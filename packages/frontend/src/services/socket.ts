@@ -52,9 +52,14 @@ class SocketService {
     });
 
     this.socket.on('session:message', (message) => {
-      const { addMessage, clearStreamingContent } = useSessionStore.getState();
+      const { addMessage, clearStreamingContent, clearToolExecutions, setActivity } = useSessionStore.getState();
       addMessage(message.sessionId, message);
       clearStreamingContent(message.sessionId);
+      // Clear tool executions when a new message is saved (Claude finished responding)
+      if (message.role === 'assistant') {
+        clearToolExecutions(message.sessionId);
+        setActivity(message.sessionId, { type: 'idle' });
+      }
     });
 
     this.socket.on('session:status', (data) => {
@@ -148,6 +153,19 @@ class SocketService {
       }
     });
 
+    this.socket.on('session:compact', (data) => {
+      console.log(`[SOCKET] session:compact received: ${data.message}`);
+      // Notify the user about context compaction by adding a system message
+      const compactMessage = {
+        id: `compact-${Date.now()}`,
+        sessionId: data.sessionId,
+        role: 'system' as const,
+        content: '🗜️ Context was auto-compacted to reduce token usage. Previous context has been summarized.',
+        createdAt: new Date().toISOString(),
+      };
+      useSessionStore.getState().addMessage(data.sessionId, compactMessage);
+    });
+
     this.socket.on('error', (message) => {
       console.error('Socket error:', message);
     });
@@ -170,6 +188,11 @@ class SocketService {
           const data = msg.data as { id: string; sessionId: string; role: 'user' | 'assistant' | 'system'; content: string; createdAt: string; images?: { path: string; filename: string }[] };
           store.addMessage(sessionId, data);
           store.clearStreamingContent(sessionId);
+          // Clear tool executions when assistant message is received
+          if (data.role === 'assistant') {
+            store.clearToolExecutions(sessionId);
+            store.setActivity(sessionId, { type: 'idle' });
+          }
           break;
         }
         case 'thinking': {
@@ -183,7 +206,26 @@ class SocketService {
           break;
         }
         case 'tool_use': {
-          const data = msg.data as { toolName: string; status: 'started' | 'completed' | 'error' };
+          const data = msg.data as { toolName: string; status: 'started' | 'completed' | 'error'; toolId?: string; input?: unknown; result?: string; error?: string };
+
+          // Add tool execution to store (using original timestamp from buffered message)
+          if (data.status === 'started') {
+            store.addToolExecution(sessionId, {
+              toolId: data.toolId || generateId(),
+              toolName: data.toolName,
+              status: 'started',
+              input: data.input,
+              timestamp: msg.timestamp, // Use original timestamp
+            });
+          } else if (data.toolId) {
+            store.updateToolExecution(sessionId, data.toolId, {
+              status: data.status,
+              result: data.result,
+              error: data.error,
+            });
+          }
+
+          // Update activity indicator
           store.setActivity(sessionId, {
             type: 'tool',
             toolName: data.toolName,

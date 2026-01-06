@@ -88,7 +88,7 @@ interface ModelUsageInfo {
 interface StreamJsonMessage {
   type: string;
   content?: string;
-  message?: {
+  message?: string | {
     role: string;
     model?: string;
     content: string | { type: string; text?: string }[];
@@ -122,6 +122,11 @@ interface StreamJsonMessage {
 interface ClaudeProcess {
   process: ChildProcess;
   sessionId: string;
+  // Per-turn token usage (for context display)
+  turnInputTokens: number;
+  turnCacheReadTokens: number;
+  turnCacheCreationTokens: number;
+  turnOutputTokens: number;
   userId: string;
   workingDirectory: string;
   claudeSessionId: string | null;
@@ -179,9 +184,64 @@ export class ClaudeProcessManager {
         return ['--permission-mode', 'default'];
       case 'danger':
         return ['--dangerously-skip-permissions'];
+      case 'orchestration':
+        return [
+          '--dangerously-skip-permissions',
+          '--append-system-prompt', this.getOrchestrationPrompt()
+        ];
       default:
         return ['--permission-mode', 'acceptEdits'];
     }
+  }
+
+  // Get orchestration mode system prompt
+  private getOrchestrationPrompt(): string {
+    return `
+## ORCHESTRATION MODE ACTIVE
+
+You are operating in Orchestration Mode. Your PRIMARY role is to coordinate and delegate work to specialized subagents rather than doing everything yourself.
+
+### Core Principles:
+1. **Delegate First**: Before implementing anything yourself, consider which specialized agent is best suited for the task
+2. **Use the Task Tool**: Invoke subagents using the Task tool with appropriate subagent_type
+3. **Coordinate Results**: Synthesize outputs from multiple agents when needed
+4. **Maintain Overview**: Keep track of the overall goal while delegating subtasks
+
+### Available Subagent Types and When to Use:
+- **Explore** - Codebase exploration, finding files, understanding structure
+- **Plan** - Creating implementation plans, breaking down complex tasks
+- **research-bot** - Researching solutions, best practices, documentation
+- **frontend-developer** - React, CSS, UI components, client-side work
+- **backend-dev** - APIs, database operations, server-side logic
+- **fullstack-dev** - Cross-cutting features spanning frontend and backend
+- **api-designer** - API design, OpenAPI specs, endpoint planning
+- **ui-designer** - UI/UX design decisions, component layouts
+- **devops-engineer** - CI/CD, Docker, Kubernetes, infrastructure
+- **database-specialist** - SQL, schema design, migrations, query optimization
+- **git-operations** - Complex git workflows, merge conflicts, rebasing
+- **debugging-expert** - Error diagnosis, profiling, root cause analysis
+- **system-architect** - System design, architecture decisions, technical specs
+
+### Delegation Guidelines:
+- **Small, focused tasks**: Delegate to a single specialist
+- **Complex features**: Break down and delegate to multiple agents in sequence
+- **Cross-cutting concerns**: Use fullstack-dev or coordinate multiple specialists
+- **Always provide clear context** and objectives to subagents
+
+### When NOT to Delegate:
+- Simple questions or explanations that don't require code changes
+- Quick file reads or searches (use Read/Grep directly)
+- Trivial edits (< 5 lines of obvious changes)
+- Direct clarifying questions to the user
+
+### Example Delegation:
+For "Add authentication to the API":
+1. Use Plan agent to create implementation plan
+2. Use database-specialist for schema/migrations
+3. Use backend-dev for API endpoints
+4. Use frontend-developer for login UI
+5. Synthesize and verify the complete solution
+`;
   }
 
   // Helper method to buffer a message
@@ -202,6 +262,20 @@ export class ClaudeProcessManager {
   private emitStatus(sessionId: string, data: { sessionId: string; status: 'running' | 'stopped' | 'error' }): void {
     this.bufferMessage(sessionId, 'status', data);
     this.io.to(`session:${sessionId}`).emit('session:status', data);
+  }
+
+  // Wrapper to emit and buffer tool_use events
+  private emitToolUse(sessionId: string, data: {
+    sessionId: string;
+    toolName: string;
+    status: 'started' | 'completed' | 'error';
+    toolId?: string;
+    input?: unknown;
+    result?: string;
+    error?: string;
+  }): void {
+    this.bufferMessage(sessionId, 'tool_use', data);
+    this.io.to(`session:${sessionId}`).emit('session:tool_use', data);
   }
 
   // Get buffered messages since a timestamp for reconnection
@@ -332,6 +406,12 @@ export class ClaudeProcessManager {
       // Usage tracking defaults
       model: 'unknown',
       contextWindow: 200000, // Default for Opus
+      // Per-turn usage (for context display)
+      turnInputTokens: 0,
+      turnCacheReadTokens: 0,
+      turnCacheCreationTokens: 0,
+      turnOutputTokens: 0,
+      // Cumulative session usage (for cost tracking)
       totalInputTokens: 0,
       totalOutputTokens: 0,
       cacheReadTokens: 0,
@@ -407,24 +487,51 @@ export class ClaudeProcessManager {
   }
 
   private emitUsage(sessionId: string, proc: ClaudeProcess): void {
-    const totalTokens = proc.totalInputTokens + proc.totalOutputTokens +
-                       proc.cacheReadTokens + proc.cacheCreationTokens;
-    const contextUsedPercent = Math.round((totalTokens / proc.contextWindow) * 100);
+    // Context usage only counts INPUT tokens (including cache), NOT output tokens
+    // Use per-turn values for context display (not cumulative session values)
+    const contextTokens = proc.turnInputTokens + proc.turnCacheReadTokens + proc.turnCacheCreationTokens;
+    const turnTotalTokens = contextTokens + proc.turnOutputTokens;
+    const contextUsedPercent = Math.round((contextTokens / proc.contextWindow) * 100);
 
-    console.log(`[USAGE] Emitting usage for ${sessionId}: model=${proc.model}, tokens=${totalTokens}, context=${contextUsedPercent}%, cost=$${proc.totalCostUsd}`);
+    console.log(`[USAGE] Emitting usage for ${sessionId}: model=${proc.model}, contextTokens=${contextTokens}, turnTotal=${turnTotalTokens}, context=${contextUsedPercent}%, cost=$${proc.totalCostUsd}`);
 
     this.io.to(`session:${sessionId}`).emit('session:usage', {
       sessionId,
-      inputTokens: proc.totalInputTokens,
-      outputTokens: proc.totalOutputTokens,
-      cacheReadTokens: proc.cacheReadTokens,
-      cacheCreationTokens: proc.cacheCreationTokens,
-      totalTokens,
+      // Per-turn values for context display
+      inputTokens: proc.turnInputTokens,
+      outputTokens: proc.turnOutputTokens,
+      cacheReadTokens: proc.turnCacheReadTokens,
+      cacheCreationTokens: proc.turnCacheCreationTokens,
+      totalTokens: contextTokens, // Context tokens only (no output) for display
       contextWindow: proc.contextWindow,
       contextUsedPercent,
+      // Cumulative session cost
       totalCostUsd: proc.totalCostUsd,
       model: proc.model,
     });
+
+    // Save usage to database for analytics (only if there are tokens to record)
+    if (turnTotalTokens > 0) {
+      try {
+        const db = getDatabase();
+        db.prepare(`
+          INSERT INTO usage_history (user_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          proc.userId,
+          sessionId,
+          proc.turnInputTokens,
+          proc.turnOutputTokens,
+          proc.turnCacheReadTokens,
+          proc.turnCacheCreationTokens,
+          turnTotalTokens,
+          proc.totalCostUsd,
+          proc.model
+        );
+      } catch (error) {
+        console.error('[USAGE] Failed to save usage to database:', error);
+      }
+    }
   }
 
   private processStreamMessage(sessionId: string, msg: StreamJsonMessage): void {
@@ -472,10 +579,11 @@ export class ClaudeProcessManager {
             proc.model = event.message.model;
           }
           if (event.message.usage) {
-            proc.totalInputTokens = event.message.usage.input_tokens || 0;
-            proc.totalOutputTokens = event.message.usage.output_tokens || 0;
-            proc.cacheReadTokens = event.message.usage.cache_read_input_tokens || 0;
-            proc.cacheCreationTokens = event.message.usage.cache_creation_input_tokens || 0;
+            // Set per-turn usage (this is the actual context used for this turn)
+            proc.turnInputTokens = event.message.usage.input_tokens || 0;
+            proc.turnOutputTokens = event.message.usage.output_tokens || 0;
+            proc.turnCacheReadTokens = event.message.usage.cache_read_input_tokens || 0;
+            proc.turnCacheCreationTokens = event.message.usage.cache_creation_input_tokens || 0;
             this.emitUsage(sessionId, proc);
           }
         }
@@ -484,10 +592,11 @@ export class ClaudeProcessManager {
       // message_delta contains updated usage and stop_reason
       if (event.type === 'message_delta') {
         if (event.usage) {
-          proc.totalInputTokens = event.usage.input_tokens || proc.totalInputTokens;
-          proc.totalOutputTokens = event.usage.output_tokens || proc.totalOutputTokens;
-          proc.cacheReadTokens = event.usage.cache_read_input_tokens || proc.cacheReadTokens;
-          proc.cacheCreationTokens = event.usage.cache_creation_input_tokens || proc.cacheCreationTokens;
+          // Update per-turn usage with delta values
+          proc.turnInputTokens = event.usage.input_tokens || proc.turnInputTokens;
+          proc.turnOutputTokens = event.usage.output_tokens || proc.turnOutputTokens;
+          proc.turnCacheReadTokens = event.usage.cache_read_input_tokens || proc.turnCacheReadTokens;
+          proc.turnCacheCreationTokens = event.usage.cache_creation_input_tokens || proc.turnCacheCreationTokens;
           this.emitUsage(sessionId, proc);
         }
         // If stop_reason is tool_use, Claude is about to use a tool - show thinking
@@ -521,10 +630,10 @@ export class ClaudeProcessManager {
             isThinking: true,
           });
           if (contentBlock.name) {
-            this.io.to(`session:${sessionId}`).emit('session:tool_use', {
+            this.emitToolUse(sessionId, {
               sessionId,
               toolName: contentBlock.name,
-              toolId: proc.currentToolId,
+              toolId: proc.currentToolId || undefined,
               status: 'started',
             });
           }
@@ -611,7 +720,7 @@ export class ClaudeProcessManager {
 
             // Note: The actual result will be captured from tool_result message
             // For now, we just show the input was accepted
-            this.io.to(`session:${sessionId}`).emit('session:tool_use', {
+            this.emitToolUse(sessionId, {
               sessionId,
               toolName: proc.currentToolName,
               toolId: proc.currentToolId || undefined,
@@ -620,7 +729,7 @@ export class ClaudeProcessManager {
             });
           } catch {
             // If parsing fails, just emit with raw input
-            this.io.to(`session:${sessionId}`).emit('session:tool_use', {
+            this.emitToolUse(sessionId, {
               sessionId,
               toolName: proc.currentToolName,
               toolId: proc.currentToolId || undefined,
@@ -694,6 +803,8 @@ export class ClaudeProcessManager {
         proc.totalCostUsd = msg.total_cost_usd;
       }
       if (msg.usage) {
+        // Store cumulative session usage (for total cost calculation)
+        // Don't update turn values here - result contains cumulative session totals
         proc.totalInputTokens = msg.usage.input_tokens || proc.totalInputTokens;
         proc.totalOutputTokens = msg.usage.output_tokens || proc.totalOutputTokens;
         proc.cacheReadTokens = msg.usage.cache_read_input_tokens || proc.cacheReadTokens;
@@ -743,14 +854,14 @@ export class ClaudeProcessManager {
     }
 
     // Handle complete assistant messages (non-streaming fallback)
-    if (msg.type === 'assistant' && msg.message && !proc.isStreaming) {
+    if (msg.type === 'assistant' && msg.message && typeof msg.message !== 'string' && !proc.isStreaming) {
       let content = '';
       if (typeof msg.message.content === 'string') {
         content = msg.message.content;
       } else if (Array.isArray(msg.message.content)) {
         content = msg.message.content
-          .filter((c) => c.type === 'text' && c.text)
-          .map((c) => c.text)
+          .filter((c: { type: string; text?: string }) => c.type === 'text' && c.text)
+          .map((c: { type: string; text?: string }) => c.text)
           .join('');
       }
 
@@ -778,7 +889,7 @@ export class ClaudeProcessManager {
         sessionId,
         isThinking: true,
       });
-      this.io.to(`session:${sessionId}`).emit('session:tool_use', {
+      this.emitToolUse(sessionId, {
         sessionId,
         toolName: msg.tool_use.name,
         status: 'started',
@@ -791,6 +902,24 @@ export class ClaudeProcessManager {
         sessionId,
         isThinking: true,
       });
+    }
+
+    // Handle compact/summarization events
+    // Claude sends these when auto-compacting context
+    if (msg.type === 'system' && (msg.subtype === 'compact' || msg.subtype === 'pre_compact' ||
+        (msg.message && typeof msg.message === 'string' && msg.message.toLowerCase().includes('compact')))) {
+      console.log(`[COMPACT] Context compaction detected for session ${sessionId}`);
+      // Reset token counts since context was compacted
+      proc.totalInputTokens = 0;
+      proc.totalOutputTokens = 0;
+      proc.cacheReadTokens = 0;
+      proc.cacheCreationTokens = 0;
+      // Notify frontend about compaction
+      this.io.to(`session:${sessionId}`).emit('session:compact', {
+        sessionId,
+        message: 'Context was auto-compacted to reduce token usage',
+      });
+      this.emitUsage(sessionId, proc);
     }
 
     // Handle result/completion

@@ -565,6 +565,204 @@ router.get('/remote-status', requireAuth, asyncHandler(async (req, res) => {
   }
 }));
 
+// Get commit diff
+router.get('/commit-diff', requireAuth, asyncHandler(async (req, res) => {
+  const repoPath = req.query.path as string;
+  const hash = req.query.hash as string;
+
+  if (!repoPath || !hash) {
+    throw new AppError('Path and commit hash are required', 400, 'MISSING_PARAMS');
+  }
+
+  try {
+    const git = getGit(repoPath);
+
+    // Get diff for this commit compared to its parent
+    const diff = await git.diff([`${hash}^`, hash]);
+
+    // Get commit details
+    const log = await git.log({ from: hash, to: hash, maxCount: 1 });
+    const commit = log.all[0];
+
+    // Parse file changes from diff
+    const fileChanges: Array<{
+      file: string;
+      additions: number;
+      deletions: number;
+      status: 'added' | 'modified' | 'deleted';
+    }> = [];
+
+    // Parse the diff to extract file info
+    const diffLines = diff.split('\n');
+    let currentFile = '';
+    let additions = 0;
+    let deletions = 0;
+
+    for (const line of diffLines) {
+      if (line.startsWith('diff --git')) {
+        // Save previous file if exists
+        if (currentFile) {
+          fileChanges.push({
+            file: currentFile,
+            additions,
+            deletions,
+            status: 'modified',
+          });
+        }
+        // Extract new file name
+        const match = line.match(/diff --git a\/.+ b\/(.+)/);
+        currentFile = match && match[1] ? match[1] : '';
+        additions = 0;
+        deletions = 0;
+      } else if (line.startsWith('+') && !line.startsWith('+++')) {
+        additions++;
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        deletions++;
+      } else if (line.startsWith('new file mode')) {
+        // Mark as added
+        if (currentFile && fileChanges.length === 0 || fileChanges[fileChanges.length - 1]?.file !== currentFile) {
+          // Will be set when we push
+        }
+      } else if (line.startsWith('deleted file mode')) {
+        // Mark as deleted
+      }
+    }
+
+    // Push last file
+    if (currentFile) {
+      fileChanges.push({
+        file: currentFile,
+        additions,
+        deletions,
+        status: 'modified',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        hash,
+        message: commit?.message || '',
+        author: commit?.author_name || '',
+        date: commit?.date || '',
+        diff,
+        files: fileChanges,
+        totalAdditions: fileChanges.reduce((sum, f) => sum + f.additions, 0),
+        totalDeletions: fileChanges.reduce((sum, f) => sum + f.deletions, 0),
+      },
+    });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    // Handle first commit (no parent)
+    if ((err as Error).message.includes('unknown revision')) {
+      const git = getGit(repoPath);
+      const diff = await git.diff(['--root', hash]);
+      const log = await git.log({ from: hash, to: hash, maxCount: 1 });
+      const commit = log.all[0];
+
+      res.json({
+        success: true,
+        data: {
+          hash,
+          message: commit?.message || '',
+          author: commit?.author_name || '',
+          date: commit?.date || '',
+          diff,
+          files: [],
+          totalAdditions: 0,
+          totalDeletions: 0,
+        },
+      });
+      return;
+    }
+    throw err;
+  }
+}));
+
+// Get file content at specific commit
+router.get('/file-at-commit', requireAuth, asyncHandler(async (req, res) => {
+  const repoPath = req.query.path as string;
+  const hash = req.query.hash as string;
+  const file = req.query.file as string;
+
+  if (!repoPath || !hash || !file) {
+    throw new AppError('Path, commit hash, and file are required', 400, 'MISSING_PARAMS');
+  }
+
+  try {
+    const git = getGit(repoPath);
+    const content = await git.show([`${hash}:${file}`]);
+
+    res.json({ success: true, data: { content } });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    if ((err as Error).message.includes('does not exist')) {
+      res.json({ success: true, data: { content: '' } });
+      return;
+    }
+    throw err;
+  }
+}));
+
+// Compare two commits/refs
+router.get('/compare', requireAuth, asyncHandler(async (req, res) => {
+  const repoPath = req.query.path as string;
+  const base = req.query.base as string;
+  const head = req.query.head as string;
+
+  if (!repoPath || !base || !head) {
+    throw new AppError('Path, base, and head refs are required', 400, 'MISSING_PARAMS');
+  }
+
+  try {
+    const git = getGit(repoPath);
+    const diff = await git.diff([base, head]);
+
+    // Get commit info for both refs
+    const baseLog = await git.log({ from: base, to: base, maxCount: 1 });
+    const headLog = await git.log({ from: head, to: head, maxCount: 1 });
+
+    // Parse additions/deletions
+    const diffLines = diff.split('\n');
+    let additions = 0;
+    let deletions = 0;
+
+    for (const line of diffLines) {
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        additions++;
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        deletions++;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        base: {
+          ref: base,
+          commit: baseLog.all[0] || null,
+        },
+        head: {
+          ref: head,
+          commit: headLog.all[0] || null,
+        },
+        diff,
+        additions,
+        deletions,
+      },
+    });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    throw err;
+  }
+}));
+
 // Generate commit message using AI
 router.post('/generate-commit-message', requireAuth, asyncHandler(async (req, res) => {
   const { path: repoPath } = req.body;

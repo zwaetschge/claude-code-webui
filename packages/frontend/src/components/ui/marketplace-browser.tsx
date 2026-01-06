@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   X,
@@ -13,6 +13,9 @@ import {
   Check,
   Puzzle,
   AlertTriangle,
+  Search,
+  Filter,
+  ChevronDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +55,9 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedMarketplace, setSelectedMarketplace] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [newMarketplace, setNewMarketplace] = useState({
     name: '',
     source: 'github' as 'github' | 'git',
@@ -136,6 +142,7 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
       toast({ title: 'Plugin installed successfully' });
     },
     onError: (error: Error) => {
@@ -150,19 +157,57 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
 
   const selectedMarketplaceData = marketplaces?.find((m: MarketplaceInfo) => m.id === selectedMarketplace);
 
+  // Filter plugins based on search and category
+  const filteredPlugins = useMemo(() => {
+    if (!selectedMarketplaceData?.plugins) return [];
+
+    return selectedMarketplaceData.plugins.filter((plugin: MarketplacePluginInfo) => {
+      const matchesSearch = !searchQuery ||
+        plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        plugin.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        plugin.author?.name?.toLowerCase().includes(searchQuery.toLowerCase());
+
+      const matchesCategory = !selectedCategory || plugin.category === selectedCategory;
+
+      return matchesSearch && matchesCategory;
+    });
+  }, [selectedMarketplaceData?.plugins, searchQuery, selectedCategory]);
+
+  // Get categories for the selected marketplace
+  const marketplaceCategories = useMemo(() => {
+    if (!selectedMarketplaceData?.plugins) return [];
+    const categories = new Set<string>();
+    selectedMarketplaceData.plugins.forEach((plugin: MarketplacePluginInfo) => {
+      if (plugin.category) {
+        categories.add(plugin.category);
+      }
+    });
+    return Array.from(categories).sort();
+  }, [selectedMarketplaceData?.plugins]);
+
+  // Count plugins per category
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    selectedMarketplaceData?.plugins?.forEach((plugin: MarketplacePluginInfo) => {
+      const cat = plugin.category || 'uncategorized';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    return counts;
+  }, [selectedMarketplaceData?.plugins]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-4xl max-h-[85vh] bg-card rounded-2xl border shadow-2xl overflow-hidden animate-scale-in flex flex-col">
+      <div className="relative w-full max-w-5xl max-h-[90vh] bg-card rounded-2xl border shadow-2xl overflow-hidden animate-scale-in flex flex-col">
         {/* Header */}
         <div className="flex items-center gap-3 p-5 border-b bg-muted/30">
           <div className="p-2.5 rounded-xl bg-violet-500/10">
             <Store className="h-5 w-5 text-violet-600 dark:text-violet-400" />
           </div>
           <div className="flex-1">
-            <h2 className="text-lg font-semibold">Plugin Marketplaces</h2>
+            <h2 className="text-lg font-semibold">Plugin Marketplace</h2>
             <p className="text-sm text-muted-foreground">
-              Browse and install plugins from marketplaces
+              Browse and install plugins from {marketplaces?.length || 0} marketplace{(marketplaces?.length || 0) !== 1 ? 's' : ''}
             </p>
           </div>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
@@ -173,7 +218,7 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
         {/* Content */}
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar - Marketplace List */}
-          <div className="w-64 border-r bg-muted/20 flex flex-col">
+          <div className="w-64 border-r bg-muted/20 flex flex-col shrink-0">
             <div className="p-3 border-b">
               <Button
                 size="sm"
@@ -255,7 +300,11 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
                   <button
                     key={mp.id}
                     type="button"
-                    onClick={() => setSelectedMarketplace(mp.id)}
+                    onClick={() => {
+                      setSelectedMarketplace(mp.id);
+                      setSearchQuery('');
+                      setSelectedCategory(null);
+                    }}
                     className={cn(
                       "w-full flex items-center gap-2 p-2.5 rounded-lg text-left transition-colors",
                       selectedMarketplace === mp.id
@@ -294,11 +343,11 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
           </div>
 
           {/* Main Content - Plugin List */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             {selectedMarketplaceData ? (
               <>
-                {/* Marketplace Header */}
-                <div className="p-4 border-b bg-muted/10">
+                {/* Marketplace Header with Search */}
+                <div className="p-4 border-b bg-muted/10 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="font-semibold">{selectedMarketplaceData.name}</h3>
@@ -333,13 +382,119 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
                       </Button>
                     </div>
                   </div>
+
+                  {/* Search and Filter Bar */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search plugins by name, description, or author..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-9 h-9"
+                      />
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Category Filter */}
+                    {marketplaceCategories.length > 0 && (
+                      <div className="relative">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                          className={cn(
+                            "h-9 gap-1.5",
+                            selectedCategory && "bg-violet-500/10 border-violet-500/30"
+                          )}
+                        >
+                          <Filter className="h-3.5 w-3.5" />
+                          {selectedCategory || 'All Categories'}
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </Button>
+
+                        {showCategoryDropdown && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-10"
+                              onClick={() => setShowCategoryDropdown(false)}
+                            />
+                            <div className="absolute right-0 top-full mt-1 z-20 w-48 py-1 bg-popover border rounded-lg shadow-lg">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCategory(null);
+                                  setShowCategoryDropdown(false);
+                                }}
+                                className={cn(
+                                  "w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors",
+                                  !selectedCategory && "bg-violet-500/10"
+                                )}
+                              >
+                                All Categories
+                                <span className="float-right text-muted-foreground">
+                                  {selectedMarketplaceData.plugins?.length || 0}
+                                </span>
+                              </button>
+                              {marketplaceCategories.map((category) => (
+                                <button
+                                  key={category}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCategory(category);
+                                    setShowCategoryDropdown(false);
+                                  }}
+                                  className={cn(
+                                    "w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors capitalize",
+                                    selectedCategory === category && "bg-violet-500/10"
+                                  )}
+                                >
+                                  {category}
+                                  <span className="float-right text-muted-foreground">
+                                    {categoryCounts[category] || 0}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Results count */}
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>
+                      Showing {filteredPlugins.length} of {selectedMarketplaceData.plugins?.length || 0} plugins
+                    </span>
+                    {(searchQuery || selectedCategory) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          setSelectedCategory(null);
+                        }}
+                        className="text-violet-500 hover:underline"
+                      >
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Plugin Grid */}
                 <div className="flex-1 overflow-y-auto p-4">
-                  {selectedMarketplaceData.plugins && selectedMarketplaceData.plugins.length > 0 ? (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {selectedMarketplaceData.plugins.map((plugin: MarketplacePluginInfo) => {
+                  {filteredPlugins.length > 0 ? (
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {filteredPlugins.map((plugin: MarketplacePluginInfo) => {
                         const installed = isPluginInstalled(plugin.name, selectedMarketplaceData.id);
                         return (
                           <div
@@ -359,11 +514,13 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
                                 <Puzzle className="h-4 w-4" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
                                   <p className="font-semibold truncate">{plugin.name}</p>
-                                  <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground shrink-0">
-                                    v{plugin.version}
-                                  </span>
+                                  {plugin.version && (
+                                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground shrink-0">
+                                      v{plugin.version}
+                                    </span>
+                                  )}
                                   {installed && (
                                     <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/10 text-green-600 dark:text-green-400 shrink-0">
                                       Installed
@@ -373,16 +530,18 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
                                 <p className="text-xs text-muted-foreground line-clamp-2">
                                   {plugin.description || 'No description'}
                                 </p>
-                                {plugin.author && (
-                                  <p className="text-xs text-muted-foreground/70 mt-1">
-                                    by {plugin.author.name}
-                                  </p>
-                                )}
-                                {plugin.category && (
-                                  <span className="inline-block mt-2 px-1.5 py-0.5 text-[10px] rounded bg-muted/70 text-muted-foreground">
-                                    {plugin.category}
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                  {plugin.author && (
+                                    <span className="text-xs text-muted-foreground/70">
+                                      by {plugin.author.name}
+                                    </span>
+                                  )}
+                                  {plugin.category && (
+                                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted/70 text-muted-foreground capitalize">
+                                      {plugin.category}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                             <div className="mt-3 flex justify-end">
@@ -418,6 +577,25 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
                           </div>
                         );
                       })}
+                    </div>
+                  ) : searchQuery || selectedCategory ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                      <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
+                      <p className="font-medium text-muted-foreground">No plugins found</p>
+                      <p className="text-sm text-muted-foreground/70 max-w-xs mt-1">
+                        Try adjusting your search or filter criteria
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSearchQuery('');
+                          setSelectedCategory(null);
+                        }}
+                        className="mt-4"
+                      >
+                        Clear filters
+                      </Button>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-center">

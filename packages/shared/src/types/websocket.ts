@@ -2,7 +2,7 @@ import type { Message, StreamingMessage } from './message';
 import type { SessionStatus } from './session';
 
 // Session permission mode
-export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
+export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger' | 'orchestration';
 
 // Image data for sending to Claude
 export interface ImageAttachmentData {
@@ -122,6 +122,10 @@ export interface ServerToClientEvents {
     sessionId: string;
     bufferedMessages: BufferedMessage[];
     isRunning: boolean;
+  }) => void;
+  'session:compact': (data: {
+    sessionId: string;
+    message: string;
   }) => void;
   error: (message: string) => void;
 }

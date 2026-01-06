@@ -12,7 +12,7 @@ services:
       - NODE_ENV=production
       - SESSION_SECRET=${SESSION_SECRET:-changeme-session-secret-at-least-32-chars}
       - JWT_SECRET=${JWT_SECRET:-changeme-jwt-secret-at-least-32-chars}
-      - FRONTEND_URL=http://ProliantG9:5174
+      - FRONTEND_URL=https://claudecode.zwaetschge-webui.ch
       - ALLOWED_BASE_PATHS=/mnt/user
       # Set your email here for display in the UI
       - CLAUDE_USER_EMAIL=${CLAUDE_USER_EMAIL:-}

@@ -1,17 +1,20 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { useBasicAuthStore } from '@/stores/basicAuthStore';
 import { useSocket } from '@/hooks/useSocket';
 import { Layout } from '@/components/layout/Layout';
 import { Toaster } from '@/components/ui/toaster';
 
 // Lazy load pages for code splitting
+const BasicLoginPage = lazy(() => import('@/pages/BasicLoginPage').then(m => ({ default: m.BasicLoginPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const AuthCallbackPage = lazy(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
 const ClaudeCallbackPage = lazy(() => import('@/pages/ClaudeCallbackPage').then(m => ({ default: m.ClaudeCallbackPage })));
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const SessionPage = lazy(() => import('@/pages/SessionPage').then(m => ({ default: m.SessionPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 
 // Loading fallback component
 function PageLoader() {
@@ -25,11 +28,9 @@ function PageLoader() {
   );
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuthStore();
-
-  // Initialize socket connection when authenticated
-  useSocket();
+// Route that requires basic auth (if enabled)
+function BasicAuthRoute({ children }: { children: React.ReactNode }) {
+  const { isBasicAuthenticated, isBasicAuthEnabled, isLoading } = useBasicAuthStore();
 
   if (isLoading) {
     return (
@@ -37,6 +38,39 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     );
+  }
+
+  // If basic auth is disabled, allow access
+  if (isBasicAuthEnabled === false) {
+    return <>{children}</>;
+  }
+
+  // If basic auth is enabled but not authenticated, redirect to basic login
+  if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
+    return <Navigate to="/basic-login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuthStore();
+  const { isBasicAuthenticated, isBasicAuthEnabled, isLoading: isBasicLoading } = useBasicAuthStore();
+
+  // Initialize socket connection when authenticated
+  useSocket();
+
+  if (isLoading || isBasicLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  // First check basic auth if enabled
+  if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
+    return <Navigate to="/basic-login" replace />;
   }
 
   if (!isAuthenticated) {
@@ -51,7 +85,15 @@ export default function App() {
     <>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/basic-login" element={<BasicLoginPage />} />
+          <Route
+            path="/login"
+            element={
+              <BasicAuthRoute>
+                <LoginPage />
+              </BasicAuthRoute>
+            }
+          />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
           <Route path="/auth/claude/callback" element={<ClaudeCallbackPage />} />
           <Route
@@ -64,6 +106,7 @@ export default function App() {
           >
             <Route index element={<DashboardPage />} />
             <Route path="session/:id" element={<SessionPage />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

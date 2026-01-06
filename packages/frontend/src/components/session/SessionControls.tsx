@@ -9,12 +9,13 @@ import {
   ChevronUp,
   DollarSign,
   RefreshCw,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { UsageData } from '@claude-code-webui/shared';
 
-type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
+type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger' | 'orchestration';
 
 interface UsageLimitInfo {
   percentUsed: number;
@@ -65,6 +66,13 @@ const modeConfig: Record<SessionMode, {
     icon: Zap,
     color: 'text-red-500',
     bgColor: 'bg-red-500/10 hover:bg-red-500/20',
+  },
+  orchestration: {
+    label: 'Orchestration',
+    description: 'Delegate to specialized subagents',
+    icon: Users,
+    color: 'text-purple-500',
+    bgColor: 'bg-purple-500/10 hover:bg-purple-500/20',
   },
 };
 

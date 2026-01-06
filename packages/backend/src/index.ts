@@ -19,6 +19,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 // Routes
 import authRoutes from './routes/auth';
+import basicAuthRoutes from './routes/basic-auth';
 import sessionRoutes from './routes/sessions';
 import filesRoutes from './routes/files';
 import gitRoutes from './routes/git';
@@ -32,12 +33,20 @@ import geminiRoutes from './routes/gemini';
 import projectsRoutes from './routes/projects';
 import githubRoutes from './routes/github';
 import commandsRoutes from './routes/commands';
+import analyticsRoutes from './routes/analytics';
+import checkpointsRoutes from './routes/checkpoints';
+import agentsRoutes from './routes/agents';
 
 async function main() {
   // Initialize database
   initDatabase();
 
   const app = express();
+
+  // Trust proxy headers when behind nginx/reverse proxy
+  // This enables proper handling of X-Forwarded-Proto, X-Forwarded-Host, etc.
+  app.set('trust proxy', true);
+
   const httpServer = createServer(app);
 
   // Setup WebSocket
@@ -88,6 +97,7 @@ async function main() {
 
   // Routes
   app.use('/auth', authRoutes);
+  app.use('/api/basic-auth', basicAuthRoutes);
   app.use('/api/sessions', sessionRoutes);
   app.use('/api/files', filesRoutes);
   app.use('/api/git', gitRoutes);
@@ -101,6 +111,9 @@ async function main() {
   app.use('/api/projects', projectsRoutes);
   app.use('/api/github', githubRoutes);
   app.use('/api/commands', commandsRoutes);
+  app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/checkpoints', checkpointsRoutes);
+  app.use('/api/agents', agentsRoutes);
 
   // Serve frontend static files in production
   if (config.isProduction) {

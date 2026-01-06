@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, '..', '..', 'data', 'claude-webui.db');
@@ -117,12 +118,71 @@ function runMigrations(db: Database.Database): void {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Usage history table (for analytics)
+    CREATE TABLE IF NOT EXISTS usage_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      model TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Session checkpoints table (for versioning)
+    CREATE TABLE IF NOT EXISTS session_checkpoints (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      snapshot_data TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Custom agents table
+    CREATE TABLE IF NOT EXISTS custom_agents (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      system_prompt TEXT NOT NULL,
+      model TEXT DEFAULT 'claude-sonnet-4-20250514',
+      allowed_tools TEXT,
+      permission_mode TEXT DEFAULT 'auto-accept',
+      icon TEXT DEFAULT 'bot',
+      color TEXT DEFAULT 'violet',
+      enabled INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- App config table (for basic auth and other app-wide settings)
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_mcp_servers_user_id ON mcp_servers(user_id);
     CREATE INDEX IF NOT EXISTS idx_cli_tools_user_id ON cli_tools(user_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_history_user_id ON usage_history(user_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_history_session_id ON usage_history(session_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_history_created_at ON usage_history(created_at);
+    CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_id ON session_checkpoints(session_id);
+    CREATE INDEX IF NOT EXISTS idx_custom_agents_user_id ON custom_agents(user_id);
   `);
+
+  // Initialize default basic auth credentials
+  initializeBasicAuth(db);
 
   // Migration: Add starred column to existing sessions table
   try {
@@ -130,6 +190,37 @@ function runMigrations(db: Database.Database): void {
   } catch {
     // Column already exists, ignore error
   }
+}
+
+function initializeBasicAuth(db: Database.Database): void {
+  const existingUsername = db.prepare('SELECT value FROM app_config WHERE key = ?').get('basic_auth_username') as { value: string } | undefined;
+
+  if (!existingUsername) {
+    // Set default credentials: admin / admin123
+    const defaultUsername = 'admin';
+    const defaultPassword = bcrypt.hashSync('admin123', 10);
+
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_username', defaultUsername);
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_password', defaultPassword);
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_enabled', 'true');
+
+    console.log('Initialized default basic auth credentials (admin/admin123)');
+  }
+}
+
+export function getAppConfig(key: string): string | null {
+  const database = getDatabase();
+  const row = database.prepare('SELECT value FROM app_config WHERE key = ?').get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setAppConfig(key: string, value: string): void {
+  const database = getDatabase();
+  database.prepare(`
+    INSERT INTO app_config (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+  `).run(key, value, value);
 }
 
 export { db };

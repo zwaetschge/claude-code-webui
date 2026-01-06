@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, Square, FolderOpen, Image, X, Paperclip, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star } from 'lucide-react';
+import { Send, Square, FolderOpen, Image, X, Paperclip, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -12,7 +12,9 @@ import { StreamingContent } from '@/components/chat/StreamingContent';
 import { SessionControls } from '@/components/session/SessionControls';
 import { FileTree } from '@/components/file-tree';
 import { GitPanel } from '@/components/git-panel';
+import { CheckpointsPanel } from '@/components/session/CheckpointsPanel';
 import { EditorPanel } from '@/components/code-editor';
+import { WebPreview } from '@/components/preview';
 import { MobileBottomNav, type MobileView } from '@/components/mobile';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -22,7 +24,6 @@ import type { Session, Message, ApiResponse, MessageImage, CliTool, CliToolExecu
 import { cn } from '@/lib/utils';
 import { CommandMenu } from '@/components/chat/CommandMenu';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from '@/components/chat/InteractiveOptions';
-import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { useDocumentSwipeGesture } from '@/hooks';
 
 interface ImageAttachment {
@@ -147,17 +148,17 @@ export function SessionPage() {
   const currentGeneratedImages = generatedImages[id || ''] || [];
   const currentToolExecutions = toolExecutions[id || ''] || [];
   const [showTodos, setShowTodos] = useState(true);
-  const [rightPanelTab, setRightPanelTab] = useState<'files' | 'todos' | 'git'>('files');
-  const [mainView, setMainView] = useState<'chat' | 'editor'>('chat');
+  const [rightPanelTab, setRightPanelTab] = useState<'files' | 'todos' | 'git' | 'checkpoints'>('files');
+  const [mainView, setMainView] = useState<'chat' | 'editor' | 'preview'>('chat');
   const currentSelectedFile = selectedFile[id || ''];
   const currentOpenFiles = openFiles[id || ''] || [];
   const hasOpenFiles = currentOpenFiles.length > 0;
 
-  // Combine messages, generated images, and tool executions into a single timeline
+  // Combine messages and generated images into a single timeline
+  // Tool executions are NOT added to timeline - they're shown inline with activity indicator
   type TimelineItem =
     | { type: 'message'; data: Message; timestamp: number }
-    | { type: 'image'; data: typeof currentGeneratedImages[0]; timestamp: number }
-    | { type: 'tool'; data: typeof currentToolExecutions[0]; timestamp: number };
+    | { type: 'image'; data: typeof currentGeneratedImages[0]; timestamp: number };
 
   const timeline: TimelineItem[] = [
     ...sessionMessages.map(msg => ({
@@ -170,12 +171,12 @@ export function SessionPage() {
       data: img,
       timestamp: img.timestamp,
     })),
-    ...currentToolExecutions.map(exec => ({
-      type: 'tool' as const,
-      data: exec,
-      timestamp: exec.timestamp,
-    })),
   ].sort((a, b) => a.timestamp - b.timestamp);
+
+  // Get recent tool executions for showing during activity (last 5 completed or in-progress)
+  const recentTools = currentToolExecutions
+    .filter(t => t.status === 'started' || t.status === 'completed')
+    .slice(-5);
 
   // Helper to get tool icon and name
   const getToolDisplay = (toolName: string) => {
@@ -207,6 +208,17 @@ export function SessionPage() {
       'fullstack-dev': 'Fullstack Dev',
       'api-designer': 'API Designer',
       'ui-designer': 'UI Designer',
+      // New agent types
+      'devops': 'DevOps',
+      'devops-engineer': 'DevOps',
+      'database': 'Database',
+      'database-specialist': 'Database',
+      'git-ops': 'Git Ops',
+      'git-operations': 'Git Ops',
+      'debugger': 'Debugger',
+      'debugging-expert': 'Debugger',
+      'architect': 'Architect',
+      'system-architect': 'Architect',
     };
     return agentMap[agentType] || agentType;
   };
@@ -670,20 +682,20 @@ export function SessionPage() {
             )}
 
             {/* View Toggle */}
-            {hasOpenFiles && (
-              <div className="flex gap-1 bg-muted rounded-lg p-0.5">
-                <button
-                  onClick={() => setMainView('chat')}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors",
-                    mainView === 'chat'
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  Chat
-                </button>
+            <div className="flex gap-1 bg-muted rounded-lg p-0.5">
+              <button
+                onClick={() => setMainView('chat')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors",
+                  mainView === 'chat'
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Chat
+              </button>
+              {hasOpenFiles && (
                 <button
                   onClick={() => setMainView('editor')}
                   className={cn(
@@ -699,8 +711,20 @@ export function SessionPage() {
                     {currentOpenFiles.length}
                   </span>
                 </button>
-              </div>
-            )}
+              )}
+              <button
+                onClick={() => setMainView('preview')}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors",
+                  mainView === 'preview'
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Globe className="h-3.5 w-3.5" />
+                Preview
+              </button>
+            </div>
           </div>
         </div>
 
@@ -727,6 +751,8 @@ export function SessionPage() {
         )}>
         {mainView === 'editor' ? (
           <EditorPanel sessionId={id || ''} />
+        ) : mainView === 'preview' ? (
+          <WebPreview className="h-full" />
         ) : (
           <>
         {timeline.length === 0 && !currentStreamingContent && (
@@ -802,7 +828,7 @@ export function SessionPage() {
                 </Card>
               </div>
             );
-          } else if (item.type === 'image') {
+          } else {
             // Generated Image
             const img = item.data;
             return (
@@ -833,78 +859,102 @@ export function SessionPage() {
                 </Card>
               </div>
             );
-          } else {
-            // Tool Execution
-            const exec = item.data;
-            return (
-              <div key={`tool-${exec.toolId}-${index}`} className="flex justify-start animate-fade-in max-w-[80%]">
-                <ToolExecutionCard execution={exec} />
-              </div>
-            );
           }
         })}
 
-        {/* Activity indicator */}
+        {/* Activity indicator with recent tool history */}
         {(currentActivity.type === 'thinking' || currentActivity.type === 'tool' || currentActiveAgent) && !currentStreamingContent && (
           <div className="flex justify-start animate-fade-in">
             <Card className={cn(
-              "border p-4",
+              "border p-4 max-w-[80%]",
               currentActiveAgent ? "bg-purple-500/10 border-purple-500/30" :
               currentActivity.type === 'tool' ? "bg-blue-500/10 border-blue-500/30" : "bg-card"
             )}>
-              <div className="flex items-center gap-3">
-                {/* Active Agent indicator - highest priority */}
-                {currentActiveAgent ? (
-                  <>
-                    <div className="relative">
-                      <Brain className="h-5 w-5 text-purple-500" />
-                      <span className="absolute -top-1 -right-1 w-2 h-2 bg-purple-500 rounded-full animate-ping" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
-                        Agent: {getAgentDisplay(currentActiveAgent.agentType)}
-                      </span>
-                      {currentActiveAgent.description && (
-                        <span className="text-xs text-muted-foreground">{currentActiveAgent.description}</span>
-                      )}
-                      <span className="text-xs text-muted-foreground/60 font-mono">{currentActiveAgent.agentType}</span>
-                    </div>
-                  </>
-                ) : currentActivity.type === 'thinking' ? (
-                  <>
-                    <Brain className="h-5 w-5 text-amber-500 animate-pulse" />
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">Claude is thinking...</span>
-                      <span className="text-xs text-muted-foreground">Analyzing request</span>
-                    </div>
-                  </>
-                ) : currentActivity.type === 'tool' && currentActivity.toolName ? (
-                  <>
-                    {(() => {
-                      const { icon: ToolIcon, label } = getToolDisplay(currentActivity.toolName);
+              <div className="space-y-3">
+                {/* Current activity */}
+                <div className="flex items-center gap-3">
+                  {/* Active Agent indicator - highest priority */}
+                  {currentActiveAgent ? (
+                    <>
+                      <div className="relative">
+                        <Brain className="h-5 w-5 text-purple-500" />
+                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-purple-500 rounded-full animate-ping" />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
+                          Agent: {getAgentDisplay(currentActiveAgent.agentType)}
+                        </span>
+                        {currentActiveAgent.description && (
+                          <span className="text-xs text-muted-foreground">{currentActiveAgent.description}</span>
+                        )}
+                      </div>
+                    </>
+                  ) : currentActivity.type === 'thinking' ? (
+                    <>
+                      <Brain className="h-5 w-5 text-amber-500 animate-pulse" />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">Claude is thinking...</span>
+                        <span className="text-xs text-muted-foreground">Analyzing request</span>
+                      </div>
+                    </>
+                  ) : currentActivity.type === 'tool' && currentActivity.toolName ? (
+                    <>
+                      {(() => {
+                        const { icon: ToolIcon, label } = getToolDisplay(currentActivity.toolName);
+                        return (
+                          <>
+                            <div className="relative">
+                              <ToolIcon className="h-5 w-5 text-blue-500" />
+                              <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full animate-ping" />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium text-blue-600 dark:text-blue-400">{label}</span>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex gap-1">
+                        <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
+                      <span className="text-sm text-muted-foreground">Working...</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Recent completed tools (compact list) */}
+                {recentTools.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-2 border-t border-border/50">
+                    {recentTools.map((tool, idx) => {
+                      const { icon: ToolIcon, label } = getToolDisplay(tool.toolName);
+                      const isRunning = tool.status === 'started';
                       return (
-                        <>
-                          <div className="relative">
-                            <ToolIcon className="h-5 w-5 text-blue-500" />
-                            <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full animate-ping" />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium text-blue-600 dark:text-blue-400">{label}</span>
-                            <span className="text-xs text-muted-foreground font-mono">{currentActivity.toolName}</span>
-                          </div>
-                        </>
+                        <div
+                          key={`${tool.toolId}-${idx}`}
+                          className={cn(
+                            "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
+                            isRunning
+                              ? "bg-blue-500/20 text-blue-600 dark:text-blue-400"
+                              : "bg-muted/50 text-muted-foreground"
+                          )}
+                        >
+                          <ToolIcon className="h-3 w-3" />
+                          <span className="truncate max-w-24">{label}</span>
+                          {isRunning && <Loader2 className="h-3 w-3 animate-spin" />}
+                          {tool.status === 'completed' && <CheckCircle className="h-3 w-3 text-green-500" />}
+                        </div>
                       );
-                    })()}
-                  </>
-                ) : (
-                  <>
-                    <div className="flex gap-1">
-                      <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
-                    <span className="text-sm text-muted-foreground">Working...</span>
-                  </>
+                    })}
+                    {currentToolExecutions.length > 5 && (
+                      <span className="text-xs text-muted-foreground px-2 py-0.5">
+                        +{currentToolExecutions.length - 5} more
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </Card>
@@ -936,18 +986,18 @@ export function SessionPage() {
         {/* Right Sidebar - Todos & Git (hidden on mobile unless mobileView is 'git' or 'todos') */}
         <div className={cn(
           "shrink-0 transition-all duration-200",
-          showTodos ? "w-72" : "w-10",
+          showTodos ? "w-80" : "w-10",
           // Mobile: hide unless mobileView is 'git' or 'todos'
           (mobileView !== 'git' && mobileView !== 'todos') && "hidden md:block",
-          (mobileView === 'git' || mobileView === 'todos') && "md:block w-full md:w-72"
+          (mobileView === 'git' || mobileView === 'todos') && "md:block w-full md:w-80"
         )}>
-          <Card className="h-full flex flex-col bg-card/50 backdrop-blur-sm border">
+          <Card className="h-full flex flex-col bg-card/50 backdrop-blur-sm border-x border-t rounded-b-none">
             {/* Sidebar Header with Tabs */}
             <div className="shrink-0 p-2 border-b">
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setShowTodos(!showTodos)}
-                  className="p-1 hover:bg-muted rounded-sm transition-colors"
+                  className="p-1 hover:bg-muted rounded-sm transition-colors shrink-0"
                 >
                   {showTodos ? (
                     <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -957,32 +1007,34 @@ export function SessionPage() {
                 </button>
 
                 {showTodos && (
-                  <div className="flex gap-1 flex-1 bg-muted rounded-lg p-0.5">
+                  <div className="flex gap-0.5 flex-1 bg-muted rounded-lg p-0.5 min-w-0">
                     <button
                       onClick={() => setRightPanelTab('files')}
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors",
+                        "flex items-center justify-center gap-1 px-2 py-1 text-xs rounded-md transition-colors flex-1 min-w-0",
                         rightPanelTab === 'files'
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground"
                       )}
+                      title="Files"
                     >
-                      <FolderOpen className="h-3.5 w-3.5" />
-                      Files
+                      <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">Files</span>
                     </button>
                     <button
                       onClick={() => setRightPanelTab('todos')}
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors",
+                        "flex items-center justify-center gap-1 px-2 py-1 text-xs rounded-md transition-colors flex-1 min-w-0 relative",
                         rightPanelTab === 'todos'
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground"
                       )}
+                      title="Tasks"
                     >
-                      <ListTodo className="h-3.5 w-3.5" />
-                      Tasks
-                      {currentTodos.length > 0 && (
-                        <span className="px-1 py-0.5 text-[10px] rounded-full bg-muted">
+                      <ListTodo className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">Tasks</span>
+                      {currentTodos.filter(t => t.status !== 'completed').length > 0 && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] rounded-full bg-primary text-primary-foreground flex items-center justify-center">
                           {currentTodos.filter(t => t.status !== 'completed').length}
                         </span>
                       )}
@@ -990,14 +1042,28 @@ export function SessionPage() {
                     <button
                       onClick={() => setRightPanelTab('git')}
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors",
+                        "flex items-center justify-center gap-1 px-2 py-1 text-xs rounded-md transition-colors flex-1 min-w-0",
                         rightPanelTab === 'git'
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:text-foreground"
                       )}
+                      title="Git"
                     >
-                      <GitBranch className="h-3.5 w-3.5" />
-                      Git
+                      <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">Git</span>
+                    </button>
+                    <button
+                      onClick={() => setRightPanelTab('checkpoints')}
+                      className={cn(
+                        "flex items-center justify-center gap-1 px-2 py-1 text-xs rounded-md transition-colors flex-1 min-w-0",
+                        rightPanelTab === 'checkpoints'
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      title="Checkpoints"
+                    >
+                      <History className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">Saves</span>
                     </button>
                   </div>
                 )}
@@ -1059,9 +1125,18 @@ export function SessionPage() {
                       ))
                     )}
                   </div>
-                ) : (
+                ) : rightPanelTab === 'git' ? (
                   <GitPanel workingDirectory={session.workingDirectory} className="h-full" />
-                )}
+                ) : rightPanelTab === 'checkpoints' ? (
+                  <CheckpointsPanel
+                    sessionId={id!}
+                    className="h-full"
+                    onRestore={() => {
+                      // Refetch messages after restore
+                      queryClient.invalidateQueries({ queryKey: ['messages', id] });
+                    }}
+                  />
+                ) : null}
               </div>
             )}
           </Card>

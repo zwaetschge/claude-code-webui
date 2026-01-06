@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { GitCommit as GitCommitIcon, Loader2, Clock, User } from 'lucide-react';
+import { GitCommit as GitCommitIcon, Loader2, Clock, User, ChevronLeft } from 'lucide-react';
 import { api } from '@/services/api';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { EnhancedDiffViewer } from './EnhancedDiffViewer';
 import type { ApiResponse, GitCommit } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +29,8 @@ function formatRelativeTime(dateString: string): string {
 }
 
 export function GitHistory({ workingDirectory, limit = 20 }: GitHistoryProps) {
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+
   const { data: commits, isLoading } = useQuery({
     queryKey: ['git-log', workingDirectory, limit],
     queryFn: async () => {
@@ -59,12 +64,39 @@ export function GitHistory({ workingDirectory, limit = 20 }: GitHistoryProps) {
     );
   }
 
+  // Show diff viewer when a commit is selected
+  if (selectedCommit) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="shrink-0 p-2 border-b">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            onClick={() => setSelectedCommit(null)}
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Back to History
+          </Button>
+        </div>
+        <div className="flex-1 min-h-0">
+          <EnhancedDiffViewer
+            workingDirectory={workingDirectory}
+            commitHash={selectedCommit}
+            onClose={() => setSelectedCommit(null)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <ScrollArea className="h-full">
       <div className="space-y-1 p-1">
         {commits.map((commit, index) => (
           <div
             key={commit.hash}
+            onClick={() => setSelectedCommit(commit.hash)}
             className={cn(
               'relative p-2 rounded-lg border bg-card hover:bg-muted/30 transition-colors cursor-pointer',
               index === 0 && 'border-primary/50'

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@claude-code-webui/shared": "workspace:*",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -32,6 +33,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.12",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",

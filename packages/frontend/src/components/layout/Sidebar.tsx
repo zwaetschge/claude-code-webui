@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MessageSquare, Settings, Plus, FolderOpen, LogOut, User, Star } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, Settings, Plus, FolderOpen, LogOut, User, Star, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -15,6 +15,7 @@ import {
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+  { icon: BarChart3, label: 'Analytics', path: '/analytics' },
 ];
 
 interface SidebarProps {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -31,6 +31,11 @@ import {
   AlertCircle,
   Loader2,
   Github,
+  Search,
+  X,
+  Lock,
+  User,
+  Shield,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -128,6 +133,9 @@ export function SettingsPage() {
   // Marketplace browser state
   const [marketplaceBrowserOpen, setMarketplaceBrowserOpen] = useState(false);
 
+  // Plugin search state
+  const [pluginSearchQuery, setPluginSearchQuery] = useState('');
+
   // Gemini API key state
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -135,6 +143,14 @@ export function SettingsPage() {
   // GitHub token state
   const [githubTokenInput, setGithubTokenInput] = useState('');
   const [showGithubToken, setShowGithubToken] = useState(false);
+
+  // Basic auth credentials state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   // MCP test state
   const [mcpTestResults, setMcpTestResults] = useState<Record<string, { testing: boolean; connected?: boolean; error?: string }>>({});
@@ -234,6 +250,30 @@ export function SettingsPage() {
       return response.data.data;
     },
   });
+
+  // Fetch basic auth credentials info
+  const { data: basicAuthCredentials, refetch: refetchBasicAuth } = useQuery({
+    queryKey: ['basic-auth-credentials'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<{ username: string; enabled: boolean }>>('/api/basic-auth/credentials');
+      return response.data.data;
+    },
+  });
+
+  // Filter installed plugins based on search
+  const filteredPlugins = useMemo(() => {
+    if (!installedPlugins) return [];
+    if (!pluginSearchQuery.trim()) return installedPlugins;
+
+    const query = pluginSearchQuery.toLowerCase();
+    return installedPlugins.filter((plugin) =>
+      plugin.name.toLowerCase().includes(query) ||
+      plugin.description?.toLowerCase().includes(query) ||
+      plugin.author?.toLowerCase().includes(query) ||
+      plugin.category?.toLowerCase().includes(query) ||
+      plugin.marketplace?.toLowerCase().includes(query)
+    );
+  }, [installedPlugins, pluginSearchQuery]);
 
   // Claude authentication mutation
   const authenticateMutation = useMutation({
@@ -517,6 +557,40 @@ export function SettingsPage() {
     },
   });
 
+  // Update basic auth credentials mutation
+  const updateBasicAuthMutation = useMutation({
+    mutationFn: async (data: { currentPassword: string; newUsername?: string; newPassword?: string }) => {
+      const response = await api.put<ApiResponse<{ username: string; message: string }>>('/api/basic-auth/credentials', data);
+      return response.data.data;
+    },
+    onSuccess: (data) => {
+      refetchBasicAuth();
+      setCurrentPassword('');
+      setNewUsername('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast({ title: 'Success', description: data?.message || 'Credentials updated' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // Toggle basic auth mutation
+  const toggleBasicAuthMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const response = await api.put<ApiResponse<{ enabled: boolean; message: string }>>('/api/basic-auth/toggle', { enabled });
+      return response.data.data;
+    },
+    onSuccess: (data) => {
+      refetchBasicAuth();
+      toast({ title: data?.enabled ? 'Basic auth enabled' : 'Basic auth disabled' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
   const handleThemeChange = (theme: Theme) => {
     localStorage.setItem('theme', theme);
     setCurrentTheme(theme);
@@ -732,10 +806,14 @@ export function SettingsPage() {
 
         {/* Tabs Navigation */}
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-5 h-12">
+          <TabsList className="grid w-full grid-cols-6 h-12">
             <TabsTrigger value="general" className="gap-2">
               <Settings2 className="h-4 w-4" />
               <span className="hidden sm:inline">General</span>
+            </TabsTrigger>
+            <TabsTrigger value="security" className="gap-2">
+              <Shield className="h-4 w-4" />
+              <span className="hidden sm:inline">Security</span>
             </TabsTrigger>
             <TabsTrigger value="appearance" className="gap-2">
               <Palette className="h-4 w-4" />
@@ -754,6 +832,201 @@ export function SettingsPage() {
               <span className="hidden sm:inline">Extensions</span>
             </TabsTrigger>
           </TabsList>
+
+          {/* Security Tab */}
+          <TabsContent value="security" className="space-y-6">
+            {/* Basic Auth Status */}
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold">Login Protection</h2>
+                  <Shield className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <Button
+                  variant={basicAuthCredentials?.enabled ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => toggleBasicAuthMutation.mutate(!basicAuthCredentials?.enabled)}
+                  disabled={toggleBasicAuthMutation.isPending}
+                  className="gap-2"
+                >
+                  {basicAuthCredentials?.enabled ? (
+                    <>
+                      <ToggleRight className="h-4 w-4" />
+                      Enabled
+                    </>
+                  ) : (
+                    <>
+                      <ToggleLeft className="h-4 w-4" />
+                      Disabled
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <Card className={cn(
+                "border",
+                basicAuthCredentials?.enabled
+                  ? "border-green-500/30 bg-green-500/5"
+                  : "border-muted"
+              )}>
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className={cn(
+                      "p-2 rounded-lg",
+                      basicAuthCredentials?.enabled
+                        ? "bg-green-500/15 text-green-600 dark:text-green-400"
+                        : "bg-muted text-muted-foreground"
+                    )}>
+                      <Lock className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">
+                        {basicAuthCredentials?.enabled ? 'Password protection is active' : 'Password protection is disabled'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Current username: <span className="font-mono">{basicAuthCredentials?.username || 'admin'}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {basicAuthCredentials?.enabled && (
+                    <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-600 dark:text-amber-400">
+                      <AlertCircle className="h-4 w-4 inline mr-2" />
+                      Users must enter the password before accessing the Claude login screen.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </section>
+
+            {/* Change Credentials */}
+            <section>
+              <h2 className="text-lg font-semibold mb-3">Change Credentials</h2>
+              <Card>
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-base">Update Username & Password</CardTitle>
+                  <CardDescription>
+                    Change your login credentials. You'll need to enter your current password.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Current Password */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Current Password *</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        type={showCurrentPassword ? 'text' : 'password'}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Enter current password"
+                        className="pl-10 pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
+                      >
+                        {showCurrentPassword ? (
+                          <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {/* New Username */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">New Username</label>
+                      <div className="relative">
+                        <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type="text"
+                          value={newUsername}
+                          onChange={(e) => setNewUsername(e.target.value)}
+                          placeholder="Leave empty to keep current"
+                          className="pl-10"
+                        />
+                      </div>
+                    </div>
+
+                    {/* New Password */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">New Password</label>
+                      <div className="relative">
+                        <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type={showNewPassword ? 'text' : 'password'}
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="Leave empty to keep current"
+                          className="pl-10 pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword(!showNewPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
+                        >
+                          {showNewPassword ? (
+                            <EyeOff className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <Eye className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Confirm Password */}
+                  {newPassword && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Confirm New Password</label>
+                      <div className="relative">
+                        <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type={showNewPassword ? 'text' : 'password'}
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="Confirm new password"
+                          className={cn(
+                            "pl-10",
+                            confirmPassword && newPassword !== confirmPassword && "border-destructive"
+                          )}
+                        />
+                      </div>
+                      {confirmPassword && newPassword !== confirmPassword && (
+                        <p className="text-xs text-destructive">Passwords do not match</p>
+                      )}
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={() => {
+                      if (newPassword && newPassword !== confirmPassword) {
+                        toast({ title: 'Error', description: 'Passwords do not match', variant: 'destructive' });
+                        return;
+                      }
+                      updateBasicAuthMutation.mutate({
+                        currentPassword,
+                        newUsername: newUsername || undefined,
+                        newPassword: newPassword || undefined,
+                      });
+                    }}
+                    disabled={
+                      !currentPassword ||
+                      (!newUsername && !newPassword) ||
+                      (newPassword && newPassword !== confirmPassword) ||
+                      updateBasicAuthMutation.isPending
+                    }
+                  >
+                    {updateBasicAuthMutation.isPending ? 'Updating...' : 'Update Credentials'}
+                  </Button>
+                </CardContent>
+              </Card>
+            </section>
+          </TabsContent>
 
           {/* General Tab */}
           <TabsContent value="general" className="space-y-6">
@@ -1635,7 +1908,7 @@ export function SettingsPage() {
               <h2 className="text-lg font-semibold">Plugins</h2>
               {installedPlugins && installedPlugins.length > 0 && (
                 <span className="px-2 py-0.5 text-xs font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded-full">
-                  {installedPlugins.length}
+                  {filteredPlugins.length}/{installedPlugins.length}
                 </span>
               )}
             </div>
@@ -1651,9 +1924,32 @@ export function SettingsPage() {
             </div>
           </div>
 
+          {/* Search input */}
+          {installedPlugins && installedPlugins.length > 0 && (
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={pluginSearchQuery}
+                onChange={(e) => setPluginSearchQuery(e.target.value)}
+                placeholder="Search plugins by name, description, category..."
+                className="pl-10 pr-10"
+              />
+              {pluginSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setPluginSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-muted"
+                >
+                  <X className="h-4 w-4 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+          )}
+
           {installedPlugins && installedPlugins.length > 0 ? (
+            filteredPlugins.length > 0 ? (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {installedPlugins.map((plugin) => {
+              {filteredPlugins.map((plugin) => {
                 const baseName = plugin.source === 'user'
                   ? plugin.dirPath.split('/').pop()?.replace('.disabled', '') || plugin.name
                   : plugin.name;
@@ -1759,6 +2055,26 @@ export function SettingsPage() {
                 );
               })}
             </div>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+                  <Search className="h-8 w-8 text-muted-foreground/50 mb-3" />
+                  <p className="font-medium text-muted-foreground mb-1">No matching plugins</p>
+                  <p className="text-sm text-muted-foreground/70 max-w-xs mb-3">
+                    No plugins found matching "{pluginSearchQuery}"
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPluginSearchQuery('')}
+                    className="gap-2"
+                  >
+                    <X className="h-4 w-4" />
+                    Clear search
+                  </Button>
+                </CardContent>
+              </Card>
+            )
           ) : (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
