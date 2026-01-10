@@ -11,6 +11,7 @@ interface BasicAuthState {
   logout: () => void;
   checkBasicAuth: () => Promise<void>;
   checkBasicAuthStatus: () => Promise<void>;
+  initializeAuth: () => Promise<void>;
 }
 
 export const useBasicAuthStore = create<BasicAuthState>()(
@@ -59,7 +60,7 @@ export const useBasicAuthStore = create<BasicAuthState>()(
         const { basicAuthToken } = get();
 
         if (!basicAuthToken) {
-          set({ isBasicAuthenticated: false, isLoading: false });
+          set({ isBasicAuthenticated: false });
           return;
         }
 
@@ -70,12 +71,12 @@ export const useBasicAuthStore = create<BasicAuthState>()(
           );
 
           if (response.data.success && response.data.data.valid) {
-            set({ isBasicAuthenticated: true, isLoading: false });
+            set({ isBasicAuthenticated: true });
           } else {
-            set({ isBasicAuthenticated: false, basicAuthToken: null, isLoading: false });
+            set({ isBasicAuthenticated: false, basicAuthToken: null });
           }
         } catch {
-          set({ isBasicAuthenticated: false, basicAuthToken: null, isLoading: false });
+          set({ isBasicAuthenticated: false, basicAuthToken: null });
         }
       },
 
@@ -86,23 +87,31 @@ export const useBasicAuthStore = create<BasicAuthState>()(
           );
 
           if (response.data.success) {
-            set({ isBasicAuthEnabled: response.data.data.enabled, isLoading: false });
+            set({ isBasicAuthEnabled: response.data.data.enabled });
           }
         } catch {
           // If we can't reach the API, assume basic auth is disabled
-          set({ isBasicAuthEnabled: false, isLoading: false });
+          set({ isBasicAuthEnabled: false });
+        }
+      },
+
+      // Initialize both checks and only set isLoading to false when both are done
+      initializeAuth: async () => {
+        set({ isLoading: true });
+        try {
+          // Run both checks in parallel
+          await Promise.all([
+            get().checkBasicAuthStatus(),
+            get().checkBasicAuth(),
+          ]);
+        } finally {
+          set({ isLoading: false });
         }
       },
     }),
     {
       name: 'claude-webui-basic-auth',
       partialize: (state) => ({ basicAuthToken: state.basicAuthToken }),
-      onRehydrateStorage: () => (state) => {
-        // Check both basic auth status and token validity on rehydration
-        state?.checkBasicAuthStatus().then(() => {
-          state?.checkBasicAuth();
-        });
-      },
     }
   )
 );

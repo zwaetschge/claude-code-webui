@@ -168,6 +168,32 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       }
     });
 
+    // Approve permission request
+    socket.on('session:approve_permission', async ({ sessionId, toolNames, originalMessage }) => {
+      console.log(`Received session:approve_permission for ${sessionId}: tools=${toolNames.join(', ')}`);
+      try {
+        await processManager.approvePermission(sessionId, socket.data.userId, toolNames, originalMessage);
+      } catch (err) {
+        socket.emit('session:error', {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to approve permission',
+        });
+      }
+    });
+
+    // Deny permission request
+    socket.on('session:deny_permission', ({ sessionId }) => {
+      console.log(`Received session:deny_permission for ${sessionId}`);
+      try {
+        processManager.denyPermission(sessionId, socket.data.userId);
+      } catch (err) {
+        socket.emit('session:error', {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to deny permission',
+        });
+      }
+    });
+
     // Reconnect to a running session
     socket.on('session:reconnect', ({ sessionId, lastTimestamp }) => {
       console.log(`Reconnect request for session ${sessionId} from socket ${socket.id}`);

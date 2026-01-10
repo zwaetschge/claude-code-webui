@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Search,
@@ -11,6 +11,7 @@ import {
   List,
   LayoutList,
   Table2,
+  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -86,6 +87,8 @@ export function FileTree({
 }: FileTreeProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [treeState, setTreeState] = useState<TreeState>({
     expanded: { [workingDirectory]: true },
     loading: {},
@@ -157,6 +160,67 @@ export function FileTree({
       }));
     }
   }, [treeState.loading, treeState.children]);
+
+  // Handle file upload
+  const handleUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      // Determine target directory: selected folder or working directory
+      let targetDir = workingDirectory;
+      if (selectedFile) {
+        // Check if selected file is a directory
+        const selectedInfo = Object.values(treeState.children)
+          .flat()
+          .find(f => f.path === selectedFile);
+        if (selectedInfo?.type === 'directory') {
+          targetDir = selectedFile;
+        } else if (selectedFile) {
+          // Use parent directory of selected file
+          const lastSlash = selectedFile.lastIndexOf('/');
+          if (lastSlash > 0) {
+            targetDir = selectedFile.substring(0, lastSlash);
+          }
+        }
+      }
+      formData.append('targetDirectory', targetDir);
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file) {
+          formData.append('files', file);
+        }
+      }
+
+      const response = await api.post<ApiResponse<{ files: { name: string; path: string; size: number }[] }>>('/api/files/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (response.data.success) {
+        // Refresh the file tree
+        refetch();
+        // Also refresh the target directory if it's expanded
+        if (targetDir !== workingDirectory && treeState.children[targetDir]) {
+          setTreeState(prev => ({
+            ...prev,
+            children: { ...prev.children, [targetDir]: undefined as unknown as FileInfo[] },
+          }));
+          loadDirectory(targetDir);
+        }
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+    } finally {
+      setIsUploading(false);
+      // Reset input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [workingDirectory, selectedFile, treeState.children, refetch, loadDirectory]);
 
   // Toggle directory expansion
   const toggleExpand = useCallback((path: string, isDirectory: boolean) => {
@@ -367,6 +431,28 @@ export function FileTree({
             <span>Files</span>
           </div>
           <div className="flex items-center gap-1">
+            {/* Upload button */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleUpload}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              title="Upload files"
+            >
+              {isUploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
+            </Button>
             {/* View mode toggle */}
             <Button
               variant="ghost"

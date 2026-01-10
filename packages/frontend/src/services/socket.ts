@@ -7,6 +7,7 @@ import type {
 } from '@claude-code-webui/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { notificationService } from './notifications';
 
 // Simple ID generator
 function generateId() {
@@ -18,6 +19,7 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 class SocketService {
   private socket: TypedSocket | null = null;
   private subscribedSessions: Set<string> = new Set();
+  private activeSessions: Set<string> = new Set(); // Track sessions that are actively working
 
   connect(): TypedSocket {
     if (this.socket?.connected) {
@@ -75,14 +77,35 @@ class SocketService {
       setThinking(data.sessionId, data.isThinking);
       // Update activity state
       if (data.isThinking) {
+        this.activeSessions.add(data.sessionId);
         setActivity(data.sessionId, { type: 'thinking' });
       } else {
+        // Claude stopped thinking - check if task is complete
+        const wasActive = this.activeSessions.has(data.sessionId);
+        if (wasActive) {
+          this.activeSessions.delete(data.sessionId);
+          // Delay notification slightly to allow for permission requests or streaming
+          setTimeout(() => {
+            const { permissionRequests, streamingContent } = useSessionStore.getState();
+            const hasPermissionRequest = !!permissionRequests[data.sessionId];
+            const hasStreaming = !!streamingContent[data.sessionId];
+            // Only notify if no pending permission request and no streaming
+            if (!hasPermissionRequest && !hasStreaming && !this.activeSessions.has(data.sessionId)) {
+              notificationService.notifyTaskComplete(data.sessionId);
+            }
+          }, 500);
+        }
         setActivity(data.sessionId, { type: 'idle' });
       }
     });
 
     this.socket.on('session:tool_use', (data) => {
       const store = useSessionStore.getState();
+
+      // Mark session as active when tool starts
+      if (data.status === 'started') {
+        this.activeSessions.add(data.sessionId);
+      }
 
       // Store tool execution for display
       if (data.status === 'started') {
@@ -164,6 +187,17 @@ class SocketService {
         createdAt: new Date().toISOString(),
       };
       useSessionStore.getState().addMessage(data.sessionId, compactMessage);
+    });
+
+    this.socket.on('session:permission_request', (data) => {
+      console.log(`[SOCKET] session:permission_request received:`, data.denials.map(d => d.tool_name).join(', '));
+      useSessionStore.getState().setPermissionRequest(data.sessionId, {
+        denials: data.denials,
+        originalMessage: data.originalMessage,
+      });
+      // Send notification for permission request
+      const toolNames = data.denials.map(d => d.tool_name);
+      notificationService.notifyPermissionRequest(data.sessionId, toolNames);
     });
 
     this.socket.on('error', (message) => {
@@ -292,23 +326,24 @@ class SocketService {
     this.socket?.emit('session:input', { sessionId, input });
   }
 
-  async sendMessageWithImages(
+  async sendMessageWithFiles(
     sessionId: string,
     message: string,
-    imageFiles: File[]
+    files: File[]
   ): Promise<void> {
     // Convert files to base64
-    const images = await Promise.all(
-      imageFiles.map(async (file) => {
+    const attachments = await Promise.all(
+      files.map(async (file) => {
         const base64 = await this.fileToBase64(file);
         return {
           data: base64,
-          mimeType: file.type,
+          mimeType: file.type || 'application/octet-stream',
+          filename: file.name,
         };
       })
     );
 
-    this.sendMessage(sessionId, message, images.length > 0 ? images : undefined);
+    this.sendMessage(sessionId, message, attachments.length > 0 ? attachments : undefined);
   }
 
   private fileToBase64(file: File): Promise<string> {
@@ -340,6 +375,20 @@ class SocketService {
     console.log(`[SOCKET] Reconnecting to session ${sessionId}, lastTimestamp=${lastTimestamp}`);
     this.subscribedSessions.add(sessionId);
     this.socket?.emit('session:reconnect', { sessionId, lastTimestamp });
+  }
+
+  // Approve permission request - allow specific tools
+  approvePermission(sessionId: string, toolNames: string[], originalMessage: string): void {
+    console.log(`[SOCKET] Approving permission for tools: ${toolNames.join(', ')}`);
+    useSessionStore.getState().clearPermissionRequest(sessionId);
+    this.socket?.emit('session:approve_permission', { sessionId, toolNames, originalMessage });
+  }
+
+  // Deny permission request
+  denyPermission(sessionId: string): void {
+    console.log(`[SOCKET] Denying permission for session ${sessionId}`);
+    useSessionStore.getState().clearPermissionRequest(sessionId);
+    this.socket?.emit('session:deny_permission', { sessionId });
   }
 
   getSocket(): TypedSocket | null {

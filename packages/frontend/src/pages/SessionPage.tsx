@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Send, Square, FolderOpen, Image, X, Paperclip, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History } from 'lucide-react';
+import { Square, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History, FolderKey, FileCode, File as FileIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -13,6 +13,9 @@ import { SessionControls } from '@/components/session/SessionControls';
 import { FileTree } from '@/components/file-tree';
 import { GitPanel } from '@/components/git-panel';
 import { CheckpointsPanel } from '@/components/session/CheckpointsPanel';
+import { AllowedDirectoriesDialog, DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
+import { PermissionRequestCard } from '@/components/session/PermissionRequestCard';
+import { NotificationBanner } from '@/components/session/NotificationBanner';
 import { EditorPanel } from '@/components/code-editor';
 import { WebPreview } from '@/components/preview';
 import { MobileBottomNav, type MobileView } from '@/components/mobile';
@@ -20,17 +23,11 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { socketService } from '@/services/socket';
-import type { Session, Message, ApiResponse, MessageImage, CliTool, CliToolExecution, Command, CommandExecutionResult, SessionMode } from '@claude-code-webui/shared';
+import type { Session, Message, ApiResponse, MessageImage, MessageAttachment, CliTool, Command, CommandExecutionResult, SessionMode } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
-import { CommandMenu } from '@/components/chat/CommandMenu';
+import { ChatInput } from '@/components/chat/ChatInput';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from '@/components/chat/InteractiveOptions';
 import { useDocumentSwipeGesture } from '@/hooks';
-
-interface ImageAttachment {
-  id: string;
-  file: File;
-  preview: string;
-}
 
 function generateId() {
   return Math.random().toString(36).substring(2, 9);
@@ -38,24 +35,17 @@ function generateId() {
 
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
-  const [input, setInput] = useState('');
-  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sessionMode, setSessionMode] = useState<SessionMode>('auto-accept');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLInputElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const dropZoneRef = useRef<HTMLDivElement>(null);
   const lastMessageIdRef = useRef<string | null>(null);
-  const { messages, streamingContent, activity, activeAgent, todos, generatedImages, toolExecutions, setMessages, clearStreamingContent, selectedFile, setSelectedFile, openFile: openFileInStore, openFiles } = useSessionStore();
+  const { messages, streamingContent, activity, activeAgent, todos, generatedImages, toolExecutions, permissionRequests, setMessages, clearStreamingContent, selectedFile, setSelectedFile, openFile: openFileInStore, openFiles } = useSessionStore();
   const [showSavedIndicator, setShowSavedIndicator] = useState(false);
   const [selectedCliTool, setSelectedCliTool] = useState<string | null>(null);
-  const [isExecutingTool, setIsExecutingTool] = useState(false);
+  const [isExecutingTool, _setIsExecutingTool] = useState(false);
   const cliToolAbortRef = useRef<AbortController | null>(null);
-  const [showCommandMenu, setShowCommandMenu] = useState(false);
-  const [commandMenuIndex, setCommandMenuIndex] = useState(0);
   const [mobileView, setMobileView] = useState<MobileView>('chat');
+  const [showAllowedDirsDialog, setShowAllowedDirsDialog] = useState(false);
 
   const { usage, addMessage } = useSessionStore();
 
@@ -105,6 +95,12 @@ export function SessionPage() {
     },
   });
 
+  // Memoized selected tool name for placeholder
+  const selectedToolName = useMemo(() => {
+    if (!selectedCliTool || !cliTools) return null;
+    return cliTools.find(t => t.id === selectedCliTool)?.name;
+  }, [selectedCliTool, cliTools]);
+
   // Fetch usage limits
   const { data: usageLimits } = useQuery({
     queryKey: ['usage-limits'],
@@ -147,6 +143,7 @@ export function SessionPage() {
   const currentActiveAgent = activeAgent[id || ''];
   const currentGeneratedImages = generatedImages[id || ''] || [];
   const currentToolExecutions = toolExecutions[id || ''] || [];
+  const currentPermissionRequest = permissionRequests[id || ''] || null;
   const [showTodos, setShowTodos] = useState(true);
   const [rightPanelTab, setRightPanelTab] = useState<'files' | 'todos' | 'git' | 'checkpoints'>('files');
   const [mainView, setMainView] = useState<'chat' | 'editor' | 'preview'>('chat');
@@ -160,7 +157,7 @@ export function SessionPage() {
     | { type: 'message'; data: Message; timestamp: number }
     | { type: 'image'; data: typeof currentGeneratedImages[0]; timestamp: number };
 
-  const timeline: TimelineItem[] = [
+  const timeline = useMemo<TimelineItem[]>(() => [
     ...sessionMessages.map(msg => ({
       type: 'message' as const,
       data: msg,
@@ -171,15 +168,18 @@ export function SessionPage() {
       data: img,
       timestamp: img.timestamp,
     })),
-  ].sort((a, b) => a.timestamp - b.timestamp);
+  ].sort((a, b) => a.timestamp - b.timestamp), [sessionMessages, currentGeneratedImages]);
 
   // Get recent tool executions for showing during activity (last 5 completed or in-progress)
-  const recentTools = currentToolExecutions
-    .filter(t => t.status === 'started' || t.status === 'completed')
-    .slice(-5);
+  const recentTools = useMemo(() =>
+    currentToolExecutions
+      .filter(t => t.status === 'started' || t.status === 'completed')
+      .slice(-5),
+    [currentToolExecutions]
+  );
 
-  // Helper to get tool icon and name
-  const getToolDisplay = (toolName: string) => {
+  // Helper to get tool icon and name - memoized to prevent re-creation on every render
+  const getToolDisplay = useCallback((toolName: string) => {
     const toolMap: Record<string, { icon: typeof Wrench; label: string }> = {
       'Write': { icon: FileText, label: 'Writing file' },
       'Read': { icon: Search, label: 'Reading file' },
@@ -192,10 +192,10 @@ export function SessionPage() {
       'Task': { icon: Brain, label: 'Starting agent' },
     };
     return toolMap[toolName] || { icon: Wrench, label: toolName };
-  };
+  }, []);
 
-  // Helper to get agent display name
-  const getAgentDisplay = (agentType: string) => {
+  // Helper to get agent display name - memoized
+  const getAgentDisplay = useCallback((agentType: string) => {
     const agentMap: Record<string, string> = {
       'Explore': 'Explorer',
       'Plan': 'Planner',
@@ -221,7 +221,7 @@ export function SessionPage() {
       'system-architect': 'Architect',
     };
     return agentMap[agentType] || agentType;
-  };
+  }, []);
 
   // Fetch session details
   const { data: session, isLoading: sessionLoading } = useQuery({
@@ -261,6 +261,7 @@ export function SessionPage() {
     },
     enabled: !!session,
   });
+
 
   const queryClient = useQueryClient();
 
@@ -320,36 +321,6 @@ export function SessionPage() {
     return () => window.clearTimeout(timeout);
   }, [showSavedIndicator]);
 
-  // Auto-resize textarea
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
-    }
-  }, [input]);
-
-  // Handle paste for images
-  useEffect(() => {
-    const handlePaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      const imageItems = Array.from(items).filter(item => item.type.startsWith('image/'));
-      if (imageItems.length === 0) return;
-
-      e.preventDefault();
-      const files = imageItems
-        .map(item => item.getAsFile())
-        .filter((f): f is File => f !== null);
-
-      addImages(files);
-    };
-
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
-  }, [attachments]);
-
   // Sync mobile view with right panel tab
   useEffect(() => {
     if (mobileView === 'git') {
@@ -365,192 +336,68 @@ export function SessionPage() {
     }
   }, [mobileView]);
 
-  const addImages = useCallback((files: File[]) => {
-    const imageFiles = files.filter(file => file.type.startsWith('image/'));
-    const maxImages = 5;
-    const remaining = maxImages - attachments.length;
+  // Callbacks for ChatInput
+  const handleSendMessage = useCallback((message: string) => {
+    if (!id) return;
+    socketService.sendMessage(id, message);
+    clearStreamingContent(id);
+  }, [id, clearStreamingContent]);
 
-    if (remaining <= 0) return;
-
-    const filesToAdd = imageFiles.slice(0, remaining);
-    const newAttachments: ImageAttachment[] = filesToAdd.map(file => ({
-      id: generateId(),
-      file,
-      preview: URL.createObjectURL(file),
-    }));
-
-    setAttachments(prev => [...prev, ...newAttachments]);
-  }, [attachments.length]);
-
-  const removeAttachment = (attachmentId: string) => {
-    const attachment = attachments.find(a => a.id === attachmentId);
-    if (attachment) {
-      URL.revokeObjectURL(attachment.preview);
-    }
-    setAttachments(prev => prev.filter(a => a.id !== attachmentId));
-  };
-
-  // Drag and drop handlers
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.currentTarget === dropZoneRef.current) {
-      setIsDragging(false);
-    }
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const files = Array.from(e.dataTransfer.files);
-    addImages(files);
-  }, [addImages]);
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    addImages(files);
-    e.target.value = '';
-  };
-
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if ((!input.trim() && attachments.length === 0) || !id || isSending || isExecutingTool) return;
-
-    // Check for slash commands
-    if (input.startsWith('/')) {
-      setShowCommandMenu(false);
-      try {
-        const response = await api.post<ApiResponse<CommandExecutionResult>>('/api/commands/execute', {
-          input,
-          projectPath: session?.workingDirectory,
-          sessionId: id,
-          currentModel: 'claude-sonnet-4-20250514',
-          usage: currentUsage ? {
-            inputTokens: currentUsage.inputTokens,
-            outputTokens: currentUsage.outputTokens,
-            cost: currentUsage.totalCostUsd,
-          } : undefined,
-        });
-
-        const result = response.data.data;
-        if (result) {
-          if (result.action === 'clear') {
-            setMessages(id, []);
-          } else if (result.action === 'send_message' && result.response) {
-            // Send the processed command template as a message
-            socketService.sendMessage(id, result.response);
-          } else if (result.response) {
-            // Show command response as a system message
-            addMessage(id, {
-              id: generateId(),
-              sessionId: id,
-              role: 'assistant',
-              content: result.response,
-              createdAt: new Date().toISOString(),
-            });
-          }
-          if (!result.success && result.error) {
-            addMessage(id, {
-              id: generateId(),
-              sessionId: id,
-              role: 'assistant',
-              content: `⚠️ ${result.error}`,
-              createdAt: new Date().toISOString(),
-            });
-          }
-        }
-        setInput('');
-      } catch (error) {
-        console.error('Command execution failed:', error);
-      }
-      return;
-    }
-
-    // If a CLI tool is selected, execute it instead of Claude
-    if (selectedCliTool) {
-      setIsExecutingTool(true);
-
-      // Create abort controller for this execution
-      const abortController = new AbortController();
-      cliToolAbortRef.current = abortController;
-
-      try {
-        // Execute CLI tool - backend will save messages
-        await api.post<ApiResponse<CliToolExecution>>(
-          `/api/cli-tools/${selectedCliTool}/execute`,
-          { prompt: input, workingDirectory: session?.workingDirectory, sessionId: id },
-          { signal: abortController.signal }
-        );
-
-        // Reload messages from server to show saved messages
-        const messagesResponse = await api.get<ApiResponse<Message[]>>(`/api/sessions/${id}/messages`);
-        if (messagesResponse.data.data) {
-          setMessages(id, messagesResponse.data.data);
-        }
-
-        setInput('');
-        setSelectedCliTool(null); // Reset tool selection after use
-      } catch (error) {
-        // Don't show error if it was cancelled
-        if (error instanceof Error && error.name === 'CanceledError') {
-          const tool = cliTools?.find(t => t.id === selectedCliTool);
-          const cancelMsgId = generateId();
-          addMessage(id, {
-            id: cancelMsgId,
-            sessionId: id,
-            role: 'assistant',
-            content: `**${tool?.name || 'Tool'}** ⏹ Abgebrochen`,
-            createdAt: new Date().toISOString(),
-          });
-        } else {
-          console.error('CLI tool execution failed:', error);
-          // Reload messages in case partial save happened
-          const messagesResponse = await api.get<ApiResponse<Message[]>>(`/api/sessions/${id}/messages`);
-          if (messagesResponse.data.data) {
-            setMessages(id, messagesResponse.data.data);
-          }
-        }
-      } finally {
-        setIsExecutingTool(false);
-        cliToolAbortRef.current = null;
-      }
-      return;
-    }
-
+  const handleSendMessageWithFiles = useCallback(async (message: string, files: File[]) => {
+    if (!id) return;
     setIsSending(true);
-
     try {
-      if (attachments.length > 0) {
-        await socketService.sendMessageWithImages(
-          id,
-          input,
-          attachments.map(a => a.file)
-        );
-        // Clean up previews
-        attachments.forEach(a => URL.revokeObjectURL(a.preview));
-        setAttachments([]);
-      } else {
-        socketService.sendMessage(id, input);
-      }
-      setInput('');
+      await socketService.sendMessageWithFiles(id, message, files);
       clearStreamingContent(id);
     } finally {
       setIsSending(false);
     }
-  };
+  }, [id, clearStreamingContent]);
+
+  const handleCommandExecute = useCallback(async (input: string) => {
+    if (!id) return;
+    try {
+      const response = await api.post<ApiResponse<CommandExecutionResult>>('/api/commands/execute', {
+        input,
+        projectPath: session?.workingDirectory,
+        sessionId: id,
+        currentModel: 'claude-sonnet-4-20250514',
+        usage: currentUsage ? {
+          inputTokens: currentUsage.inputTokens,
+          outputTokens: currentUsage.outputTokens,
+          cost: currentUsage.totalCostUsd,
+        } : undefined,
+      });
+
+      const result = response.data.data;
+      if (result) {
+        if (result.action === 'clear') {
+          setMessages(id, []);
+        } else if (result.action === 'send_message' && result.response) {
+          socketService.sendMessage(id, result.response);
+        } else if (result.response) {
+          addMessage(id, {
+            id: generateId(),
+            sessionId: id,
+            role: 'assistant',
+            content: result.response,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        if (!result.success && result.error) {
+          addMessage(id, {
+            id: generateId(),
+            sessionId: id,
+            role: 'assistant',
+            content: `⚠️ ${result.error}`,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Command execution failed:', error);
+    }
+  }, [id, session?.workingDirectory, currentUsage, setMessages, addMessage]);
 
   const handleInterrupt = () => {
     if (!id) return;
@@ -587,23 +434,7 @@ export function SessionPage() {
   }
 
   return (
-    <div
-      ref={dropZoneRef}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-      className="flex flex-col h-full min-h-0 relative"
-    >
-      {/* Drop overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-primary/10 backdrop-blur-sm border-2 border-dashed border-primary rounded-xl">
-          <div className="text-center">
-            <Image className="h-12 w-12 mx-auto mb-2 text-primary" />
-            <p className="text-lg font-medium text-primary">Drop images here</p>
-          </div>
-        </div>
-      )}
+    <div className="flex flex-col h-full min-h-0 relative">
 
       {/* Session Header */}
       <div className="shrink-0 pb-4 border-b mb-4 space-y-3 overflow-visible">
@@ -635,10 +466,17 @@ export function SessionPage() {
                 )}
               />
             </h2>
-            <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+            <div className="text-sm text-muted-foreground flex items-center gap-1.5">
               <FolderOpen className="h-3.5 w-3.5" />
-              {session.workingDirectory}
-            </p>
+              <span className="truncate max-w-[200px] md:max-w-none">{session.workingDirectory}</span>
+              <button
+                onClick={() => setShowAllowedDirsDialog(true)}
+                className="ml-1 p-1 rounded hover:bg-muted transition-colors"
+                title="Manage allowed directories"
+              >
+                <FolderKey className="h-3.5 w-3.5 text-primary" />
+              </button>
+            </div>
           </div>
           <div className="flex gap-2 items-center">
             {/* CLI Tool selector - visible in header */}
@@ -667,6 +505,9 @@ export function SessionPage() {
                 )}
               </div>
             )}
+
+            {/* Notification toggle */}
+            <NotificationBanner />
 
             {session.status === 'running' && (
               <Button variant="outline" onClick={handleInterrupt} className="gap-2 h-9">
@@ -786,20 +627,59 @@ export function SessionPage() {
                       : 'bg-card border'
                   )}
                 >
-                  {/* Image thumbnails for user messages */}
-                  {message.images && message.images.length > 0 && (
+                  {/* File attachments for user messages */}
+                  {((message.images && message.images.length > 0) || (message.attachments && message.attachments.length > 0)) && (
                     <div className="flex flex-wrap gap-2 mb-3">
-                      {message.images.map((img: MessageImage, imgIndex: number) => {
+                      {/* Legacy images support */}
+                      {message.images?.map((img: MessageImage, imgIndex: number) => {
                         const token = useAuthStore.getState().token || '';
                         const imageUrl = `/api/sessions/${id}/images/${img.filename}?token=${encodeURIComponent(token)}`;
                         return (
                           <img
-                            key={imgIndex}
+                            key={`img-${imgIndex}`}
                             src={imageUrl}
                             alt={`Attachment ${imgIndex + 1}`}
                             className="max-h-32 max-w-48 rounded-lg border border-primary-foreground/20 object-cover cursor-pointer hover:opacity-90 transition-opacity"
                             onClick={() => window.open(imageUrl, '_blank')}
                           />
+                        );
+                      })}
+                      {/* New attachments support */}
+                      {message.attachments?.map((att: MessageAttachment, attIndex: number) => {
+                        const token = useAuthStore.getState().token || '';
+                        const attachmentUrl = att.filename && att.path
+                          ? `/api/sessions/${id}/attachments/${att.filename}?token=${encodeURIComponent(token)}`
+                          : null;
+
+                        if (att.type === 'image' && attachmentUrl) {
+                          return (
+                            <img
+                              key={`att-${attIndex}`}
+                              src={attachmentUrl}
+                              alt={att.filename}
+                              className="max-h-32 max-w-48 rounded-lg border border-primary-foreground/20 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={() => window.open(attachmentUrl, '_blank')}
+                            />
+                          );
+                        }
+
+                        // Non-image attachments (text, pdf, document)
+                        const AttachmentIcon = att.type === 'text' ? FileCode : att.type === 'pdf' ? FileText : FileIcon;
+                        return (
+                          <div
+                            key={`att-${attIndex}`}
+                            className={cn(
+                              "flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer hover:opacity-90 transition-opacity",
+                              message.role === 'user'
+                                ? "border-primary-foreground/20 bg-primary-foreground/10"
+                                : "border-border bg-muted"
+                            )}
+                            onClick={() => attachmentUrl && window.open(attachmentUrl, '_blank')}
+                            title={att.filename}
+                          >
+                            <AttachmentIcon className={cn("h-5 w-5", att.type === 'pdf' && "text-red-500")} />
+                            <span className="text-xs truncate max-w-32">{att.filename}</span>
+                          </div>
                         );
                       })}
                     </div>
@@ -821,10 +701,20 @@ export function SessionPage() {
                             socketService.sendMessage(id, selected);
                           }
                         }}
-                        disabled={session.status !== 'running'}
+                        disabled={session.status === 'error'}
                       />
                     ) : null;
                   })()}
+                  {/* Directory access request detection */}
+                  {message.role === 'assistant' && id && (
+                    <DirectoryAccessPrompt
+                      message={message.content}
+                      sessionId={id}
+                      onAccessGranted={() => {
+                        queryClient.invalidateQueries({ queryKey: ['session', id] });
+                      }}
+                    />
+                  )}
                 </Card>
               </div>
             );
@@ -974,6 +864,18 @@ export function SessionPage() {
                   clearStreamingContent(id);
                 }
               }}
+            />
+          </div>
+        )}
+
+        {/* Permission request card */}
+        {currentPermissionRequest && id && (
+          <div className="flex justify-start animate-fade-in">
+            <PermissionRequestCard
+              sessionId={id}
+              denials={currentPermissionRequest.denials}
+              originalMessage={currentPermissionRequest.originalMessage}
+              className="max-w-[80%]"
             />
           </div>
         )}
@@ -1144,145 +1046,24 @@ export function SessionPage() {
       </div>
 
       {/* Input */}
-      <div className="shrink-0 pt-4 border-t space-y-3">
-        {showSavedIndicator && (
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground animate-fade-in">
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-            <span>Response saved</span>
-          </div>
-        )}
-        {/* Image attachments preview */}
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 p-3 rounded-xl bg-muted/50 border animate-scale-in">
-            {attachments.map((attachment) => (
-              <div key={attachment.id} className="relative group">
-                <img
-                  src={attachment.preview}
-                  alt="Attachment"
-                  className="h-16 w-16 object-cover rounded-lg border shadow-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(attachment.id)}
-                  className="absolute -top-2 -right-2 p-1 rounded-full bg-destructive text-destructive-foreground shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <form onSubmit={handleSend} className="flex gap-2 items-center">
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={handleFileSelect}
-          />
-
-          {/* Image upload button */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            className="h-12 w-12 md:h-10 md:w-10 shrink-0"
-            title="Add image (or paste/drop)"
-          >
-            <Paperclip className="h-5 w-5" />
-          </Button>
-
-          {/* Text input */}
-          <div className="flex-1 flex items-center relative">
-            {/* Command autocomplete menu */}
-            {showCommandMenu && commands && commands.length > 0 && (
-              <CommandMenu
-                commands={commands}
-                filter={input.startsWith('/') ? input.slice(1) : ''}
-                selectedIndex={commandMenuIndex}
-                onSelect={(cmd) => {
-                  setInput(`/${cmd.name} `);
-                  setShowCommandMenu(false);
-                  textareaRef.current?.focus();
-                }}
-                onClose={() => setShowCommandMenu(false)}
-              />
-            )}
-            <input
-              ref={textareaRef as React.RefObject<HTMLInputElement>}
-              type="text"
-              value={input}
-              onChange={(e) => {
-                const value = e.target.value;
-                setInput(value);
-                // Show command menu when typing /
-                if (value.startsWith('/') && !value.includes(' ')) {
-                  setShowCommandMenu(true);
-                  setCommandMenuIndex(0);
-                } else {
-                  setShowCommandMenu(false);
-                }
-              }}
-              onKeyDown={(e) => {
-                if (showCommandMenu) {
-                  const filteredCommands = commands?.filter(cmd =>
-                    cmd.name.toLowerCase().includes((input.slice(1) || '').toLowerCase())
-                  ) || [];
-
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    setCommandMenuIndex(i => Math.min(i + 1, filteredCommands.length - 1));
-                  } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    setCommandMenuIndex(i => Math.max(i - 1, 0));
-                  } else if (e.key === 'Tab' || e.key === 'Enter') {
-                    e.preventDefault();
-                    const selected = filteredCommands[commandMenuIndex];
-                    if (selected) {
-                      setInput(`/${selected.name} `);
-                      setShowCommandMenu(false);
-                    }
-                  } else if (e.key === 'Escape') {
-                    setShowCommandMenu(false);
-                  }
-                } else if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend(e as unknown as React.FormEvent);
-                }
-              }}
-              placeholder={selectedCliTool
-                ? `Prompt for ${cliTools?.find(t => t.id === selectedCliTool)?.name}...`
-                : "Message..."
-              }
-              className={cn(
-                "w-full h-12 md:h-10 px-4 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-ring text-base md:text-sm",
-                selectedCliTool && "border-orange-500/30 focus:ring-orange-500/50"
-              )}
-            />
-          </div>
-
-          {/* Send button */}
-          <Button
-            type="submit"
-            size="icon"
-            disabled={(!input.trim() && attachments.length === 0) || isSending || isExecutingTool}
-            className={cn(
-              "h-12 w-12 md:h-10 md:w-10 shrink-0",
-              selectedCliTool && "bg-orange-600 hover:bg-orange-700"
-            )}
-          >
-            {isExecutingTool ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
-        </form>
-      </div>
+      {showSavedIndicator && (
+        <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground animate-fade-in pt-2">
+          <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+          <span>Response saved</span>
+        </div>
+      )}
+      <ChatInput
+        sessionId={id || ''}
+        onSendMessage={handleSendMessage}
+        onSendMessageWithFiles={handleSendMessageWithFiles}
+        onCommandExecute={handleCommandExecute}
+        commands={commands}
+        selectedToolName={selectedToolName}
+        selectedCliTool={selectedCliTool}
+        disabled={session.status === 'error'}
+        isSending={isSending}
+        isExecutingTool={isExecutingTool}
+      />
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav
@@ -1296,6 +1077,17 @@ export function SessionPage() {
 
       {/* Mobile padding for bottom nav */}
       <div className="md:hidden h-14" />
+
+      {/* Allowed Directories Dialog */}
+      <AllowedDirectoriesDialog
+        sessionId={id || ''}
+        open={showAllowedDirsDialog}
+        onOpenChange={setShowAllowedDirsDialog}
+        onDirectoriesChanged={() => {
+          // Invalidate session query to get updated allowed directories
+          queryClient.invalidateQueries({ queryKey: ['session', id] });
+        }}
+      />
     </div>
   );
 }

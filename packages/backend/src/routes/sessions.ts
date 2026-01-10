@@ -283,37 +283,147 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   res.json({ success: true, data: messages });
 });
 
+// Get allowed directories for a session
+router.get('/:id/allowed-directories', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const db = getDatabase();
+
+  const session = db
+    .prepare('SELECT allowed_directories FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId) as { allowed_directories: string | null } | undefined;
+
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  const allowedDirectories: string[] = session.allowed_directories
+    ? JSON.parse(session.allowed_directories)
+    : [];
+
+  res.json({ success: true, data: allowedDirectories });
+});
+
+// Add an allowed directory to a session
+router.post('/:id/allowed-directories', requireAuth, async (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const { directory } = req.body;
+
+  if (!directory || typeof directory !== 'string') {
+    throw new AppError('Directory path is required', 400, 'VALIDATION_ERROR');
+  }
+
+  // Normalize and validate the directory path
+  const normalizedDir = path.resolve(directory);
+
+  // Check if directory exists
+  try {
+    const stat = await fs.stat(normalizedDir);
+    if (!stat.isDirectory()) {
+      throw new AppError('Path is not a directory', 400, 'NOT_A_DIRECTORY');
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new AppError('Directory does not exist', 400, 'DIR_NOT_FOUND');
+    }
+    throw err;
+  }
+
+  const db = getDatabase();
+
+  const session = db
+    .prepare('SELECT allowed_directories FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId) as { allowed_directories: string | null } | undefined;
+
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  const allowedDirectories: string[] = session.allowed_directories
+    ? JSON.parse(session.allowed_directories)
+    : [];
+
+  // Check if already exists
+  if (allowedDirectories.includes(normalizedDir)) {
+    return res.json({ success: true, data: allowedDirectories, message: 'Directory already allowed' });
+  }
+
+  // Add the new directory
+  allowedDirectories.push(normalizedDir);
+
+  db.prepare('UPDATE sessions SET allowed_directories = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(allowedDirectories), req.params.id);
+
+  res.json({ success: true, data: allowedDirectories });
+});
+
+// Remove an allowed directory from a session
+router.delete('/:id/allowed-directories', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const directory = req.query.directory as string | undefined;
+
+  if (!directory || typeof directory !== 'string') {
+    throw new AppError('Directory path is required as query parameter', 400, 'VALIDATION_ERROR');
+  }
+
+  const normalizedDir = path.resolve(directory);
+  const db = getDatabase();
+
+  const session = db
+    .prepare('SELECT allowed_directories FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId) as { allowed_directories: string | null } | undefined;
+
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  const allowedDirectories: string[] = session.allowed_directories
+    ? JSON.parse(session.allowed_directories)
+    : [];
+
+  // Remove the directory
+  const newDirectories = allowedDirectories.filter((d) => d !== normalizedDir);
+
+  db.prepare('UPDATE sessions SET allowed_directories = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(newDirectories), req.params.id);
+
+  res.json({ success: true, data: newDirectories });
+});
+
+// Helper function to validate token from query param or Authorization header
+async function validateToken(req: import('express').Request, res: import('express').Response): Promise<string | null> {
+  const queryToken = req.query.token as string | undefined;
+  const authHeader = req.headers.authorization;
+
+  if (queryToken) {
+    const jwt = await import('jsonwebtoken');
+    try {
+      const decoded = jwt.default.verify(queryToken, config.jwtSecret) as { userId: string };
+      return decoded.userId;
+    } catch {
+      res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
+      return null;
+    }
+  } else if (authHeader && authHeader.startsWith('Bearer ')) {
+    const jwt = await import('jsonwebtoken');
+    const token = authHeader.substring(7);
+    try {
+      const decoded = jwt.default.verify(token, config.jwtSecret) as { userId: string };
+      return decoded.userId;
+    } catch {
+      res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
+      return null;
+    }
+  } else {
+    res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
+    return null;
+  }
+}
+
 // Serve session images (supports token in query param for browser image loading)
 router.get('/:id/images/:filename', async (req, res, next) => {
   try {
-    let userId: string | undefined;
-
-    // Try to get token from query param (for img src) or from Authorization header
-    const queryToken = req.query.token as string | undefined;
-    const authHeader = req.headers.authorization;
-
-    if (queryToken) {
-      // Validate token from query param
-      const jwt = await import('jsonwebtoken');
-      try {
-        const decoded = jwt.default.verify(queryToken, config.jwtSecret) as { userId: string };
-        userId = decoded.userId;
-      } catch {
-        return res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
-      }
-    } else if (authHeader && authHeader.startsWith('Bearer ')) {
-      // Validate token from Authorization header
-      const jwt = await import('jsonwebtoken');
-      const token = authHeader.substring(7);
-      try {
-        const decoded = jwt.default.verify(token, config.jwtSecret) as { userId: string };
-        userId = decoded.userId;
-      } catch {
-        return res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
-      }
-    } else {
-      return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
-    }
+    const userId = await validateToken(req, res);
+    if (!userId) return;
 
     const db = getDatabase();
 
@@ -339,6 +449,50 @@ router.get('/:id/images/:filename', async (req, res, next) => {
       res.sendFile(imagePath);
     } catch {
       return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Image not found' } });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Serve session attachments (images, text, pdf, etc.)
+router.get('/:id/attachments/:filename', async (req, res, next) => {
+  try {
+    const userId = await validateToken(req, res);
+    if (!userId) return;
+
+    const db = getDatabase();
+
+    // Verify session ownership and get working directory
+    const session = db
+      .prepare('SELECT working_directory FROM sessions WHERE id = ? AND user_id = ?')
+      .get(req.params.id, userId) as { working_directory: string } | undefined;
+
+    if (!session) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Session not found' } });
+    }
+
+    const filename = req.params.filename;
+    // Sanitize filename to prevent directory traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_FILENAME', message: 'Invalid filename' } });
+    }
+
+    // Try both attachment directories (new and legacy)
+    const attachmentPath = path.join(session.working_directory, '.claude-webui-attachments', filename);
+    const legacyImagePath = path.join(session.working_directory, '.claude-webui-images', filename);
+
+    try {
+      await fs.access(attachmentPath);
+      res.sendFile(attachmentPath);
+    } catch {
+      // Try legacy image path
+      try {
+        await fs.access(legacyImagePath);
+        res.sendFile(legacyImagePath);
+      } catch {
+        return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Attachment not found' } });
+      }
     }
   } catch (err) {
     next(err);

@@ -5,6 +5,13 @@ export interface MessageImage {
   filename: string;
 }
 
+export interface MessageAttachment {
+  path: string;
+  filename: string;
+  mimeType: string;
+  type: 'image' | 'text' | 'pdf' | 'document';
+}
+
 export interface Message {
   id: string;
   sessionId: string;
@@ -12,6 +19,7 @@ export interface Message {
   content: string;
   createdAt: string;
   images?: MessageImage[];
+  attachments?: MessageAttachment[];
 }
 
 export interface ToolUse {

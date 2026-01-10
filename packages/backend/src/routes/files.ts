@@ -2,10 +2,44 @@ import { Router } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import multer from 'multer';
 import { requireAuth } from '../middleware/auth';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { config } from '../config';
 import type { FileInfo, DirectoryContents } from '@claude-code-webui/shared';
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: async (req, _file, cb) => {
+    const targetDir = req.body.targetDirectory || req.query.targetDirectory as string;
+    if (!targetDir) {
+      return cb(new Error('Target directory is required'), '');
+    }
+    try {
+      const resolvedPath = path.resolve(targetDir);
+      const isAllowed = config.allowedBasePaths.some((base) => resolvedPath.startsWith(base));
+      if (!isAllowed) {
+        return cb(new Error('Path not allowed'), '');
+      }
+      // Ensure directory exists
+      await fs.mkdir(resolvedPath, { recursive: true });
+      cb(null, resolvedPath);
+    } catch (err) {
+      cb(err as Error, '');
+    }
+  },
+  filename: (_req, file, cb) => {
+    // Use original filename
+    cb(null, file.originalname);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max file size
+  },
+});
 
 const router = Router();
 
@@ -279,5 +313,48 @@ router.delete('/', requireAuth, asyncHandler(async (req, res) => {
     throw err;
   }
 }));
+
+// Upload files
+router.post('/upload', requireAuth, (req, res) => {
+  upload.array('files', 20)(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            success: false,
+            error: { message: 'File too large (max 50MB)', code: 'FILE_TOO_LARGE' },
+          });
+        }
+        return res.status(400).json({
+          success: false,
+          error: { message: err.message, code: err.code },
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        error: { message: err.message, code: 'UPLOAD_ERROR' },
+      });
+    }
+
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'No files uploaded', code: 'NO_FILES' },
+      });
+    }
+
+    const uploadedFiles = files.map((file) => ({
+      name: file.originalname,
+      path: file.path,
+      size: file.size,
+    }));
+
+    return res.json({
+      success: true,
+      data: { files: uploadedFiles },
+    });
+  });
+});
 
 export default router;

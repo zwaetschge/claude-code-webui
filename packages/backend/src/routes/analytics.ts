@@ -71,6 +71,8 @@ router.get('/summary', async (req: Request, res: Response) => {
     `).all(authReq.userId);
 
     // Get per-session breakdown (top 10)
+    // Use fully qualified column name for created_at to avoid ambiguity with sessions table
+    const sessionDateFilter = dateFilter.replace('created_at', 'uh.created_at');
     const bySession = db.prepare(`
       SELECT
         uh.session_id,
@@ -80,7 +82,7 @@ router.get('/summary', async (req: Request, res: Response) => {
         COUNT(*) as requests
       FROM usage_history uh
       LEFT JOIN sessions s ON s.id = uh.session_id
-      WHERE uh.user_id = ? ${dateFilter}
+      WHERE uh.user_id = ? ${sessionDateFilter}
       GROUP BY uh.session_id
       ORDER BY cost DESC
       LIMIT 10

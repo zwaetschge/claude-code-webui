@@ -47,9 +47,54 @@ class CircularBuffer<T> {
   }
 }
 
-interface ImageData {
+interface FileAttachmentData {
   data: string; // base64
   mimeType: string;
+  filename?: string;
+}
+
+
+// Helper to determine attachment type
+function getAttachmentType(mimeType: string, filename?: string): 'image' | 'text' | 'pdf' | 'document' {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType === 'application/pdf') return 'pdf';
+  if (
+    mimeType.startsWith('text/') ||
+    mimeType === 'application/json' ||
+    mimeType === 'application/xml' ||
+    mimeType === 'application/javascript' ||
+    (filename && /\.(md|txt|json|yaml|yml|js|ts|tsx|jsx|py|rb|go|rs|java|sql|sh|html|css|xml|csv|toml|ini|cfg|conf|env|gitignore)$/i.test(filename))
+  ) {
+    return 'text';
+  }
+  return 'document';
+}
+
+// Helper to get file extension from mimeType and filename
+function getFileExtension(mimeType: string, filename?: string): string {
+  // Try to get extension from filename first
+  if (filename) {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    if (ext) return ext;
+  }
+  // Fallback to mimeType
+  const mimeMap: Record<string, string> = {
+    'text/plain': 'txt',
+    'text/markdown': 'md',
+    'text/html': 'html',
+    'text/css': 'css',
+    'text/csv': 'csv',
+    'application/json': 'json',
+    'application/xml': 'xml',
+    'application/pdf': 'pdf',
+    'application/javascript': 'js',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+  };
+  return mimeMap[mimeType] || mimeType.split('/')[1] || 'bin';
 }
 
 interface UsageInfo {
@@ -85,6 +130,13 @@ interface ModelUsageInfo {
   costUSD: number;
 }
 
+// Permission denial from Claude CLI
+interface PermissionDenial {
+  tool_name: string;
+  tool_use_id: string;
+  tool_input: Record<string, unknown>;
+}
+
 interface StreamJsonMessage {
   type: string;
   content?: string;
@@ -117,6 +169,8 @@ interface StreamJsonMessage {
   total_cost_usd?: number;
   usage?: UsageInfo;
   modelUsage?: Record<string, ModelUsageInfo>;
+  // Permission denials
+  permission_denials?: PermissionDenial[];
 }
 
 interface ClaudeProcess {
@@ -149,12 +203,17 @@ interface ClaudeProcess {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   totalCostUsd: number;
+  previousTotalCostUsd: number; // For calculating per-turn cost
   // Context reminder flag for resumed sessions
   needsWorkingDirReminder: boolean;
   // Reconnect buffer
   outputBuffer: CircularBuffer<BufferedMessage>;
   lastActivityAt: number;
   disconnectedAt: number | null;
+  // Permission approval tracking
+  lastUserMessage: string | null;
+  lastAttachments: FileAttachmentData[] | null;
+  pendingPermissionDenials: PermissionDenial[] | null;
 }
 
 export class ClaudeProcessManager {
@@ -341,7 +400,7 @@ For "Add authentication to the API":
 
     const session = db
       .prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?')
-      .get(sessionId, userId) as { working_directory: string; claude_session_id: string | null } | undefined;
+      .get(sessionId, userId) as { working_directory: string; claude_session_id: string | null; allowed_directories: string | null } | undefined;
 
     if (!session) {
       throw new Error('Session not found');
@@ -366,6 +425,14 @@ For "Add authentication to the API":
       ...this.getPermissionFlags(effectiveMode),
     ];
 
+    // Add allowed directories
+    const allowedDirs: string[] = session.allowed_directories
+      ? JSON.parse(session.allowed_directories)
+      : [];
+    for (const dir of allowedDirs) {
+      args.push('--add-dir', dir);
+    }
+
     const isResuming = !!session.claude_session_id;
     if (isResuming && session.claude_session_id) {
       args.push('--resume', session.claude_session_id);
@@ -373,6 +440,7 @@ For "Add authentication to the API":
 
     console.log(`Starting Claude with args: ${args.join(' ')}`);
     console.log(`Working directory: ${session.working_directory}`);
+    console.log(`Allowed directories: ${allowedDirs.join(', ') || 'none'}`);
     console.log(`Resuming: ${isResuming}`);
 
     // Use regular spawn instead of PTY for stream-json mode
@@ -417,12 +485,17 @@ For "Add authentication to the API":
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
       totalCostUsd: 0,
+      previousTotalCostUsd: 0,
       // Only need reminder for resumed sessions
       needsWorkingDirReminder: isResuming,
       // Reconnect buffer
       outputBuffer: new CircularBuffer<BufferedMessage>(BUFFER_SIZE),
       lastActivityAt: Date.now(),
       disconnectedAt: null,
+      // Permission approval tracking
+      lastUserMessage: null,
+      lastAttachments: null,
+      pendingPermissionDenials: null,
     };
 
     this.processes.set(sessionId, claudeProcess);
@@ -490,10 +563,7 @@ For "Add authentication to the API":
     // Context usage only counts INPUT tokens (including cache), NOT output tokens
     // Use per-turn values for context display (not cumulative session values)
     const contextTokens = proc.turnInputTokens + proc.turnCacheReadTokens + proc.turnCacheCreationTokens;
-    const turnTotalTokens = contextTokens + proc.turnOutputTokens;
     const contextUsedPercent = Math.round((contextTokens / proc.contextWindow) * 100);
-
-    console.log(`[USAGE] Emitting usage for ${sessionId}: model=${proc.model}, contextTokens=${contextTokens}, turnTotal=${turnTotalTokens}, context=${contextUsedPercent}%, cost=$${proc.totalCostUsd}`);
 
     this.io.to(`session:${sessionId}`).emit('session:usage', {
       sessionId,
@@ -509,28 +579,60 @@ For "Add authentication to the API":
       totalCostUsd: proc.totalCostUsd,
       model: proc.model,
     });
+    // Note: DB saving moved to saveUsageToDatabase() called only on turn completion
+  }
 
-    // Save usage to database for analytics (only if there are tokens to record)
-    if (turnTotalTokens > 0) {
-      try {
-        const db = getDatabase();
-        db.prepare(`
-          INSERT INTO usage_history (user_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          proc.userId,
-          sessionId,
-          proc.turnInputTokens,
-          proc.turnOutputTokens,
-          proc.turnCacheReadTokens,
-          proc.turnCacheCreationTokens,
-          turnTotalTokens,
-          proc.totalCostUsd,
-          proc.model
-        );
-      } catch (error) {
-        console.error('[USAGE] Failed to save usage to database:', error);
-      }
+  // Calculate cost for tokens based on model pricing
+  // Prices per 1M tokens (as of 2025)
+  private static readonly MODEL_PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
+    'claude-opus-4-5-20251101': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+    'claude-sonnet-4-20250514': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+    'claude-3-5-sonnet-20241022': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+    'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+  };
+
+  private calculateTurnCost(proc: ClaudeProcess): number {
+    // Get pricing for model, fallback to opus pricing
+    const defaultPricing = { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 };
+    const pricing = ClaudeProcessManager.MODEL_PRICING[proc.model] ?? defaultPricing;
+
+    // Calculate cost (prices are per 1M tokens)
+    const inputCost = (proc.turnInputTokens / 1_000_000) * pricing.input;
+    const outputCost = (proc.turnOutputTokens / 1_000_000) * pricing.output;
+    const cacheReadCost = (proc.turnCacheReadTokens / 1_000_000) * pricing.cacheRead;
+    const cacheWriteCost = (proc.turnCacheCreationTokens / 1_000_000) * pricing.cacheWrite;
+
+    return inputCost + outputCost + cacheReadCost + cacheWriteCost;
+  }
+
+  // Save usage to database - called ONCE per turn when result is received
+  private saveUsageToDatabase(sessionId: string, proc: ClaudeProcess): void {
+    const turnTotalTokens = proc.turnInputTokens + proc.turnOutputTokens + proc.turnCacheReadTokens + proc.turnCacheCreationTokens;
+
+    if (turnTotalTokens <= 0) return;
+
+    // Calculate cost from tokens (not from CLI cumulative value)
+    const turnCostUsd = this.calculateTurnCost(proc);
+
+    try {
+      const db = getDatabase();
+      db.prepare(`
+        INSERT INTO usage_history (user_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        proc.userId,
+        sessionId,
+        proc.turnInputTokens,
+        proc.turnOutputTokens,
+        proc.turnCacheReadTokens,
+        proc.turnCacheCreationTokens,
+        turnTotalTokens,
+        turnCostUsd,
+        proc.model
+      );
+      console.log(`[USAGE] Saved turn usage: ${turnTotalTokens} tokens, $${turnCostUsd.toFixed(4)}`);
+    } catch (error) {
+      console.error('[USAGE] Failed to save usage to database:', error);
     }
   }
 
@@ -789,6 +891,25 @@ For "Add authentication to the API":
 
     // Handle result message with final usage
     if (msg.type === 'result') {
+      // Check for permission denials
+      if (msg.permission_denials && msg.permission_denials.length > 0) {
+        console.log(`[PERMISSION] Permission denied for tools:`, msg.permission_denials.map(d => d.tool_name).join(', '));
+        proc.pendingPermissionDenials = msg.permission_denials;
+
+        // Emit permission request event to frontend
+        this.io.to(`session:${sessionId}`).emit('session:permission_request', {
+          sessionId,
+          denials: msg.permission_denials,
+          originalMessage: proc.lastUserMessage || '',
+        });
+
+        // Stop thinking indicator - user needs to approve
+        this.io.to(`session:${sessionId}`).emit('session:thinking', {
+          sessionId,
+          isThinking: false,
+        });
+      }
+
       // Clear any active agent on result (safety net)
       if (proc.currentAgentType) {
         console.log(`[AGENT] Agent completed (on result): ${proc.currentAgentType}`);
@@ -799,6 +920,7 @@ For "Add authentication to the API":
         });
         proc.currentAgentType = null;
       }
+
       if (msg.total_cost_usd !== undefined) {
         proc.totalCostUsd = msg.total_cost_usd;
       }
@@ -820,6 +942,10 @@ For "Add authentication to the API":
         }
       }
       this.emitUsage(sessionId, proc);
+
+      // Save usage to database - ONLY HERE at the end of the turn
+      // Cost is calculated from tokens, not from CLI cumulative value
+      this.saveUsageToDatabase(sessionId, proc);
     }
 
     // Handle content_block_start - begin streaming text
@@ -969,7 +1095,7 @@ For "Add authentication to the API":
     sessionId: string,
     userId: string,
     message: string,
-    images?: ImageData[]
+    attachments?: FileAttachmentData[]
   ): Promise<void> {
     let proc = this.processes.get(sessionId);
 
@@ -987,25 +1113,46 @@ For "Add authentication to the API":
       throw new Error('Unauthorized');
     }
 
-    // Handle images
-    let imagePaths: string[] = [];
-    if (images && images.length > 0) {
-      const imageDir = path.join(proc.workingDirectory, '.claude-webui-images');
-      await fs.mkdir(imageDir, { recursive: true });
+    // Process attachments by type
+    const filePaths: { path: string; filename: string; type: 'image' | 'text' | 'pdf' | 'document'; mimeType: string }[] = [];
+    const inlineTextContents: { filename: string; content: string }[] = [];
 
-      imagePaths = await Promise.all(
-        images.map(async (img, index) => {
-          const ext = img.mimeType.split('/')[1] || 'png';
-          const filename = `image_${Date.now()}_${index}.${ext}`;
-          const filepath = path.join(imageDir, filename);
-          const buffer = Buffer.from(img.data, 'base64');
+    if (attachments && attachments.length > 0) {
+      const attachmentDir = path.join(proc.workingDirectory, '.claude-webui-attachments');
+      await fs.mkdir(attachmentDir, { recursive: true });
+
+      for (const [index, attachment] of attachments.entries()) {
+        const type = getAttachmentType(attachment.mimeType, attachment.filename);
+        const ext = getFileExtension(attachment.mimeType, attachment.filename);
+        const buffer = Buffer.from(attachment.data, 'base64');
+
+        // For text files, we can optionally inline the content
+        if (type === 'text' && buffer.length < 50000) {
+          // Inline small text files (< 50KB)
+          const textContent = buffer.toString('utf-8');
+          inlineTextContents.push({
+            filename: attachment.filename || `file_${Date.now()}_${index}.${ext}`,
+            content: textContent,
+          });
+        } else {
+          // Save larger text files, images, PDFs, and other documents to disk
+          const timestamp = Date.now();
+          const baseFilename = attachment.filename
+            ? attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+            : `file_${timestamp}_${index}.${ext}`;
+          const filepath = path.join(attachmentDir, `${timestamp}_${baseFilename}`);
           await fs.writeFile(filepath, buffer);
-          return filepath;
-        })
-      );
+          filePaths.push({
+            path: filepath,
+            filename: path.basename(filepath),
+            type,
+            mimeType: attachment.mimeType,
+          });
+        }
+      }
     }
 
-    // Build message for Claude (with image instructions and/or working dir reminder if needed)
+    // Build message for Claude (with attachment instructions and/or working dir reminder if needed)
     let messageForClaude = message;
 
     // Add working directory reminder for resumed sessions (only once)
@@ -1021,17 +1168,65 @@ This is the project you should be working on. All file operations should be rela
       console.log(`Added working directory reminder for resumed session [${sessionId}]`);
     }
 
-    if (imagePaths.length > 0) {
-      const imageRefs = imagePaths.map((p) => `- ${p}`).join('\n');
-      const imagePrompt = `Please analyze the following image files:\n${imageRefs}\nUse the Read tool on these paths.\n\n`;
-      messageForClaude = imagePrompt + messageForClaude;
+    // Add inline text content directly to the message
+    if (inlineTextContents.length > 0) {
+      const textParts = inlineTextContents.map(
+        (tc) => `<attached-file name="${tc.filename}">\n${tc.content}\n</attached-file>`
+      );
+      messageForClaude = `${textParts.join('\n\n')}\n\n${messageForClaude}`;
     }
 
-    // Build image metadata for frontend (filename only, served via API)
-    const imageMetadata = imagePaths.map((p) => ({
-      path: p,
-      filename: path.basename(p),
-    }));
+    // Add file references for files that need to be read from disk
+    if (filePaths.length > 0) {
+      const imageFiles = filePaths.filter((f) => f.type === 'image');
+      const pdfFiles = filePaths.filter((f) => f.type === 'pdf');
+      const otherFiles = filePaths.filter((f) => f.type !== 'image' && f.type !== 'pdf');
+
+      const instructions: string[] = [];
+
+      if (imageFiles.length > 0) {
+        const refs = imageFiles.map((f) => `- ${f.path}`).join('\n');
+        instructions.push(`Please analyze the following image files:\n${refs}\nUse the Read tool on these paths.`);
+      }
+
+      if (pdfFiles.length > 0) {
+        const refs = pdfFiles.map((f) => `- ${f.path}`).join('\n');
+        instructions.push(`Please read and analyze the following PDF files:\n${refs}\nUse the Read tool on these paths.`);
+      }
+
+      if (otherFiles.length > 0) {
+        const refs = otherFiles.map((f) => `- ${f.path}`).join('\n');
+        instructions.push(`Please read the following files:\n${refs}\nUse the Read tool on these paths.`);
+      }
+
+      if (instructions.length > 0) {
+        messageForClaude = instructions.join('\n\n') + '\n\n' + messageForClaude;
+      }
+    }
+
+    // Build attachment metadata for frontend (for backwards compatibility, images go in 'images' field)
+    const imageMetadata = filePaths
+      .filter((f) => f.type === 'image')
+      .map((f) => ({
+        path: f.path,
+        filename: f.filename,
+      }));
+
+    // All attachments metadata (for new attachments field)
+    const attachmentMetadata = [
+      ...filePaths.map((f) => ({
+        path: f.path,
+        filename: f.filename,
+        mimeType: f.mimeType,
+        type: f.type,
+      })),
+      ...inlineTextContents.map((tc) => ({
+        path: '',
+        filename: tc.filename,
+        mimeType: 'text/plain',
+        type: 'text' as const,
+      })),
+    ];
 
     // Save user message and emit to frontend (show original message, images as metadata)
     const db = getDatabase();
@@ -1052,7 +1247,13 @@ This is the project you should be working on. All file operations should be rela
       content: message,
       createdAt,
       images: imageMetadata.length > 0 ? imageMetadata : undefined,
+      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
     });
+
+    // Track last message for permission approval resend
+    proc.lastUserMessage = message;
+    proc.lastAttachments = attachments || null;
+    proc.pendingPermissionDenials = null; // Clear any previous denials
 
     // Emit thinking indicator
     this.io.to(`session:${sessionId}`).emit('session:thinking', {
@@ -1203,5 +1404,176 @@ This is the project you should be working on. All file operations should be rela
 
   getRunningSessionIds(): string[] {
     return Array.from(this.processes.keys());
+  }
+
+  // Handle permission approval - restart session with allowed tools and resend message
+  async approvePermission(
+    sessionId: string,
+    userId: string,
+    toolNames: string[],
+    originalMessage: string
+  ): Promise<void> {
+    const proc = this.processes.get(sessionId);
+    if (!proc) {
+      throw new Error('Session not running');
+    }
+
+    if (proc.userId !== userId) {
+      throw new Error('Unauthorized');
+    }
+
+    console.log(`[PERMISSION] Approving tools: ${toolNames.join(', ')} for session ${sessionId}`);
+
+    // Get the pending denials and last message
+    const lastMessage = originalMessage || proc.lastUserMessage;
+    const lastAttachments = proc.lastAttachments;
+
+    if (!lastMessage) {
+      throw new Error('No message to resend');
+    }
+
+    // Clear pending denials
+    proc.pendingPermissionDenials = null;
+
+    // Store Claude session ID and working directory before killing
+    const claudeSessionId = proc.claudeSessionId;
+    const workingDirectory = proc.workingDirectory;
+    const mode = proc.mode;
+
+    // Kill current process
+    proc.process.kill('SIGTERM');
+    this.processes.delete(sessionId);
+
+    // Wait for process to terminate
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Restart with allowed tools
+    const db = getDatabase();
+    const session = db
+      .prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, userId) as { working_directory: string; claude_session_id: string | null; allowed_directories: string | null } | undefined;
+
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    // Build command args with allowed tools
+    const args: string[] = [
+      '--print',
+      '--verbose',
+      '--output-format', 'stream-json',
+      '--input-format', 'stream-json',
+      '--include-partial-messages',
+      ...this.getPermissionFlags(mode),
+    ];
+
+    // Add allowed tools
+    for (const toolName of toolNames) {
+      args.push('--allowedTools', toolName);
+    }
+
+    // Add allowed directories
+    const allowedDirs: string[] = session.allowed_directories
+      ? JSON.parse(session.allowed_directories)
+      : [];
+    for (const dir of allowedDirs) {
+      args.push('--add-dir', dir);
+    }
+
+    // Resume existing Claude session
+    if (claudeSessionId) {
+      args.push('--resume', claudeSessionId);
+    }
+
+    console.log(`[PERMISSION] Restarting Claude with args: ${args.join(' ')}`);
+
+    // Spawn new process
+    const newProc = cpSpawn('claude', args, {
+      cwd: workingDirectory,
+      env: {
+        ...process.env,
+        WEBUI_SESSION_ID: sessionId,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const claudeProcess: ClaudeProcess = {
+      process: newProc,
+      sessionId,
+      userId,
+      workingDirectory,
+      claudeSessionId,
+      buffer: '',
+      streamingText: '',
+      isStreaming: false,
+      mode,
+      currentToolName: null,
+      currentToolId: null,
+      currentToolInput: '',
+      currentAgentType: null,
+      model: proc.model || 'unknown',
+      contextWindow: proc.contextWindow || 200000,
+      turnInputTokens: 0,
+      turnCacheReadTokens: 0,
+      turnCacheCreationTokens: 0,
+      turnOutputTokens: 0,
+      totalInputTokens: proc.totalInputTokens,
+      totalOutputTokens: proc.totalOutputTokens,
+      cacheReadTokens: proc.cacheReadTokens,
+      cacheCreationTokens: proc.cacheCreationTokens,
+      totalCostUsd: proc.totalCostUsd,
+      previousTotalCostUsd: proc.previousTotalCostUsd,
+      needsWorkingDirReminder: false,
+      outputBuffer: proc.outputBuffer,
+      lastActivityAt: Date.now(),
+      disconnectedAt: null,
+      lastUserMessage: null,
+      lastAttachments: null,
+      pendingPermissionDenials: null,
+    };
+
+    this.processes.set(sessionId, claudeProcess);
+
+    // Setup handlers
+    newProc.stdout?.on('data', (data: Buffer) => {
+      this.handleJsonOutput(sessionId, data.toString());
+    });
+
+    newProc.stderr?.on('data', (data: Buffer) => {
+      console.error(`Claude stderr [${sessionId}]:`, data.toString());
+    });
+
+    newProc.on('exit', (exitCode) => {
+      console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
+      this.cleanupProcess(sessionId);
+    });
+
+    newProc.on('error', (err) => {
+      console.error(`Claude process error [${sessionId}]:`, err);
+      this.cleanupProcess(sessionId);
+    });
+
+    // Wait for initialization
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Resend the original message
+    await this.sendMessage(sessionId, userId, lastMessage, lastAttachments || undefined);
+  }
+
+  // Handle permission denial - clear pending state
+  denyPermission(sessionId: string, userId: string): void {
+    const proc = this.processes.get(sessionId);
+    if (!proc) {
+      return;
+    }
+
+    if (proc.userId !== userId) {
+      throw new Error('Unauthorized');
+    }
+
+    console.log(`[PERMISSION] User denied permission for session ${sessionId}`);
+    proc.pendingPermissionDenials = null;
+    proc.lastUserMessage = null;
+    proc.lastAttachments = null;
   }
 }

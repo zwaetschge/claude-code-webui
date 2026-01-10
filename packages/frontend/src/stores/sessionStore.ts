@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Message, SessionStatus, UsageData, ToolExecution } from '@claude-code-webui/shared';
+import type { Session, Message, SessionStatus, UsageData, ToolExecution, PermissionDenial } from '@claude-code-webui/shared';
 
 // Activity state for showing what Claude is doing
 export interface ActivityState {
@@ -39,6 +39,12 @@ export interface OpenFile {
   originalContent: string;
 }
 
+// Pending permission request from Claude
+export interface PermissionRequest {
+  denials: PermissionDenial[];
+  originalMessage: string;
+}
+
 interface SessionState {
   sessions: Session[];
   activeSessionId: string | null;
@@ -51,6 +57,9 @@ interface SessionState {
   usage: Record<string, UsageData>;
   generatedImages: Record<string, GeneratedImage[]>;
   toolExecutions: Record<string, ToolExecution[]>;
+
+  // Permission request state
+  permissionRequests: Record<string, PermissionRequest | null>;
 
   // File Tree state
   fileTreeOpen: Record<string, boolean>;
@@ -83,6 +92,10 @@ interface SessionState {
   updateToolExecution: (sessionId: string, toolId: string, update: Partial<ToolExecution>) => void;
   clearToolExecutions: (sessionId: string) => void;
 
+  // Permission request actions
+  setPermissionRequest: (sessionId: string, request: PermissionRequest | null) => void;
+  clearPermissionRequest: (sessionId: string) => void;
+
   // File Tree actions
   setFileTreeOpen: (sessionId: string, open: boolean) => void;
   setSelectedFile: (sessionId: string, path: string | null) => void;
@@ -107,6 +120,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   usage: {},
   generatedImages: {},
   toolExecutions: {},
+  permissionRequests: {},
   fileTreeOpen: {},
   selectedFile: {},
   openFiles: {},
@@ -225,6 +239,23 @@ export const useSessionStore = create<SessionState>((set) => ({
       toolExecutions: {
         ...state.toolExecutions,
         [sessionId]: [],
+      },
+    })),
+
+  // Permission request actions
+  setPermissionRequest: (sessionId, request) =>
+    set((state) => ({
+      permissionRequests: {
+        ...state.permissionRequests,
+        [sessionId]: request,
+      },
+    })),
+
+  clearPermissionRequest: (sessionId) =>
+    set((state) => ({
+      permissionRequests: {
+        ...state.permissionRequests,
+        [sessionId]: null,
       },
     })),
 

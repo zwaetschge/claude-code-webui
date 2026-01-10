@@ -4,11 +4,15 @@ import type { SessionStatus } from './session';
 // Session permission mode
 export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger' | 'orchestration';
 
-// Image data for sending to Claude
-export interface ImageAttachmentData {
+// File attachment data for sending to Claude (images, text, pdf, etc.)
+export interface FileAttachmentData {
   data: string; // base64 encoded
   mimeType: string;
+  filename?: string; // original filename for non-image files
 }
+
+// Alias for backwards compatibility
+export type ImageAttachmentData = FileAttachmentData;
 
 // Buffered message for reconnection replay
 export interface BufferedMessage {
@@ -44,6 +48,14 @@ export interface ClientToServerEvents {
   'session:set-mode': (data: {
     sessionId: string;
     mode: SessionMode;
+  }) => void;
+  'session:approve_permission': (data: {
+    sessionId: string;
+    toolNames: string[]; // Tools to allow
+    originalMessage: string; // The message to resend
+  }) => void;
+  'session:deny_permission': (data: {
+    sessionId: string;
   }) => void;
 }
 
@@ -93,6 +105,20 @@ export interface GeneratedImageData {
   generator: 'gemini' | 'other';
 }
 
+// Permission denial data (when Claude tries to use a tool without permission)
+export interface PermissionDenial {
+  tool_name: string;
+  tool_use_id: string;
+  tool_input: Record<string, unknown>;
+}
+
+// Permission request event data
+export interface PermissionRequestData {
+  sessionId: string;
+  denials: PermissionDenial[];
+  originalMessage: string; // The message that triggered the permission request
+}
+
 // Server to Client Events
 export interface ServerToClientEvents {
   'session:output': (data: StreamingMessage) => void;
@@ -127,6 +153,7 @@ export interface ServerToClientEvents {
     sessionId: string;
     message: string;
   }) => void;
+  'session:permission_request': (data: PermissionRequestData) => void;
   error: (message: string) => void;
 }
 

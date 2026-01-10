@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useBasicAuthStore } from '@/stores/basicAuthStore';
@@ -81,6 +81,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { initializeAuth } = useBasicAuthStore();
+
+  // Initialize basic auth check on app mount
+  useEffect(() => {
+    initializeAuth();
+  }, [initializeAuth]);
+
   return (
     <>
       <Suspense fallback={<PageLoader />}>

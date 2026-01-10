@@ -190,6 +190,13 @@ function runMigrations(db: Database.Database): void {
   } catch {
     // Column already exists, ignore error
   }
+
+  // Migration: Add allowed_directories column to sessions table
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN allowed_directories TEXT DEFAULT '[]'`);
+  } catch {
+    // Column already exists, ignore error
+  }
 }
 
 function initializeBasicAuth(db: Database.Database): void {
