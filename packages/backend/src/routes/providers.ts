@@ -7,7 +7,7 @@ import type { ApiResponse } from '@claude-code-webui/shared';
 const router = Router();
 
 // Provider types supported
-export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'ollama' | 'custom';
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'zai' | 'ollama' | 'custom';
 
 interface AIProvider {
   id: string;
@@ -42,6 +42,7 @@ const DEFAULT_MODELS: Record<ProviderType, string[]> = {
   anthropic: ['claude-opus-4-5-20251101', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
   google: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
   openrouter: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro', 'meta-llama/llama-3.1-405b'],
+  zai: ['zai-coder', 'zai-chat'],
   ollama: ['llama3.2', 'llama3.1', 'codellama', 'mistral', 'mixtral'],
   custom: [],
 };
@@ -52,6 +53,7 @@ const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com/v1',
   google: 'https://generativelanguage.googleapis.com/v1beta',
   openrouter: 'https://openrouter.ai/api/v1',
+  zai: 'https://api.z.ai/v1',
   ollama: 'http://localhost:11434',
   custom: '',
 };
@@ -287,8 +289,11 @@ router.post('/:id/test', requireAuth, async (req, res) => {
 
     try {
       switch (provider.type) {
-        case 'openai': {
-          const response = await fetch(`${provider.base_url || DEFAULT_BASE_URLS.openai}/models`, {
+        case 'openai':
+        case 'zai': {
+          // Z.AI uses OpenAI-compatible API
+          const baseUrl = provider.base_url || DEFAULT_BASE_URLS[provider.type];
+          const response = await fetch(`${baseUrl}/models`, {
             headers: { 'Authorization': `Bearer ${provider.api_key_encrypted}` },
           });
           testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
