@@ -36,6 +36,9 @@ import commandsRoutes from './routes/commands';
 import analyticsRoutes from './routes/analytics';
 import checkpointsRoutes from './routes/checkpoints';
 import agentsRoutes from './routes/agents';
+import notesRoutes from './routes/notes';
+import categoriesRoutes from './routes/categories';
+import providersRoutes from './routes/providers';
 
 async function main() {
   // Initialize database
@@ -114,6 +117,9 @@ async function main() {
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/checkpoints', checkpointsRoutes);
   app.use('/api/agents', agentsRoutes);
+  app.use('/api/notes', notesRoutes);
+  app.use('/api/categories', categoriesRoutes);
+  app.use('/api/providers', providersRoutes);
 
   // Serve frontend static files in production
   if (config.isProduction) {

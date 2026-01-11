@@ -55,7 +55,7 @@ router.get('/', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, created_at as createdAt, updated_at as updatedAt
+              starred, category, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE user_id = ? ORDER BY starred DESC, updated_at DESC`
     )
     .all(userId) as Array<Record<string, unknown>>;
@@ -74,7 +74,7 @@ router.get('/:id', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, created_at as createdAt, updated_at as updatedAt
+              starred, category, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ? AND user_id = ?`
     )
     .get(req.params.id, userId) as Record<string, unknown> | undefined;
@@ -497,6 +497,101 @@ router.get('/:id/attachments/:filename', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Set session category
+router.patch('/:id/category', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const { categoryId } = req.body;
+  const db = getDatabase();
+
+  // Verify session ownership
+  const session = db
+    .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId);
+
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  // If categoryId is provided, verify it belongs to the user
+  if (categoryId) {
+    const category = db
+      .prepare('SELECT id FROM session_categories WHERE id = ? AND user_id = ?')
+      .get(categoryId, userId);
+
+    if (!category) {
+      throw new AppError('Category not found', 404, 'CATEGORY_NOT_FOUND');
+    }
+  }
+
+  db.prepare('UPDATE sessions SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(categoryId || null, req.params.id);
+
+  res.json({ success: true, data: { category: categoryId || null } });
+});
+
+// Search messages in a session
+router.get('/:id/messages/search', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const query = req.query.q as string;
+  const limit = parseInt(req.query.limit as string) || 50;
+  const db = getDatabase();
+
+  if (!query || query.length < 2) {
+    throw new AppError('Query must be at least 2 characters', 400, 'INVALID_QUERY');
+  }
+
+  // Verify session ownership
+  const session = db
+    .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId);
+
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  // Search messages with LIKE
+  const searchPattern = `%${query}%`;
+  const messages = db
+    .prepare(
+      `SELECT id, session_id as sessionId, role, content, created_at as createdAt
+       FROM messages
+       WHERE session_id = ? AND content LIKE ?
+       ORDER BY created_at DESC
+       LIMIT ?`
+    )
+    .all(req.params.id, searchPattern, limit);
+
+  res.json({ success: true, data: messages });
+});
+
+// Search all messages across all sessions
+router.get('/messages/search', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const query = req.query.q as string;
+  const limit = parseInt(req.query.limit as string) || 50;
+  const db = getDatabase();
+
+  if (!query || query.length < 2) {
+    throw new AppError('Query must be at least 2 characters', 400, 'INVALID_QUERY');
+  }
+
+  // Search messages with LIKE, joining with sessions to verify ownership
+  const searchPattern = `%${query}%`;
+  const messages = db
+    .prepare(
+      `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt,
+              s.name as sessionName
+       FROM messages m
+       JOIN sessions s ON m.session_id = s.id
+       WHERE s.user_id = ? AND m.content LIKE ?
+       ORDER BY m.created_at DESC
+       LIMIT ?`
+    )
+    .all(userId, searchPattern, limit);
+
+  res.json({ success: true, data: messages });
 });
 
 export default router;

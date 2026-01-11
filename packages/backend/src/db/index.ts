@@ -197,6 +197,61 @@ function runMigrations(db: Database.Database): void {
   } catch {
     // Column already exists, ignore error
   }
+
+  // Migration: Add category column to sessions table
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN category TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Create session_categories table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_categories (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      color TEXT DEFAULT 'blue',
+      icon TEXT DEFAULT 'folder',
+      sort_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_categories_user_id ON session_categories(user_id);
+  `);
+
+  // Create notes table for prompt notepad
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      title TEXT NOT NULL DEFAULT 'Untitled',
+      content TEXT NOT NULL DEFAULT '',
+      pinned INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_notes_user_id ON notes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_notes_session_id ON notes(session_id);
+  `);
+
+  // Create ai_providers table for multi-provider support
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_providers (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      api_key_encrypted TEXT,
+      base_url TEXT,
+      models TEXT,
+      default_model TEXT,
+      enabled INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_providers_user_id ON ai_providers(user_id);
+  `);
 }
 
 function initializeBasicAuth(db: Database.Database): void {

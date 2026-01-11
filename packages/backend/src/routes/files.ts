@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import multer from 'multer';
@@ -7,6 +8,42 @@ import { requireAuth } from '../middleware/auth';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { config } from '../config';
 import type { FileInfo, DirectoryContents } from '@claude-code-webui/shared';
+
+// CSV parsing helper
+function parseCSV(content: string): { headers: string[]; rows: string[][] } {
+  const lines = content.split('\n').filter(line => line.trim());
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  const parseRow = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseRow(lines[0] || '');
+  const rows = lines.slice(1).map(parseRow);
+
+  return { headers, rows };
+}
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -356,5 +393,184 @@ router.post('/upload', requireAuth, (req, res) => {
     });
   });
 });
+
+// Preview file (CSV, XLSX with data extraction)
+router.get('/preview', requireAuth, asyncHandler(async (req, res) => {
+  const filePath = req.query.path as string;
+  const maxRows = parseInt(req.query.maxRows as string) || 100;
+
+  if (!filePath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  const resolvedPath = validatePath(filePath);
+  const ext = path.extname(resolvedPath).toLowerCase();
+
+  try {
+    const stats = await fs.stat(resolvedPath);
+
+    if (stats.isDirectory()) {
+      throw new AppError('Path is a directory', 400, 'IS_DIRECTORY');
+    }
+
+    // Handle different file types
+    if (ext === '.csv') {
+      // Limit file size for CSV (5MB)
+      if (stats.size > 5 * 1024 * 1024) {
+        throw new AppError('File too large for preview', 400, 'FILE_TOO_LARGE');
+      }
+
+      const content = await fs.readFile(resolvedPath, 'utf-8');
+      const parsed = parseCSV(content);
+
+      return res.json({
+        success: true,
+        data: {
+          type: 'csv',
+          path: resolvedPath,
+          headers: parsed.headers,
+          rows: parsed.rows.slice(0, maxRows),
+          totalRows: parsed.rows.length,
+          truncated: parsed.rows.length > maxRows,
+        },
+      });
+    }
+
+    if (ext === '.xlsx' || ext === '.xls') {
+      // Dynamic import for xlsx
+      try {
+        const XLSX = await import('xlsx');
+
+        // Read workbook
+        const workbook = XLSX.read(await fs.readFile(resolvedPath), { type: 'buffer' });
+
+        // Get all sheet names and data
+        const sheets: Record<string, { headers: string[]; rows: string[][]; totalRows: number }> = {};
+
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName];
+          if (!sheet) continue;
+
+          const data = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+          const headers = (data[0] || []).map(String);
+          const rows = data.slice(1, maxRows + 1).map(row =>
+            Array.isArray(row) ? row.map(cell => String(cell ?? '')) : []
+          );
+
+          sheets[sheetName] = {
+            headers,
+            rows,
+            totalRows: data.length - 1,
+          };
+        }
+
+        return res.json({
+          success: true,
+          data: {
+            type: 'xlsx',
+            path: resolvedPath,
+            sheets,
+            sheetNames: workbook.SheetNames,
+          },
+        });
+      } catch {
+        throw new AppError('Failed to parse Excel file', 400, 'PARSE_ERROR');
+      }
+    }
+
+    if (ext === '.json') {
+      // Limit file size (2MB)
+      if (stats.size > 2 * 1024 * 1024) {
+        throw new AppError('File too large for preview', 400, 'FILE_TOO_LARGE');
+      }
+
+      const content = await fs.readFile(resolvedPath, 'utf-8');
+      try {
+        const parsed = JSON.parse(content);
+        return res.json({
+          success: true,
+          data: {
+            type: 'json',
+            path: resolvedPath,
+            content: parsed,
+            size: stats.size,
+          },
+        });
+      } catch {
+        throw new AppError('Invalid JSON file', 400, 'PARSE_ERROR');
+      }
+    }
+
+    // For other text files, return raw content
+    if (stats.size > 1024 * 1024) {
+      throw new AppError('File too large for preview', 400, 'FILE_TOO_LARGE');
+    }
+
+    const content = await fs.readFile(resolvedPath, 'utf-8');
+    return res.json({
+      success: true,
+      data: {
+        type: 'text',
+        path: resolvedPath,
+        content,
+        size: stats.size,
+      },
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new AppError('File not found', 404, 'NOT_FOUND');
+    }
+    throw err;
+  }
+}));
+
+// Get file as binary (for PDFs, images, etc.)
+router.get('/binary', requireAuth, asyncHandler(async (req, res) => {
+  const filePath = req.query.path as string;
+
+  if (!filePath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  const resolvedPath = validatePath(filePath);
+  const ext = path.extname(resolvedPath).toLowerCase();
+
+  try {
+    const stats = await fs.stat(resolvedPath);
+
+    if (stats.isDirectory()) {
+      throw new AppError('Path is a directory', 400, 'IS_DIRECTORY');
+    }
+
+    // Limit file size (20MB for binary files)
+    if (stats.size > 20 * 1024 * 1024) {
+      throw new AppError('File too large', 400, 'FILE_TOO_LARGE');
+    }
+
+    // Set appropriate content type
+    const contentTypes: Record<string, string> = {
+      '.pdf': 'application/pdf',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+    };
+
+    const contentType = contentTypes[ext] || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stats.size);
+
+    // Stream the file
+    const stream = createReadStream(resolvedPath);
+    stream.pipe(res);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new AppError('File not found', 404, 'NOT_FOUND');
+    }
+    throw err;
+  }
+}));
 
 export default router;

@@ -763,6 +763,199 @@ router.get('/compare', requireAuth, asyncHandler(async (req, res) => {
   }
 }));
 
+// Restore file from a specific commit (undo changes)
+router.post('/restore', requireAuth, asyncHandler(async (req, res) => {
+  const { path: repoPath, file, commit } = req.body;
+
+  if (!repoPath || !file) {
+    throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
+  }
+
+  try {
+    const git = getGit(repoPath);
+
+    if (commit) {
+      // Restore from specific commit
+      await git.checkout([commit, '--', file]);
+    } else {
+      // Restore from HEAD (discard all changes including staged)
+      await git.checkout(['HEAD', '--', file]);
+    }
+
+    res.json({ success: true, data: { restored: file, from: commit || 'HEAD' } });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    if ((err as Error).message.includes('did not match')) {
+      throw new AppError('File not found in specified commit', 404, 'FILE_NOT_FOUND');
+    }
+    throw err;
+  }
+}));
+
+// Discard all unstaged changes
+router.post('/discard-all', requireAuth, asyncHandler(async (req, res) => {
+  const { path: repoPath, includeUntracked } = req.body;
+
+  if (!repoPath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  try {
+    const git = getGit(repoPath);
+
+    // Discard all tracked file changes
+    await git.checkout(['--', '.']);
+
+    // Optionally remove untracked files
+    if (includeUntracked) {
+      await git.clean('f', ['-d']);
+    }
+
+    const status = await git.status();
+
+    res.json({
+      success: true,
+      data: {
+        isClean: status.isClean(),
+        remaining: {
+          staged: status.staged,
+          unstaged: status.modified,
+          untracked: status.not_added,
+        },
+      },
+    });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    throw err;
+  }
+}));
+
+// Get file history (commits that modified the file)
+router.get('/file-history', requireAuth, asyncHandler(async (req, res) => {
+  const repoPath = req.query.path as string;
+  const file = req.query.file as string;
+  const limit = parseInt(req.query.limit as string) || 20;
+
+  if (!repoPath || !file) {
+    throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
+  }
+
+  try {
+    const git = getGit(repoPath);
+
+    const log = await git.log({
+      maxCount: limit,
+      file,
+    });
+
+    const commits = log.all.map((commit) => ({
+      hash: commit.hash,
+      shortHash: commit.hash.substring(0, 7),
+      message: commit.message,
+      author: commit.author_name,
+      date: commit.date,
+    }));
+
+    res.json({ success: true, data: commits });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    throw err;
+  }
+}));
+
+// Stash changes
+router.post('/stash', requireAuth, asyncHandler(async (req, res) => {
+  const { path: repoPath, message, includeUntracked } = req.body;
+
+  if (!repoPath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  try {
+    const git = getGit(repoPath);
+
+    const stashArgs = ['push'];
+    if (message) {
+      stashArgs.push('-m', message);
+    }
+    if (includeUntracked) {
+      stashArgs.push('-u');
+    }
+
+    await git.stash(stashArgs);
+
+    res.json({ success: true, data: { message: message || 'Changes stashed' } });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    throw err;
+  }
+}));
+
+// List stashes
+router.get('/stash/list', requireAuth, asyncHandler(async (req, res) => {
+  const repoPath = req.query.path as string;
+
+  if (!repoPath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  try {
+    const git = getGit(repoPath);
+    const stashList = await git.stashList();
+
+    const stashes = stashList.all.map((stash, index) => ({
+      index,
+      hash: stash.hash,
+      message: stash.message,
+      date: stash.date,
+    }));
+
+    res.json({ success: true, data: stashes });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    throw err;
+  }
+}));
+
+// Apply or pop stash
+router.post('/stash/apply', requireAuth, asyncHandler(async (req, res) => {
+  const { path: repoPath, index, pop } = req.body;
+
+  if (!repoPath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  try {
+    const git = getGit(repoPath);
+
+    const stashRef = index !== undefined ? `stash@{${index}}` : undefined;
+    const args = stashRef ? [stashRef] : [];
+
+    if (pop) {
+      await git.stash(['pop', ...args]);
+    } else {
+      await git.stash(['apply', ...args]);
+    }
+
+    res.json({ success: true, data: { applied: stashRef || 'stash@{0}', popped: !!pop } });
+  } catch (err) {
+    if ((err as Error).message.includes('not a git repository')) {
+      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    }
+    throw err;
+  }
+}));
+
 // Generate commit message using AI
 router.post('/generate-commit-message', requireAuth, asyncHandler(async (req, res) => {
   const { path: repoPath } = req.body;

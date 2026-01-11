@@ -12,6 +12,7 @@ import {
   LayoutList,
   Table2,
   Upload,
+  Eye,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +20,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { api } from '@/services/api';
 import { FileIcon } from './file-icons';
+import { FilePreviewDialog } from '@/components/file-preview';
 import type { FileInfo, ApiResponse, DirectoryContents } from '@claude-code-webui/shared';
+
+// File extensions that support preview
+const PREVIEWABLE_EXTENSIONS = new Set([
+  '.csv', '.xlsx', '.xls', '.json', '.txt', '.md', '.log',
+  '.xml', '.yaml', '.yml', '.toml', '.ini', '.conf',
+]);
 
 interface FileTreeProps {
   workingDirectory: string;
@@ -88,12 +96,26 @@ export function FileTree({
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
   const [isUploading, setIsUploading] = useState(false);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [treeState, setTreeState] = useState<TreeState>({
     expanded: { [workingDirectory]: true },
     loading: {},
     children: {},
   });
+
+  // Check if file is previewable
+  const isPreviewable = useCallback((filename: string): boolean => {
+    const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+    return PREVIEWABLE_EXTENSIONS.has(ext);
+  }, []);
+
+  // Open preview dialog
+  const openPreview = useCallback((path: string) => {
+    setPreviewPath(path);
+    setPreviewOpen(true);
+  }, []);
 
   // Cycle through view modes
   const cycleViewMode = useCallback(() => {
@@ -308,7 +330,7 @@ export function FileTree({
           aria-expanded={isDirectory ? isExpanded : undefined}
           aria-selected={isSelected}
           className={cn(
-            'flex items-center gap-1.5 py-1 px-2 cursor-pointer rounded-sm transition-colors',
+            'group flex items-center gap-1.5 py-1 px-2 cursor-pointer rounded-sm transition-colors',
             'hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary/50',
             isSelected && 'bg-primary/10 text-primary'
           )}
@@ -384,6 +406,22 @@ export function FileTree({
               </div>
             )}
           </div>
+
+          {/* Preview button for previewable files */}
+          {!isDirectory && isPreviewable(file.name) && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={(e) => {
+                e.stopPropagation();
+                openPreview(file.path);
+              }}
+              title="Preview file"
+            >
+              <Eye className="h-3 w-3" />
+            </Button>
+          )}
         </div>
 
         {/* Children */}
@@ -408,7 +446,7 @@ export function FileTree({
         )}
       </div>
     );
-  }, [treeState, selectedFile, searchQuery, viewMode, filterFiles, toggleExpand, handleSelect, handleOpen]);
+  }, [treeState, selectedFile, searchQuery, viewMode, filterFiles, toggleExpand, handleSelect, handleOpen, isPreviewable, openPreview]);
 
   // Sort and filter root files
   const displayFiles = useMemo(() => {
@@ -522,6 +560,13 @@ export function FileTree({
           {workingDirectory}
         </p>
       </div>
+
+      {/* File preview dialog */}
+      <FilePreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        filePath={previewPath}
+      />
     </div>
   );
 }
