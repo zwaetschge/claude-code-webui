@@ -45,6 +45,7 @@ import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { AgentSkillEditorDialog } from '@/components/ui/agent-skill-editor';
 import { PluginEditorDialog } from '@/components/ui/plugin-editor';
 import { MarketplaceBrowserDialog } from '@/components/ui/marketplace-browser';
+import { ProvidersSettings } from '@/components/providers';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
 import type { UserSettings, McpServer, CliTool, ApiResponse, Theme } from '@claude-code-webui/shared';
@@ -806,7 +807,7 @@ export function SettingsPage() {
 
         {/* Tabs Navigation */}
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-6 h-12">
+          <TabsList className="grid w-full grid-cols-7 h-12">
             <TabsTrigger value="general" className="gap-2">
               <Settings2 className="h-4 w-4" />
               <span className="hidden sm:inline">General</span>
@@ -822,6 +823,10 @@ export function SettingsPage() {
             <TabsTrigger value="api-keys" className="gap-2">
               <KeyRound className="h-4 w-4" />
               <span className="hidden sm:inline">API Keys</span>
+            </TabsTrigger>
+            <TabsTrigger value="providers" className="gap-2">
+              <Bot className="h-4 w-4" />
+              <span className="hidden sm:inline">AI Providers</span>
             </TabsTrigger>
             <TabsTrigger value="tools" className="gap-2">
               <Wrench className="h-4 w-4" />
@@ -1307,6 +1312,11 @@ export function SettingsPage() {
                 </CardContent>
               </Card>
             </section>
+          </TabsContent>
+
+          {/* AI Providers Tab */}
+          <TabsContent value="providers" className="space-y-6">
+            <ProvidersSettings />
           </TabsContent>
 
           {/* Tools Tab */}

@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, FolderOpen, MessageSquare, Settings, RefreshCw, FolderPlus, Folder } from 'lucide-react';
+import { Plus, Trash2, FolderOpen, MessageSquare, Settings, RefreshCw, FolderPlus, Folder, Tags } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { DiscoveredProjects } from '@/components/projects';
+import { SessionCategories, CategorySelector } from '@/components/session-categories';
 import { useSessionStore } from '@/stores/sessionStore';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
@@ -104,6 +105,8 @@ export function DashboardPage() {
   const [sessionMode, setSessionMode] = useState<'new' | 'existing'>('new');
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showCategories, setShowCategories] = useState(false);
 
   // Usage limits state - must be before any early returns
   const [limits, setLimits] = useState<{
@@ -262,10 +265,20 @@ export function DashboardPage() {
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
           <p className="text-sm md:text-base text-muted-foreground">Manage your Claude Code sessions</p>
         </div>
-        <Button onClick={() => setShowNewSession(true)} className="w-full sm:w-auto">
-          <Plus className="mr-2 h-4 w-4" />
-          New Session
-        </Button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <Button
+            variant={showCategories ? 'default' : 'outline'}
+            onClick={() => setShowCategories(!showCategories)}
+            className="gap-2"
+          >
+            <Tags className="h-4 w-4" />
+            <span className="hidden sm:inline">Categories</span>
+          </Button>
+          <Button onClick={() => setShowNewSession(true)} className="flex-1 sm:flex-initial">
+            <Plus className="mr-2 h-4 w-4" />
+            New Session
+          </Button>
+        </div>
       </div>
 
       {/* Usage Limits */}
@@ -455,66 +468,88 @@ export function DashboardPage() {
         }}
       />
 
-      {/* Sessions Grid */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {sessions.map((session) => (
-          <Card
-            key={session.id}
-            className="cursor-pointer transition-colors hover:border-primary"
-            onClick={() => navigate(`/session/${session.id}`)}
-          >
-            <CardHeader className="flex flex-row items-start justify-between space-y-0">
-              <div className="space-y-1">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  {session.name}
-                </CardTitle>
-                <CardDescription className="flex items-center gap-1">
-                  <FolderOpen className="h-3 w-3" />
-                  {session.workingDirectory}
-                </CardDescription>
-              </div>
-              <div
-                className={cn(
-                  'h-3 w-3 rounded-full',
-                  session.status === 'running' && 'bg-green-500',
-                  session.status === 'stopped' && 'bg-gray-500',
-                  session.status === 'error' && 'bg-red-500'
-                )}
-              />
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">
-                  {new Date(session.updatedAt).toLocaleDateString()}
-                </span>
-                <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => deleteMutation.mutate(session.id)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-
-        {sessions.length === 0 && !showNewSession && (
-          <Card className="col-span-full">
-            <CardContent className="flex flex-col items-center justify-center py-10">
-              <MessageSquare className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground mb-4">No sessions yet</p>
-              <Button onClick={() => setShowNewSession(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create your first session
-              </Button>
-            </CardContent>
+      {/* Sessions with Optional Categories Sidebar */}
+      <div className="flex gap-4">
+        {/* Categories Sidebar */}
+        {showCategories && (
+          <Card className="w-64 shrink-0 hidden md:block">
+            <SessionCategories
+              selectedCategory={selectedCategory}
+              onCategorySelect={setSelectedCategory}
+              className="h-[400px]"
+            />
           </Card>
         )}
+
+        {/* Sessions Grid */}
+        <div className="flex-1 grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {sessions.map((session) => (
+            <Card
+              key={session.id}
+              className="cursor-pointer transition-colors hover:border-primary"
+              onClick={() => navigate(`/session/${session.id}`)}
+            >
+              <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                <div className="space-y-1">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    {session.name}
+                  </CardTitle>
+                  <CardDescription className="flex items-center gap-1">
+                    <FolderOpen className="h-3 w-3" />
+                    {session.workingDirectory}
+                  </CardDescription>
+                </div>
+                <div
+                  className={cn(
+                    'h-3 w-3 rounded-full',
+                    session.status === 'running' && 'bg-green-500',
+                    session.status === 'stopped' && 'bg-gray-500',
+                    session.status === 'error' && 'bg-red-500'
+                  )}
+                />
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <CategorySelector
+                      sessionId={session.id}
+                      currentCategory={null}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(session.updatedAt).toLocaleDateString()}
+                    </span>
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => deleteMutation.mutate(session.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+
+          {sessions.length === 0 && !showNewSession && (
+            <Card className="col-span-full">
+              <CardContent className="flex flex-col items-center justify-center py-10">
+                <MessageSquare className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground mb-4">No sessions yet</p>
+                <Button onClick={() => setShowNewSession(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create your first session
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       </div>
     </div>
   );

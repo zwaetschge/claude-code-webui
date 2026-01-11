@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Square, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History, FolderKey, FileCode, File as FileIcon } from 'lucide-react';
+import { Square, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History, FolderKey, FileCode, File as FileIcon, StickyNote, FileCode2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -19,6 +19,8 @@ import { NotificationBanner } from '@/components/session/NotificationBanner';
 import { EditorPanel } from '@/components/code-editor';
 import { WebPreview } from '@/components/preview';
 import { MobileBottomNav, type MobileView } from '@/components/mobile';
+import { Notepad } from '@/components/notepad';
+import { AgentsEditor } from '@/components/agents-editor';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
@@ -145,7 +147,7 @@ export function SessionPage() {
   const currentToolExecutions = toolExecutions[id || ''] || [];
   const currentPermissionRequest = permissionRequests[id || ''] || null;
   const [showTodos, setShowTodos] = useState(true);
-  const [rightPanelTab, setRightPanelTab] = useState<'files' | 'todos' | 'git' | 'checkpoints'>('files');
+  const [rightPanelTab, setRightPanelTab] = useState<'files' | 'todos' | 'git' | 'checkpoints' | 'notes' | 'agents'>('files');
   const [mainView, setMainView] = useState<'chat' | 'editor' | 'preview'>('chat');
   const currentSelectedFile = selectedFile[id || ''];
   const currentOpenFiles = openFiles[id || ''] || [];
@@ -967,6 +969,32 @@ export function SessionPage() {
                       <History className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">Saves</span>
                     </button>
+                    <button
+                      onClick={() => setRightPanelTab('notes')}
+                      className={cn(
+                        "flex items-center justify-center gap-1 px-2 py-1 text-xs rounded-md transition-colors flex-1 min-w-0",
+                        rightPanelTab === 'notes'
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      title="Notes"
+                    >
+                      <StickyNote className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">Notes</span>
+                    </button>
+                    <button
+                      onClick={() => setRightPanelTab('agents')}
+                      className={cn(
+                        "flex items-center justify-center gap-1 px-2 py-1 text-xs rounded-md transition-colors flex-1 min-w-0",
+                        rightPanelTab === 'agents'
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                      title="AGENTS.md"
+                    >
+                      <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">Agents</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1037,6 +1065,19 @@ export function SessionPage() {
                       // Refetch messages after restore
                       queryClient.invalidateQueries({ queryKey: ['messages', id] });
                     }}
+                  />
+                ) : rightPanelTab === 'notes' ? (
+                  <Notepad
+                    sessionId={id}
+                    onSendToChat={(content) => {
+                      handleSendMessage(content);
+                    }}
+                    className="h-full"
+                  />
+                ) : rightPanelTab === 'agents' ? (
+                  <AgentsEditor
+                    workingDirectory={session.workingDirectory}
+                    className="h-full"
                   />
                 ) : null}
               </div>
