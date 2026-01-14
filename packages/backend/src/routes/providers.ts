@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { getDatabase } from '../db/index.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { safeEncrypt, safeDecrypt } from '../utils/encryption.js';
 import type { ApiResponse } from '@claude-code-webui/shared';
 
 const router = Router();
@@ -141,7 +142,7 @@ router.post('/', requireAuth, (req, res) => {
       authReq.userId,
       name,
       type,
-      apiKey || null, // TODO: Encrypt API key
+      safeEncrypt(apiKey), // Encrypt API key
       baseUrl || DEFAULT_BASE_URLS[type as ProviderType] || null,
       models ? (typeof models === 'string' ? models : JSON.stringify(models)) : null,
       defaultModel || null
@@ -194,7 +195,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     }
     if (apiKey !== undefined && apiKey !== '') {
       updates.push('api_key_encrypted = ?');
-      values.push(apiKey || null); // TODO: Encrypt
+      values.push(safeEncrypt(apiKey)); // Encrypt API key
     }
     if (baseUrl !== undefined) {
       updates.push('base_url = ?');
@@ -288,13 +289,16 @@ router.post('/:id/test', requireAuth, async (req, res) => {
     let testResult = { success: false, message: 'Unknown provider type' };
 
     try {
+      // Decrypt API key for testing
+      const apiKey = safeDecrypt(provider.api_key_encrypted);
+
       switch (provider.type) {
         case 'openai':
         case 'zai': {
           // Z.AI uses OpenAI-compatible API
           const baseUrl = provider.base_url || DEFAULT_BASE_URLS[provider.type];
           const response = await fetch(`${baseUrl}/models`, {
-            headers: { 'Authorization': `Bearer ${provider.api_key_encrypted}` },
+            headers: { 'Authorization': `Bearer ${apiKey}` },
           });
           testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
           break;

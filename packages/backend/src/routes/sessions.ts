@@ -7,6 +7,8 @@ import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { config } from '../config';
+import { safeJsonParse } from '../utils/json';
+import { rateLimiters } from '../middleware/rateLimiter';
 
 const router = Router();
 
@@ -88,8 +90,8 @@ router.get('/:id', requireAuth, (req, res) => {
   res.json({ success: true, data: session });
 });
 
-// Create new session
-router.post('/', requireAuth, async (req, res) => {
+// Create new session (with rate limiting)
+router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const parsed = createSessionSchema.safeParse(req.body);
 
@@ -296,9 +298,7 @@ router.get('/:id/allowed-directories', requireAuth, (req, res) => {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
   }
 
-  const allowedDirectories: string[] = session.allowed_directories
-    ? JSON.parse(session.allowed_directories)
-    : [];
+  const allowedDirectories = safeJsonParse<string[]>(session.allowed_directories, []);
 
   res.json({ success: true, data: allowedDirectories });
 });
@@ -338,9 +338,7 @@ router.post('/:id/allowed-directories', requireAuth, async (req, res) => {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
   }
 
-  const allowedDirectories: string[] = session.allowed_directories
-    ? JSON.parse(session.allowed_directories)
-    : [];
+  const allowedDirectories = safeJsonParse<string[]>(session.allowed_directories, []);
 
   // Check if already exists
   if (allowedDirectories.includes(normalizedDir)) {
@@ -376,9 +374,7 @@ router.delete('/:id/allowed-directories', requireAuth, (req, res) => {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
   }
 
-  const allowedDirectories: string[] = session.allowed_directories
-    ? JSON.parse(session.allowed_directories)
-    : [];
+  const allowedDirectories = safeJsonParse<string[]>(session.allowed_directories, []);
 
   // Remove the directory
   const newDirectories = allowedDirectories.filter((d) => d !== normalizedDir);

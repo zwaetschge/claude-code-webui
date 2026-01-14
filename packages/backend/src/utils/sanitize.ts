@@ -1,0 +1,97 @@
+import path from 'path';
+
+/**
+ * Sanitize a filename to prevent path traversal and other attacks
+ * Removes dangerous characters and path components
+ */
+export function sanitizeFilename(filename: string): string {
+  // Remove null bytes
+  let sanitized = filename.replace(/\0/g, '');
+
+  // Get just the filename without any path
+  sanitized = path.basename(sanitized);
+
+  // Remove path traversal attempts
+  sanitized = sanitized.replace(/\.\./g, '');
+
+  // Replace potentially dangerous characters
+  // Keep alphanumeric, dots, dashes, underscores, spaces
+  sanitized = sanitized.replace(/[^a-zA-Z0-9.\-_\s]/g, '_');
+
+  // Collapse multiple underscores/dots
+  sanitized = sanitized.replace(/_+/g, '_');
+  sanitized = sanitized.replace(/\.+/g, '.');
+
+  // Remove leading/trailing dots and underscores
+  sanitized = sanitized.replace(/^[._]+|[._]+$/g, '');
+
+  // Ensure there's still a filename
+  if (!sanitized || sanitized.length === 0) {
+    sanitized = 'unnamed_file';
+  }
+
+  // Limit filename length
+  if (sanitized.length > 255) {
+    const ext = path.extname(sanitized);
+    const name = path.basename(sanitized, ext);
+    sanitized = name.substring(0, 255 - ext.length) + ext;
+  }
+
+  return sanitized;
+}
+
+/**
+ * Validate MIME type against actual file content (basic validation)
+ * Returns true if the file appears to match its claimed type
+ */
+export function validateMimeType(buffer: Buffer, claimedMimeType: string): boolean {
+  // Check common file signatures (magic numbers)
+  const signatures: Record<string, number[][]> = {
+    'image/png': [[0x89, 0x50, 0x4E, 0x47]],
+    'image/jpeg': [[0xFF, 0xD8, 0xFF]],
+    'image/gif': [[0x47, 0x49, 0x46, 0x38]],
+    'image/webp': [[0x52, 0x49, 0x46, 0x46]], // RIFF header
+    'application/pdf': [[0x25, 0x50, 0x44, 0x46]], // %PDF
+    'application/zip': [[0x50, 0x4B, 0x03, 0x04], [0x50, 0x4B, 0x05, 0x06]],
+  };
+
+  const expectedSignatures = signatures[claimedMimeType];
+  if (!expectedSignatures) {
+    // No signature check for this type - allow it
+    return true;
+  }
+
+  return expectedSignatures.some(signature =>
+    signature.every((byte, index) => buffer[index] === byte)
+  );
+}
+
+/**
+ * List of allowed MIME types for file uploads
+ */
+export const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  // Images
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+  // Documents
+  'application/pdf',
+  'application/json',
+  'application/xml',
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'text/html',
+  'text/css',
+  'text/javascript',
+  // Code files (often detected as octet-stream)
+  'application/octet-stream',
+  'application/javascript',
+  'application/typescript',
+  // Archives
+  'application/zip',
+  'application/x-tar',
+  'application/gzip',
+]);
