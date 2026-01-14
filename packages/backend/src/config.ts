@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   PORT: z.string().default('3001'),
+  HOST: z.string().default('0.0.0.0'), // Default to 0.0.0.0 for Docker compatibility
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   SESSION_SECRET: z.string().min(32),
   JWT_SECRET: z.string().min(32),
@@ -45,6 +46,7 @@ function loadConfig() {
 
   return {
     port: parseInt(env.PORT, 10),
+    host: env.HOST,
     isProduction: env.NODE_ENV === 'production',
     isDevelopment: env.NODE_ENV === 'development',
     sessionSecret: env.SESSION_SECRET,
