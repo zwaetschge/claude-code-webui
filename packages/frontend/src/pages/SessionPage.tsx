@@ -29,7 +29,6 @@ import type { Session, Message, ApiResponse, MessageImage, MessageAttachment, Cl
 import { cn } from '@/lib/utils';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from '@/components/chat/InteractiveOptions';
-import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { PermissionApprovalDialog } from '@/components/chat/PermissionApprovalDialog';
 import { useDocumentSwipeGesture } from '@/hooks';
 
