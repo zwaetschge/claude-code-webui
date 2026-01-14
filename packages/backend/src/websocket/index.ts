@@ -125,6 +125,19 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       }
     });
 
+    // Restart session (stop and start fresh)
+    socket.on('session:restart', async (sessionId) => {
+      console.log(`Restart request for session ${sessionId}`);
+      try {
+        await processManager.restartSession(sessionId, socket.data.userId);
+      } catch (err) {
+        socket.emit('session:error', {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to restart session',
+        });
+      }
+    });
+
     // Send raw input for interactive prompts (trust dialogs, etc.)
     socket.on('session:input', async ({ sessionId, input }) => {
       console.log(`Received session:input for ${sessionId}: "${input}"`);

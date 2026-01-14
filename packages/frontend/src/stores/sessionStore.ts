@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Message, SessionStatus, UsageData, ToolExecution, PermissionDenial } from '@claude-code-webui/shared';
+import type { Session, Message, SessionStatus, UsageData, ToolExecution, PermissionDenial, PendingPermission } from '@claude-code-webui/shared';
 
 // Activity state for showing what Claude is doing
 export interface ActivityState {
@@ -39,7 +39,7 @@ export interface OpenFile {
   originalContent: string;
 }
 
-// Pending permission request from Claude
+// Permission request (legacy flow with denials)
 export interface PermissionRequest {
   denials: PermissionDenial[];
   originalMessage: string;
@@ -58,8 +58,11 @@ interface SessionState {
   generatedImages: Record<string, GeneratedImage[]>;
   toolExecutions: Record<string, ToolExecution[]>;
 
-  // Permission request state
+  // Permission request state (legacy)
   permissionRequests: Record<string, PermissionRequest | null>;
+
+  // Pending permissions state (hooks-based)
+  pendingPermissions: Record<string, PendingPermission | null>;
 
   // File Tree state
   fileTreeOpen: Record<string, boolean>;
@@ -92,9 +95,12 @@ interface SessionState {
   updateToolExecution: (sessionId: string, toolId: string, update: Partial<ToolExecution>) => void;
   clearToolExecutions: (sessionId: string) => void;
 
-  // Permission request actions
+  // Permission request actions (legacy)
   setPermissionRequest: (sessionId: string, request: PermissionRequest | null) => void;
   clearPermissionRequest: (sessionId: string) => void;
+
+  // Pending permission actions (hooks-based)
+  setPendingPermission: (sessionId: string, permission: PendingPermission | null) => void;
 
   // File Tree actions
   setFileTreeOpen: (sessionId: string, open: boolean) => void;
@@ -121,6 +127,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   generatedImages: {},
   toolExecutions: {},
   permissionRequests: {},
+  pendingPermissions: {},
   fileTreeOpen: {},
   selectedFile: {},
   openFiles: {},
@@ -242,7 +249,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       },
     })),
 
-  // Permission request actions
+  // Permission request actions (legacy)
   setPermissionRequest: (sessionId, request) =>
     set((state) => ({
       permissionRequests: {
@@ -256,6 +263,15 @@ export const useSessionStore = create<SessionState>((set) => ({
       permissionRequests: {
         ...state.permissionRequests,
         [sessionId]: null,
+      },
+    })),
+
+  // Pending permission actions (hooks-based)
+  setPendingPermission: (sessionId, permission) =>
+    set((state) => ({
+      pendingPermissions: {
+        ...state.pendingPermissions,
+        [sessionId]: permission,
       },
     })),
 

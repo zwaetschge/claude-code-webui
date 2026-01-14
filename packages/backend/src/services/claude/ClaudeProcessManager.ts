@@ -10,8 +10,14 @@ import type {
 import { getDatabase } from '../../db';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { ChildProcess, spawn as cpSpawn } from 'child_process';
+import { config } from '../../config';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Circular buffer for storing messages for reconnection
 const BUFFER_SIZE = 5000;
@@ -193,6 +199,7 @@ interface ClaudeProcess {
   currentToolName: string | null;
   currentToolId: string | null; // Tool use ID from Claude
   currentToolInput: string; // Accumulates JSON input during tool use
+  pendingToolResults: Map<string, { toolName: string; input: unknown }>; // Track tools awaiting results
   // Agent tracking
   currentAgentType: string | null;
   // Usage tracking
@@ -232,7 +239,7 @@ export class ClaudeProcessManager {
     }, 60 * 1000);
   }
 
-  // Map UI modes to Claude CLI permission flags
+  // Map UI modes to Claude CLI permission flags (legacy flow)
   private getPermissionFlags(mode: SessionMode): string[] {
     switch (mode) {
       case 'planning':
@@ -251,6 +258,66 @@ export class ClaudeProcessManager {
       default:
         return ['--permission-mode', 'acceptEdits'];
     }
+  }
+
+  // Get the path to the permission prompt wrapper script (hooks-based flow)
+  private getPermissionPromptScriptPath(): string {
+    // The shell script is always in the source directory (packages/backend/src/cli/)
+    // We need to find it relative to the current file location
+    // In dev (tsx): __dirname = packages/backend/src/services/claude
+    // In prod (compiled): __dirname = packages/backend/dist/services/claude
+
+    // First, try relative to source (development)
+    const devPath = path.resolve(__dirname, '../cli/permission-prompt-wrapper.sh');
+    if (fsSync.existsSync(devPath)) {
+      return devPath;
+    }
+
+    // If running from dist, the script is in src (parallel to dist)
+    // __dirname = packages/backend/dist/services/claude
+    // We want: packages/backend/src/cli/permission-prompt-wrapper.sh
+    const prodPath = path.resolve(__dirname, '../../../src/cli/permission-prompt-wrapper.sh');
+    if (fsSync.existsSync(prodPath)) {
+      return prodPath;
+    }
+
+    // Fallback: try to find it from the package root
+    const packageRoot = path.resolve(__dirname, '../../../../');
+    const fallbackPath = path.join(packageRoot, 'src/cli/permission-prompt-wrapper.sh');
+    if (fsSync.existsSync(fallbackPath)) {
+      return fallbackPath;
+    }
+
+    console.warn(`[HOOKS] Could not find permission-prompt-wrapper.sh, tried: ${devPath}, ${prodPath}, ${fallbackPath}`);
+    return devPath; // Return dev path as default
+  }
+
+  // Generate settings JSON with PermissionRequest hook configured (hooks-based flow)
+  private getHookSettings(): string {
+    const scriptPath = this.getPermissionPromptScriptPath();
+    console.log(`[HOOKS] Using permission hook script: ${scriptPath}`);
+
+    // New hook format with matchers
+    // PreToolUse hooks run before every tool execution
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: '*',  // Match all tools
+            hooks: [
+              {
+                type: 'command',
+                command: scriptPath,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const json = JSON.stringify(settings);
+    console.log(`[HOOKS] Settings JSON: ${json}`);
+    return json;
   }
 
   // Get orchestration mode system prompt
@@ -416,13 +483,16 @@ For "Add authentication to the API":
     console.log(`[MODE] Starting session ${sessionId} with mode ${effectiveMode}`);
 
     // Build command args for stream-json mode
+    // IMPORTANT: Always use --dangerously-skip-permissions so our hook is the ONLY permission layer
+    // Without this, Claude's internal permission system would still prompt after our hook approves
     const args: string[] = [
       '--print',
       '--verbose',
+      '--debug', 'hooks',  // Debug hook execution
       '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--include-partial-messages',
-      ...this.getPermissionFlags(effectiveMode),
+      '--dangerously-skip-permissions',  // Let our hook handle all permissions
     ];
 
     // Add allowed directories
@@ -433,23 +503,42 @@ For "Add authentication to the API":
       args.push('--add-dir', dir);
     }
 
+    // Add permission hook settings for all modes except 'danger'
+    // In danger mode, skip hooks entirely (tools run without any checks)
+    // In other modes, our hook surfaces permission requests to the UI
+    if (effectiveMode !== 'danger') {
+      const hookSettings = this.getHookSettings();
+      args.push('--settings', hookSettings);
+    }
+
     const isResuming = !!session.claude_session_id;
     if (isResuming && session.claude_session_id) {
       args.push('--resume', session.claude_session_id);
     }
 
-    console.log(`Starting Claude with args: ${args.join(' ')}`);
-    console.log(`Working directory: ${session.working_directory}`);
-    console.log(`Allowed directories: ${allowedDirs.join(', ') || 'none'}`);
-    console.log(`Resuming: ${isResuming}`);
+    console.log(`[SESSION] ========== Starting Claude Session ==========`);
+    console.log(`[SESSION] Session ID: ${sessionId}`);
+    console.log(`[SESSION] Working directory: ${session.working_directory}`);
+    console.log(`[SESSION] Mode: ${effectiveMode}`);
+    console.log(`[SESSION] Allowed directories: ${allowedDirs.join(', ') || 'none'}`);
+    console.log(`[SESSION] Resuming: ${isResuming}`);
+    console.log(`[SESSION] Args: ${args.join(' ')}`);
+    console.log(`[SESSION] Env WEBUI_SESSION_ID: ${sessionId}`);
+    console.log(`[SESSION] Env WEBUI_BACKEND_URL: http://localhost:${config.port}`);
+    console.log(`[SESSION] Env WEBUI_PROJECT_PATH: ${session.working_directory}`);
+    console.log(`[SESSION] ==============================================`)
 
     // Use regular spawn instead of PTY for stream-json mode
     const proc = cpSpawn('claude', args, {
       cwd: session.working_directory,
       env: {
         ...process.env,
-        // Pass session ID so Claude can use it for image generation
+        // Pass session ID so Claude can use it for image generation and permissions
         WEBUI_SESSION_ID: sessionId,
+        // Pass backend URL for permission-prompt script
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        // Pass project path for loading project-specific settings
+        WEBUI_PROJECT_PATH: session.working_directory,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -469,6 +558,7 @@ For "Add authentication to the API":
       currentToolName: null,
       currentToolId: null,
       currentToolInput: '',
+      pendingToolResults: new Map(),
       // Agent tracking
       currentAgentType: null,
       // Usage tracking defaults
@@ -795,29 +885,17 @@ For "Add authentication to the API":
         if (proc.currentToolName && proc.currentToolInput) {
           console.log(`[TOOL] ${proc.currentToolName} completed with input length: ${proc.currentToolInput.length}`);
 
-          // Emit tool completion with input (result will come from tool_result)
+          // Emit tool completion with full input data
           try {
             const inputData = JSON.parse(proc.currentToolInput);
-            // For display, show a summary of the input
-            let inputSummary = '';
-            if (proc.currentToolName === 'Read' && inputData.file_path) {
-              inputSummary = inputData.file_path;
-            } else if (proc.currentToolName === 'Write' && inputData.file_path) {
-              inputSummary = inputData.file_path;
-            } else if (proc.currentToolName === 'Edit' && inputData.file_path) {
-              inputSummary = inputData.file_path;
-            } else if (proc.currentToolName === 'Bash' && inputData.command) {
-              inputSummary = inputData.command.substring(0, 100);
-            } else if (proc.currentToolName === 'Glob' && inputData.pattern) {
-              inputSummary = inputData.pattern;
-            } else if (proc.currentToolName === 'Grep' && inputData.pattern) {
-              inputSummary = inputData.pattern;
-            } else if (proc.currentToolName === 'WebFetch' && inputData.url) {
-              inputSummary = inputData.url;
-            } else if (proc.currentToolName === 'WebSearch' && inputData.query) {
-              inputSummary = inputData.query;
-            } else {
-              inputSummary = JSON.stringify(inputData).substring(0, 100);
+
+            // Store tool info for matching with result later
+            if (proc.currentToolId) {
+              proc.pendingToolResults = proc.pendingToolResults || new Map();
+              proc.pendingToolResults.set(proc.currentToolId, {
+                toolName: proc.currentToolName,
+                input: inputData,
+              });
             }
 
             // Note: The actual result will be captured from tool_result message
@@ -827,7 +905,7 @@ For "Add authentication to the API":
               toolName: proc.currentToolName,
               toolId: proc.currentToolId || undefined,
               status: 'completed',
-              input: inputSummary,
+              input: inputData,
             });
           } catch {
             // If parsing fails, just emit with raw input
@@ -836,7 +914,7 @@ For "Add authentication to the API":
               toolName: proc.currentToolName,
               toolId: proc.currentToolId || undefined,
               status: 'completed',
-              input: proc.currentToolInput.substring(0, 100),
+              input: proc.currentToolInput,
             });
           }
 
@@ -1023,11 +1101,45 @@ For "Add authentication to the API":
     }
 
     // Handle user messages in stream (from subagent interactions) - show thinking
+    // Also extract tool_result content to update tool executions
     if (msg.type === 'user') {
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: true,
       });
+
+      // Extract tool results from user message content
+      const userMsg = msg as { message?: { content?: Array<{ type: string; tool_use_id?: string; content?: string | Array<{ type: string; text?: string }> }> } };
+      if (userMsg.message?.content && Array.isArray(userMsg.message.content)) {
+        for (const block of userMsg.message.content) {
+          if (block.type === 'tool_result' && block.tool_use_id) {
+            // Extract result text
+            let resultText = '';
+            if (typeof block.content === 'string') {
+              resultText = block.content;
+            } else if (Array.isArray(block.content)) {
+              resultText = block.content
+                .filter((c) => c.type === 'text' && c.text)
+                .map((c) => c.text)
+                .join('\n');
+            }
+
+            // Emit tool result update
+            if (resultText) {
+              console.log(`[TOOL] Result for ${block.tool_use_id}: ${resultText.substring(0, 100)}...`);
+              this.io.to(`session:${sessionId}`).emit('session:tool_use', {
+                sessionId,
+                toolId: block.tool_use_id,
+                toolName: proc.pendingToolResults?.get(block.tool_use_id)?.toolName || 'Unknown',
+                status: 'completed',
+                result: resultText,
+              });
+              // Clean up pending
+              proc.pendingToolResults?.delete(block.tool_use_id);
+            }
+          }
+        }
+      }
     }
 
     // Handle compact/summarization events
@@ -1328,6 +1440,41 @@ This is the project you should be working on. All file operations should be rela
         this.cleanupProcess(sessionId);
       }
     }, 2000);
+  }
+
+  // Restart a session (stop and start fresh)
+  async restartSession(sessionId: string, userId: string): Promise<void> {
+    console.log(`[SESSION] Restarting session ${sessionId}`);
+
+    const proc = this.processes.get(sessionId);
+    const currentMode = proc?.mode ?? this.pendingModes.get(sessionId) ?? 'auto-accept';
+
+    // Stop if running
+    if (proc) {
+      if (proc.userId !== userId) {
+        throw new Error('Unauthorized');
+      }
+
+      // Kill the process immediately
+      proc.process.kill('SIGTERM');
+      this.processes.delete(sessionId);
+    }
+
+    // Clear claude_session_id to start fresh (not resume)
+    const db = getDatabase();
+    db.prepare('UPDATE sessions SET status = ?, claude_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+      'stopped',
+      sessionId
+    );
+    console.log(`[SESSION] Cleared claude_session_id for fresh start`);
+
+    // Wait a moment for cleanup
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Start fresh with the same mode
+    await this.startSession(sessionId, userId, currentMode);
+
+    console.log(`[SESSION] Session ${sessionId} restarted`);
   }
 
   // Set permission mode for a session

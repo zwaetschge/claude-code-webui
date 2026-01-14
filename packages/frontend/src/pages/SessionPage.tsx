@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Square, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History, FolderKey, FileCode, File as FileIcon, StickyNote, FileCode2 } from 'lucide-react';
+import { Square, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, ChevronRight, ChevronDown, GitBranch, MessageSquare, Code2, Star, History, FolderKey, FileCode, File as FileIcon, StickyNote, FileCode2, RotateCcw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -25,10 +25,12 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { socketService } from '@/services/socket';
-import type { Session, Message, ApiResponse, MessageImage, MessageAttachment, CliTool, Command, CommandExecutionResult, SessionMode } from '@claude-code-webui/shared';
+import type { Session, Message, ApiResponse, MessageImage, MessageAttachment, CliTool, Command, CommandExecutionResult, SessionMode, PermissionAction } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from '@/components/chat/InteractiveOptions';
+import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
+import { PermissionApprovalDialog } from '@/components/chat/PermissionApprovalDialog';
 import { useDocumentSwipeGesture } from '@/hooks';
 
 function generateId() {
@@ -41,7 +43,7 @@ export function SessionPage() {
   const [sessionMode, setSessionMode] = useState<SessionMode>('auto-accept');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastMessageIdRef = useRef<string | null>(null);
-  const { messages, streamingContent, activity, activeAgent, todos, generatedImages, toolExecutions, permissionRequests, setMessages, clearStreamingContent, selectedFile, setSelectedFile, openFile: openFileInStore, openFiles } = useSessionStore();
+  const { messages, streamingContent, activity, activeAgent, todos, generatedImages, toolExecutions, permissionRequests, pendingPermissions, setMessages, clearStreamingContent, selectedFile, setSelectedFile, openFile: openFileInStore, openFiles } = useSessionStore();
   const [showSavedIndicator, setShowSavedIndicator] = useState(false);
   const [selectedCliTool, setSelectedCliTool] = useState<string | null>(null);
   const [isExecutingTool, _setIsExecutingTool] = useState(false);
@@ -145,7 +147,9 @@ export function SessionPage() {
   const currentActiveAgent = activeAgent[id || ''];
   const currentGeneratedImages = generatedImages[id || ''] || [];
   const currentToolExecutions = toolExecutions[id || ''] || [];
+  // Support both legacy and hooks-based permission requests
   const currentPermissionRequest = permissionRequests[id || ''] || null;
+  const currentPendingPermission = pendingPermissions[id || ''] || null;
   const [showTodos, setShowTodos] = useState(true);
   const [rightPanelTab, setRightPanelTab] = useState<'files' | 'todos' | 'git' | 'checkpoints' | 'notes' | 'agents'>('files');
   const [mainView, setMainView] = useState<'chat' | 'editor' | 'preview'>('chat');
@@ -406,12 +410,32 @@ export function SessionPage() {
     socketService.interruptSession(id);
   };
 
+  const handleRestart = () => {
+    if (!id) return;
+    socketService.restartSession(id);
+  };
+
   const handleModeChange = useCallback((newMode: SessionMode) => {
     setSessionMode(newMode);
     if (id) {
       socketService.setSessionMode(id, newMode);
     }
   }, [id]);
+
+  // Handler for hooks-based permission response
+  const handlePermissionResponse = useCallback(async (action: PermissionAction, pattern?: string) => {
+    if (!id || !currentPendingPermission) return;
+    try {
+      await socketService.respondToPermission(
+        id,
+        currentPendingPermission.requestId,
+        action,
+        pattern
+      );
+    } catch (error) {
+      console.error('Failed to respond to permission request:', error);
+    }
+  }, [id, currentPendingPermission]);
 
   const handleCancelCliTool = () => {
     if (cliToolAbortRef.current) {
@@ -517,6 +541,10 @@ export function SessionPage() {
                 <span className="hidden sm:inline">Interrupt</span>
               </Button>
             )}
+            <Button variant="outline" onClick={handleRestart} className="gap-2 h-9" title="Restart Claude session">
+              <RotateCcw className="h-4 w-4" />
+              <span className="hidden sm:inline">Restart</span>
+            </Button>
             {isExecutingTool && (
               <Button variant="outline" onClick={handleCancelCliTool} className="gap-2 h-9 border-orange-500/50 text-orange-600 hover:bg-orange-500/10">
                 <Square className="h-4 w-4" />
@@ -870,7 +898,7 @@ export function SessionPage() {
           </div>
         )}
 
-        {/* Permission request card */}
+        {/* Legacy permission request card (denials-based flow) */}
         {currentPermissionRequest && id && (
           <div className="flex justify-start animate-fade-in">
             <PermissionRequestCard
@@ -1105,6 +1133,14 @@ export function SessionPage() {
         isSending={isSending}
         isExecutingTool={isExecutingTool}
       />
+
+      {/* Permission Approval Dialog (hooks-based flow) */}
+      {currentPendingPermission && (
+        <PermissionApprovalDialog
+          permission={currentPendingPermission}
+          onRespond={handlePermissionResponse}
+        />
+      )}
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav
