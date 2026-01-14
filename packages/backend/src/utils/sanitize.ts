@@ -1,6 +1,62 @@
 import path from 'path';
 
 /**
+ * Sanitize a string for use in shell commands
+ * Removes/escapes shell metacharacters to prevent command injection
+ */
+export function sanitizeShellArg(arg: string): string {
+  // Remove null bytes
+  let sanitized = arg.replace(/\0/g, '');
+
+  // Remove common shell metacharacters that could enable command injection
+  // Only allow alphanumeric, dots, dashes, underscores, slashes, colons, and @
+  sanitized = sanitized.replace(/[^a-zA-Z0-9.\-_/:@]/g, '');
+
+  return sanitized;
+}
+
+/**
+ * Validate a GitHub repository string (owner/repo format)
+ */
+export function isValidGitHubRepo(repo: string): boolean {
+  // GitHub repo format: owner/repo or owner/repo.git
+  // Owner: alphanumeric and hyphens, 1-39 chars
+  // Repo: alphanumeric, hyphens, underscores, dots
+  const githubRepoRegex = /^[a-zA-Z0-9][-a-zA-Z0-9]{0,38}\/[a-zA-Z0-9._-]+$/;
+  return githubRepoRegex.test(repo.replace(/\.git$/, ''));
+}
+
+/**
+ * Validate a git URL for safe cloning
+ * Only allows https:// URLs to prevent SSRF and protocol attacks
+ */
+export function isValidGitUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    // Only allow https protocol to prevent SSRF via file://, git://, ssh://, etc.
+    if (parsed.protocol !== 'https:') {
+      return false;
+    }
+    // Block localhost and private IP ranges
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('172.') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal')
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Sanitize a filename to prevent path traversal and other attacks
  * Removes dangerous characters and path components
  */

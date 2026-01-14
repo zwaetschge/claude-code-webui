@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 
@@ -258,15 +259,26 @@ function initializeBasicAuth(db: Database.Database): void {
   const existingUsername = db.prepare('SELECT value FROM app_config WHERE key = ?').get('basic_auth_username') as { value: string } | undefined;
 
   if (!existingUsername) {
-    // Set default credentials: admin / admin123
+    // Generate a secure random password on first run
     const defaultUsername = 'admin';
-    const defaultPassword = bcrypt.hashSync('admin123', 10);
+    const randomPassword = crypto.randomBytes(16).toString('base64').slice(0, 20);
+    const hashedPassword = bcrypt.hashSync(randomPassword, 10);
 
     db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_username', defaultUsername);
-    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_password', defaultPassword);
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_password', hashedPassword);
     db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_enabled', 'true');
 
-    console.log('Initialized default basic auth credentials (admin/admin123)');
+    // Show the generated credentials (only on first run)
+    console.log('');
+    console.log('╔════════════════════════════════════════════════════════════╗');
+    console.log('║  INITIAL BASIC AUTH CREDENTIALS (save these!)              ║');
+    console.log('╠════════════════════════════════════════════════════════════╣');
+    console.log(`║  Username: ${defaultUsername.padEnd(47)}║`);
+    console.log(`║  Password: ${randomPassword.padEnd(47)}║`);
+    console.log('╠════════════════════════════════════════════════════════════╣');
+    console.log('║  ⚠️  Change these in Settings > Security after first login ║');
+    console.log('╚════════════════════════════════════════════════════════════╝');
+    console.log('');
   }
 }
 

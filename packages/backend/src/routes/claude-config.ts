@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
+import { isValidGitHubRepo, isValidGitUrl, sanitizeShellArg } from '../utils/sanitize';
 
 const router = Router();
 
@@ -1068,10 +1069,26 @@ router.post('/marketplaces', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
+  // Validate GitHub repo format to prevent command injection
+  if (source === 'github' && repo && !isValidGitHubRepo(repo)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid GitHub repository format. Use owner/repo format.' },
+    });
+  }
+
   if (source === 'git' && !url) {
     return res.status(400).json({
       success: false,
       error: { code: 'VALIDATION_ERROR', message: 'URL is required for git source' },
+    });
+  }
+
+  // Validate git URL to prevent SSRF and command injection
+  if (source === 'git' && url && !isValidGitUrl(url)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid git URL. Only HTTPS URLs to public hosts are allowed.' },
     });
   }
 
@@ -1105,16 +1122,22 @@ router.post('/marketplaces', requireAuth, asyncHandler(async (req, res) => {
   try {
     await ensureDir(installLocation);
 
-    const gitUrl = source === 'github'
+    // Build and sanitize the git URL (defense in depth - validation already happened above)
+    const rawGitUrl = source === 'github'
       ? `https://github.com/${repo}.git`
       : url;
+    const gitUrl = sanitizeShellArg(rawGitUrl);
 
-    // Clone the repository
-    const { execSync } = await import('child_process');
-    execSync(`git clone --depth 1 "${gitUrl}" "${installLocation}"`, {
+    // Clone the repository using spawn with array args to prevent shell injection
+    const { spawnSync } = await import('child_process');
+    const result = spawnSync('git', ['clone', '--depth', '1', gitUrl, installLocation], {
       stdio: 'pipe',
       timeout: 60000,
     });
+
+    if (result.status !== 0) {
+      throw new Error(result.stderr?.toString() || 'Git clone failed');
+    }
 
     // Add to known_marketplaces.json
     marketplaces[sanitizedName] = {

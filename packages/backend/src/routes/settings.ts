@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../db';
 import { AppError } from '../middleware/errorHandler';
+import { safeEncrypt, safeDecrypt } from '../utils/encryption';
+import { safeJsonParse } from '../utils/json';
 import type { UserSettings, Theme } from '@claude-code-webui/shared';
 
 const router = Router();
@@ -120,11 +122,10 @@ router.put('/api-key', requireAuth, (req, res) => {
     throw new AppError('API key is required', 400, 'MISSING_API_KEY');
   }
 
-  // TODO: Encrypt the API key before storing
-  // For now, store as-is (in production, use proper encryption)
+  // Encrypt the API key before storing
   const db = getDatabase();
   db.prepare('UPDATE users SET api_key_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    apiKey,
+    safeEncrypt(apiKey),
     userId
   );
 
@@ -203,7 +204,8 @@ router.put('/gemini-key', requireAuth, (req, res) => {
     }
   }
 
-  settingsObj.geminiApiKey = apiKey;
+  // Encrypt the API key before storing
+  settingsObj.geminiApiKey = safeEncrypt(apiKey);
 
   db.prepare(
     'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
@@ -244,7 +246,7 @@ router.delete('/gemini-key', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Get Gemini API key for internal use (returns full key)
+// Get Gemini API key for internal use (returns full decrypted key)
 export function getGeminiApiKeyForUser(userId: string): string | null {
   const db = getDatabase();
 
@@ -253,11 +255,10 @@ export function getGeminiApiKeyForUser(userId: string): string | null {
   ).get(userId) as { settings_json: string | null } | undefined;
 
   if (settings?.settings_json) {
-    try {
-      const parsed = JSON.parse(settings.settings_json);
-      return parsed.geminiApiKey || null;
-    } catch {
-      return null;
+    const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});
+    const encryptedKey = parsed.geminiApiKey;
+    if (typeof encryptedKey === 'string') {
+      return safeDecrypt(encryptedKey);
     }
   }
 
@@ -324,7 +325,8 @@ router.put('/github-token', requireAuth, (req, res) => {
     }
   }
 
-  settingsObj.githubToken = token;
+  // Encrypt the token before storing
+  settingsObj.githubToken = safeEncrypt(token);
 
   db.prepare(
     'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
@@ -365,7 +367,7 @@ router.delete('/github-token', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Get GitHub token for internal use (returns full token)
+// Get GitHub token for internal use (returns full decrypted token)
 export function getGitHubTokenForUser(userId: string): string | null {
   const db = getDatabase();
 
@@ -374,11 +376,10 @@ export function getGitHubTokenForUser(userId: string): string | null {
   ).get(userId) as { settings_json: string | null } | undefined;
 
   if (settings?.settings_json) {
-    try {
-      const parsed = JSON.parse(settings.settings_json);
-      return parsed.githubToken || null;
-    } catch {
-      return null;
+    const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});
+    const encryptedToken = parsed.githubToken;
+    if (typeof encryptedToken === 'string') {
+      return safeDecrypt(encryptedToken);
     }
   }
 
