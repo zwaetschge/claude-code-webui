@@ -60,12 +60,18 @@ async function main() {
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow same-origin requests or matching frontend URL (case-insensitive)
-        if (!origin || origin.toLowerCase() === config.frontendUrl.toLowerCase()) {
-          callback(null, true);
-        } else {
-          callback(null, true); // Allow all origins for Docker flexibility
+        // Allow same-origin requests (no origin header)
+        if (!origin) {
+          return callback(null, true);
         }
+        // Check if origin is in the allowed list
+        const normalizedOrigin = origin.toLowerCase();
+        if (config.allowedOrigins.includes(normalizedOrigin)) {
+          return callback(null, true);
+        }
+        // Reject unauthorized origins
+        console.warn(`CORS: Rejected request from unauthorized origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
       },
       credentials: true,
     })

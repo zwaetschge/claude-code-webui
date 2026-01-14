@@ -13,6 +13,8 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
+  // Additional allowed CORS origins (comma-separated, for Docker/reverse proxy setups)
+  CORS_ALLOWED_ORIGINS: z.string().optional(),
   ENCRYPTION_KEY: z.string().optional(),
   ALLOWED_BASE_PATHS: z.string().default('/home,/Users'),
   // Claude OAuth (uses official Claude Code client ID) - enabled by default
@@ -32,6 +34,15 @@ function loadConfig() {
 
   const env = parsed.data;
 
+  // Build allowed origins list
+  const allowedOrigins = [env.FRONTEND_URL.toLowerCase()];
+  if (env.CORS_ALLOWED_ORIGINS) {
+    const additionalOrigins = env.CORS_ALLOWED_ORIGINS.split(',')
+      .map(o => o.trim().toLowerCase())
+      .filter(o => o.length > 0);
+    allowedOrigins.push(...additionalOrigins);
+  }
+
   return {
     port: parseInt(env.PORT, 10),
     isProduction: env.NODE_ENV === 'production',
@@ -49,6 +60,7 @@ function loadConfig() {
       callbackUrl: env.GOOGLE_CALLBACK_URL,
     },
     frontendUrl: env.FRONTEND_URL,
+    allowedOrigins, // List of allowed CORS origins
     encryptionKey: env.ENCRYPTION_KEY,
     allowedBasePaths: env.ALLOWED_BASE_PATHS.split(',').map((p) => p.trim()),
     claude: {

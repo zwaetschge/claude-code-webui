@@ -190,7 +190,6 @@ export function FileTree({
 
     setIsUploading(true);
     try {
-      const formData = new FormData();
       // Determine target directory: selected folder or working directory
       let targetDir = workingDirectory;
       if (selectedFile) {
@@ -208,8 +207,8 @@ export function FileTree({
           }
         }
       }
-      formData.append('targetDirectory', targetDir);
 
+      const formData = new FormData();
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (file) {
@@ -217,7 +216,9 @@ export function FileTree({
         }
       }
 
-      const response = await api.post<ApiResponse<{ files: { name: string; path: string; size: number }[] }>>('/api/files/upload', formData, {
+      // Pass targetDirectory as query param (not in body) because multer's
+      // destination callback runs before body is parsed
+      const response = await api.post<ApiResponse<{ files: { name: string; path: string; size: number }[] }>>(`/api/files/upload?targetDirectory=${encodeURIComponent(targetDir)}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 

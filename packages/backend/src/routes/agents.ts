@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { getDatabase } from '../db';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { safeJsonParse } from '../utils/json';
 
 const router = Router();
 
@@ -40,7 +41,7 @@ router.get('/', async (req: Request, res: Response) => {
     // Parse allowed_tools JSON for each agent
     const parsedAgents = agents.map(agent => ({
       ...agent,
-      allowedTools: agent.allowed_tools ? JSON.parse(agent.allowed_tools) : [],
+      allowedTools: safeJsonParse<string[]>(agent.allowed_tools, []),
       enabled: !!agent.enabled,
     }));
 
@@ -72,7 +73,7 @@ router.get('/:agentId', async (req: Request, res: Response) => {
       success: true,
       data: {
         ...agent,
-        allowedTools: agent.allowed_tools ? JSON.parse(agent.allowed_tools) : [],
+        allowedTools: safeJsonParse<string[]>(agent.allowed_tools, []),
         enabled: !!agent.enabled,
       },
     });
@@ -133,7 +134,7 @@ router.post('/', async (req: Request, res: Response) => {
       success: true,
       data: {
         ...agent,
-        allowedTools: agent.allowed_tools ? JSON.parse(agent.allowed_tools) : [],
+        allowedTools: safeJsonParse<string[]>(agent.allowed_tools, []),
         enabled: !!agent.enabled,
       },
     });
@@ -207,7 +208,7 @@ router.put('/:agentId', async (req: Request, res: Response) => {
       success: true,
       data: {
         ...agent,
-        allowedTools: agent.allowed_tools ? JSON.parse(agent.allowed_tools) : [],
+        allowedTools: safeJsonParse<string[]>(agent.allowed_tools, []),
         enabled: !!agent.enabled,
       },
     });
@@ -288,7 +289,7 @@ router.post('/:agentId/duplicate', async (req: Request, res: Response) => {
       success: true,
       data: {
         ...agent,
-        allowedTools: agent.allowed_tools ? JSON.parse(agent.allowed_tools) : [],
+        allowedTools: safeJsonParse<string[]>(agent.allowed_tools, []),
         enabled: !!agent.enabled,
       },
     });

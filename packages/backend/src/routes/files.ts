@@ -7,6 +7,8 @@ import multer from 'multer';
 import { requireAuth } from '../middleware/auth';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { config } from '../config';
+import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize';
+import { rateLimiters } from '../middleware/rateLimiter';
 import type { FileInfo, DirectoryContents } from '@claude-code-webui/shared';
 
 // CSV parsing helper
@@ -66,13 +68,25 @@ const storage = multer.diskStorage({
     }
   },
   filename: (_req, file, cb) => {
-    // Use original filename
-    cb(null, file.originalname);
+    // Sanitize filename to prevent path traversal and other attacks
+    const sanitized = sanitizeFilename(file.originalname);
+    cb(null, sanitized);
   },
 });
 
+// File filter for MIME type validation
+const fileFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
+  if (ALLOWED_UPLOAD_MIME_TYPES.has(file.mimetype)) {
+    cb(null, true);
+  } else {
+    console.warn(`Upload rejected: unsupported MIME type ${file.mimetype} for file ${file.originalname}`);
+    cb(null, false);
+  }
+};
+
 const upload = multer({
   storage,
+  fileFilter,
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB max file size
   },
@@ -351,8 +365,8 @@ router.delete('/', requireAuth, asyncHandler(async (req, res) => {
   }
 }));
 
-// Upload files
-router.post('/upload', requireAuth, (req, res) => {
+// Upload files (with rate limiting)
+router.post('/upload', requireAuth, rateLimiters.upload, (req, res) => {
   upload.array('files', 20)(req, res, (err) => {
     if (err) {
       if (err instanceof multer.MulterError) {
