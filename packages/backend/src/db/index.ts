@@ -258,7 +258,7 @@ function initializeBasicAuth(db: Database.Database): void {
   const existingUsername = db.prepare('SELECT value FROM app_config WHERE key = ?').get('basic_auth_username') as { value: string } | undefined;
 
   if (!existingUsername) {
-    // Set default credentials: admin / admin123
+    // Set default credentials (change these immediately in production!)
     const defaultUsername = 'admin';
     const defaultPassword = bcrypt.hashSync('admin123', 10);
 
@@ -266,7 +266,8 @@ function initializeBasicAuth(db: Database.Database): void {
     db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_password', defaultPassword);
     db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_enabled', 'true');
 
-    console.log('Initialized default basic auth credentials (admin/admin123)');
+    // Security warning without exposing credentials in logs
+    console.warn('⚠️  Default basic auth credentials initialized. Change them immediately via Settings > Security!');
   }
 }
 
