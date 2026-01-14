@@ -4,6 +4,7 @@ import type {
   ServerToClientEvents,
   BufferedMessage,
   SessionMode,
+  PermissionAction,
 } from '@claude-code-webui/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -86,8 +87,8 @@ class SocketService {
           this.activeSessions.delete(data.sessionId);
           // Delay notification slightly to allow for permission requests or streaming
           setTimeout(() => {
-            const { permissionRequests, streamingContent } = useSessionStore.getState();
-            const hasPermissionRequest = !!permissionRequests[data.sessionId];
+            const { permissionRequests, pendingPermissions, streamingContent } = useSessionStore.getState();
+            const hasPermissionRequest = !!permissionRequests[data.sessionId] || !!pendingPermissions[data.sessionId];
             const hasStreaming = !!streamingContent[data.sessionId];
             // Only notify if no pending permission request and no streaming
             if (!hasPermissionRequest && !hasStreaming && !this.activeSessions.has(data.sessionId)) {
@@ -119,6 +120,7 @@ class SocketService {
       } else if (data.toolId) {
         store.updateToolExecution(data.sessionId, data.toolId, {
           status: data.status,
+          input: data.input,
           result: data.result,
           error: data.error,
         });
@@ -190,14 +192,24 @@ class SocketService {
     });
 
     this.socket.on('session:permission_request', (data) => {
-      console.log(`[SOCKET] session:permission_request received:`, data.denials.map(d => d.tool_name).join(', '));
-      useSessionStore.getState().setPermissionRequest(data.sessionId, {
-        denials: data.denials,
-        originalMessage: data.originalMessage,
-      });
-      // Send notification for permission request
-      const toolNames = data.denials.map(d => d.tool_name);
-      notificationService.notifyPermissionRequest(data.sessionId, toolNames);
+      // Handle both legacy (denials) and new (hooks-based) permission request formats
+      if ('denials' in data && data.denials) {
+        // Legacy format with denials
+        console.log(`[SOCKET] session:permission_request (legacy) received:`, data.denials.map(d => d.tool_name).join(', '));
+        useSessionStore.getState().setPermissionRequest(data.sessionId, {
+          denials: data.denials,
+          originalMessage: data.originalMessage,
+        });
+        // Send notification for permission request
+        const toolNames = data.denials.map(d => d.tool_name);
+        notificationService.notifyPermissionRequest(data.sessionId, toolNames);
+      } else if ('requestId' in data) {
+        // New hooks-based format
+        console.log(`[SOCKET] session:permission_request (hooks) received:`, data.toolName, data.description);
+        useSessionStore.getState().setPendingPermission(data.sessionId, data);
+        // Send notification
+        notificationService.notifyPermissionRequest(data.sessionId, [data.toolName]);
+      }
     });
 
     this.socket.on('error', (message) => {
@@ -364,6 +376,12 @@ class SocketService {
     this.socket?.emit('session:interrupt', sessionId);
   }
 
+  // Restart session (stop and start fresh)
+  restartSession(sessionId: string): void {
+    console.log(`[SOCKET] Restarting session ${sessionId}`);
+    this.socket?.emit('session:restart', sessionId);
+  }
+
   // Set session permission mode
   setSessionMode(sessionId: string, mode: SessionMode): void {
     console.log(`[SOCKET] Setting session ${sessionId} mode to ${mode}`);
@@ -377,18 +395,54 @@ class SocketService {
     this.socket?.emit('session:reconnect', { sessionId, lastTimestamp });
   }
 
-  // Approve permission request - allow specific tools
+  // Approve permission request - allow specific tools (legacy flow)
   approvePermission(sessionId: string, toolNames: string[], originalMessage: string): void {
     console.log(`[SOCKET] Approving permission for tools: ${toolNames.join(', ')}`);
     useSessionStore.getState().clearPermissionRequest(sessionId);
     this.socket?.emit('session:approve_permission', { sessionId, toolNames, originalMessage });
   }
 
-  // Deny permission request
+  // Deny permission request (legacy flow)
   denyPermission(sessionId: string): void {
     console.log(`[SOCKET] Denying permission for session ${sessionId}`);
     useSessionStore.getState().clearPermissionRequest(sessionId);
     this.socket?.emit('session:deny_permission', { sessionId });
+  }
+
+  // Respond to a permission request (hooks-based flow)
+  async respondToPermission(
+    sessionId: string,
+    requestId: string,
+    action: PermissionAction,
+    pattern?: string
+  ): Promise<void> {
+    console.log(`[SOCKET] Responding to permission ${requestId}: ${action}`);
+
+    // Call the backend API to respond (the long-polling endpoint will pick this up)
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      throw new Error('No auth token');
+    }
+
+    const response = await fetch('/api/permissions/respond', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        requestId,
+        action,
+        pattern,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to respond to permission request');
+    }
+
+    // Clear the pending permission from the store
+    useSessionStore.getState().setPendingPermission(sessionId, null);
   }
 
   getSocket(): TypedSocket | null {

@@ -27,6 +27,8 @@ import settingsRoutes from './routes/settings';
 import mcpRoutes from './routes/mcp';
 import claudeRoutes from './routes/claude';
 import claudeConfigRoutes from './routes/claude-config';
+import claudeSettingsRoutes from './routes/claude-settings';
+import permissionsRoutes from './routes/permissions';
 import usageRoutes from './routes/usage';
 import cliToolsRoutes from './routes/cli-tools';
 import geminiRoutes from './routes/gemini';
@@ -114,6 +116,8 @@ async function main() {
   app.use('/api/mcp-servers', mcpRoutes);
   app.use('/api/claude', claudeRoutes);
   app.use('/api/claude-config', claudeConfigRoutes);
+  app.use('/api/claude-settings', claudeSettingsRoutes);
+  app.use('/api/permissions', permissionsRoutes);
   app.use('/api/usage', usageRoutes);
   app.use('/api/cli-tools', cliToolsRoutes);
   app.use('/api/gemini', geminiRoutes);
@@ -152,7 +156,7 @@ async function main() {
   app.use(errorHandler);
 
   // Start server
-  httpServer.listen(config.port, () => {
+  httpServer.listen(config.port, '127.0.0.1', () => {
     console.log(`Server running on http://localhost:${config.port}`);
     console.log(`Frontend URL: ${config.frontendUrl}`);
   });

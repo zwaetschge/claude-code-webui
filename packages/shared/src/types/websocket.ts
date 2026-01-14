@@ -21,6 +21,9 @@ export interface BufferedMessage {
   timestamp: number;
 }
 
+// Permission response action type
+export type PermissionAction = 'allow_once' | 'allow_project' | 'allow_global' | 'deny';
+
 // Client to Server Events
 export interface ClientToServerEvents {
   'session:send': (data: {
@@ -35,6 +38,7 @@ export interface ClientToServerEvents {
   'session:subscribe': (sessionId: string) => void;
   'session:unsubscribe': (sessionId: string) => void;
   'session:interrupt': (sessionId: string) => void;
+  'session:restart': (sessionId: string) => void;
   'session:reconnect': (data: {
     sessionId: string;
     lastTimestamp?: number;
@@ -49,6 +53,7 @@ export interface ClientToServerEvents {
     sessionId: string;
     mode: SessionMode;
   }) => void;
+  // Legacy permission events (for simple approve/deny flow)
   'session:approve_permission': (data: {
     sessionId: string;
     toolNames: string[]; // Tools to allow
@@ -56,6 +61,13 @@ export interface ClientToServerEvents {
   }) => void;
   'session:deny_permission': (data: {
     sessionId: string;
+  }) => void;
+  // New hooks-based permission event (for finer control)
+  'session:permission_respond': (data: {
+    sessionId: string;
+    requestId: string;
+    action: PermissionAction;
+    pattern?: string;
   }) => void;
 }
 
@@ -95,6 +107,16 @@ export interface ToolExecution {
   timestamp: number;
 }
 
+// Pending permission request from Claude (hooks-based)
+export interface PendingPermission {
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  toolInput: unknown;
+  description: string;
+  suggestedPattern: string;
+}
+
 // Generated image data
 export interface GeneratedImageData {
   sessionId: string;
@@ -112,7 +134,7 @@ export interface PermissionDenial {
   tool_input: Record<string, unknown>;
 }
 
-// Permission request event data
+// Permission request event data (legacy flow)
 export interface PermissionRequestData {
   sessionId: string;
   denials: PermissionDenial[];
@@ -153,7 +175,8 @@ export interface ServerToClientEvents {
     sessionId: string;
     message: string;
   }) => void;
-  'session:permission_request': (data: PermissionRequestData) => void;
+  // Legacy permission request (simple denials flow)
+  'session:permission_request': (data: PermissionRequestData | PendingPermission) => void;
   error: (message: string) => void;
 }
 
