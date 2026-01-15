@@ -65,11 +65,11 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
           >
             <img
               src="/claude-logo.png"
-              alt="Claude"
+              alt="Plum Code"
               className="h-8 w-8 object-contain"
             />
             <div className="text-left">
-              <h1 className="text-base font-semibold text-foreground">Claude Code</h1>
+              <h1 className="text-base font-semibold text-foreground">Plum Code</h1>
               <p className="text-[10px] text-muted-foreground font-medium">WebUI</p>
             </div>
           </Link>
@@ -84,12 +84,12 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
           >
             <img
               src="/claude-logo.png"
-              alt="Claude"
+              alt="Plum Code"
               className="h-8 w-8 object-contain"
             />
             {!isCollapsed && (
               <div className="text-left">
-                <h1 className="text-base font-semibold text-foreground">Claude Code</h1>
+                <h1 className="text-base font-semibold text-foreground">Plum Code</h1>
                 <p className="text-[10px] text-muted-foreground font-medium">WebUI</p>
               </div>
             )}

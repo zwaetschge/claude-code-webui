@@ -43,7 +43,7 @@ const DEFAULT_MODELS: Record<ProviderType, string[]> = {
   anthropic: ['claude-opus-4-5-20251101', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
   google: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
   openrouter: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro', 'meta-llama/llama-3.1-405b'],
-  zai: ['zai-coder', 'zai-chat'],
+  zai: ['glm-4.7', 'zai-coder', 'zai-chat'],
   ollama: ['llama3.2', 'llama3.1', 'codellama', 'mistral', 'mixtral'],
   custom: [],
 };

@@ -31,6 +31,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from '@/components/chat/InteractiveOptions';
 import { PermissionApprovalDialog } from '@/components/chat/PermissionApprovalDialog';
 import { useDocumentSwipeGesture } from '@/hooks';
+import { getProviderLabel, setProviderTheme } from '@/lib/providerTheme';
 
 function generateId() {
   return Math.random().toString(36).substring(2, 9);
@@ -45,7 +46,7 @@ export function SessionPage() {
   const { messages, streamingContent, activity, activeAgent, todos, generatedImages, toolExecutions, permissionRequests, pendingPermissions, setMessages, clearStreamingContent, selectedFile, setSelectedFile, openFile: openFileInStore, openFiles } = useSessionStore();
   const [showSavedIndicator, setShowSavedIndicator] = useState(false);
   const [selectedCliTool, setSelectedCliTool] = useState<string | null>(null);
-  const [isExecutingTool, _setIsExecutingTool] = useState(false);
+  const [isExecutingTool, setIsExecutingTool] = useState(false);
   const cliToolAbortRef = useRef<AbortController | null>(null);
   const [mobileView, setMobileView] = useState<MobileView>('chat');
   const [showAllowedDirsDialog, setShowAllowedDirsDialog] = useState(false);
@@ -98,11 +99,22 @@ export function SessionPage() {
     },
   });
 
+  const providerCliToolId = useMemo(() => {
+    if (!cliTools || !session?.provider || session.provider === 'claude') return null;
+    const lookup = session.provider === 'codex'
+      ? ['codex-cli', 'codex']
+      : ['zai', 'z.ai', 'claude-zai', 'claude-zai-cli'];
+    const match = cliTools.find((tool) => lookup.includes(tool.name.toLowerCase()));
+    return match?.id ?? null;
+  }, [cliTools, session?.provider]);
+
+  const effectiveCliToolId = session?.provider === 'claude' ? selectedCliTool : providerCliToolId;
+
   // Memoized selected tool name for placeholder
   const selectedToolName = useMemo(() => {
-    if (!selectedCliTool || !cliTools) return null;
-    return cliTools.find(t => t.id === selectedCliTool)?.name;
-  }, [selectedCliTool, cliTools]);
+    if (!effectiveCliToolId || !cliTools) return null;
+    return cliTools.find(t => t.id === effectiveCliToolId)?.name;
+  }, [effectiveCliToolId, cliTools]);
 
   // Fetch usage limits
   const { data: usageLimits } = useQuery({
@@ -270,6 +282,17 @@ export function SessionPage() {
 
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    if (session?.provider) {
+      setProviderTheme(session.provider);
+    }
+  }, [session?.provider]);
+
+  useEffect(() => {
+    if (!session?.provider || session.provider === 'claude') return;
+    setSelectedCliTool(providerCliToolId);
+  }, [session?.provider, providerCliToolId]);
+
   // Star/unstar session mutation
   const starMutation = useMutation({
     mutationFn: async () => {
@@ -342,14 +365,70 @@ export function SessionPage() {
   }, [mobileView]);
 
   // Callbacks for ChatInput
-  const handleSendMessage = useCallback((message: string) => {
+  const handleSendMessage = useCallback(async (message: string) => {
     if (!id) return;
-    socketService.sendMessage(id, message);
-    clearStreamingContent(id);
-  }, [id, clearStreamingContent]);
+    const toolId = session?.provider === 'claude' ? selectedCliTool : providerCliToolId;
+    if (session?.provider && session.provider !== 'claude' && !toolId) {
+      addMessage(id, {
+        id: generateId(),
+        sessionId: id,
+        role: 'system',
+        content: `⚠️ Configure a CLI tool named "${session.provider === 'codex' ? 'codex-cli' : 'zai'}" to run ${session.provider} sessions.`,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (!toolId) {
+      socketService.sendMessage(id, message);
+      clearStreamingContent(id);
+      return;
+    }
+
+    setIsExecutingTool(true);
+    const abortController = new AbortController();
+    cliToolAbortRef.current = abortController;
+    try {
+      await api.post<ApiResponse<unknown>>(
+        `/api/cli-tools/${toolId}/execute`,
+        {
+          prompt: message,
+          workingDirectory: session?.workingDirectory,
+          sessionId: id,
+        },
+        { signal: abortController.signal }
+      );
+      queryClient.invalidateQueries({ queryKey: ['messages', id] });
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+      addMessage(id, {
+        id: generateId(),
+        sessionId: id,
+        role: 'system',
+        content: `⚠️ CLI tool execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        createdAt: new Date().toISOString(),
+      });
+    } finally {
+      setIsExecutingTool(false);
+      cliToolAbortRef.current = null;
+    }
+  }, [id, selectedCliTool, providerCliToolId, session?.provider, session?.workingDirectory, clearStreamingContent, addMessage, queryClient]);
 
   const handleSendMessageWithFiles = useCallback(async (message: string, files: File[]) => {
     if (!id) return;
+    if (effectiveCliToolId || (session?.provider && session.provider !== 'claude')) {
+      addMessage(id, {
+        id: generateId(),
+        sessionId: id,
+        role: 'system',
+        content: '⚠️ CLI tools do not support file attachments. Send text-only prompts when a CLI tool is selected.',
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
+
     setIsSending(true);
     try {
       await socketService.sendMessageWithFiles(id, message, files);
@@ -357,7 +436,7 @@ export function SessionPage() {
     } finally {
       setIsSending(false);
     }
-  }, [id, clearStreamingContent]);
+  }, [id, effectiveCliToolId, session?.provider, addMessage, clearStreamingContent]);
 
   const handleCommandExecute = useCallback(async (input: string) => {
     if (!id) return;
@@ -482,6 +561,14 @@ export function SessionPage() {
                 />
               </button>
               {session.name}
+              <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                {getProviderLabel(session.provider ?? 'claude')}
+              </span>
+              {session.provider !== 'claude' && selectedToolName && (
+                <span className="text-xs text-muted-foreground">
+                  via {selectedToolName}
+                </span>
+              )}
               <span
                 className={cn(
                   'inline-block h-2.5 w-2.5 rounded-full',
@@ -505,7 +592,7 @@ export function SessionPage() {
           </div>
           <div className="flex gap-2 items-center">
             {/* CLI Tool selector - visible in header */}
-            {cliTools && cliTools.length > 0 && (
+            {session.provider === 'claude' && cliTools && cliTools.length > 0 && (
               <div className="relative shrink-0">
                 <select
                   value={selectedCliTool || ''}
@@ -1127,7 +1214,7 @@ export function SessionPage() {
         onCommandExecute={handleCommandExecute}
         commands={commands}
         selectedToolName={selectedToolName}
-        selectedCliTool={selectedCliTool}
+        selectedCliTool={effectiveCliToolId}
         disabled={session.status === 'error'}
         isSending={isSending}
         isExecutingTool={isExecutingTool}

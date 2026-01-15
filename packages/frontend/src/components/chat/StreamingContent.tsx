@@ -376,7 +376,7 @@ function WelcomeScreen({ data }: { data: { version: string; model: string; worki
           <Sparkles className="h-8 w-8 text-primary" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Claude Code Ready</h2>
+          <h2 className="text-lg font-semibold">Plum Code Ready</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {data.model} · v{data.version}
           </p>

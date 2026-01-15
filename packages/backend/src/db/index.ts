@@ -56,6 +56,7 @@ function runMigrations(db: Database.Database): void {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       working_directory TEXT NOT NULL,
+      provider TEXT DEFAULT 'claude',
       claude_session_id TEXT,
       status TEXT DEFAULT 'stopped',
       last_message TEXT,
@@ -202,6 +203,13 @@ function runMigrations(db: Database.Database): void {
   // Migration: Add category column to sessions table
   try {
     db.exec(`ALTER TABLE sessions ADD COLUMN category TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Add provider column to sessions table
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN provider TEXT DEFAULT 'claude'`);
   } catch {
     // Column already exists, ignore error
   }

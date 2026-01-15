@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
+import { getStoredProvider, setProviderTheme } from './lib/providerTheme';
 
 // Initialize theme before render to prevent flash
 function initializeTheme() {
@@ -18,6 +19,8 @@ function initializeTheme() {
   } else {
     document.documentElement.classList.add(theme);
   }
+
+  setProviderTheme(getStoredProvider());
 }
 
 initializeTheme();

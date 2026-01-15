@@ -16,6 +16,7 @@ const router = Router();
 const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   workingDirectory: z.string().optional(), // Optional - will be auto-generated from name
+  provider: z.enum(['claude', 'zai', 'codex']).optional(),
 });
 
 const updateSessionSchema = z.object({
@@ -55,7 +56,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const sessions = db
     .prepare(
-      `SELECT id, user_id as userId, name, working_directory as workingDirectory,
+      `SELECT id, user_id as userId, name, working_directory as workingDirectory, provider,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, category, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE user_id = ? ORDER BY starred DESC, updated_at DESC`
@@ -74,7 +75,7 @@ router.get('/:id', requireAuth, (req, res) => {
 
   const rawSession = db
     .prepare(
-      `SELECT id, user_id as userId, name, working_directory as workingDirectory,
+      `SELECT id, user_id as userId, name, working_directory as workingDirectory, provider,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, category, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ? AND user_id = ?`
@@ -99,7 +100,7 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
   }
 
-  const { name, workingDirectory: providedWorkingDir } = parsed.data;
+  const { name, workingDirectory: providedWorkingDir, provider } = parsed.data;
   const db = getDatabase();
 
   let workingDirectory: string;
@@ -154,13 +155,13 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
   const sessionId = nanoid();
 
   db.prepare(
-    `INSERT INTO sessions (id, user_id, name, working_directory)
-     VALUES (?, ?, ?, ?)`
-  ).run(sessionId, userId, name, workingDirectory);
+    `INSERT INTO sessions (id, user_id, name, working_directory, provider)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(sessionId, userId, name, workingDirectory, provider ?? 'claude');
 
   const newSession = db
     .prepare(
-      `SELECT id, user_id as userId, name, working_directory as workingDirectory,
+      `SELECT id, user_id as userId, name, working_directory as workingDirectory, provider,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`
@@ -214,7 +215,7 @@ router.put('/:id', requireAuth, (req, res) => {
 
   const updatedSession = db
     .prepare(
-      `SELECT id, user_id as userId, name, working_directory as workingDirectory,
+      `SELECT id, user_id as userId, name, working_directory as workingDirectory, provider,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`

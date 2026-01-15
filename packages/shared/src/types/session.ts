@@ -5,6 +5,7 @@ export interface Session {
   userId: string;
   name: string;
   workingDirectory: string;
+  provider: 'claude' | 'zai' | 'codex';
   claudeSessionId: string | null;
   status: SessionStatus;
   lastMessage: string | null;
@@ -16,6 +17,7 @@ export interface Session {
 export interface CreateSessionInput {
   name: string;
   workingDirectory: string;
+  provider?: 'claude' | 'zai' | 'codex';
 }
 
 export interface UpdateSessionInput {
