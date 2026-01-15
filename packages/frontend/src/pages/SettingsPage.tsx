@@ -1496,7 +1496,7 @@ export function SettingsPage() {
                 </div>
                 <p className="font-medium text-muted-foreground mb-1">No MCP servers configured</p>
                 <p className="text-sm text-muted-foreground/70 max-w-xs">
-                  Add Model Context Protocol servers to extend Claude's capabilities
+                  Add Model Context Protocol servers to extend all providers
                 </p>
               </CardContent>
             </Card>
@@ -1519,12 +1519,15 @@ export function SettingsPage() {
               Add
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground mb-3">
+            Provider sessions look for tools named <span className="font-medium">codex-cli</span> (Codex) or <span className="font-medium">zai</span> (Z.AI).
+          </p>
 
           {showCliToolForm && (
             <Card className="mb-4 border-orange-500/30 bg-orange-500/5 animate-scale-in">
               <CardHeader className="pb-4">
                 <CardTitle className="text-base">New CLI Tool</CardTitle>
-                <CardDescription>Add an AI CLI tool for Claude to orchestrate</CardDescription>
+                <CardDescription>Add an AI CLI tool that all providers can orchestrate</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -1652,7 +1655,7 @@ export function SettingsPage() {
                 </div>
                 <p className="font-medium text-muted-foreground mb-1">No CLI tools configured</p>
                 <p className="text-sm text-muted-foreground/70 max-w-xs">
-                  Add AI CLI tools like Codex or Aider for Claude to orchestrate
+                  Add AI CLI tools like Codex or Aider for all providers to orchestrate
                 </p>
               </CardContent>
             </Card>
@@ -1662,7 +1665,7 @@ export function SettingsPage() {
 
           {/* Extensions Tab */}
           <TabsContent value="extensions" className="space-y-6">
-            {/* Claude Agents */}
+            {/* Shared Agents */}
         <section>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -1777,7 +1780,7 @@ export function SettingsPage() {
                 </div>
                 <p className="font-medium text-muted-foreground mb-1">No agents found</p>
                 <p className="text-sm text-muted-foreground/70 max-w-xs mb-4">
-                  Create custom agents to extend Claude's capabilities
+                  Create custom agents that are available across providers
                 </p>
                 <Button size="sm" onClick={() => openAgentEditor('create')} className="gap-2">
                   <Plus className="h-4 w-4" />
@@ -1788,7 +1791,7 @@ export function SettingsPage() {
           )}
         </section>
 
-        {/* Claude Skills */}
+        {/* Shared Skills */}
         <section>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -1900,7 +1903,7 @@ export function SettingsPage() {
                 </div>
                 <p className="font-medium text-muted-foreground mb-1">No skills found</p>
                 <p className="text-sm text-muted-foreground/70 max-w-xs mb-4">
-                  Create custom skills to add reusable capabilities
+                  Create custom skills that are available across providers
                 </p>
                 <Button size="sm" onClick={() => openSkillEditor('create')} className="gap-2 bg-green-600 hover:bg-green-700">
                   <Plus className="h-4 w-4" />

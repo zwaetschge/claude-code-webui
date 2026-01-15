@@ -13,6 +13,7 @@ import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
 import type { Session, ApiResponse, UserSettings } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
+import { getProviderLabel, getStoredProvider, PROVIDER_OPTIONS, setProviderTheme, type UiProvider } from '@/lib/providerTheme';
 
 // Usage limit display components
 function UsageBar({ percent, color }: { percent: number; color: string }) {
@@ -104,6 +105,7 @@ export function DashboardPage() {
   const [newSessionName, setNewSessionName] = useState('');
   const [sessionMode, setSessionMode] = useState<'new' | 'existing'>('new');
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<UiProvider>(() => getStoredProvider());
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showCategories, setShowCategories] = useState(false);
@@ -141,7 +143,7 @@ export function DashboardPage() {
 
   // Create session mutation
   const createMutation = useMutation({
-    mutationFn: async (data: { name: string; workingDirectory?: string }) => {
+    mutationFn: async (data: { name: string; workingDirectory?: string; provider?: UiProvider }) => {
       const response = await api.post<ApiResponse<Session>>('/api/sessions', data);
       return response.data;
     },
@@ -180,8 +182,9 @@ export function DashboardPage() {
   const handleCreateSession = (e: React.FormEvent) => {
     e.preventDefault();
     if (newSessionName.trim()) {
-      const payload: { name: string; workingDirectory?: string } = {
+      const payload: { name: string; workingDirectory?: string; provider?: UiProvider } = {
         name: newSessionName.trim(),
+        provider: selectedProvider,
       };
 
       // If using existing folder mode and a folder is selected, include it
@@ -198,6 +201,10 @@ export function DashboardPage() {
       setShowNewSession(true);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    setProviderTheme(selectedProvider);
+  }, [selectedProvider]);
 
   // Fetch usage limits from API
   const fetchLimits = async () => {
@@ -263,7 +270,7 @@ export function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
-          <p className="text-sm md:text-base text-muted-foreground">Manage your Claude Code sessions</p>
+          <p className="text-sm md:text-base text-muted-foreground">Manage your Plum Code sessions</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <Button
@@ -448,6 +455,26 @@ export function DashboardPage() {
                 </div>
               </form>
             )}
+
+            <div className="mt-4 space-y-2">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Provider</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {PROVIDER_OPTIONS.map((option) => {
+                  const isActive = selectedProvider === option.id;
+                  return (
+                    <Button
+                      key={option.id}
+                      type="button"
+                      variant={isActive ? 'default' : 'outline'}
+                      className="h-10"
+                      onClick={() => setSelectedProvider(option.id)}
+                    >
+                      {option.label}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -495,6 +522,11 @@ export function DashboardPage() {
                     <MessageSquare className="h-4 w-4" />
                     {session.name}
                   </CardTitle>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                      {getProviderLabel(session.provider ?? 'claude')}
+                    </span>
+                  </div>
                   <CardDescription className="flex items-center gap-1">
                     <FolderOpen className="h-3 w-3" />
                     {session.workingDirectory}

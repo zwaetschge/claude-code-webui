@@ -77,6 +77,110 @@
     --glow-color: 18 60% 55%;
   }
 
+  :root[data-provider='zai'] {
+    --background: 270 30% 96%;
+    --foreground: 270 20% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 270 20% 14%;
+    --primary: 285 55% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 270 18% 90%;
+    --secondary-foreground: 270 18% 22%;
+    --muted: 270 15% 92%;
+    --muted-foreground: 270 10% 42%;
+    --accent: 285 55% 52%;
+    --accent-foreground: 0 0% 100%;
+    --border: 270 15% 88%;
+    --input: 270 15% 88%;
+    --ring: 285 55% 52%;
+
+    --claude-crail: 285 55% 52%;
+    --claude-terracotta: 285 45% 60%;
+    --claude-pampas: 270 30% 96%;
+    --claude-cloudy: 270 12% 70%;
+
+    --shadow-color: 270 18% 28%;
+    --glow-color: 285 55% 52%;
+  }
+
+  html.dark[data-provider='zai'], :root.dark[data-provider='zai'] {
+    --background: 270 20% 9%;
+    --foreground: 270 15% 92%;
+    --card: 270 18% 12%;
+    --card-foreground: 270 15% 92%;
+    --primary: 285 60% 60%;
+    --primary-foreground: 270 20% 10%;
+    --secondary: 270 16% 16%;
+    --secondary-foreground: 270 15% 82%;
+    --muted: 270 16% 14%;
+    --muted-foreground: 270 12% 56%;
+    --accent: 285 60% 60%;
+    --accent-foreground: 270 20% 10%;
+    --border: 270 16% 18%;
+    --input: 270 16% 18%;
+    --ring: 285 60% 60%;
+
+    --claude-crail: 285 60% 60%;
+    --claude-terracotta: 285 50% 66%;
+    --claude-pampas: 270 20% 92%;
+    --claude-cloudy: 270 12% 55%;
+
+    --shadow-color: 270 20% 5%;
+    --glow-color: 285 60% 60%;
+  }
+
+  :root[data-provider='codex'] {
+    --background: 150 25% 96%;
+    --foreground: 150 20% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 150 20% 12%;
+    --primary: 142 55% 40%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 150 20% 90%;
+    --secondary-foreground: 150 20% 22%;
+    --muted: 150 18% 92%;
+    --muted-foreground: 150 10% 42%;
+    --accent: 142 55% 40%;
+    --accent-foreground: 0 0% 100%;
+    --border: 150 15% 88%;
+    --input: 150 15% 88%;
+    --ring: 142 55% 40%;
+
+    --claude-crail: 142 55% 40%;
+    --claude-terracotta: 150 45% 48%;
+    --claude-pampas: 150 25% 96%;
+    --claude-cloudy: 150 10% 70%;
+
+    --shadow-color: 150 20% 28%;
+    --glow-color: 142 55% 40%;
+  }
+
+  html.dark[data-provider='codex'], :root.dark[data-provider='codex'] {
+    --background: 150 18% 9%;
+    --foreground: 150 15% 92%;
+    --card: 150 16% 12%;
+    --card-foreground: 150 15% 92%;
+    --primary: 142 60% 55%;
+    --primary-foreground: 150 18% 10%;
+    --secondary: 150 16% 16%;
+    --secondary-foreground: 150 15% 82%;
+    --muted: 150 16% 14%;
+    --muted-foreground: 150 10% 56%;
+    --accent: 142 60% 55%;
+    --accent-foreground: 150 18% 10%;
+    --border: 150 16% 18%;
+    --input: 150 16% 18%;
+    --ring: 142 60% 55%;
+
+    --claude-crail: 142 60% 55%;
+    --claude-terracotta: 150 50% 60%;
+    --claude-pampas: 150 18% 92%;
+    --claude-cloudy: 150 10% 55%;
+
+    --shadow-color: 150 18% 5%;
+    --glow-color: 142 60% 55%;
+  }
+
   * {
     @apply border-border;
   }

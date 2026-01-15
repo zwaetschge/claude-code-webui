@@ -43,10 +43,10 @@ export function Layout() {
           <Link to="/" className="flex items-center gap-2">
             <img
               src="/claude-logo.png"
-              alt="Claude"
+              alt="Plum Code"
               className="h-7 w-7 object-contain"
             />
-            <span className="font-semibold text-sm">Claude Code</span>
+            <span className="font-semibold text-sm">Plum Code</span>
           </Link>
 
           <Button

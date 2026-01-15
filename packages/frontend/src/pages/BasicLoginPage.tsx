@@ -48,7 +48,7 @@ export function BasicLoginPage() {
           </div>
           <CardTitle className="text-2xl font-bold tracking-tight">Welcome</CardTitle>
           <CardDescription className="text-base text-muted-foreground/80">
-            Sign in to access Claude Code WebUI
+            Sign in to access Plum-Code-WebUI
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-4">

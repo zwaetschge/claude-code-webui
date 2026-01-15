@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Github, AlertCircle } from 'lucide-react';
+import { Github, AlertCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
+import { getStoredProvider, PROVIDER_OPTIONS, setProviderTheme, type UiProvider } from '@/lib/providerTheme';
 
 const errorMessages: Record<string, string> = {
   github: 'GitHub authentication failed. Please try again.',
@@ -27,6 +28,7 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const { isAuthenticated, isLoading } = useAuthStore();
   const error = searchParams.get('error');
+  const [selectedProvider, setSelectedProvider] = useState<UiProvider>(() => getStoredProvider());
 
   // Fetch available auth providers
   const { data: providers } = useQuery({
@@ -42,6 +44,10 @@ export function LoginPage() {
       navigate('/');
     }
   }, [isAuthenticated, isLoading, navigate]);
+
+  useEffect(() => {
+    setProviderTheme(selectedProvider);
+  }, [selectedProvider]);
 
   const handleGitHubLogin = () => {
     window.location.href = '/auth/github';
@@ -59,24 +65,24 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background pattern-bg p-4">
       {/* Decorative elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 -left-32 w-64 h-64 bg-[#D97757]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-[#D97757]/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/4 -left-32 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
       </div>
 
       <Card className="w-full max-w-md relative animate-fade-in card-hover gradient-border">
         <CardHeader className="text-center pb-2">
           <div className="flex justify-center mb-4">
-            <div className="p-4 rounded-2xl bg-[#D97757]/10 animate-glow">
+            <div className="p-4 rounded-2xl bg-primary/10 animate-glow">
               <img
                 src="/claude-logo.png"
-                alt="Claude"
+                alt="Plum Code"
                 className="h-12 w-12 object-contain"
               />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">Claude Code</CardTitle>
+          <CardTitle className="text-2xl font-bold tracking-tight">Plum Code</CardTitle>
           <CardDescription className="text-base text-muted-foreground/80">
-            WebUI
+            Plum-Code-WebUI
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 pt-4">
@@ -87,10 +93,36 @@ export function LoginPage() {
             </div>
           )}
 
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Choose a provider</p>
+            <div className="grid grid-cols-1 gap-2">
+              {PROVIDER_OPTIONS.map((option) => {
+                const isActive = selectedProvider === option.id;
+                return (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant={isActive ? 'default' : 'outline'}
+                    className="justify-between h-12"
+                    onClick={() => setSelectedProvider(option.id)}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Sparkles className={isActive ? 'text-primary-foreground' : 'text-primary'} />
+                      {option.label}
+                    </span>
+                    <span className={isActive ? 'text-primary-foreground/80 text-xs' : 'text-muted-foreground text-xs'}>
+                      {option.description}
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+
           {providers?.claude && (
             <Button
               onClick={handleClaudeLogin}
-              className="w-full h-12 text-base gap-3 bg-[#D97757] hover:bg-[#C86747] text-white"
+              className="w-full h-12 text-base gap-3"
               size="lg"
             >
               <img src="/claude-logo.png" alt="" className="h-5 w-5 object-contain brightness-0 invert" />
