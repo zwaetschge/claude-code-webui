@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../db';
 import { AppError } from '../middleware/errorHandler';
-import { safeEncrypt, safeDecrypt } from '../utils/encryption';
+import { isEncryptionAvailable, safeEncrypt, safeDecrypt } from '../utils/encryption';
 import { safeJsonParse } from '../utils/json';
 import type { UserSettings, Theme } from '@claude-code-webui/shared';
 
@@ -122,6 +122,10 @@ router.put('/api-key', requireAuth, (req, res) => {
     throw new AppError('API key is required', 400, 'MISSING_API_KEY');
   }
 
+  if (!isEncryptionAvailable()) {
+    throw new AppError('ENCRYPTION_KEY must be set to store API keys', 400, 'ENCRYPTION_REQUIRED');
+  }
+
   // Encrypt the API key before storing
   const db = getDatabase();
   db.prepare('UPDATE users SET api_key_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
@@ -156,12 +160,13 @@ router.get('/gemini-key', requireAuth, (req, res) => {
   if (settings?.settings_json) {
     try {
       const parsed = JSON.parse(settings.settings_json);
+      const decryptedKey = typeof parsed.geminiApiKey === 'string' ? safeDecrypt(parsed.geminiApiKey) : null;
       res.json({
         success: true,
         data: {
-          hasKey: !!parsed.geminiApiKey,
-          keyPreview: parsed.geminiApiKey
-            ? `${parsed.geminiApiKey.substring(0, 10)}...${parsed.geminiApiKey.slice(-4)}`
+          hasKey: !!decryptedKey,
+          keyPreview: decryptedKey
+            ? `${decryptedKey.substring(0, 10)}...${decryptedKey.slice(-4)}`
             : null
         }
       });
@@ -181,6 +186,10 @@ router.put('/gemini-key', requireAuth, (req, res) => {
 
   if (!apiKey || typeof apiKey !== 'string') {
     throw new AppError('API key is required', 400, 'MISSING_API_KEY');
+  }
+
+  if (!isEncryptionAvailable()) {
+    throw new AppError('ENCRYPTION_KEY must be set to store API keys', 400, 'ENCRYPTION_REQUIRED');
   }
 
   // Validate key format (Google API keys start with AIza)
@@ -277,12 +286,13 @@ router.get('/github-token', requireAuth, (req, res) => {
   if (settings?.settings_json) {
     try {
       const parsed = JSON.parse(settings.settings_json);
-      if (parsed.githubToken) {
+      const decryptedToken = typeof parsed.githubToken === 'string' ? safeDecrypt(parsed.githubToken) : null;
+      if (decryptedToken) {
         res.json({
           success: true,
           data: {
             hasToken: true,
-            tokenPreview: `${parsed.githubToken.substring(0, 8)}...${parsed.githubToken.slice(-4)}`
+            tokenPreview: `${decryptedToken.substring(0, 8)}...${decryptedToken.slice(-4)}`
           }
         });
         return;
@@ -302,6 +312,10 @@ router.put('/github-token', requireAuth, (req, res) => {
 
   if (!token || typeof token !== 'string') {
     throw new AppError('Token is required', 400, 'MISSING_TOKEN');
+  }
+
+  if (!isEncryptionAvailable()) {
+    throw new AppError('ENCRYPTION_KEY must be set to store tokens', 400, 'ENCRYPTION_REQUIRED');
   }
 
   // Validate token format (GitHub PAT starts with ghp_, github_pat_, or is a classic token)

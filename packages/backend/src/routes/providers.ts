@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { getDatabase } from '../db/index.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
-import { safeEncrypt, safeDecrypt } from '../utils/encryption.js';
+import { isEncryptionAvailable, safeEncrypt, safeDecrypt } from '../utils/encryption.js';
 import type { ApiResponse } from '@claude-code-webui/shared';
 
 const router = Router();
@@ -58,6 +58,25 @@ const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   ollama: 'http://localhost:11434',
   custom: '',
 };
+
+const PROVIDER_TYPES = new Set(Object.keys(DEFAULT_MODELS));
+
+const PRIVATE_HOST_PATTERN = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/;
+
+function isSafePublicUrl(rawUrl: string): boolean {
+  try {
+    const parsedUrl = new URL(rawUrl);
+    if (!['https:', 'http:'].includes(parsedUrl.protocol)) {
+      return false;
+    }
+    if (PRIVATE_HOST_PATTERN.test(parsedUrl.hostname)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function transformProvider(p: AIProvider): AIProviderResponse {
   return {
@@ -131,6 +150,22 @@ router.post('/', requireAuth, (req, res) => {
     return res.status(400).json(response);
   }
 
+  if (!PROVIDER_TYPES.has(type)) {
+    const response: ApiResponse<null> = {
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid provider type' },
+    };
+    return res.status(400).json(response);
+  }
+
+  if (apiKey && !isEncryptionAvailable()) {
+    const response: ApiResponse<null> = {
+      success: false,
+      error: { code: 'ENCRYPTION_REQUIRED', message: 'ENCRYPTION_KEY must be set to store API keys' },
+    };
+    return res.status(400).json(response);
+  }
+
   try {
     const id = nanoid();
 
@@ -194,6 +229,13 @@ router.patch('/:id', requireAuth, (req, res) => {
       values.push(name);
     }
     if (apiKey !== undefined && apiKey !== '') {
+      if (!isEncryptionAvailable()) {
+        const response: ApiResponse<null> = {
+          success: false,
+          error: { code: 'ENCRYPTION_REQUIRED', message: 'ENCRYPTION_KEY must be set to store API keys' },
+        };
+        return res.status(400).json(response);
+      }
       updates.push('api_key_encrypted = ?');
       values.push(safeEncrypt(apiKey)); // Encrypt API key
     }
@@ -297,6 +339,10 @@ router.post('/:id/test', requireAuth, async (req, res) => {
         case 'zai': {
           // Z.AI uses OpenAI-compatible API
           const baseUrl = provider.base_url || DEFAULT_BASE_URLS[provider.type];
+          if (!isSafePublicUrl(baseUrl)) {
+            testResult = { success: false, message: 'Unsafe base URL for server-side connection test' };
+            break;
+          }
           const response = await fetch(`${baseUrl}/models`, {
             headers: { 'Authorization': `Bearer ${apiKey}` },
           });
