@@ -3,7 +3,7 @@ export interface User {
   email: string;
   name: string | null;
   avatarUrl: string | null;
-  provider: 'github' | 'google' | 'claude' | 'dev';
+  provider: 'github' | 'google' | 'claude' | 'codex' | 'dev';
   providerId: string;
   createdAt: string;
   updatedAt: string;
