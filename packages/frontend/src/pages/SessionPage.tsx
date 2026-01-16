@@ -99,23 +99,6 @@ export function SessionPage() {
     },
   });
 
-  const providerCliToolId = useMemo(() => {
-    if (!cliTools || !session?.provider || session.provider === 'claude') return null;
-    const lookup = session.provider === 'codex'
-      ? ['codex-cli', 'codex']
-      : ['zai', 'z.ai', 'claude-zai', 'claude-zai-cli'];
-    const match = cliTools.find((tool) => lookup.includes(tool.name.toLowerCase()));
-    return match?.id ?? null;
-  }, [cliTools, session?.provider]);
-
-  const effectiveCliToolId = session?.provider === 'claude' ? selectedCliTool : providerCliToolId;
-
-  // Memoized selected tool name for placeholder
-  const selectedToolName = useMemo(() => {
-    if (!effectiveCliToolId || !cliTools) return null;
-    return cliTools.find(t => t.id === effectiveCliToolId)?.name;
-  }, [effectiveCliToolId, cliTools]);
-
   // Fetch usage limits
   const { data: usageLimits } = useQuery({
     queryKey: ['usage-limits'],
@@ -252,6 +235,23 @@ export function SessionPage() {
     },
     enabled: !!id,
   });
+
+  const providerCliToolId = useMemo(() => {
+    if (!cliTools || !session?.provider || session.provider === 'claude') return null;
+    const lookup = session.provider === 'codex'
+      ? ['codex-cli', 'codex']
+      : ['zai', 'z.ai', 'claude-zai', 'claude-zai-cli'];
+    const match = cliTools.find((tool) => lookup.includes(tool.name.toLowerCase()));
+    return match?.id ?? null;
+  }, [cliTools, session?.provider]);
+
+  const effectiveCliToolId = session?.provider === 'claude' ? selectedCliTool : providerCliToolId;
+
+  // Memoized selected tool name for placeholder
+  const selectedToolName = useMemo(() => {
+    if (!effectiveCliToolId || !cliTools) return null;
+    return cliTools.find(t => t.id === effectiveCliToolId)?.name;
+  }, [effectiveCliToolId, cliTools]);
 
   // Fetch messages
   const { isLoading: messagesLoading } = useQuery({
