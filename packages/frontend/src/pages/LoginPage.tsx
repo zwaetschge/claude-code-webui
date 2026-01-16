@@ -14,6 +14,7 @@ const errorMessages: Record<string, string> = {
   claude: 'Claude authentication failed. Please try again.',
   claude_not_logged_in: 'Claude CLI not logged in. Run "claude /login" first.',
   codex: 'Codex authentication failed. Please try again.',
+  codex_disabled: 'Codex authentication is disabled on this server.',
   unauthorized: 'You are not authorized. Please sign in.',
   expired: 'Your session has expired. Please sign in again.',
 };

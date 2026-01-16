@@ -238,20 +238,26 @@ if (config.claude.oauthEnabled) {
   });
 }
 
-router.get('/codex', async (_req, res) => {
-  try {
-    const user = await findOrCreateLocalUser({
-      provider: 'codex',
-      email: 'codex-user@local',
-      name: 'Codex User',
-    });
-    const token = generateToken(user.id);
-    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-  } catch (error) {
-    console.error('Codex CLI auth error:', error);
-    res.redirect(`${config.frontendUrl}/login?error=codex`);
-  }
-});
+if (config.codex.authEnabled) {
+  router.get('/codex', async (_req, res) => {
+    try {
+      const user = await findOrCreateLocalUser({
+        provider: 'codex',
+        email: 'codex-user@local',
+        name: 'Codex User',
+      });
+      const token = generateToken(user.id);
+      res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+    } catch (error) {
+      console.error('Codex CLI auth error:', error);
+      res.redirect(`${config.frontendUrl}/login?error=codex`);
+    }
+  });
+} else {
+  router.get('/codex', (_req, res) => {
+    res.redirect(`${config.frontendUrl}/login?error=codex_disabled`);
+  });
+}
 
 // Dev login (only in development mode)
 if (config.isDevelopment) {
@@ -355,7 +361,7 @@ router.get('/providers', (_req, res) => {
       github: !!(config.github.clientId && config.github.clientSecret),
       google: !!(config.google.clientId && config.google.clientSecret),
       claude: config.claude.oauthEnabled,
-      codex: true,
+      codex: config.codex.authEnabled,
     },
   });
 });
