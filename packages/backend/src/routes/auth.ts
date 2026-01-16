@@ -409,7 +409,7 @@ router.get('/providers', (_req, res) => {
       claude: config.claude.oauthEnabled,
       codex: config.codex.authEnabled,
       gemini: true,
-      zai: config.claude.oauthEnabled,
+      zai: true,
     },
   });
 });
