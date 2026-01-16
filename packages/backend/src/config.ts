@@ -22,8 +22,8 @@ const envSchema = z.object({
   CLAUDE_OAUTH_ENABLED: z.string().optional().transform(v => v !== 'false'),
   // User email for display (since Anthropic API is Cloudflare-protected)
   CLAUDE_USER_EMAIL: z.string().optional(),
-  // Codex local auth (disabled by default)
-  CODEX_AUTH_ENABLED: z.string().optional().transform(v => v === 'true'),
+  // Codex local auth (enabled by default)
+  CODEX_AUTH_ENABLED: z.string().optional().transform(v => v !== 'false'),
 });
 
 function loadConfig() {
@@ -76,7 +76,7 @@ function loadConfig() {
       userEmail: env.CLAUDE_USER_EMAIL, // Optional: set via CLAUDE_USER_EMAIL env var
     },
     codex: {
-      authEnabled: env.CODEX_AUTH_ENABLED, // Disabled by default (set CODEX_AUTH_ENABLED=true to enable)
+      authEnabled: env.CODEX_AUTH_ENABLED, // Enabled by default (set CODEX_AUTH_ENABLED=false to disable)
     },
   };
 }
