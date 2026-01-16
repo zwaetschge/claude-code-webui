@@ -17,6 +17,55 @@ function generateToken(userId: string): string {
   return jwt.sign({ userId }, config.jwtSecret, { expiresIn: '7d' });
 }
 
+async function findOrCreateLocalUser({
+  provider,
+  email,
+  name,
+}: {
+  provider: User['provider'];
+  email: string;
+  name: string;
+}): Promise<User> {
+  const db = getDatabase();
+  const providerId = 'local-cli';
+
+  let user = db
+    .prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?')
+    .get(provider, providerId) as User | undefined;
+
+  if (!user) {
+    const userId = nanoid();
+    db.prepare(
+      `INSERT INTO users (id, email, name, avatar_url, provider, provider_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(userId, email, name, null, provider, providerId);
+
+    // Create default settings
+    db.prepare(
+      `INSERT INTO user_settings (user_id, theme, allowed_tools)
+       VALUES (?, 'dark', '["Bash","Read","Write","Edit","Glob","Grep"]')`
+    ).run(userId);
+
+    user = {
+      id: userId,
+      email,
+      name,
+      avatarUrl: null,
+      provider,
+      providerId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as User;
+  } else {
+    // Update user info
+    db.prepare('UPDATE users SET email = ?, name = ? WHERE id = ?').run(email, name, user.id);
+    user.email = email;
+    user.name = name;
+  }
+
+  return user;
+}
+
 // GitHub OAuth (only if configured)
 if (config.github.clientId && config.github.clientSecret && config.github.callbackUrl) {
   router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
@@ -170,42 +219,11 @@ if (config.claude.oauthEnabled) {
         console.log('Profile fetch error:', err);
       }
 
-      const db = getDatabase();
-
-      // Find or create user
-      let user = db
-        .prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?')
-        .get('claude', 'local-cli') as User | undefined;
-
-      if (!user) {
-        const userId = nanoid();
-        db.prepare(
-          `INSERT INTO users (id, email, name, avatar_url, provider, provider_id)
-           VALUES (?, ?, ?, ?, 'claude', 'local-cli')`
-        ).run(userId, email, name, null);
-
-        // Create default settings
-        db.prepare(
-          `INSERT INTO user_settings (user_id, theme, allowed_tools)
-           VALUES (?, 'dark', '["Bash","Read","Write","Edit","Glob","Grep"]')`
-        ).run(userId);
-
-        user = {
-          id: userId,
-          email,
-          name,
-          avatarUrl: null,
-          provider: 'claude',
-          providerId: 'local-cli',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        } as User;
-      } else {
-        // Update user info
-        db.prepare('UPDATE users SET email = ?, name = ? WHERE id = ?').run(email, name, user.id);
-        user.email = email;
-        user.name = name;
-      }
+      const user = await findOrCreateLocalUser({
+        provider: 'claude',
+        email,
+        name,
+      });
 
       const token = generateToken(user.id);
       res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
@@ -219,6 +237,21 @@ if (config.claude.oauthEnabled) {
     res.redirect(`${config.frontendUrl}/login?error=claude`);
   });
 }
+
+router.get('/codex', async (_req, res) => {
+  try {
+    const user = await findOrCreateLocalUser({
+      provider: 'codex',
+      email: 'codex-user@local',
+      name: 'Codex User',
+    });
+    const token = generateToken(user.id);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Codex CLI auth error:', error);
+    res.redirect(`${config.frontendUrl}/login?error=codex`);
+  }
+});
 
 // Dev login (only in development mode)
 if (config.isDevelopment) {
@@ -322,6 +355,7 @@ router.get('/providers', (_req, res) => {
       github: !!(config.github.clientId && config.github.clientSecret),
       google: !!(config.google.clientId && config.google.clientSecret),
       claude: config.claude.oauthEnabled,
+      codex: true,
     },
   });
 });
