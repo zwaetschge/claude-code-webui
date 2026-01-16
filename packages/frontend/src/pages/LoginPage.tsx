@@ -13,6 +13,11 @@ const errorMessages: Record<string, string> = {
   google: 'Google authentication failed. Please try again.',
   claude: 'Claude authentication failed. Please try again.',
   claude_not_logged_in: 'Claude CLI not logged in. Run "claude /login" first.',
+  codex: 'Codex authentication failed. Please try again.',
+  codex_disabled: 'Codex authentication is disabled on this server.',
+  gemini: 'Gemini authentication failed. Please try again.',
+  gemini_not_logged_in: 'Gemini CLI not logged in. Run "gemini auth login" first.',
+  zai: 'Z.AI authentication failed. Please try again.',
   unauthorized: 'You are not authorized. Please sign in.',
   expired: 'Your session has expired. Please sign in again.',
 };
@@ -21,6 +26,9 @@ interface AuthProviders {
   github: boolean;
   google: boolean;
   claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+  zai: boolean;
 }
 
 export function LoginPage() {
@@ -59,6 +67,18 @@ export function LoginPage() {
 
   const handleClaudeLogin = () => {
     window.location.href = '/auth/claude';
+  };
+
+  const handleCodexLogin = () => {
+    window.location.href = '/auth/codex';
+  };
+
+  const handleGeminiLogin = () => {
+    window.location.href = '/auth/gemini';
+  };
+
+  const handleZaiLogin = () => {
+    window.location.href = '/auth/zai';
   };
 
   return (
@@ -130,6 +150,42 @@ export function LoginPage() {
             </Button>
           )}
 
+          {providers?.zai && (
+            <Button
+              onClick={handleZaiLogin}
+              className="w-full h-12 text-base gap-3"
+              size="lg"
+              variant="outline"
+            >
+              <Sparkles className="h-5 w-5" />
+              Continue with Z.AI
+            </Button>
+          )}
+
+          {providers?.codex && (
+            <Button
+              onClick={handleCodexLogin}
+              className="w-full h-12 text-base gap-3"
+              size="lg"
+              variant="outline"
+            >
+              <Sparkles className="h-5 w-5" />
+              Continue with Codex
+            </Button>
+          )}
+
+          {providers?.gemini && (
+            <Button
+              onClick={handleGeminiLogin}
+              className="w-full h-12 text-base gap-3"
+              size="lg"
+              variant="outline"
+            >
+              <Sparkles className="h-5 w-5" />
+              Continue with Gemini
+            </Button>
+          )}
+
           {providers?.github && (
             <Button
               onClick={handleGitHubLogin}
@@ -171,7 +227,7 @@ export function LoginPage() {
             </Button>
           )}
 
-          {!providers?.claude && !providers?.github && !providers?.google && (
+          {!providers?.claude && !providers?.codex && !providers?.gemini && !providers?.zai && !providers?.github && !providers?.google && (
             <div className="text-center py-4">
               <p className="text-sm text-muted-foreground">
                 No authentication providers configured.
