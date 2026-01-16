@@ -270,41 +270,6 @@ if (config.codex.authEnabled) {
   });
 }
 
-router.get('/gemini', async (_req, res) => {
-  try {
-    const accessToken = await getGeminiAccessToken();
-    if (!accessToken) {
-      return res.redirect(`${config.frontendUrl}/login?error=gemini_not_logged_in`);
-    }
-
-    const user = await findOrCreateLocalUser({
-      provider: 'gemini',
-      email: 'gemini-user@local',
-      name: 'Gemini User',
-    });
-    const token = generateToken(user.id);
-    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-  } catch (error) {
-    console.error('Gemini CLI auth error:', error);
-    res.redirect(`${config.frontendUrl}/login?error=gemini`);
-  }
-});
-
-router.get('/zai', async (_req, res) => {
-  try {
-    const user = await findOrCreateLocalUser({
-      provider: 'zai',
-      email: 'zai-user@local',
-      name: 'Z.AI User',
-    });
-    const token = generateToken(user.id);
-    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-  } catch (error) {
-    console.error('Z.AI auth error:', error);
-    res.redirect(`${config.frontendUrl}/login?error=zai`);
-  }
-});
-
 // Dev login (only in development mode)
 if (config.isDevelopment) {
   router.post('/dev-login', (req, res) => {
@@ -408,8 +373,6 @@ router.get('/providers', (_req, res) => {
       google: !!(config.google.clientId && config.google.clientSecret),
       claude: config.claude.oauthEnabled,
       codex: config.codex.authEnabled,
-      gemini: true,
-      zai: true,
     },
   });
 });
