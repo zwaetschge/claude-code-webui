@@ -13,6 +13,7 @@ import {
   Table2,
   Upload,
   Eye,
+  Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -117,6 +118,33 @@ export function FileTree({
     setPreviewOpen(true);
   }, []);
 
+  // Download file via authenticated fetch → blob → download link
+  const downloadFile = useCallback(async (filePath: string, fileName: string) => {
+    try {
+      const { useAuthStore } = await import('@/stores/authStore');
+      const token = useAuthStore.getState().token;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`/api/files/download?path=${encodeURIComponent(filePath)}`, {
+        headers,
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Download failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  }, []);
+
   // Cycle through view modes
   const cycleViewMode = useCallback(() => {
     setViewMode(prev => {
@@ -218,9 +246,7 @@ export function FileTree({
 
       // Pass targetDirectory as query param (not in body) because multer's
       // destination callback runs before body is parsed
-      const response = await api.post<ApiResponse<{ files: { name: string; path: string; size: number }[] }>>(`/api/files/upload?targetDirectory=${encodeURIComponent(targetDir)}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const response = await api.post<ApiResponse<{ files: { name: string; path: string; size: number }[] }>>(`/api/files/upload?targetDirectory=${encodeURIComponent(targetDir)}`, formData);
 
       if (response.data.success) {
         // Refresh the file tree
@@ -421,6 +447,22 @@ export function FileTree({
               title="Preview file"
             >
               <Eye className="h-3 w-3" />
+            </Button>
+          )}
+
+          {/* Download button for files */}
+          {!isDirectory && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={(e) => {
+                e.stopPropagation();
+                downloadFile(file.path, file.name);
+              }}
+              title="Download file"
+            >
+              <Download className="h-3 w-3" />
             </Button>
           )}
         </div>

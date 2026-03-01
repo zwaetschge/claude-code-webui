@@ -3,11 +3,15 @@ import { Bell, BellOff, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { notificationService } from '@/services/notifications';
 import { cn } from '@/lib/utils';
+import { useProviderStore } from '@/stores/providerStore';
+import { UI_PROVIDER_META } from '@/lib/providers';
 
 export function NotificationBanner() {
   const [showBanner, setShowBanner] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [enabled, setEnabled] = useState(true);
+  const { uiProvider } = useProviderStore();
+  const providerLabel = UI_PROVIDER_META[uiProvider].label;
 
   useEffect(() => {
     // Check if notifications are supported and what the current permission is
@@ -80,7 +84,7 @@ export function NotificationBanner() {
     )}>
       <Bell className="h-5 w-5 text-primary shrink-0" />
       <p className="text-sm flex-1">
-        Enable notifications to get alerts when Claude needs your input or finishes a task
+        Enable notifications to get alerts when {providerLabel} needs your input or finishes a task
       </p>
       <div className="flex items-center gap-2 shrink-0">
         <Button size="sm" variant="default" onClick={handleEnable}>

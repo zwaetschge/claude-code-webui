@@ -61,6 +61,25 @@ temp/
 # Generated images
 .claude-webui-images/
 
+# Local CLI config
+config/
+
+# Claude Code agent data
+.claude/
+
+# Attachments
+.claude-webui-attachments/
+
+# Rebuild status files
+LAST_REBUILD.md
+REBUILD_ROBOT_REPORT.md
+
+# Backup files
+.tmp-backup-*/
+
+# Logo assets (local only)
+logos/
+
 # Credentials and secrets
 *.key
 *.pem

@@ -52,6 +52,16 @@ interface ClaudeSettings {
   };
 }
 
+const PLAN_ALLOWED_TOOLS = new Set(['TodoWrite', 'ExitPlanMode']);
+
+function resolveConfigHome(): string {
+  const override = process.env.WEBUI_CONFIG_HOME || process.env.CLAUDE_CONFIG_HOME;
+  if (override && override.trim()) {
+    return override.trim();
+  }
+  return path.join(os.homedir(), '.claude');
+}
+
 // Load settings from a JSON file
 function loadSettings(filePath: string): ClaudeSettings | null {
   try {
@@ -66,11 +76,11 @@ function loadSettings(filePath: string): ClaudeSettings | null {
 }
 
 // Get all allowed patterns from global and project settings
-function getAllowedPatterns(projectPath?: string): string[] {
+function getAllowedPatterns(configHome: string, projectPath?: string): string[] {
   const patterns: string[] = [];
 
   // Load global settings (~/.claude/settings.json)
-  const globalSettingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+  const globalSettingsPath = path.join(configHome, 'settings.json');
   const globalSettings = loadSettings(globalSettingsPath);
   if (globalSettings?.permissions?.allow) {
     patterns.push(...globalSettings.permissions.allow);
@@ -332,8 +342,10 @@ async function main(): Promise<void> {
   const sessionId = process.env.WEBUI_SESSION_ID;
   const backendUrl = process.env.WEBUI_BACKEND_URL || 'http://localhost:3006';
   const projectPath = process.env.WEBUI_PROJECT_PATH || process.cwd();
+  const sessionMode = (process.env.WEBUI_SESSION_MODE || '').toLowerCase();
+  const configHome = resolveConfigHome();
 
-  log(`Starting permission hook - sessionId: ${sessionId}, backendUrl: ${backendUrl}, projectPath: ${projectPath}`);
+  log(`Starting permission hook - sessionId: ${sessionId}, backendUrl: ${backendUrl}, projectPath: ${projectPath}, mode: ${sessionMode || 'unknown'}`);
 
   if (!sessionId) {
     // No session ID means we're not running in WebUI context
@@ -374,8 +386,25 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
+    if (sessionMode === 'auto-accept' || sessionMode === 'orchestration' || sessionMode === 'danger') {
+      log(`Auto-approved tool due to mode ${sessionMode || 'auto-accept'}`);
+      outputDecision('allow');
+      return;
+    }
+
+    if (sessionMode === 'planning') {
+      if (PLAN_ALLOWED_TOOLS.has(toolName)) {
+        log(`Allowed plan-mode tool: ${toolName}`);
+        outputDecision('allow');
+        return;
+      }
+      log(`Blocked tool in plan mode: ${toolName}`);
+      outputDecision('deny', 'Plan mode: tool blocked');
+      return;
+    }
+
     // Load allowed patterns and check for auto-approval
-    const allowedPatterns = getAllowedPatterns(projectPath);
+    const allowedPatterns = getAllowedPatterns(configHome, projectPath);
     log(`Loaded ${allowedPatterns.length} allowed patterns total`);
 
     const matchedPattern = isAutoApproved(toolName, toolInput, allowedPatterns);

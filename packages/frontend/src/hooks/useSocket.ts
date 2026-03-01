@@ -1,8 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { socketService } from '@/services/socket';
 
-export function useSocket(): void {
+interface UseSocketReturn {
+  socket: ReturnType<typeof socketService.getSocket>;
+  isConnected: boolean;
+}
+
+export function useSocket(): UseSocketReturn {
   const { isAuthenticated, token } = useAuthStore();
 
   useEffect(() => {
@@ -20,4 +25,9 @@ export function useSocket(): void {
       }
     };
   }, [isAuthenticated, token]);
+
+  const socket = useMemo(() => socketService.getSocket(), [isAuthenticated, token]);
+  const isConnected = socket?.connected ?? false;
+
+  return { socket, isConnected };
 }

@@ -159,9 +159,55 @@ router.get('/timeline', async (req: Request, res: Response) => {
       ORDER BY date ASC
     `).all(authReq.userId);
 
+    const providerRows = db.prepare(`
+      SELECT
+        strftime('${dateFormat}', created_at) as date,
+        model,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(SUM(cost_usd), 0) as cost,
+        COUNT(*) as requests
+      FROM usage_history
+      WHERE user_id = ? ${dateFilter}
+      GROUP BY strftime('${dateFormat}', created_at), model
+      ORDER BY date ASC
+    `).all(authReq.userId) as Array<{
+      date: string;
+      model: string | null;
+      total_tokens: number;
+      cost: number;
+      requests: number;
+    }>;
+
+    const getProviderLabel = (model?: string | null): string => {
+      const value = (model || '').toLowerCase();
+      if (!value) return 'Other';
+      if (value.includes('gpt') || value.includes('codex')) return 'Codex';
+      if (value.includes('claude')) return 'Claude';
+      if (value.includes('gemini')) return 'Gemini';
+      if (value.includes('glm') || value.includes('zai')) return 'Z.AI';
+      return 'Other';
+    };
+
+    const providersByDate = new Map<string, Record<string, { tokens: number; cost: number; requests: number }>>();
+    for (const row of providerRows) {
+      const provider = getProviderLabel(row.model);
+      const current = providersByDate.get(row.date) || {};
+      const entry = current[provider] || { tokens: 0, cost: 0, requests: 0 };
+      entry.tokens += row.total_tokens;
+      entry.cost += row.cost;
+      entry.requests += row.requests;
+      current[provider] = entry;
+      providersByDate.set(row.date, current);
+    }
+
+    const timelineWithProviders = (timeline as Array<{ date: string }>).map((entry) => ({
+      ...entry,
+      providers: providersByDate.get(entry.date) || {},
+    }));
+
     res.json({
       success: true,
-      data: timeline,
+      data: timelineWithProviders,
     });
   } catch (error) {
     console.error('Error fetching analytics timeline:', error);

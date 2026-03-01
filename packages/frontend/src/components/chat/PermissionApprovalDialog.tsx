@@ -14,6 +14,8 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { PendingPermission, PermissionAction } from '@claude-code-webui/shared';
+import { useProviderStore } from '@/stores/providerStore';
+import { UI_PROVIDER_META } from '@/lib/providers';
 
 interface PermissionApprovalDialogProps {
   permission: PendingPermission;
@@ -82,6 +84,8 @@ function testPattern(pattern: string, testString: string): boolean {
 }
 
 export function PermissionApprovalDialog({ permission, onRespond }: PermissionApprovalDialogProps) {
+  const { uiProvider } = useProviderStore();
+  const providerLabel = UI_PROVIDER_META[uiProvider].label;
   const [showPatternEditor, setShowPatternEditor] = useState(false);
   const [pattern, setPattern] = useState(permission.suggestedPattern);
   const [testValue, setTestValue] = useState(getToolPreview(permission.toolName, permission.toolInput));
@@ -119,7 +123,7 @@ export function PermissionApprovalDialog({ permission, onRespond }: PermissionAp
           <div>
             <h2 className="font-semibold text-lg">Permission Required</h2>
             <p className="text-sm text-muted-foreground">
-              Claude wants to use the {permission.toolName} tool
+              {providerLabel} wants to use the {permission.toolName} tool
             </p>
           </div>
         </div>
@@ -205,11 +209,11 @@ export function PermissionApprovalDialog({ permission, onRespond }: PermissionAp
 
         {/* Actions */}
         <div className="p-4 border-t border-border space-y-2">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               onClick={() => handleRespond('allow_once')}
               disabled={isSubmitting}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors"
+              className="flex items-center justify-center gap-2 px-4 py-3 sm:py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors"
             >
               <ShieldCheck className="h-4 w-4" />
               Allow Once
@@ -217,17 +221,17 @@ export function PermissionApprovalDialog({ permission, onRespond }: PermissionAp
             <button
               onClick={() => handleRespond('deny')}
               disabled={isSubmitting}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors"
+              className="flex items-center justify-center gap-2 px-4 py-3 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors"
             >
               <ShieldX className="h-4 w-4" />
               Deny
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               onClick={() => handleRespond('allow_project')}
               disabled={isSubmitting}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors text-sm"
+              className="flex items-center justify-center gap-2 px-4 py-3 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors text-sm"
             >
               <ShieldCheck className="h-4 w-4" />
               Allow for Project
@@ -235,7 +239,7 @@ export function PermissionApprovalDialog({ permission, onRespond }: PermissionAp
             <button
               onClick={() => handleRespond('allow_global')}
               disabled={isSubmitting}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors text-sm"
+              className="flex items-center justify-center gap-2 px-4 py-3 sm:py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors text-sm"
             >
               <ShieldCheck className="h-4 w-4" />
               Allow Globally

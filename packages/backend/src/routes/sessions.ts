@@ -16,11 +16,16 @@ const router = Router();
 const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   workingDirectory: z.string().optional(), // Optional - will be auto-generated from name
+  cliProvider: z.enum(['claude', 'codex', 'gemini', 'glm', 'kimi', 'multi']).optional().default('claude'),
 });
 
 const updateSessionSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   workingDirectory: z.string().min(1).optional(),
+});
+
+const updateProviderSchema = z.object({
+  cliProvider: z.enum(['claude', 'codex', 'gemini', 'glm', 'kimi', 'multi']),
 });
 
 // Validate working directory
@@ -57,7 +62,7 @@ router.get('/', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, category, created_at as createdAt, updated_at as updatedAt
+              starred, category, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE user_id = ? ORDER BY starred DESC, updated_at DESC`
     )
     .all(userId) as Array<Record<string, unknown>>;
@@ -76,7 +81,7 @@ router.get('/:id', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, category, created_at as createdAt, updated_at as updatedAt
+              starred, category, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ? AND user_id = ?`
     )
     .get(req.params.id, userId) as Record<string, unknown> | undefined;
@@ -99,7 +104,7 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
   }
 
-  const { name, workingDirectory: providedWorkingDir } = parsed.data;
+  const { name, workingDirectory: providedWorkingDir, cliProvider } = parsed.data;
   const db = getDatabase();
 
   let workingDirectory: string;
@@ -154,15 +159,15 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
   const sessionId = nanoid();
 
   db.prepare(
-    `INSERT INTO sessions (id, user_id, name, working_directory)
-     VALUES (?, ?, ?, ?)`
-  ).run(sessionId, userId, name, workingDirectory);
+    `INSERT INTO sessions (id, user_id, name, working_directory, cli_provider)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(sessionId, userId, name, workingDirectory, cliProvider);
 
   const newSession = db
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, created_at as createdAt, updated_at as updatedAt
+              starred, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(sessionId) as Record<string, unknown>;
@@ -216,7 +221,7 @@ router.put('/:id', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, created_at as createdAt, updated_at as updatedAt
+              starred, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(req.params.id) as Record<string, unknown>;
@@ -243,6 +248,44 @@ router.patch('/:id/star', requireAuth, (req, res) => {
   db.prepare('UPDATE sessions SET starred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStarred, req.params.id);
 
   res.json({ success: true, data: { starred: Boolean(newStarred) } });
+});
+
+// Update session CLI provider
+router.patch('/:id/provider', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const parsed = updateProviderSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+  }
+
+  const db = getDatabase();
+  const existing = db
+    .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
+
+  if (!existing) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  const { cliProvider } = parsed.data;
+
+  if (existing.cliProvider !== cliProvider) {
+    db.prepare(
+      'UPDATE sessions SET cli_provider = ?, claude_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(cliProvider, req.params.id);
+  }
+
+  const updatedSession = db
+    .prepare(
+      `SELECT id, user_id as userId, name, working_directory as workingDirectory,
+              claude_session_id as claudeSessionId, status, last_message as lastMessage,
+              starred, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
+       FROM sessions WHERE id = ?`
+    )
+    .get(req.params.id) as Record<string, unknown>;
+
+  res.json({ success: true, data: { ...updatedSession, starred: Boolean(updatedSession.starred) } });
 });
 
 // Delete session

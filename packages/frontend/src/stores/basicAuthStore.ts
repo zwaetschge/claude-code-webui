@@ -7,7 +7,7 @@ interface BasicAuthState {
   basicAuthToken: string | null;
   isBasicAuthEnabled: boolean | null;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (username: string, password: string) => Promise<{ success: boolean; token?: string; error?: string }>;
   logout: () => void;
   checkBasicAuth: () => Promise<void>;
   checkBasicAuthStatus: () => Promise<void>;
@@ -30,11 +30,12 @@ export const useBasicAuthStore = create<BasicAuthState>()(
           );
 
           if (response.data.success && response.data.data?.token) {
+            const token = response.data.data.token;
             set({
               isBasicAuthenticated: true,
-              basicAuthToken: response.data.data.token,
+              basicAuthToken: token,
             });
-            return { success: true };
+            return { success: true, token };
           }
 
           return { success: false, error: 'Login failed' };

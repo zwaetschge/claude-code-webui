@@ -3,6 +3,8 @@ import { Shield, ShieldAlert, CheckCircle2, XCircle, AlertTriangle, Sparkles, Bo
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { useProviderStore } from '@/stores/providerStore';
+import { UI_PROVIDER_META } from '@/lib/providers';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -241,7 +243,15 @@ function parseClaudeOutput(content: string): {
 }
 
 // Trust Dialog Component
-function TrustDialog({ path, onResponse }: { path: string; onResponse?: (response: string) => void }) {
+function TrustDialog({
+  path,
+  providerName,
+  onResponse,
+}: {
+  path: string;
+  providerName: string;
+  onResponse?: (response: string) => void;
+}) {
   const [isResponding, setIsResponding] = useState(false);
 
   const handleResponse = (response: 'yes' | 'no') => {
@@ -271,7 +281,7 @@ function TrustDialog({ path, onResponse }: { path: string; onResponse?: (respons
         <div className="flex items-start gap-2 text-sm text-muted-foreground">
           <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
           <p>
-            Claude Code may read, write, or execute files in this directory.
+            {providerName} may read, write, or execute files in this directory.
             Only trust folders from known sources.
           </p>
         </div>
@@ -328,7 +338,7 @@ function SelectionDialog({
   };
 
   return (
-    <Card className="max-w-[80%] p-0 overflow-hidden border-2 border-primary/30">
+    <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 overflow-hidden border-2 border-primary/30">
       <div className="flex items-center gap-3 p-4 bg-primary/10 border-b border-primary/20">
         <div className="p-2 rounded-lg bg-primary/20">
           <AlertTriangle className="h-5 w-5 text-primary" />
@@ -368,15 +378,21 @@ function SelectionDialog({
 }
 
 // Welcome screen component
-function WelcomeScreen({ data }: { data: { version: string; model: string; workingDir: string } }) {
+function WelcomeScreen({
+  data,
+  providerName,
+}: {
+  data: { version: string; model: string; workingDir: string };
+  providerName: string;
+}) {
   return (
-    <Card className="max-w-md p-0 overflow-hidden border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-transparent to-primary/5">
+    <Card className="max-w-[95%] sm:max-w-md p-0 overflow-hidden border-2 border-primary/20 bg-gradient-to-br from-primary/5 via-transparent to-primary/5">
       <div className="p-6 text-center space-y-4">
         <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
           <Sparkles className="h-8 w-8 text-primary" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Claude Code Ready</h2>
+          <h2 className="text-lg font-semibold">{providerName} Ready</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {data.model} · v{data.version}
           </p>
@@ -393,7 +409,15 @@ function WelcomeScreen({ data }: { data: { version: string; model: string; worki
 }
 
 // Thinking indicator
-function ThinkingIndicator({ thinkingTime, isIdeating }: { thinkingTime?: string; isIdeating?: boolean }) {
+function ThinkingIndicator({
+  thinkingTime,
+  isIdeating,
+  providerLabel,
+}: {
+  thinkingTime?: string;
+  isIdeating?: boolean;
+  providerLabel: string;
+}) {
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <div className="relative">
@@ -402,7 +426,7 @@ function ThinkingIndicator({ thinkingTime, isIdeating }: { thinkingTime?: string
       </div>
       <div className="flex flex-col">
         <span className="text-sm font-medium">
-          {isIdeating ? 'Claude is ideating...' : 'Claude is thinking...'}
+          {isIdeating ? `${providerLabel} is ideating...` : `${providerLabel} is thinking...`}
         </span>
         {thinkingTime && (
           <span className="text-xs text-muted-foreground">{thinkingTime}</span>
@@ -413,9 +437,10 @@ function ThinkingIndicator({ thinkingTime, isIdeating }: { thinkingTime?: string
 }
 
 // Plan mode indicator
-function PlanModeIndicator({ message }: { message?: string }) {
+function PlanModeIndicator({ message, providerLabel }: { message?: string; providerLabel: string }) {
+  const sanitizedMessage = message?.replace(/Claude/gi, providerLabel);
   return (
-    <Card className="max-w-[80%] p-0 overflow-hidden border-2 border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-transparent">
+    <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 overflow-hidden border-2 border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-transparent">
       <div className="flex items-center gap-3 p-4 bg-blue-500/10 border-b border-blue-500/20">
         <div className="p-2 rounded-lg bg-blue-500/20">
           <Sparkles className="h-5 w-5 text-blue-500 animate-pulse" />
@@ -425,10 +450,12 @@ function PlanModeIndicator({ message }: { message?: string }) {
           <p className="text-xs text-muted-foreground">Exploring and designing implementation</p>
         </div>
       </div>
-      {message && (
+      {sanitizedMessage && (
         <div className="p-4">
           <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{message}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+              {sanitizedMessage}
+            </ReactMarkdown>
           </div>
         </div>
       )}
@@ -453,6 +480,9 @@ function ClaudeResponse({ message }: { message: string }) {
 }
 
 export function StreamingContent({ content, onResponse }: StreamingContentProps) {
+  const { uiProvider } = useProviderStore();
+  const providerLabel = UI_PROVIDER_META[uiProvider].label;
+  const providerName = UI_PROVIDER_META[uiProvider].productName;
   const parsed = useMemo(() => {
     const clean = stripAnsi(content);
     const result = parseClaudeOutput(content);
@@ -464,11 +494,11 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
   }, [content]);
 
   if (parsed.type === 'welcome' && parsed.welcomeData) {
-    return <WelcomeScreen data={parsed.welcomeData} />;
+    return <WelcomeScreen data={parsed.welcomeData} providerName={providerName} />;
   }
 
   if (parsed.type === 'trust') {
-    return <TrustDialog path={parsed.path!} onResponse={onResponse} />;
+    return <TrustDialog path={parsed.path!} providerName={providerName} onResponse={onResponse} />;
   }
 
   if (parsed.type === 'selection') {
@@ -482,7 +512,7 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
   }
 
   if (parsed.type === 'plan_mode') {
-    return <PlanModeIndicator message={parsed.message} />;
+    return <PlanModeIndicator message={parsed.message} providerLabel={providerLabel} />;
   }
 
   if (parsed.type === 'thinking') {
@@ -491,18 +521,22 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
         "max-w-[80%] p-0 bg-card border overflow-hidden",
         parsed.isIdeating && "border-blue-500/30"
       )}>
-        <ThinkingIndicator thinkingTime={parsed.thinkingTime} isIdeating={parsed.isIdeating} />
+        <ThinkingIndicator
+          thinkingTime={parsed.thinkingTime}
+          isIdeating={parsed.isIdeating}
+          providerLabel={providerLabel}
+        />
       </Card>
     );
   }
 
   if (parsed.type === 'response' && parsed.message) {
     return (
-      <Card className="max-w-[80%] p-4 bg-card border">
+      <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-3 sm:p-4 bg-card border">
         <ClaudeResponse message={parsed.message} />
         {parsed.thinkingTime && (
           <div className="mt-3 pt-3 border-t flex items-center gap-2">
-            <ThinkingIndicator thinkingTime={parsed.thinkingTime} />
+            <ThinkingIndicator thinkingTime={parsed.thinkingTime} providerLabel={providerLabel} />
           </div>
         )}
       </Card>
@@ -511,8 +545,8 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
 
   // Empty or unrecognized - show minimal loading state
   return (
-    <Card className="max-w-[80%] p-0 bg-card border overflow-hidden">
-      <ThinkingIndicator />
+    <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 bg-card border overflow-hidden">
+      <ThinkingIndicator providerLabel={providerLabel} />
     </Card>
   );
 }

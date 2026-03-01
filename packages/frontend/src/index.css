@@ -1,5 +1,5 @@
 /* Claude-inspired typography: Styrene B alternatives + Tiempos alternatives */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Sora:wght@400;500;600;700&family=Syne:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Google+Sans:wght@400;500;700&family=Google+Sans+Display:wght@400;500&family=Google+Sans+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,74 +7,675 @@
 
 @layer base {
   :root {
-    /* Claude.ai light theme - exact brand colors */
-    /* Pampas: #F4F3EE = hsl(50, 22%, 95%) */
-    /* Crail: #C15F3C = hsl(18, 53%, 49%) */
-    --background: 50 22% 95%;              /* Pampas #F4F3EE - Claude's cream */
-    --foreground: 24 15% 12%;              /* Warm near-black */
+    /* Anthropic Official Brand Colors (brandfetch.com/anthropic.com) */
+    /* Primary Dark: #141413 | Light: #FFFFFF */
+    /* Secondary: #828179 (Friar Gray) | #F0EFEA (Cararra) */
+    /* Accent: #CC785C (Antique Brass) */
+    /* Gradient Pro: #C377FF → #2B75E2 */
+    --background: 50 17% 93%;              /* Cararra #F0EFEA */
+    --foreground: 60 2% 8%;                /* Cod Gray #141413 */
     --card: 0 0% 100%;                     /* Pure white cards */
-    --card-foreground: 24 15% 12%;
+    --card-foreground: 60 2% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 24 15% 12%;
-    --primary: 18 53% 49%;                 /* Crail #C15F3C - Claude's orange */
+    --popover-foreground: 60 2% 8%;
+    --primary: 16 50% 58%;                 /* Antique Brass #CC785C */
     --primary-foreground: 0 0% 100%;
-    --secondary: 45 10% 90%;               /* Warm light gray */
-    --secondary-foreground: 24 10% 25%;
-    --muted: 45 8% 92%;                    /* Cloudy derived */
-    --muted-foreground: 30 6% 45%;
-    --accent: 18 53% 49%;                  /* Same as primary */
+    --secondary: 50 17% 93%;               /* Cararra */
+    --secondary-foreground: 50 4% 49%;     /* Friar Gray #828179 */
+    --muted: 50 12% 90%;
+    --muted-foreground: 50 4% 49%;         /* Friar Gray */
+    --accent: 16 50% 58%;                  /* Antique Brass */
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --success: 152 60% 36%;                /* Teal green */
+    --success: 152 60% 36%;
     --success-foreground: 0 0% 100%;
-    --border: 45 12% 88%;
-    --input: 45 12% 88%;
-    --ring: 18 53% 49%;
-    --radius: 0.75rem;                     /* 12px - rounded-xl standard */
+    --border: 50 10% 86%;
+    --input: 50 10% 86%;
+    --ring: 16 50% 58%;
+    --radius: 0.75rem;
 
-    /* Claude brand tokens */
-    --claude-crail: 18 53% 49%;            /* #C15F3C */
-    --claude-terracotta: 15 65% 56%;       /* #da7756 */
-    --claude-pampas: 50 22% 95%;           /* #F4F3EE */
-    --claude-cloudy: 38 7% 67%;            /* #B1ADA1 */
+    /* Anthropic brand tokens */
+    --anthropic-dark: 60 2% 8%;            /* #141413 */
+    --anthropic-accent: 16 50% 58%;        /* #CC785C Antique Brass */
+    --anthropic-gray: 50 4% 49%;           /* #828179 Friar Gray */
+    --anthropic-light: 50 17% 93%;         /* #F0EFEA Cararra */
+    --anthropic-gradient-1: 270 100% 73%;  /* #C377FF Purple */
+    --anthropic-gradient-2: 216 74% 53%;   /* #2B75E2 Blue */
+
+    /* Legacy tokens (mapped to Anthropic) */
+    --claude-crail: var(--anthropic-accent);
+    --claude-terracotta: 16 55% 65%;       /* Lighter accent */
+    --claude-pampas: var(--anthropic-light);
+    --claude-cloudy: var(--anthropic-gray);
+
+    /* Provider-agnostic tokens */
+    --brand-accent: var(--anthropic-accent);
+    --brand-accent-2: var(--anthropic-gradient-1);
+    --pattern-color: var(--anthropic-gray);
+    --pattern-opacity: 0.06;
+
+    /* Fonts - Styrene A alternatives */
+    --font-ui: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Newsreader', ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
     /* Effect colors */
-    --shadow-color: 30 15% 30%;
-    --glow-color: 18 53% 49%;
+    --shadow-color: 50 10% 25%;
+    --glow-color: 16 50% 58%;
   }
 
   html.dark, :root.dark {
-    /* Claude-inspired dark theme - deep charcoal */
-    --background: 24 12% 8%;               /* Deep warm charcoal */
-    --foreground: 45 15% 92%;              /* Warm off-white */
-    --card: 24 10% 11%;                    /* Elevated card surface */
-    --card-foreground: 45 15% 92%;
-    --popover: 24 10% 11%;
-    --popover-foreground: 45 15% 92%;
-    --primary: 18 60% 55%;                 /* Brighter Crail for dark mode */
-    --primary-foreground: 24 12% 8%;
-    --secondary: 24 8% 16%;
-    --secondary-foreground: 45 12% 80%;
-    --muted: 24 8% 14%;
-    --muted-foreground: 30 6% 50%;
-    --accent: 18 60% 55%;
-    --accent-foreground: 24 12% 8%;
+    /* Anthropic Dark Theme */
+    --background: 60 2% 8%;                /* Cod Gray #141413 */
+    --foreground: 50 17% 93%;              /* Cararra #F0EFEA */
+    --card: 60 2% 11%;                     /* Slightly elevated */
+    --card-foreground: 50 17% 93%;
+    --popover: 60 2% 11%;
+    --popover-foreground: 50 17% 93%;
+    --primary: 16 55% 62%;                 /* Brighter Antique Brass for dark */
+    --primary-foreground: 60 2% 8%;
+    --secondary: 60 2% 14%;
+    --secondary-foreground: 50 8% 75%;
+    --muted: 60 2% 12%;
+    --muted-foreground: 50 4% 55%;
+    --accent: 16 55% 62%;
+    --accent-foreground: 60 2% 8%;
     --destructive: 0 60% 55%;
     --destructive-foreground: 0 0% 100%;
     --success: 152 50% 45%;
     --success-foreground: 0 0% 100%;
-    --border: 24 8% 18%;
-    --input: 24 8% 18%;
-    --ring: 18 60% 55%;
+    --border: 60 2% 18%;
+    --input: 60 2% 18%;
+    --ring: 16 55% 62%;
 
-    --claude-crail: 18 60% 55%;
-    --claude-terracotta: 15 70% 60%;
-    --claude-pampas: 45 15% 92%;
-    --claude-cloudy: 30 6% 50%;
+    --anthropic-dark: 60 2% 8%;
+    --anthropic-accent: 16 55% 62%;
+    --anthropic-gray: 50 4% 55%;
+    --anthropic-light: 50 17% 93%;
+    --anthropic-gradient-1: 270 100% 75%;
+    --anthropic-gradient-2: 216 74% 58%;
 
-    --shadow-color: 24 15% 4%;
-    --glow-color: 18 60% 55%;
+    --claude-crail: var(--anthropic-accent);
+    --claude-terracotta: 16 60% 68%;
+    --claude-pampas: var(--anthropic-light);
+    --claude-cloudy: var(--anthropic-gray);
+
+    --brand-accent: var(--anthropic-accent);
+    --brand-accent-2: var(--anthropic-gradient-1);
+    --pattern-color: var(--anthropic-gray);
+    --pattern-opacity: 0.06;
+
+    --shadow-color: 60 5% 4%;
+    --glow-color: 16 55% 62%;
+  }
+
+  :root.provider-plum {
+    --background: 280 35% 96%;
+    --foreground: 275 35% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 275 35% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 275 35% 14%;
+    --primary: 282 56% 43%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 280 25% 90%;
+    --secondary-foreground: 275 20% 22%;
+    --muted: 275 20% 92%;
+    --muted-foreground: 275 10% 45%;
+    --accent: 292 65% 55%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+    --border: 275 20% 88%;
+    --input: 275 20% 88%;
+    --ring: 282 56% 43%;
+
+    --claude-crail: 282 56% 43%;
+    --claude-terracotta: 292 65% 55%;
+    --claude-pampas: 280 35% 96%;
+    --claude-cloudy: 275 12% 70%;
+
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 275 16% 70%;
+    --pattern-opacity: 0.09;
+
+    --shadow-color: 275 22% 22%;
+    --glow-color: 282 56% 43%;
+    --font-ui: 'Syne', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Instrument Serif', ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  }
+
+  :root.provider-plum.dark {
+    --background: 280 30% 10%;
+    --foreground: 280 25% 92%;
+    --card: 280 20% 14%;
+    --card-foreground: 280 25% 92%;
+    --popover: 280 20% 14%;
+    --popover-foreground: 280 25% 92%;
+    --primary: 285 60% 58%;
+    --primary-foreground: 280 30% 10%;
+    --secondary: 280 18% 18%;
+    --secondary-foreground: 280 15% 80%;
+    --muted: 280 16% 16%;
+    --muted-foreground: 280 10% 55%;
+    --accent: 290 70% 62%;
+    --accent-foreground: 280 30% 10%;
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 50% 45%;
+    --success-foreground: 0 0% 100%;
+    --border: 280 15% 20%;
+    --input: 280 15% 20%;
+    --ring: 285 60% 58%;
+
+    --claude-crail: 285 60% 58%;
+    --claude-terracotta: 292 70% 64%;
+    --claude-pampas: 280 25% 92%;
+    --claude-cloudy: 280 10% 55%;
+
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 280 12% 55%;
+    --pattern-opacity: 0.08;
+
+    --shadow-color: 280 25% 6%;
+    --glow-color: 285 60% 58%;
+    --font-ui: 'Syne', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Instrument Serif', ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  }
+
+  :root.provider-codex {
+    /* OpenAI 2025 Brand: Pure Black & White minimalism */
+    /* Primary: #000000 (Black) | #FFFFFF (White) */
+    /* Accent: #74aa9c (ChatGPT Teal) for subtle highlights */
+    --background: 0 0% 0%;               /* Pure Black #000000 */
+    --foreground: 0 0% 100%;             /* Pure White #FFFFFF */
+    --card: 0 0% 4%;                     /* Near-black cards */
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;                /* White primary */
+    --primary-foreground: 0 0% 0%;       /* Black text on white */
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 8%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 160 28% 56%;               /* ChatGPT Teal #74aa9c */
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 160 28% 56%;              /* ChatGPT Teal */
+    --success-foreground: 0 0% 0%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 100%;
+
+    --openai-black: 0 0% 0%;
+    --openai-white: 0 0% 100%;
+    --openai-teal: 160 28% 56%;          /* #74aa9c */
+    --claude-crail: var(--openai-white);
+    --claude-terracotta: var(--openai-teal);
+    --claude-pampas: var(--openai-white);
+    --claude-cloudy: 0 0% 40%;
+
+    --brand-accent: var(--openai-white);
+    --brand-accent-2: var(--openai-teal);
+    --pattern-color: 0 0% 100%;
+    --pattern-opacity: 0;                /* No pattern - pure minimalism */
+
+    --shadow-color: 0 0% 0%;
+    --glow-color: 0 0% 100%;
+    /* Grotesk-style geometric sans-serif */
+    --font-ui: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  }
+
+  :root.provider-codex.dark {
+    /* OpenAI 2025 Dark (same as light - always dark) */
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 8%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 160 28% 56%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 160 28% 56%;
+    --success-foreground: 0 0% 0%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 100%;
+
+    --openai-black: 0 0% 0%;
+    --openai-white: 0 0% 100%;
+    --openai-teal: 160 28% 56%;
+    --claude-crail: var(--openai-white);
+    --claude-terracotta: var(--openai-teal);
+    --claude-pampas: var(--openai-white);
+    --claude-cloudy: 0 0% 40%;
+
+    --brand-accent: var(--openai-white);
+    --brand-accent-2: var(--openai-teal);
+    --pattern-color: 0 0% 100%;
+    --pattern-opacity: 0;
+
+    --shadow-color: 0 0% 0%;
+    --glow-color: 0 0% 100%;
+  }
+
+  body {
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+  }
+
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+
+  :root.provider-zai {
+    --background: 210 35% 96%;
+    --foreground: 220 24% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 24% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 24% 12%;
+    --primary: 200 85% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 18% 92%;
+    --secondary-foreground: 220 18% 25%;
+    --muted: 210 16% 94%;
+    --muted-foreground: 220 10% 45%;
+    --accent: 200 85% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 196 70% 40%;
+    --success-foreground: 0 0% 100%;
+    --border: 210 16% 88%;
+    --input: 210 16% 88%;
+    --ring: 200 85% 45%;
+
+    --claude-crail: 200 85% 45%;
+    --claude-terracotta: 190 90% 50%;
+    --claude-pampas: 210 35% 96%;
+    --claude-cloudy: 210 10% 70%;
+
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 210 12% 70%;
+    --pattern-opacity: 0.07;
+
+    --shadow-color: 215 18% 18%;
+    --glow-color: 200 85% 45%;
+    --font-ui: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  :root.provider-zai.dark {
+    --background: 220 22% 9%;
+    --foreground: 210 20% 92%;
+    --card: 220 18% 12%;
+    --card-foreground: 210 20% 92%;
+    --popover: 220 18% 12%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 200 80% 55%;
+    --primary-foreground: 220 22% 9%;
+    --secondary: 220 14% 17%;
+    --secondary-foreground: 210 12% 80%;
+    --muted: 220 14% 15%;
+    --muted-foreground: 210 10% 55%;
+    --accent: 200 80% 55%;
+    --accent-foreground: 220 22% 9%;
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 196 65% 45%;
+    --success-foreground: 0 0% 100%;
+    --border: 220 14% 20%;
+    --input: 220 14% 20%;
+    --ring: 200 80% 55%;
+
+    --claude-crail: 200 80% 55%;
+    --claude-terracotta: 190 80% 52%;
+    --claude-pampas: 210 20% 92%;
+    --claude-cloudy: 210 8% 48%;
+
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 210 8% 34%;
+    --pattern-opacity: 0.08;
+
+    --shadow-color: 220 20% 4%;
+    --glow-color: 200 80% 55%;
+  }
+
+  :root.provider-gemini {
+    /* Gemini Google 2025 Brand Colors */
+    /* Primary Blue: #078EFA | Primary Purple: #AD89EB */
+    --background: 210 30% 98%;
+    --foreground: 220 20% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+    --primary: 207 97% 50%;              /* #078EFA - Gemini Blue */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 262 40% 95%;            /* Light purple tint */
+    --secondary-foreground: 262 50% 30%;
+    --muted: 210 20% 94%;
+    --muted-foreground: 220 12% 45%;
+    --accent: 262 71% 73%;               /* #AD89EB - Gemini Purple */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 40%;
+    --success-foreground: 0 0% 100%;
+    --border: 210 18% 90%;
+    --input: 210 18% 90%;
+    --ring: 207 97% 50%;
+
+    --gemini-blue: 207 97% 50%;          /* #078EFA */
+    --gemini-purple: 262 71% 73%;        /* #AD89EB */
+    --claude-crail: var(--gemini-blue);
+    --claude-terracotta: var(--gemini-purple);
+    --brand-accent: var(--gemini-blue);
+    --brand-accent-2: var(--gemini-purple);
+    --pattern-color: 262 50% 80%;
+    --pattern-opacity: 0.05;
+    --shadow-color: 220 20% 15%;
+    --glow-color: 207 97% 50%;
+
+    /* Google Sans fallback to Product Sans-like fonts */
+    --font-ui: 'Google Sans', 'Product Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-body: 'Google Sans', 'Product Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'Google Sans Mono', 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :root.provider-gemini.dark {
+    /* Gemini Google 2025 Dark Mode */
+    --background: 220 20% 8%;
+    --foreground: 210 25% 95%;
+    --card: 220 18% 12%;
+    --card-foreground: 210 25% 95%;
+    --popover: 220 18% 12%;
+    --popover-foreground: 210 25% 95%;
+    --primary: 207 95% 58%;              /* Brighter blue for dark mode */
+    --primary-foreground: 220 20% 8%;
+    --secondary: 262 30% 20%;
+    --secondary-foreground: 262 50% 85%;
+    --muted: 220 16% 15%;
+    --muted-foreground: 210 12% 55%;
+    --accent: 262 65% 70%;               /* Softer purple for dark */
+    --accent-foreground: 220 20% 8%;
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 50% 45%;
+    --success-foreground: 0 0% 100%;
+    --border: 220 16% 20%;
+    --input: 220 16% 20%;
+    --ring: 207 95% 58%;
+
+    --gemini-blue: 207 95% 58%;
+    --gemini-purple: 262 65% 70%;
+    --claude-crail: var(--gemini-blue);
+    --claude-terracotta: var(--gemini-purple);
+    --brand-accent: var(--gemini-blue);
+    --brand-accent-2: var(--gemini-purple);
+    --pattern-color: 262 30% 40%;
+    --pattern-opacity: 0.06;
+    --shadow-color: 220 25% 4%;
+    --glow-color: 207 95% 58%;
+  }
+
+  :root.provider-kimi {
+    /* Moonshot AI / Kimi "Dark Side Minimalism"
+     * Inspired by 月之暗面 (The Dark Side of the Moon)
+     * Monochromatisch, reduziert, kosmisch
+     * Always-dark: no separate light mode — the dark IS the brand */
+    --background: 240 10% 4%;              /* Deep space black #0a0a0f */
+    --foreground: 0 0% 93%;               /* Soft white #ededed */
+    --card: 240 8% 8%;                    /* Void card #131318 */
+    --card-foreground: 0 0% 93%;
+    --popover: 240 8% 8%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 0 0% 93%;                  /* White as primary — stark contrast */
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 6% 12%;              /* Darker surface */
+    --secondary-foreground: 0 0% 80%;
+    --muted: 240 6% 10%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 220 15% 50%;                /* Muted steel blue — subtle moonlight */
+    --accent-foreground: 0 0% 93%;
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 160 40% 42%;
+    --success-foreground: 0 0% 100%;
+    --border: 240 6% 16%;
+    --input: 240 6% 16%;
+    --ring: 0 0% 60%;
+
+    --kimi-void: 240 10% 4%;             /* Deep background */
+    --kimi-surface: 240 8% 8%;           /* Card surface */
+    --kimi-moonlight: 220 15% 50%;       /* Subtle blue accent */
+    --kimi-lunar: 220 20% 70%;           /* Lighter blue for hover */
+    --claude-crail: 0 0% 93%;
+    --claude-terracotta: var(--kimi-moonlight);
+    --claude-pampas: 0 0% 93%;
+    --claude-cloudy: 0 0% 35%;
+
+    --brand-accent: 0 0% 93%;
+    --brand-accent-2: var(--kimi-moonlight);
+    --pattern-color: 220 10% 30%;
+    --pattern-opacity: 0;                 /* No pattern — void is the aesthetic */
+
+    --shadow-color: 240 15% 2%;
+    --glow-color: 220 15% 50%;
+    /* Geometric sans-serif — precision and clarity */
+    --font-ui: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'DM Mono', 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  }
+
+  :root.provider-kimi.dark {
+    /* Kimi is always-dark. Dark mode = same as default */
+    --background: 240 10% 4%;
+    --foreground: 0 0% 93%;
+    --card: 240 8% 8%;
+    --card-foreground: 0 0% 93%;
+    --popover: 240 8% 8%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 0 0% 93%;
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 6% 12%;
+    --secondary-foreground: 0 0% 80%;
+    --muted: 240 6% 10%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 220 15% 50%;
+    --accent-foreground: 0 0% 93%;
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 160 40% 42%;
+    --success-foreground: 0 0% 100%;
+    --border: 240 6% 16%;
+    --input: 240 6% 16%;
+    --ring: 0 0% 60%;
+
+    --kimi-void: 240 10% 4%;
+    --kimi-surface: 240 8% 8%;
+    --kimi-moonlight: 220 15% 50%;
+    --kimi-lunar: 220 20% 70%;
+    --claude-crail: 0 0% 93%;
+    --claude-terracotta: var(--kimi-moonlight);
+    --claude-pampas: 0 0% 93%;
+    --claude-cloudy: 0 0% 35%;
+
+    --brand-accent: 0 0% 93%;
+    --brand-accent-2: var(--kimi-moonlight);
+    --pattern-color: 220 10% 30%;
+    --pattern-opacity: 0;
+
+    --shadow-color: 240 15% 2%;
+    --glow-color: 220 15% 50%;
+  }
+
+  :root.provider-mistral {
+    /* Mistral AI Brand: Orange/Red/Yellow Rainbow + Beige backgrounds */
+    /* Pixelated/blocky aesthetic - no rounded corners */
+    --background: 45 100% 97%;  /* Beige Light #FFFAEB */
+    --foreground: 0 0% 8%;      /* Near Black */
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 8%;
+    --primary: 28 100% 51%;     /* Orange #FF8205 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 45 100% 88%;   /* Beige Medium #FFF0C3 */
+    --secondary-foreground: 0 0% 20%;
+    --muted: 45 30% 90%;        /* Beige Dark #E9E2CB */
+    --muted-foreground: 0 0% 40%;
+    --accent: 0 100% 44%;       /* Red #E10500 */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 100% 44%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 45 20% 85%;
+    --input: 45 20% 85%;
+    --ring: 28 100% 51%;
+    --radius: 0px;              /* No rounded corners for Mistral */
+    --claude-crail: 28 100% 51%;      /* Orange */
+    --claude-terracotta: 48 100% 50%; /* Yellow #FFD800 */
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 28 50% 50%;
+    --pattern-opacity: 0.06;
+    --shadow-color: 28 30% 20%;
+    --glow-color: 28 100% 51%;
+    --font-ui: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  :root.provider-mistral.dark {
+    /* Mistral AI Dark Mode */
+    /* Pixelated/blocky aesthetic - no rounded corners */
+    --background: 0 0% 12%;     /* Black Tinted #1E1E1E */
+    --foreground: 45 50% 92%;
+    --card: 0 0% 8%;
+    --card-foreground: 45 50% 92%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 45 50% 92%;
+    --primary: 28 100% 55%;     /* Orange brighter for dark mode */
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 45 30% 78%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 20 100% 52%;      /* Orange Dark #FA500F */
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 100% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 28 100% 55%;
+    --radius: 0px;              /* No rounded corners for Mistral */
+    --claude-crail: 28 100% 55%;
+    --claude-terracotta: 48 100% 50%;
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 28 30% 35%;
+    --pattern-opacity: 0.08;
+    --shadow-color: 0 0% 4%;
+    --glow-color: 28 100% 55%;
+  }
+
+  /* Multi-CLI Mode: Uses Plum theme as base with orchestration accents */
+  :root.provider-multi {
+    /* Inherit from Plum Light Theme */
+    --background: 280 35% 96%;
+    --foreground: 275 35% 14%;
+    --card: 280 30% 98%;
+    --card-foreground: 275 35% 14%;
+    --popover: 280 30% 98%;
+    --popover-foreground: 275 35% 14%;
+    --primary: 282 56% 43%;       /* Plum primary */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 280 25% 92%;
+    --secondary-foreground: 275 30% 25%;
+    --muted: 280 20% 88%;
+    --muted-foreground: 275 15% 40%;
+    --accent: 292 65% 55%;        /* Vibrant violet accent */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 280 20% 85%;
+    --input: 280 20% 85%;
+    --ring: 282 56% 43%;
+    --radius: 0.75rem;
+    --claude-crail: 282 56% 43%;
+    --claude-terracotta: 292 65% 55%;
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 280 35% 50%;
+    --pattern-opacity: 0.04;
+    --shadow-color: 280 30% 10%;
+    --glow-color: 292 65% 55%;
+    /* Multi-CLI specific */
+    --multi-master: 282 56% 43%;   /* Master agent color */
+    --multi-slave-1: 200 80% 50%;  /* Codex blue-green */
+    --multi-slave-2: 220 90% 56%;  /* Gemini blue */
+    --multi-slave-3: 195 85% 50%;  /* Z.AI cyan */
+    --font-ui: 'Syne', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Instrument Serif', ui-serif, Georgia, Cambria, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :root.provider-multi.dark {
+    /* Multi-CLI Dark Mode */
+    --background: 280 30% 10%;
+    --foreground: 280 25% 92%;
+    --card: 280 25% 14%;
+    --card-foreground: 280 25% 92%;
+    --popover: 280 25% 14%;
+    --popover-foreground: 280 25% 92%;
+    --primary: 285 60% 58%;
+    --primary-foreground: 280 30% 8%;
+    --secondary: 280 20% 18%;
+    --secondary-foreground: 280 20% 75%;
+    --muted: 280 15% 16%;
+    --muted-foreground: 280 10% 55%;
+    --accent: 290 70% 62%;
+    --accent-foreground: 280 30% 8%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 280 15% 22%;
+    --input: 280 15% 22%;
+    --ring: 285 60% 58%;
+    --radius: 0.75rem;
+    --claude-crail: 285 60% 58%;
+    --claude-terracotta: 290 70% 62%;
+    --brand-accent: var(--claude-crail);
+    --brand-accent-2: var(--claude-terracotta);
+    --pattern-color: 280 25% 35%;
+    --pattern-opacity: 0.06;
+    --shadow-color: 280 30% 4%;
+    --glow-color: 290 70% 62%;
+    /* Multi-CLI specific */
+    --multi-master: 285 60% 58%;
+    --multi-slave-1: 200 80% 55%;
+    --multi-slave-2: 220 90% 60%;
+    --multi-slave-3: 195 85% 55%;
   }
 
   * {
@@ -91,29 +692,29 @@
   body {
     @apply bg-background text-foreground;
     /* Space Grotesk is similar to Styrene B - geometric, slightly rounded */
-    font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-ui);
     transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   /* Typography refinements - Claude uses tight tracking on headings */
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-ui);
     font-weight: 600;
     letter-spacing: -0.025em;
   }
 
   /* Body text uses serif (Newsreader is similar to Tiempos) */
   p, li, .prose {
-    font-family: 'Newsreader', ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    font-family: var(--font-body);
   }
 
   /* UI text stays sans-serif */
   button, input, select, label, .ui-text {
-    font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-ui);
   }
 
   code, pre, .font-mono {
-    font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+    font-family: var(--font-mono);
   }
 }
 
@@ -199,19 +800,266 @@
     @apply bg-green-500;
   }
 
-  /* Gradient text with Claude colors */
+  /* Gradient text with brand colors */
   .gradient-text {
-    background: linear-gradient(135deg, hsl(var(--claude-crail)) 0%, hsl(var(--claude-terracotta)) 100%);
+    background: linear-gradient(135deg, hsl(var(--brand-accent)) 0%, hsl(var(--brand-accent-2)) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
-  /* Subtle pattern background - Claude uses very subtle patterns */
+  /* Anthropic "Gradient Pro" - Purple to Blue */
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .gradient-pro {
+    background: linear-gradient(135deg, #C377FF 0%, #2B75E2 100%);
+  }
+
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .gradient-pro-text {
+    background: linear-gradient(135deg, #C377FF 0%, #2B75E2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Anthropic gradient border effect */
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .gradient-border::before {
+    background: linear-gradient(135deg, hsl(var(--anthropic-accent)) 0%, #C377FF 50%, #2B75E2 100%);
+  }
+
+  /* Subtle pattern background - only for Claude (Anthropic) */
   .pattern-bg {
+    background-image: none; /* Default: no pattern */
+  }
+
+  /* Claude/Anthropic: dot pattern */
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .pattern-bg {
     background-image:
-      radial-gradient(circle at 1px 1px, hsl(var(--claude-cloudy) / 0.08) 1px, transparent 0);
+      radial-gradient(circle at 1px 1px, hsl(var(--pattern-color) / var(--pattern-opacity)) 1px, transparent 0);
     background-size: 20px 20px;
+  }
+
+  /* Plum: frosted glass effect (handled by PlumBackground component) */
+  :root.provider-plum .pattern-bg {
+    background-image: none;
+  }
+
+  :root.provider-codex .pattern-bg {
+    background-image: none;
+  }
+
+  /* OpenAI/Codex: Stark minimalist aesthetic */
+  /* Sharp corners, high contrast, clean lines */
+  :root.provider-codex {
+    --radius: 0.25rem;  /* Minimal rounding - almost sharp */
+  }
+
+  :root.provider-codex .claude-card {
+    border: 1px solid hsl(0 0% 15%);
+    box-shadow: none;
+  }
+
+  :root.provider-codex .claude-card:hover {
+    border-color: hsl(0 0% 25%);
+    box-shadow: none;
+  }
+
+  /* OpenAI-style buttons - clean, no shadows */
+  :root.provider-codex .claude-button-primary {
+    border: 1px solid hsl(0 0% 100%);
+    box-shadow: none;
+  }
+
+  :root.provider-codex .claude-button-primary:hover {
+    background: hsl(0 0% 100%);
+    color: hsl(0 0% 0%);
+  }
+
+  /* Subtle teal accent on interactive elements */
+  :root.provider-codex a:hover,
+  :root.provider-codex .text-primary:hover {
+    color: hsl(160 28% 56%);  /* ChatGPT Teal */
+  }
+
+  /* Clean focus states */
+  :root.provider-codex input:focus,
+  :root.provider-codex textarea:focus {
+    border-color: hsl(0 0% 40%);
+    box-shadow: none;
+    outline: 1px solid hsl(0 0% 40%);
+    outline-offset: -1px;
+  }
+
+  /* OpenAI gradient text - white to teal */
+  :root.provider-codex .gradient-text {
+    background: linear-gradient(135deg, hsl(0 0% 100%) 0%, hsl(160 28% 56%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Mistral: Blocky/pixelated aesthetic - remove all rounded corners */
+  :root.provider-mistral *,
+  :root.provider-mistral *::before,
+  :root.provider-mistral *::after {
+    border-radius: 0 !important;
+  }
+
+  /* Mistral: Pixelated pattern instead of dots */
+  :root.provider-mistral .pattern-bg {
+    background-image:
+      linear-gradient(90deg, hsl(var(--pattern-color) / var(--pattern-opacity)) 1px, transparent 1px),
+      linear-gradient(hsl(var(--pattern-color) / var(--pattern-opacity)) 1px, transparent 1px);
+    background-size: 8px 8px;
+  }
+
+  /* Gemini: Signature blue-to-purple gradient glow effect */
+  :root.provider-gemini .claude-card,
+  :root.provider-gemini .card {
+    position: relative;
+    overflow: visible;
+  }
+
+  :root.provider-gemini .claude-card::before,
+  :root.provider-gemini [data-glow]::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, #078EFA 0%, #AD89EB 50%, #E879F9 100%);
+    opacity: 0;
+    z-index: -1;
+    filter: blur(12px);
+    transition: opacity 0.3s ease;
+  }
+
+  :root.provider-gemini .claude-card:hover::before,
+  :root.provider-gemini [data-glow]:hover::before {
+    opacity: 0.5;
+  }
+
+  /* Gemini glow on buttons */
+  :root.provider-gemini .claude-button-primary {
+    position: relative;
+    overflow: visible;
+    box-shadow: 0 0 20px -5px rgba(7, 142, 250, 0.4),
+                0 0 30px -5px rgba(173, 137, 235, 0.3);
+    transition: box-shadow 0.3s ease, transform 0.2s ease;
+  }
+
+  :root.provider-gemini .claude-button-primary:hover {
+    box-shadow: 0 0 25px -2px rgba(7, 142, 250, 0.6),
+                0 0 40px -2px rgba(173, 137, 235, 0.5);
+  }
+
+  /* Gemini animated glow border for focus states */
+  :root.provider-gemini input:focus,
+  :root.provider-gemini textarea:focus,
+  :root.provider-gemini select:focus {
+    box-shadow: 0 0 0 2px hsl(var(--background)),
+                0 0 0 4px rgba(7, 142, 250, 0.5),
+                0 0 20px -5px rgba(173, 137, 235, 0.4);
+  }
+
+  /* Gemini gradient border on cards */
+  :root.provider-gemini .gradient-border::before {
+    background: linear-gradient(135deg, #078EFA 0%, #AD89EB 50%, #E879F9 100%);
+  }
+
+  /* Gemini pattern - soft gradient orbs */
+  :root.provider-gemini .pattern-bg {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% 40%, rgba(7, 142, 250, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse 60% 80% at 80% 60%, rgba(173, 137, 235, 0.06) 0%, transparent 50%);
+    background-size: 100% 100%;
+  }
+
+  /* Gemini pulsing glow animation for active elements */
+  @keyframes gemini-glow {
+    0%, 100% {
+      box-shadow: 0 0 20px -5px rgba(7, 142, 250, 0.4),
+                  0 0 30px -5px rgba(173, 137, 235, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 30px -2px rgba(7, 142, 250, 0.6),
+                  0 0 45px -2px rgba(173, 137, 235, 0.5);
+    }
+  }
+
+  :root.provider-gemini .animate-glow {
+    animation: gemini-glow 3s ease-in-out infinite;
+  }
+
+  /* ── Kimi / Moonshot AI: "Dark Side Minimalism" ── */
+  /* Void aesthetic — no patterns, no glow, pure reduction */
+  :root.provider-kimi .pattern-bg {
+    background-image: none;
+  }
+
+  :root.provider-kimi {
+    --radius: 0.375rem;  /* Subtle rounding — geometric precision */
+  }
+
+  /* Cards: thin border, no shadow — floating in the void */
+  :root.provider-kimi .claude-card {
+    border: 1px solid hsl(240 6% 16%);
+    box-shadow: none;
+    transition: border-color 0.2s ease;
+  }
+
+  :root.provider-kimi .claude-card:hover {
+    border-color: hsl(220 15% 35%);
+    box-shadow: none;
+  }
+
+  /* Buttons: understated, no glow — quiet confidence */
+  :root.provider-kimi .claude-button-primary {
+    border: 1px solid hsl(0 0% 93%);
+    box-shadow: none;
+    transition: all 0.2s ease;
+  }
+
+  :root.provider-kimi .claude-button-primary:hover {
+    background: hsl(0 0% 93%);
+    color: hsl(240 10% 4%);
+  }
+
+  /* Moonlight accent on interactive elements */
+  :root.provider-kimi a:hover,
+  :root.provider-kimi .text-primary:hover {
+    color: hsl(220 20% 70%);  /* Lunar blue */
+  }
+
+  /* Minimal focus states — thin lunar ring */
+  :root.provider-kimi input:focus,
+  :root.provider-kimi textarea:focus {
+    border-color: hsl(220 15% 35%);
+    box-shadow: none;
+    outline: 1px solid hsl(220 15% 35%);
+    outline-offset: -1px;
+  }
+
+  /* Gradient text: white to steel moonlight */
+  :root.provider-kimi .gradient-text {
+    background: linear-gradient(135deg, hsl(0 0% 93%) 0%, hsl(220 15% 50%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Gradient border: subtle lunar gradient */
+  :root.provider-kimi .gradient-border::before {
+    background: linear-gradient(135deg, hsl(0 0% 30%) 0%, hsl(220 15% 40%) 100%);
+  }
+
+  .ui-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card/70 px-2 py-1 text-[11px] font-medium text-muted-foreground;
+  }
+
+  .ui-pill-value {
+    @apply text-foreground;
+  }
+
+  .ui-pill-subtle {
+    @apply bg-muted/50;
   }
 
   /* Glass effect - subtle blur */
@@ -232,6 +1080,20 @@
   .claude-button-primary {
     @apply bg-primary text-primary-foreground;
     @apply hover:opacity-90 active:scale-[0.98];
+  }
+
+  /* Claude login CTA should stay on-brand regardless of provider theme */
+  .claude-cta {
+    background-color: hsl(18 53% 49%);
+    color: #fff;
+  }
+
+  .claude-cta:hover {
+    background-color: hsl(18 53% 44%);
+  }
+
+  .claude-cta:active {
+    transform: scale(0.98);
   }
 
   .claude-button-secondary {
@@ -261,7 +1123,7 @@
     inset: 0;
     padding: 1px;
     border-radius: inherit;
-    background: linear-gradient(135deg, hsl(var(--claude-crail) / 0.4), transparent 50%, hsl(var(--claude-terracotta) / 0.2));
+    background: linear-gradient(135deg, hsl(var(--brand-accent) / 0.4), transparent 50%, hsl(var(--brand-accent-2) / 0.2));
     -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite: xor;
@@ -272,7 +1134,7 @@
   /* Section divider */
   .section-divider {
     @apply border-t border-border;
-    background: linear-gradient(90deg, transparent, hsl(var(--claude-crail) / 0.1), transparent);
+    background: linear-gradient(90deg, transparent, hsl(var(--brand-accent) / 0.1), transparent);
     height: 1px;
   }
 }
@@ -337,7 +1199,7 @@
 
 /* Selection - Claude orange tint */
 ::selection {
-  background: hsl(var(--claude-crail) / 0.15);
+  background: hsl(var(--brand-accent) / 0.15);
   color: hsl(var(--foreground));
 }
 
@@ -362,7 +1224,7 @@
 
 /* Claude-style prose for content areas */
 .claude-prose {
-  font-family: 'Newsreader', ui-serif, Georgia, serif;
+  font-family: var(--font-body);
   line-height: 1.7;
   letter-spacing: 0.01em;
 }
@@ -371,7 +1233,7 @@
 .claude-prose h2,
 .claude-prose h3,
 .claude-prose h4 {
-  font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui);
   letter-spacing: -0.025em;
   margin-top: 1.5em;
   margin-bottom: 0.5em;

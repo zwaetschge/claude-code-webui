@@ -20,6 +20,10 @@ interface AIProvider {
   models: string | null; // JSON array of model IDs
   default_model: string | null;
   enabled: number;
+  auth_method: 'api_key' | 'oauth' | null;
+  oauth_access_token: string | null;
+  oauth_refresh_token: string | null;
+  oauth_expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,18 +37,21 @@ interface AIProviderResponse {
   models: string | null;
   default_model: string | null;
   enabled: number;
+  auth_method: 'api_key' | 'oauth' | null;
+  has_oauth_token: boolean;
+  oauth_expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
 // Default models for each provider
 const DEFAULT_MODELS: Record<ProviderType, string[]> = {
-  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'o1', 'o1-mini', 'o1-pro'],
-  anthropic: ['claude-opus-4-5-20251101', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
-  google: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
-  openrouter: ['openai/gpt-4o', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro', 'meta-llama/llama-3.1-405b'],
-  zai: ['zai-coder', 'zai-chat'],
-  ollama: ['llama3.2', 'llama3.1', 'codellama', 'mistral', 'mixtral'],
+  openai: ['o3', 'o3-mini', 'gpt-4.5', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o1-pro'],
+  anthropic: ['claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001', 'claude-opus-4-1-20250805', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
+  google: ['gemini-3-pro', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+  openrouter: ['openai/o3', 'openai/gpt-4.5', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-pro', 'meta-llama/llama-3.3-70b'],
+  zai: ['glm-4.7', 'glm-4.6v', 'glm-4.5', 'glm-4.5-air'],
+  ollama: ['llama3.3', 'llama3.2', 'qwen2.5-coder', 'codellama', 'mistral', 'mixtral'],
   custom: [],
 };
 
@@ -69,6 +76,9 @@ function transformProvider(p: AIProvider): AIProviderResponse {
     models: p.models,
     default_model: p.default_model,
     enabled: p.enabled,
+    auth_method: p.auth_method || 'api_key',
+    has_oauth_token: !!p.oauth_access_token,
+    oauth_expires_at: p.oauth_expires_at,
     created_at: p.created_at,
     updated_at: p.updated_at,
   };
@@ -107,6 +117,7 @@ router.get('/types', requireAuth, (_req, res) => {
     baseUrl: DEFAULT_BASE_URLS[type],
     models: DEFAULT_MODELS[type],
     requiresApiKey: type !== 'ollama',
+    supportsOAuth: type === 'google', // Currently only Google/Gemini supports OAuth
     icon: type,
   }));
 
@@ -291,16 +302,40 @@ router.post('/:id/test', requireAuth, async (req, res) => {
     try {
       // Decrypt API key for testing
       const apiKey = safeDecrypt(provider.api_key_encrypted);
+      const authToken = provider.auth_method === 'oauth' && provider.oauth_access_token
+        ? provider.oauth_access_token
+        : apiKey;
 
       switch (provider.type) {
         case 'openai':
         case 'zai': {
           // Z.AI uses OpenAI-compatible API
           const baseUrl = provider.base_url || DEFAULT_BASE_URLS[provider.type];
+          if (!authToken) {
+            testResult = { success: false, message: 'No API key or OAuth token configured' };
+            break;
+          }
           const response = await fetch(`${baseUrl}/models`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
+            headers: { 'Authorization': `Bearer ${authToken}` },
           });
           testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
+          break;
+        }
+        case 'google': {
+          // Test Gemini API
+          if (provider.auth_method === 'oauth' && provider.oauth_access_token) {
+            const baseUrl = provider.base_url || DEFAULT_BASE_URLS.google;
+            const response = await fetch(`${baseUrl}/models`, {
+              headers: { 'Authorization': `Bearer ${provider.oauth_access_token}` },
+            });
+            testResult = { success: response.ok, message: response.ok ? 'Connected via OAuth' : 'OAuth token may have expired' };
+          } else if (apiKey) {
+            const baseUrl = provider.base_url || DEFAULT_BASE_URLS.google;
+            const response = await fetch(`${baseUrl}/models?key=${apiKey}`);
+            testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
+          } else {
+            testResult = { success: false, message: 'No API key or OAuth token configured' };
+          }
           break;
         }
         case 'ollama': {

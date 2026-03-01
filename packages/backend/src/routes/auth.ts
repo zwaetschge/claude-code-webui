@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import passport from 'passport';
-import jwt from 'jsonwebtoken';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -9,13 +8,11 @@ import { config } from '../config';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../db';
 import type { User } from '@claude-code-webui/shared';
+import { isProviderAvailable } from '../services/cli-providers';
+import { generateUserToken } from '../utils/authTokens';
+import { upsertSharedCliUser } from '../utils/cliUser';
 
 const router = Router();
-
-// Generate JWT token
-function generateToken(userId: string): string {
-  return jwt.sign({ userId }, config.jwtSecret, { expiresIn: '7d' });
-}
 
 // GitHub OAuth (only if configured)
 if (config.github.clientId && config.github.clientSecret && config.github.callbackUrl) {
@@ -23,16 +20,16 @@ if (config.github.clientId && config.github.clientSecret && config.github.callba
 
   router.get(
     '/github/callback',
-    passport.authenticate('github', { failureRedirect: `${config.frontendUrl}/login?error=github` }),
+    passport.authenticate('github', { failureRedirect: `${config.frontendUrl}/connect?error=github` }),
     (req, res) => {
       const user = req.user as User;
-      const token = generateToken(user.id);
+      const token = generateUserToken(user.id);
       res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
     }
   );
 } else {
   router.get('/github', (_req, res) => {
-    res.redirect(`${config.frontendUrl}/login?error=github`);
+    res.redirect(`${config.frontendUrl}/connect?error=github`);
   });
 }
 
@@ -42,16 +39,16 @@ if (config.google.clientId && config.google.clientSecret && config.google.callba
 
   router.get(
     '/google/callback',
-    passport.authenticate('google', { failureRedirect: `${config.frontendUrl}/login?error=google` }),
+    passport.authenticate('google', { failureRedirect: `${config.frontendUrl}/connect?error=google` }),
     (req, res) => {
       const user = req.user as User;
-      const token = generateToken(user.id);
+      const token = generateUserToken(user.id);
       res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
     }
   );
 } else {
   router.get('/google', (_req, res) => {
-    res.redirect(`${config.frontendUrl}/login?error=google`);
+    res.redirect(`${config.frontendUrl}/connect?error=google`);
   });
 }
 
@@ -80,45 +77,54 @@ async function getClaudeCredentials(): Promise<ClaudeCredentials | null> {
 
 async function refreshClaudeToken(refreshToken: string): Promise<ClaudeCredentials | null> {
   try {
-    const response = await fetch('https://console.anthropic.com/api/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code client ID
-      }),
-    });
+    const endpoints = [
+      'https://api.anthropic.com/oauth/token',
+      'https://console.anthropic.com/api/oauth/token',
+    ];
 
-    if (!response.ok) {
-      console.error('Token refresh failed:', await response.text());
-      return null;
+    for (const endpoint of endpoints) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code client ID
+        }),
+      });
+
+      if (!response.ok) {
+        console.error(`Token refresh failed (${endpoint}):`, await response.text());
+        continue;
+      }
+
+      const tokens = await response.json() as {
+        access_token: string;
+        refresh_token: string;
+        expires_in: number;
+      };
+
+      // Read existing credentials to preserve other fields
+      const existing = await getClaudeCredentials();
+      const updated: ClaudeCredentials = {
+        claudeAiOauth: {
+          ...existing?.claudeAiOauth,
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          expiresAt: Date.now() + tokens.expires_in * 1000,
+          scopes: existing?.claudeAiOauth?.scopes || [],
+          subscriptionType: existing?.claudeAiOauth?.subscriptionType || 'unknown',
+          rateLimitTier: existing?.claudeAiOauth?.rateLimitTier || 'unknown',
+        },
+      };
+
+      // Save updated credentials
+      await fs.writeFile(credentialsPath, JSON.stringify(updated, null, 2));
+      console.log('Claude token refreshed successfully');
+      return updated;
     }
 
-    const tokens = await response.json() as {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    };
-
-    // Read existing credentials to preserve other fields
-    const existing = await getClaudeCredentials();
-    const updated: ClaudeCredentials = {
-      claudeAiOauth: {
-        ...existing?.claudeAiOauth,
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        expiresAt: Date.now() + tokens.expires_in * 1000,
-        scopes: existing?.claudeAiOauth?.scopes || [],
-        subscriptionType: existing?.claudeAiOauth?.subscriptionType || 'unknown',
-        rateLimitTier: existing?.claudeAiOauth?.rateLimitTier || 'unknown',
-      },
-    };
-
-    // Save updated credentials
-    await fs.writeFile(credentialsPath, JSON.stringify(updated, null, 2));
-    console.log('Claude token refreshed successfully');
-    return updated;
+    return null;
   } catch (err) {
     console.error('Token refresh error:', err);
     return null;
@@ -132,7 +138,7 @@ if (config.claude.oauthEnabled) {
       let credentials = await getClaudeCredentials();
 
       if (!credentials?.claudeAiOauth?.accessToken) {
-        return res.redirect(`${config.frontendUrl}/login?error=claude_not_logged_in`);
+        return res.redirect(`${config.frontendUrl}/connect?error=claude_not_logged_in`);
       }
 
       // Check if token is expired and refresh if needed
@@ -170,55 +176,70 @@ if (config.claude.oauthEnabled) {
         console.log('Profile fetch error:', err);
       }
 
-      const db = getDatabase();
-
-      // Find or create user
-      let user = db
-        .prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?')
-        .get('claude', 'local-cli') as User | undefined;
-
-      if (!user) {
-        const userId = nanoid();
-        db.prepare(
-          `INSERT INTO users (id, email, name, avatar_url, provider, provider_id)
-           VALUES (?, ?, ?, ?, 'claude', 'local-cli')`
-        ).run(userId, email, name, null);
-
-        // Create default settings
-        db.prepare(
-          `INSERT INTO user_settings (user_id, theme, allowed_tools)
-           VALUES (?, 'dark', '["Bash","Read","Write","Edit","Glob","Grep"]')`
-        ).run(userId);
-
-        user = {
-          id: userId,
-          email,
-          name,
-          avatarUrl: null,
-          provider: 'claude',
-          providerId: 'local-cli',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        } as User;
-      } else {
-        // Update user info
-        db.prepare('UPDATE users SET email = ?, name = ? WHERE id = ?').run(email, name, user.id);
-        user.email = email;
-        user.name = name;
-      }
-
-      const token = generateToken(user.id);
+      const user = upsertSharedCliUser(email, name);
+      const token = generateUserToken(user.id);
       res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
     } catch (error) {
       console.error('Claude CLI auth error:', error);
-      res.redirect(`${config.frontendUrl}/login?error=claude`);
+      res.redirect(`${config.frontendUrl}/connect?error=claude`);
     }
   });
 } else {
   router.get('/claude', (_req, res) => {
-    res.redirect(`${config.frontendUrl}/login?error=claude`);
+    res.redirect(`${config.frontendUrl}/connect?error=claude`);
   });
 }
+
+// Codex CLI credentials login (uses ~/.codex presence)
+router.get('/codex', async (_req, res) => {
+  try {
+    const available = await isProviderAvailable('codex');
+    if (!available) {
+      return res.redirect(`${config.frontendUrl}/connect?error=codex_not_logged_in`);
+    }
+
+    const user = upsertSharedCliUser('codex-user@local', 'Codex User');
+    const token = generateUserToken(user.id);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Codex CLI auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=codex`);
+  }
+});
+
+// Gemini CLI credentials login (uses ~/.gemini presence)
+router.get('/gemini', async (_req, res) => {
+  try {
+    const available = await isProviderAvailable('gemini');
+    if (!available) {
+      return res.redirect(`${config.frontendUrl}/connect?error=gemini_not_logged_in`);
+    }
+
+    const user = upsertSharedCliUser('gemini-user@local', 'Gemini User');
+    const token = generateUserToken(user.id);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Gemini CLI auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=gemini`);
+  }
+});
+
+// Z.AI CLI credentials login (uses ~/.glm presence)
+router.get('/zai', async (_req, res) => {
+  try {
+    const available = await isProviderAvailable('glm');
+    if (!available) {
+      return res.redirect(`${config.frontendUrl}/connect?error=zai_not_logged_in`);
+    }
+
+    const user = upsertSharedCliUser('zai-user@local', 'Z.AI User');
+    const token = generateUserToken(user.id);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Z.AI CLI auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=zai`);
+  }
+});
 
 // Dev login (only in development mode)
 if (config.isDevelopment) {
@@ -256,7 +277,7 @@ if (config.isDevelopment) {
       } as User;
     }
 
-    const token = generateToken(user.id);
+    const token = generateUserToken(user.id);
     res.json({ success: true, data: { token, user } });
   });
 
@@ -284,7 +305,7 @@ if (config.isDevelopment) {
       user = { id: userId };
     }
 
-    const token = generateToken(user.id);
+    const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
   });
 }
@@ -315,13 +336,21 @@ router.post('/logout', requireAuth, (req, res) => {
 });
 
 // Auth providers info
-router.get('/providers', (_req, res) => {
+router.get('/providers', async (_req, res) => {
+  const [codexAvailable, geminiAvailable, zaiAvailable] = await Promise.all([
+    isProviderAvailable('codex'),
+    isProviderAvailable('gemini'),
+    isProviderAvailable('glm'),
+  ]);
   res.json({
     success: true,
     data: {
       github: !!(config.github.clientId && config.github.clientSecret),
       google: !!(config.google.clientId && config.google.clientSecret),
       claude: config.claude.oauthEnabled,
+      codex: codexAvailable,
+      gemini: geminiAvailable,
+      zai: zaiAvailable,
     },
   });
 });

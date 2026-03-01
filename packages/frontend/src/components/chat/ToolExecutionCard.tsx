@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   FileText,
   Search,
@@ -23,7 +23,7 @@ interface ToolExecutionCardProps {
 }
 
 // Map tool names to icons and labels
-const getToolDisplay = (toolName: string): { icon: typeof Wrench; label: string; inputLabel: string } => {
+export const getToolDisplay = (toolName: string): { icon: typeof Wrench; label: string; inputLabel: string } => {
   const toolMap: Record<string, { icon: typeof Wrench; label: string; inputLabel: string }> = {
     'Write': { icon: FileText, label: 'Write', inputLabel: 'File' },
     'Read': { icon: Search, label: 'Read', inputLabel: 'File' },
@@ -126,6 +126,29 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
   return result;
 };
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60_000).toFixed(1)}m`;
+}
+
+function LiveDuration({ startedAt }: { startedAt: number }) {
+  const [elapsed, setElapsed] = useState(Date.now() - startedAt);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - startedAt);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [startedAt]);
+
+  return (
+    <span className="text-[10px] font-mono text-blue-400 tabular-nums ml-1">
+      {formatDuration(elapsed)}
+    </span>
+  );
+}
+
 // Status icon component
 const StatusIcon = ({ status }: { status: 'started' | 'completed' | 'error' }) => {
   switch (status) {
@@ -154,6 +177,12 @@ export function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
   // Truncate preview for display
   const truncatedPreview = preview.length > 80 ? preview.substring(0, 80) + '...' : preview;
 
+  // Duration
+  const duration = execution.completedAt
+    ? execution.completedAt - execution.timestamp
+    : null;
+  const isRunning = execution.status === 'started';
+
   return (
     <div className="flex flex-col gap-1 px-3 py-2 bg-muted/30 rounded-lg text-xs border border-border/50">
       {/* Header row */}
@@ -168,6 +197,14 @@ export function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
             {truncatedPreview}
           </code>
         )}
+        {/* Duration badge */}
+        {isRunning ? (
+          <LiveDuration startedAt={execution.timestamp} />
+        ) : duration != null ? (
+          <span className={`text-[10px] font-mono tabular-nums ml-1 ${duration > 5000 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+            {formatDuration(duration)}
+          </span>
+        ) : null}
         {isExpandable && (
           <>
             {expanded ? (

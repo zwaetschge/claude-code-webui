@@ -6,6 +6,9 @@ export interface ActivityState {
   type: 'idle' | 'thinking' | 'tool';
   toolName?: string;
   toolStatus?: 'started' | 'completed' | 'error';
+  message?: string;
+  startedAt?: number;
+  messageStartedAt?: number;
 }
 
 // Active agent state
@@ -13,6 +16,7 @@ export interface AgentState {
   agentType: string;
   description?: string;
   status: 'started' | 'completed' | 'error';
+  startedAt?: number;
 }
 
 // Todo item from Claude's TodoWrite tool
@@ -72,6 +76,9 @@ interface SessionState {
   openFiles: Record<string, OpenFile[]>;
   activeFileTab: Record<string, string | null>;
 
+  // Track last received message timestamp per session for reconnection
+  lastMessageTimestamp: Record<string, number>;
+
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
   updateSession: (id: string, updates: Partial<Session>) => void;
@@ -80,6 +87,7 @@ interface SessionState {
 
   setMessages: (sessionId: string, messages: Message[]) => void;
   addMessage: (sessionId: string, message: Message) => void;
+  addMessageIfNotExists: (sessionId: string, message: Message) => void;
 
   appendStreamingContent: (sessionId: string, content: string) => void;
   clearStreamingContent: (sessionId: string) => void;
@@ -112,9 +120,13 @@ interface SessionState {
   updateFileContent: (sessionId: string, path: string, content: string) => void;
   markFileSaved: (sessionId: string, path: string) => void;
   setActiveTab: (sessionId: string, path: string) => void;
+
+  // Timestamp tracking for reconnection
+  updateLastMessageTimestamp: (sessionId: string, timestamp: number) => void;
+  getLastMessageTimestamp: (sessionId: string) => number | undefined;
 }
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   messages: {},
@@ -132,6 +144,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   selectedFile: {},
   openFiles: {},
   activeFileTab: {},
+  lastMessageTimestamp: {},
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -159,18 +172,51 @@ export const useSessionStore = create<SessionState>((set) => ({
     })),
 
   addMessage: (sessionId, message) =>
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [sessionId]: [...(state.messages[sessionId] || []), message],
-      },
-    })),
+    set((state) => {
+      const timestamp = Date.now();
+      return {
+        messages: {
+          ...state.messages,
+          [sessionId]: [...(state.messages[sessionId] || []), message],
+        },
+        lastMessageTimestamp: {
+          ...state.lastMessageTimestamp,
+          [sessionId]: timestamp,
+        },
+      };
+    }),
+
+  // Add message only if it doesn't already exist (for deduplication during reconnection)
+  addMessageIfNotExists: (sessionId, message) =>
+    set((state) => {
+      const existingMessages = state.messages[sessionId] || [];
+      // Check if message with same ID already exists
+      if (existingMessages.some((m) => m.id === message.id)) {
+        return state; // Don't add duplicate
+      }
+      const timestamp = Date.now();
+      return {
+        messages: {
+          ...state.messages,
+          [sessionId]: [...existingMessages, message],
+        },
+        lastMessageTimestamp: {
+          ...state.lastMessageTimestamp,
+          [sessionId]: timestamp,
+        },
+      };
+    }),
 
   appendStreamingContent: (sessionId, content) =>
     set((state) => ({
       streamingContent: {
         ...state.streamingContent,
         [sessionId]: (state.streamingContent[sessionId] || '') + content,
+      },
+      // Update timestamp when receiving streaming content
+      lastMessageTimestamp: {
+        ...state.lastMessageTimestamp,
+        [sessionId]: Date.now(),
       },
     })),
 
@@ -370,4 +416,15 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => ({
       activeFileTab: { ...state.activeFileTab, [sessionId]: path },
     })),
+
+  // Timestamp tracking for reconnection
+  updateLastMessageTimestamp: (sessionId, timestamp) =>
+    set((state) => ({
+      lastMessageTimestamp: {
+        ...state.lastMessageTimestamp,
+        [sessionId]: timestamp,
+      },
+    })),
+
+  getLastMessageTimestamp: (sessionId) => get().lastMessageTimestamp[sessionId],
 }));

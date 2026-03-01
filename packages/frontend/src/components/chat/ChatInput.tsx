@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo, memo, useEffect } from 'react';
-import { Send, Paperclip, Loader2, X, FileText, FileCode, File as FileIcon } from 'lucide-react';
+import { Send, Paperclip, Loader2, X, FileText, FileCode, File as FileIcon, StopCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CommandMenu } from '@/components/chat/CommandMenu';
 import { cn } from '@/lib/utils';
@@ -60,30 +60,36 @@ interface ChatInputProps {
   onSendMessage: (message: string) => void;
   onSendMessageWithFiles: (message: string, files: File[]) => void;
   onCommandExecute: (input: string) => Promise<void>;
+  onInterrupt?: () => void;
   commands?: Command[];
   selectedToolName?: string | null;
   selectedCliTool?: string | null;
+  quickPrompts?: Array<{ label: string; value: string }>;
   disabled?: boolean;
   isSending?: boolean;
   isExecutingTool?: boolean;
+  isActive?: boolean;
 }
 
 export const ChatInput = memo(function ChatInput({
   onSendMessage,
   onSendMessageWithFiles,
   onCommandExecute,
+  onInterrupt,
   commands,
   selectedToolName,
   selectedCliTool,
+  quickPrompts,
   disabled,
   isSending,
   isExecutingTool,
+  isActive,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [showCommandMenu, setShowCommandMenu] = useState(false);
   const [commandMenuIndex, setCommandMenuIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Memoized filtered commands
@@ -159,6 +165,10 @@ export const ChatInput = memo(function ChatInput({
 
     // Clear input immediately for responsiveness
     setInput('');
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
 
     // Check for slash commands
     if (currentInput.startsWith('/')) {
@@ -180,7 +190,7 @@ export const ChatInput = memo(function ChatInput({
     }
   }, [input, attachments, disabled, isSending, isExecutingTool, onCommandExecute, onSendMessage, onSendMessageWithFiles]);
 
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setInput(value);
     // Show command menu when typing /
@@ -192,7 +202,7 @@ export const ChatInput = memo(function ChatInput({
     }
   }, []);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showCommandMenu && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -222,6 +232,11 @@ export const ChatInput = memo(function ChatInput({
     inputRef.current?.focus();
   }, []);
 
+  const handleQuickPrompt = useCallback((value: string) => {
+    setInput(value);
+    inputRef.current?.focus();
+  }, []);
+
   // Helper to get icon for attachment type
   const getAttachmentIcon = (type: AttachmentType) => {
     switch (type) {
@@ -238,6 +253,25 @@ export const ChatInput = memo(function ChatInput({
 
   return (
     <div className="shrink-0 pt-4 border-t space-y-3">
+      {quickPrompts && quickPrompts.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto sm:overflow-visible sm:flex-wrap pb-1 sm:pb-0 -mx-1 px-1 scrollbar-none">
+          {quickPrompts.map((prompt) => (
+            <button
+              key={prompt.label}
+              type="button"
+              onClick={() => handleQuickPrompt(prompt.value)}
+              disabled={disabled || isSending || isExecutingTool}
+              className={cn(
+                "ui-pill ui-pill-subtle transition-colors shrink-0",
+                "hover:bg-muted/70 hover:text-foreground",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+            >
+              {prompt.label}
+            </button>
+          ))}
+        </div>
+      )}
       {/* File attachments preview */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 p-3 rounded-xl bg-muted/50 border animate-scale-in">
@@ -304,9 +338,8 @@ export const ChatInput = memo(function ChatInput({
               onClose={() => setShowCommandMenu(false)}
             />
           )}
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
@@ -314,12 +347,34 @@ export const ChatInput = memo(function ChatInput({
               ? `Prompt for ${selectedToolName}...`
               : "Message..."
             }
+            rows={1}
             className={cn(
-              "w-full h-12 md:h-10 px-4 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-ring text-base md:text-sm",
+              "w-full min-h-[48px] md:min-h-[40px] max-h-[200px] px-4 py-3 md:py-2 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-ring text-base md:text-sm resize-none",
               selectedCliTool && "border-orange-500/30 focus:ring-orange-500/50"
             )}
+            style={{ height: 'auto', overflow: 'hidden' }}
+            onInput={(e) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = 'auto';
+              target.style.height = Math.min(target.scrollHeight, 200) + 'px';
+            }}
           />
         </div>
+
+        {/* Stop button - always visible, dimmed when inactive */}
+        {onInterrupt && (
+          <Button
+            type="button"
+            size="icon"
+            variant={isActive ? "destructive" : "outline"}
+            onClick={onInterrupt}
+            disabled={!isActive}
+            className={cn("h-12 w-12 md:h-10 md:w-10 shrink-0 transition-opacity", !isActive && "opacity-30")}
+            title="Stop (Escape)"
+          >
+            <StopCircle className="h-5 w-5" />
+          </Button>
+        )}
 
         {/* Send button */}
         <Button
@@ -331,7 +386,7 @@ export const ChatInput = memo(function ChatInput({
             selectedCliTool && "bg-orange-600 hover:bg-orange-700"
           )}
         >
-          {isExecutingTool ? (
+          {isSending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <Send className="h-4 w-4" />

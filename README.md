@@ -1,6 +1,6 @@
-# Claude Code WebUI
+# Plum Code WebUI
 
-A powerful web-based interface for Claude Code CLI with rich features for development workflows.
+A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with multi-provider support, real-time streaming, tool execution tracking, orchestration, and self-rebuild capabilities.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
@@ -31,8 +31,31 @@ A powerful web-based interface for Claude Code CLI with rich features for develo
 - Image attachments and Gemini image generation
 - LaTeX/Math rendering with KaTeX
 - Interactive choice prompts
-- Token usage and cost tracking
+- Context & token popover with live progress bar
 - Todo tracking from Claude's TodoWrite tool
+
+### DevTools Integration
+- **Context Popover**: Inline progress bar showing context window usage (green→yellow→red), click to see full token breakdown (input/output/cache read/cache write), cost, and model
+- **Tool-Log Panel**: Full tool execution timeline with filter buttons (All, Read, Write, Bash, Web, Agent), duration tracking per tool, live timers for running tools, expandable input/output details
+- **Compaction Boundary Cards**: Visual separators in chat when context is compacted, with expandable summary text
+
+### Multi-Provider Support
+- **Claude** (Anthropic) — primary provider
+- **Codex** (OpenAI) — alternative provider
+- **GLM** (Z.AI) — Chinese market provider
+- Per-session provider selection
+- Independent CLI instances per provider
+
+### Orchestration
+- Multi-provider task delegation
+- Parallel worker execution
+- Task routing and progress tracking
+- Worker output streaming
+
+### Ralph (Autonomous Loop)
+- Iterative autonomous task execution
+- Plan generation and progress tracking
+- Multi-iteration workflows with checkpoints
 
 ### File Management
 - File Tree Browser with lazy loading and git status
@@ -65,6 +88,16 @@ A powerful web-based interface for Claude Code CLI with rich features for develo
 - Session starring and filtering
 - PTY Reconnect with 30-minute buffer
 
+### Self-Rebuild
+- Container can rebuild and redeploy itself
+- Rebuild Robot for external container management
+- Status tracking and reporting
+
+### Watchdog & Monitoring
+- Session health monitoring
+- Telegram bot notifications
+- Configurable alert thresholds
+
 ### Mobile Support
 - Progressive Web App (PWA)
 - Bottom tab navigation
@@ -76,6 +109,7 @@ A powerful web-based interface for Claude Code CLI with rich features for develo
 - Theme configuration
 - API key management (Gemini, GitHub)
 - MCP Server management with connection testing
+- Memory viewer for session context
 
 ## Tech Stack
 
@@ -98,7 +132,7 @@ A powerful web-based interface for Claude Code CLI with rich features for develo
 - **KaTeX** - Math rendering
 
 ### Shared
-- **TypeScript** - Type safety across packages
+- **TypeScript** - Type safety across all packages
 
 ## Installation
 
@@ -138,7 +172,7 @@ Access the WebUI at http://localhost:5174
 
 ```bash
 # Clone the repository
-git clone https://github.com/zwaetschge/claude-code-webui.git
+git clone https://github.com/zwaetschge/plum-code-webui.git
 cd claude-code-webui
 
 # Install dependencies
@@ -174,6 +208,19 @@ docker-compose -f docker-compose.hub.yml up -d
 docker-compose up -d --build
 ```
 
+### Unraid persistence note
+
+On Unraid, avoid mounting configs from `/root` (tmpfs on reboot). Use the appdata share instead, e.g.:
+
+```
+/mnt/user/appdata/claude-code-webui/config/claude  -> /home/node/.claude
+/mnt/user/appdata/claude-code-webui/config/codex   -> /home/node/.codex
+/mnt/user/appdata/claude-code-webui/config/gemini  -> /home/node/.gemini
+/mnt/user/appdata/claude-code-webui/config/glm     -> /home/node/.glm
+/mnt/user/appdata/claude-code-webui/config/npm-global -> /home/node/.npm-global
+/mnt/user/appdata/claude-code-webui/config/npm-glm -> /home/node/.npm-glm
+```
+
 ## Configuration
 
 ### Environment Variables
@@ -184,6 +231,13 @@ docker-compose up -d --build
 | `JWT_SECRET` | JWT signing key | Yes |
 | `FRONTEND_URL` | CORS origin (default: http://localhost:5173) | No |
 | `PORT` | Backend port (default: 3006) | No |
+| `CLI_AUTO_UPDATE` | Auto-update CLI tools on startup (true/false) | No |
+| `CLI_AUTO_UPDATE_INTERVAL_HOURS` | Repeat auto-update every N hours (0 disables) | No |
+| `CLI_AUTO_UPDATE_PROVIDERS` | Comma list of CLI providers to update | No |
+| `WEBUI_GLM_CONFIG_HOME` | Config home for GLM Claude Code (default: ~/.glm) | No |
+| `CLI_PROVIDER_GLM_PREFIX` | npm prefix for GLM Claude Code CLI (default: ~/.npm-glm) | No |
+| `CLI_PROVIDER_GLM_COMMAND` | Path to GLM Claude Code binary | No |
+| `CLI_PROVIDER_GLM_CREDENTIALS_PATH` | Credentials path for GLM availability checks | No |
 
 ### Claude CLI Integration
 
@@ -194,24 +248,37 @@ claude --print --verbose --output-format stream-json --input-format stream-json 
        --include-partial-messages --dangerously-skip-permissions
 ```
 
+GLM (Z.AI) sessions run a separate Claude Code CLI instance with its own config home (`~/.glm` by default). See the `CLI_PROVIDER_GLM_*` and `WEBUI_GLM_CONFIG_HOME` environment variables above.
+
 ## Project Structure
 
 ```
 packages/
-├── backend/          # Express + Socket.IO server
+├── backend/              # Express + Socket.IO server
 │   ├── src/
-│   │   ├── routes/   # REST API endpoints
-│   │   ├── services/ # Business logic
-│   │   ├── websocket/# Socket.IO handlers
-│   │   └── db/       # SQLite database
-├── frontend/         # React + Vite application
+│   │   ├── routes/       # REST API endpoints
+│   │   ├── services/     # Business logic
+│   │   │   ├── claude/   # Claude CLI process management
+│   │   │   ├── orchestration/  # Multi-provider orchestration
+│   │   │   ├── ralph/    # Autonomous loop engine
+│   │   │   ├── watchdog/ # Health monitoring & alerts
+│   │   │   └── gemini/   # Gemini image generation
+│   │   ├── websocket/    # Socket.IO handlers
+│   │   └── db/           # SQLite database
+├── frontend/             # React + Vite application
 │   ├── src/
 │   │   ├── components/
+│   │   │   ├── chat/     # Chat messages, tools, compaction cards
+│   │   │   ├── session/  # Controls, tool log, watchdog
+│   │   │   ├── orchestration/  # Multi-provider UI
+│   │   │   ├── ralph/    # Autonomous loop UI
+│   │   │   └── ui/       # Shared UI primitives
 │   │   ├── pages/
-│   │   ├── stores/   # Zustand stores
-│   │   ├── services/ # API & Socket clients
-│   │   └── hooks/    # Custom React hooks
-└── shared/           # Shared TypeScript types
+│   │   ├── stores/       # Zustand stores
+│   │   ├── services/     # API & Socket clients
+│   │   └── hooks/        # Custom React hooks
+├── shared/               # Shared TypeScript types
+└── scripts/              # Rebuild robot & helper scripts
 ```
 
 ## API Endpoints
@@ -260,9 +327,14 @@ packages/
 - `session:output` - Streaming text
 - `session:message` - Complete message
 - `session:thinking` - Thinking indicator
-- `session:tool_use` - Tool usage events
+- `session:tool_use` - Tool usage events (with duration tracking)
 - `session:todos` - Todo list updates
 - `session:usage` - Token usage data
+- `session:compact` - Context compaction events
+- `session:agent` - Subagent lifecycle events
+- `session:mode` - Permission mode changes
+- `orchestration:*` - Orchestration state, tasks, workers
+- `ralph:*` - Ralph autonomous loop events
 
 ## Contributing
 

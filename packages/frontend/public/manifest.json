@@ -1,7 +1,7 @@
 {
-  "name": "Claude Code WebUI",
-  "short_name": "Claude Code",
-  "description": "Web Interface for Claude Code CLI",
+  "name": "Plum Code WebUI",
+  "short_name": "Plum Code",
+  "description": "Web Interface for Plum Code",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0b",
@@ -9,13 +9,13 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/claude-logo.png",
+      "src": "/logos/plum.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/claude-logo.png",
+      "src": "/logos/plum.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

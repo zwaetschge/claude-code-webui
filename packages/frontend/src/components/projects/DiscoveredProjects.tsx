@@ -16,8 +16,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { Session, ApiResponse, DiscoveredProject } from '@claude-code-webui/shared';
+import type { Session, ApiResponse, DiscoveredProject, CLIProvider } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
+
+interface DiscoveredProjectsProps {
+  cliProvider?: CLIProvider;
+  defaultExpanded?: boolean;
+  className?: string;
+}
 
 function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
@@ -34,10 +40,10 @@ function formatRelativeTime(dateString: string): string {
   return date.toLocaleDateString();
 }
 
-export function DiscoveredProjects() {
+export function DiscoveredProjects({ cliProvider, defaultExpanded = false, className }: DiscoveredProjectsProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
 
   // Fetch discovered projects
@@ -56,10 +62,14 @@ export function DiscoveredProjects() {
   // Create session from project mutation
   const createMutation = useMutation({
     mutationFn: async (project: DiscoveredProject) => {
-      const response = await api.post<ApiResponse<Session>>('/api/sessions', {
+      const payload: { name: string; workingDirectory: string; cliProvider?: CLIProvider } = {
         name: project.name,
         workingDirectory: project.path,
-      });
+      };
+      if (cliProvider) {
+        payload.cliProvider = cliProvider;
+      }
+      const response = await api.post<ApiResponse<Session>>('/api/sessions', payload);
       return response.data;
     },
     onSuccess: (data) => {
@@ -95,7 +105,7 @@ export function DiscoveredProjects() {
   }
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div
@@ -127,7 +137,7 @@ export function DiscoveredProjects() {
         </div>
         {isExpanded && (
           <CardDescription>
-            Projects found in ~/.claude/projects. Click to create a session.
+            Projects found in ~/.claude/projects. Start a session with the selected provider.
           </CardDescription>
         )}
       </CardHeader>

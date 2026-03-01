@@ -1,104 +1,42 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, FolderOpen, MessageSquare, Settings, RefreshCw, FolderPlus, Folder, Tags } from 'lucide-react';
+import { Plus, Trash2, FolderOpen, MessageSquare, Settings, FolderPlus, Folder, Tags, Bot, Palette, ArrowUpRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { DiscoveredProjects } from '@/components/projects';
 import { SessionCategories, CategorySelector } from '@/components/session-categories';
+import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { useSessionStore } from '@/stores/sessionStore';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { Session, ApiResponse, UserSettings } from '@claude-code-webui/shared';
+import type { Session, ApiResponse, UserSettings, CLIProvider } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
-
-// Usage limit display components
-function UsageBar({ percent, color }: { percent: number; color: string }) {
-  return (
-    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-      <div
-        className={cn('h-full rounded-full transition-all', color)}
-        style={{ width: `${Math.min(percent, 100)}%` }}
-      />
-    </div>
-  );
-}
-
-function formatTimeUntil(date: Date): string {
-  const now = new Date();
-  const diff = date.getTime() - now.getTime();
-  if (diff <= 0) return 'now';
-
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-  if (hours > 24) {
-    const days = Math.floor(hours / 24);
-    return `${days} day${days > 1 ? 's' : ''}`;
-  }
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  return `${minutes}m`;
-}
-
-function formatResetDate(date: Date): string {
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const day = days[date.getDay()];
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${day}, ${hours}:${minutes}`;
-}
-
-function LimitCard({
-  title,
-  subtitle,
-  percent,
-  resetInfo,
-}: {
-  title: string;
-  subtitle?: string;
-  percent: number;
-  resetInfo: string;
-}) {
-  const getColor = (p: number) => {
-    if (p >= 90) return 'bg-red-500';
-    if (p >= 70) return 'bg-amber-500';
-    return 'bg-green-500';
-  };
-
-  return (
-    <div className="flex-1 min-w-[100px] sm:min-w-[140px] p-2 sm:p-3 rounded-lg bg-muted/30 border border-border/50">
-      <div className="flex items-center justify-between mb-1 sm:mb-1.5">
-        <span className="text-xs sm:text-sm font-medium">{title}</span>
-        {subtitle && (
-          <span className="text-[10px] sm:text-xs text-muted-foreground">{subtitle}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-1.5">
-        <UsageBar percent={percent} color={getColor(percent)} />
-        <span className={cn(
-          'text-xs sm:text-sm font-mono font-medium min-w-[32px] sm:min-w-[36px] text-right',
-          percent >= 90 ? 'text-red-500' : percent >= 70 ? 'text-amber-500' : 'text-foreground'
-        )}>
-          {percent}%
-        </span>
-      </div>
-      <div className="flex items-center gap-1 text-[10px] sm:text-xs text-muted-foreground">
-        <RefreshCw className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
-        <span className="truncate">{resetInfo}</span>
-      </div>
-    </div>
-  );
-}
+import { useProviderStore } from '@/stores/providerStore';
+import { toCliProvider, CLI_PROVIDER_ICON, UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { MultiCliConfig, useMultiCliConfig } from '@/components/multi-cli';
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { setSessions, sessions } = useSessionStore();
+  const { uiProvider, setProvider } = useProviderStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
   const [newSessionName, setNewSessionName] = useState('');
@@ -107,17 +45,10 @@ export function DashboardPage() {
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showCategories, setShowCategories] = useState(false);
+  const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() => toCliProvider(uiProvider));
+  const [multiCliConfig, setMultiCliConfig] = useMultiCliConfig();
 
-  // Usage limits state - must be before any early returns
-  const [limits, setLimits] = useState<{
-    session: { percentUsed: number; resetsAt: Date | null };
-    weeklyAll: { percentUsed: number; resetsAt: Date | null };
-    weeklySonnet: { percentUsed: number; resetsAt: Date | null };
-  } | null>(null);
-  const [isRefreshingLimits, setIsRefreshingLimits] = useState(false);
-  const [limitsError, setLimitsError] = useState<string | null>(null);
-
-  // Fetch user settings to check for default working directory
+  // Fetch user settings
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => {
@@ -125,6 +56,17 @@ export function DashboardPage() {
       return response.data.data;
     },
   });
+
+  useEffect(() => {
+    if (settings?.uiProvider) {
+      setProvider(settings.uiProvider);
+    }
+  }, [settings?.uiProvider, setProvider]);
+
+  useEffect(() => {
+    if (!showNewSession || !settings?.defaultCliProvider) return;
+    setSelectedCliProvider(settings.defaultCliProvider);
+  }, [settings?.defaultCliProvider, showNewSession]);
 
   // Fetch sessions
   const { isLoading } = useQuery({
@@ -139,9 +81,24 @@ export function DashboardPage() {
     },
   });
 
+  // Fetch available CLI providers
+  interface CLIProviderInfo {
+    id: CLIProvider;
+    name: string;
+    icon: string;
+    available: boolean;
+  }
+  const { data: cliProviders } = useQuery({
+    queryKey: ['cli-providers'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<CLIProviderInfo[]>>('/api/cli-providers');
+      return response.data.data || [];
+    },
+  });
+
   // Create session mutation
   const createMutation = useMutation({
-    mutationFn: async (data: { name: string; workingDirectory?: string }) => {
+    mutationFn: async (data: { name: string; workingDirectory?: string; cliProvider?: CLIProvider }) => {
       const response = await api.post<ApiResponse<Session>>('/api/sessions', data);
       return response.data;
     },
@@ -152,11 +109,35 @@ export function DashboardPage() {
         setNewSessionName('');
         setSessionMode('new');
         setSelectedFolder(null);
+        setSelectedCliProvider(settings?.defaultCliProvider ?? toCliProvider(uiProvider));
         navigate(`/session/${data.data.id}`);
       }
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const themeMutation = useMutation({
+    mutationFn: async (provider: UiProvider) => {
+      const response = await api.put<ApiResponse<UserSettings>>('/api/settings', { uiProvider: provider });
+      return response.data.data;
+    },
+    onMutate: (provider) => {
+      setProvider(provider);
+      const previous = queryClient.getQueryData<UserSettings>(['settings']);
+      queryClient.setQueryData(['settings'], { ...(previous || {}), uiProvider: provider });
+      return { previous };
+    },
+    onError: (error: Error, _provider, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['settings'], context.previous);
+        if (context.previous.uiProvider) setProvider(context.previous.uiProvider as UiProvider);
+      }
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(['settings'], data);
     },
   });
 
@@ -180,75 +161,20 @@ export function DashboardPage() {
   const handleCreateSession = (e: React.FormEvent) => {
     e.preventDefault();
     if (newSessionName.trim()) {
-      const payload: { name: string; workingDirectory?: string } = {
+      const payload: { name: string; workingDirectory?: string; cliProvider?: CLIProvider } = {
         name: newSessionName.trim(),
+        cliProvider: selectedCliProvider,
       };
-
-      // If using existing folder mode and a folder is selected, include it
       if (sessionMode === 'existing' && selectedFolder) {
         payload.workingDirectory = selectedFolder;
       }
-
       createMutation.mutate(payload);
     }
   };
 
   useEffect(() => {
-    if (searchParams.get('new') === 'true') {
-      setShowNewSession(true);
-    }
+    if (searchParams.get('new') === 'true') setShowNewSession(true);
   }, [searchParams]);
-
-  // Fetch usage limits from API
-  const fetchLimits = async () => {
-    setIsRefreshingLimits(true);
-    setLimitsError(null);
-    try {
-      const response = await api.get<{
-        success: boolean;
-        data: {
-          subscriptionType: string;
-          rateLimitTier: string;
-          fiveHour: { utilization: number; resetsAt: string | null } | null;
-          sevenDay: { utilization: number; resetsAt: string | null } | null;
-          sevenDaySonnet: { utilization: number; resetsAt: string | null } | null;
-        };
-      }>('/api/usage/limits');
-
-      if (response.data.success && response.data.data) {
-        const data = response.data.data;
-        setLimits({
-          session: {
-            percentUsed: Math.round(data.fiveHour?.utilization ?? 0),
-            resetsAt: data.fiveHour?.resetsAt ? new Date(data.fiveHour.resetsAt) : null,
-          },
-          weeklyAll: {
-            percentUsed: Math.round(data.sevenDay?.utilization ?? 0),
-            resetsAt: data.sevenDay?.resetsAt ? new Date(data.sevenDay.resetsAt) : null,
-          },
-          weeklySonnet: {
-            percentUsed: Math.round(data.sevenDaySonnet?.utilization ?? 0),
-            resetsAt: data.sevenDaySonnet?.resetsAt ? new Date(data.sevenDaySonnet.resetsAt) : null,
-          },
-        });
-      }
-    } catch (err) {
-      console.error('Failed to fetch usage limits:', err);
-      // Don't show error - usage API may be blocked by Cloudflare
-      setLimitsError(null);
-    } finally {
-      setIsRefreshingLimits(false);
-    }
-  };
-
-  // Fetch limits on mount
-  useEffect(() => {
-    fetchLimits();
-  }, []);
-
-  const handleRefreshLimits = () => {
-    fetchLimits();
-  };
 
   if (isLoading) {
     return (
@@ -259,189 +185,181 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
-          <p className="text-sm md:text-base text-muted-foreground">Manage your Claude Code sessions</p>
+    <div className="space-y-4">
+      {/* Compact horizontal header */}
+      <header className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+            Sessions
+            <span className="rounded-full bg-muted/60 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              {sessions.length}
+            </span>
+          </h1>
+          <span className="text-sm text-muted-foreground hidden sm:inline">Pick up where you left off</span>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
+
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setShowNewSession(true)} size="sm" className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">New Session</span>
+          </Button>
           <Button
             variant={showCategories ? 'default' : 'outline'}
+            size="sm"
             onClick={() => setShowCategories(!showCategories)}
-            className="gap-2"
+            className="gap-1.5"
           >
             <Tags className="h-4 w-4" />
-            <span className="hidden sm:inline">Categories</span>
           </Button>
-          <Button onClick={() => setShowNewSession(true)} className="flex-1 sm:flex-initial">
-            <Plus className="mr-2 h-4 w-4" />
-            New Session
+          <Button variant="outline" size="sm" asChild className="gap-1.5">
+            <Link to="/connect">
+              <ArrowUpRight className="h-4 w-4" />
+            </Link>
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Palette className="h-4 w-4" />
+                <span className="hidden md:inline">{UI_PROVIDER_META[uiProvider].label}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {(Object.keys(UI_PROVIDER_META) as UiProvider[]).map((provider) => (
+                <DropdownMenuItem
+                  key={provider}
+                  className="flex items-center gap-2 cursor-pointer"
+                  onClick={() => themeMutation.mutate(provider)}
+                >
+                  <ProviderLogo provider={provider} className="h-4 w-4" alt="" />
+                  <span className="flex-1">{UI_PROVIDER_META[provider].label}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      </div>
-
-      {/* Usage Limits */}
-      <div className="flex items-center gap-2 md:gap-4 flex-wrap">
-        {limitsError ? (
-          <div className="text-sm text-muted-foreground">{limitsError}</div>
-        ) : limits ? (
-          <>
-            <LimitCard
-              title="5h Session"
-              percent={limits.session.percentUsed}
-              resetInfo={limits.session.resetsAt ? `in ${formatTimeUntil(limits.session.resetsAt)}` : '-'}
-            />
-            <LimitCard
-              title="Weekly"
-              subtitle="All Models"
-              percent={limits.weeklyAll.percentUsed}
-              resetInfo={limits.weeklyAll.resetsAt ? formatResetDate(limits.weeklyAll.resetsAt) : '-'}
-            />
-            <LimitCard
-              title="Weekly"
-              subtitle="Sonnet"
-              percent={limits.weeklySonnet.percentUsed}
-              resetInfo={limits.weeklySonnet.resetsAt ? formatResetDate(limits.weeklySonnet.resetsAt) : '-'}
-            />
-          </>
-        ) : (
-          <div className="text-sm text-muted-foreground">Loading limits...</div>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleRefreshLimits}
-          disabled={isRefreshingLimits}
-          className="h-9 w-9"
-          title="Refresh limits"
-        >
-          <RefreshCw className={cn("h-4 w-4", isRefreshingLimits && "animate-spin")} />
-        </Button>
-      </div>
-
-      {/* Discovered Projects */}
-      <DiscoveredProjects />
+      </header>
 
       {/* New Session Form */}
       {showNewSession && (
         <Card>
-          <CardHeader>
-            <CardTitle>Create New Session</CardTitle>
-            <CardDescription>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Create New Session</CardTitle>
+            <CardDescription className="text-xs">
               {sessionMode === 'new'
-                ? (hasDefaultDir ? `A folder will be created in ${settings?.defaultWorkingDir}` : 'Set a default working directory in Settings first')
-                : 'Select an existing folder to work with'}
+                ? (hasDefaultDir ? `Folder created in ${settings?.defaultWorkingDir}` : 'Set default directory in Settings')
+                : 'Select an existing folder'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Mode Toggle */}
-            <div className="flex gap-2 mb-4">
+            <div className="flex gap-2 mb-3">
               <Button
                 type="button"
                 variant={sessionMode === 'new' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => {
-                  setSessionMode('new');
-                  setSelectedFolder(null);
-                }}
-                className="gap-2"
+                onClick={() => { setSessionMode('new'); setSelectedFolder(null); }}
+                className="gap-1.5"
               >
-                <FolderPlus className="h-4 w-4" />
-                New Folder
+                <FolderPlus className="h-3.5 w-3.5" />
+                New
               </Button>
               <Button
                 type="button"
                 variant={sessionMode === 'existing' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setSessionMode('existing')}
-                className="gap-2"
+                className="gap-1.5"
               >
-                <Folder className="h-4 w-4" />
-                Existing Folder
+                <Folder className="h-3.5 w-3.5" />
+                Existing
               </Button>
             </div>
 
             {sessionMode === 'new' && !hasDefaultDir ? (
               <div className="text-center py-4">
-                <FolderOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground mb-4">
-                  Please set a default working directory in Settings to create new folders.
-                </p>
+                <FolderOpen className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground mb-3">Set default working directory in Settings.</p>
                 <div className="flex justify-center gap-2">
-                  <Button asChild>
-                    <Link to="/settings">
-                      <Settings className="mr-2 h-4 w-4" />
-                      Go to Settings
-                    </Link>
+                  <Button size="sm" asChild>
+                    <Link to="/settings"><Settings className="mr-1.5 h-3.5 w-3.5" />Settings</Link>
                   </Button>
-                  <Button variant="outline" onClick={() => setShowNewSession(false)}>
-                    Cancel
-                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowNewSession(false)}>Cancel</Button>
                 </div>
               </div>
             ) : (
-              <form onSubmit={handleCreateSession} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Session Name</label>
-                  <Input
-                    value={newSessionName}
-                    onChange={(e) => setNewSessionName(e.target.value)}
-                    placeholder="My Project"
-                    autoFocus
-                  />
+              <form onSubmit={handleCreateSession} className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">Session Name</label>
+                    <Input
+                      value={newSessionName}
+                      onChange={(e) => setNewSessionName(e.target.value)}
+                      placeholder="My Project"
+                      autoFocus
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium flex items-center gap-1.5">
+                      <Bot className="h-3.5 w-3.5" />
+                      Provider
+                    </label>
+                    <Select value={selectedCliProvider} onValueChange={(v) => setSelectedCliProvider(v as CLIProvider)}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Select provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cliProviders?.map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id} disabled={!provider.available}>
+                            <span className="flex items-center gap-2">
+                              <span>{provider.icon}</span>
+                              <span>{provider.name}</span>
+                              {!provider.available && <span className="text-xs text-muted-foreground">(N/A)</span>}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
 
-                {sessionMode === 'existing' ? (
+                {/* Multi-CLI Configuration */}
+                {selectedCliProvider === 'multi' && (
+                  <MultiCliConfig
+                    config={multiCliConfig}
+                    onChange={setMultiCliConfig}
+                  />
+                )}
+
+                {sessionMode === 'existing' && (
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Working Directory</label>
                     <div className="flex gap-2">
                       <Input
                         value={selectedFolder || ''}
                         readOnly
-                        placeholder="Select a folder..."
-                        className="flex-1 bg-muted/50"
+                        placeholder="Select folder..."
+                        className="flex-1 bg-muted/50 h-9"
                       />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setShowFolderBrowser(true)}
-                      >
+                      <Button type="button" variant="outline" size="sm" onClick={() => setShowFolderBrowser(true)}>
                         Browse
                       </Button>
                     </div>
-                    {selectedFolder && (
-                      <p className="text-xs text-muted-foreground">
-                        Session will use: {selectedFolder}
-                      </p>
-                    )}
+                    <DiscoveredProjects cliProvider={selectedCliProvider} defaultExpanded className="border-dashed bg-muted/30" />
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    This will create a folder: {settings?.defaultWorkingDir}/{newSessionName ? newSessionName.toLowerCase().replace(/[^a-z0-9-_]/gi, '-') : 'my-project'}
-                  </p>
                 )}
 
                 <div className="flex gap-2">
                   <Button
                     type="submit"
-                    disabled={
-                      createMutation.isPending ||
-                      !newSessionName.trim() ||
-                      (sessionMode === 'existing' && !selectedFolder)
-                    }
+                    size="sm"
+                    disabled={createMutation.isPending || !newSessionName.trim() || (sessionMode === 'existing' && !selectedFolder)}
                   >
-                    {createMutation.isPending ? 'Creating...' : 'Create Session'}
+                    {createMutation.isPending ? 'Creating...' : 'Create'}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      setShowNewSession(false);
-                      setSessionMode('new');
-                      setSelectedFolder(null);
-                      setNewSessionName('');
-                    }}
+                    size="sm"
+                    onClick={() => { setShowNewSession(false); setSessionMode('new'); setSelectedFolder(null); setNewSessionName(''); }}
                   >
                     Cancel
                   </Button>
@@ -452,7 +370,6 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* Folder Browser Dialog */}
       <FolderBrowserDialog
         open={showFolderBrowser}
         onOpenChange={setShowFolderBrowser}
@@ -460,75 +377,60 @@ export function DashboardPage() {
         onChange={(path: string) => {
           setSelectedFolder(path);
           setShowFolderBrowser(false);
-          // Auto-fill session name from folder name if empty
-          if (!newSessionName) {
-            const folderName = path.split('/').pop() || '';
-            setNewSessionName(folderName);
-          }
+          if (!newSessionName) setNewSessionName(path.split('/').pop() || '');
         }}
       />
 
-      {/* Sessions with Optional Categories Sidebar */}
+      {/* Sessions with Optional Categories */}
       <div className="flex gap-4">
-        {/* Categories Sidebar */}
         {showCategories && (
-          <Card className="w-64 shrink-0 hidden md:block">
-            <SessionCategories
-              selectedCategory={selectedCategory}
-              onCategorySelect={setSelectedCategory}
-              className="h-[400px]"
-            />
+          <Card className="w-56 shrink-0 hidden md:block">
+            <SessionCategories selectedCategory={selectedCategory} onCategorySelect={setSelectedCategory} className="h-[350px]" />
           </Card>
         )}
 
-        {/* Sessions Grid */}
-        <div className="flex-1 grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {sessions.map((session) => (
+        <div className="flex-1 grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {(selectedCategory ? sessions.filter(s => (s as any).category === selectedCategory) : sessions).map((session) => (
             <Card
               key={session.id}
               className="cursor-pointer transition-colors hover:border-primary"
               onClick={() => navigate(`/session/${session.id}`)}
             >
-              <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                <div className="space-y-1">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4" />
-                    {session.name}
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-0.5 min-w-0 flex-1">
+                  <CardTitle className="text-sm flex items-center gap-1.5 truncate">
+                    <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{session.name}</span>
+                    {session.cliProvider && (
+                      <span className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground shrink-0">
+                        {CLI_PROVIDER_ICON[session.cliProvider]}
+                      </span>
+                    )}
                   </CardTitle>
-                  <CardDescription className="flex items-center gap-1">
-                    <FolderOpen className="h-3 w-3" />
-                    {session.workingDirectory}
+                  <CardDescription className="flex items-center gap-1 text-[10px] truncate">
+                    <FolderOpen className="h-2.5 w-2.5 shrink-0" />
+                    <span className="truncate">{session.workingDirectory}</span>
                   </CardDescription>
                 </div>
-                <div
-                  className={cn(
-                    'h-3 w-3 rounded-full',
-                    session.status === 'running' && 'bg-green-500',
-                    session.status === 'stopped' && 'bg-gray-500',
-                    session.status === 'error' && 'bg-red-500'
-                  )}
-                />
+                <div className={cn(
+                  'h-2 w-2 rounded-full shrink-0 mt-1',
+                  session.status === 'running' && 'bg-green-500',
+                  session.status === 'stopped' && 'bg-gray-400',
+                  session.status === 'error' && 'bg-red-500'
+                )} />
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <CategorySelector
-                      sessionId={session.id}
-                      currentCategory={null}
-                    />
+                    <CategorySelector sessionId={session.id} currentCategory={(session as any).category || null} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-muted-foreground">
                       {new Date(session.updatedAt).toLocaleDateString()}
                     </span>
                     <div onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => deleteMutation.mutate(session.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteMutation.mutate(session.id)}>
+                        <Trash2 className="h-3 w-3 text-destructive" />
                       </Button>
                     </div>
                   </div>
@@ -537,13 +439,13 @@ export function DashboardPage() {
             </Card>
           ))}
 
-          {sessions.length === 0 && !showNewSession && (
+          {(selectedCategory ? sessions.filter(s => (s as any).category === selectedCategory) : sessions).length === 0 && !showNewSession && (
             <Card className="col-span-full">
-              <CardContent className="flex flex-col items-center justify-center py-10">
-                <MessageSquare className="h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-4">No sessions yet</p>
-                <Button onClick={() => setShowNewSession(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
+              <CardContent className="flex flex-col items-center justify-center py-8">
+                <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
+                <Button size="sm" onClick={() => setShowNewSession(true)}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
                   Create your first session
                 </Button>
               </CardContent>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Folder,
   FolderOpen,
@@ -10,6 +10,7 @@ import {
   Check,
   X,
   Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,6 +46,7 @@ interface FolderBrowserProps {
 }
 
 export function FolderBrowser({ value, onChange, onClose, showFiles = false }: FolderBrowserProps) {
+  const queryClient = useQueryClient();
   const [currentPath, setCurrentPath] = useState(value || '');
   const [manualPath, setManualPath] = useState(value || '');
 
@@ -186,6 +188,15 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
         />
         <Button variant="ghost" size="sm" className="h-8 shrink-0" onClick={handleManualPathSubmit}>
           Go
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['files-list', currentPath] })}
+          title="Refresh"
+        >
+          <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
         </Button>
       </div>
 

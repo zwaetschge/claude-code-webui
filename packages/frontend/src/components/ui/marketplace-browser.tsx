@@ -49,10 +49,16 @@ interface InstalledPluginInfo {
 
 interface MarketplaceBrowserProps {
   onClose: () => void;
+  configProvider?: string;
 }
 
-export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
+export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrowserProps) {
   const queryClient = useQueryClient();
+  const providerKey = configProvider || 'default';
+  const withProvider = (endpoint: string) => {
+    if (!configProvider) return endpoint;
+    return `${endpoint}${endpoint.includes('?') ? '&' : '?'}provider=${encodeURIComponent(configProvider)}`;
+  };
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedMarketplace, setSelectedMarketplace] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -67,18 +73,18 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
 
   // Fetch marketplaces
   const { data: marketplaces, isLoading: marketplacesLoading } = useQuery({
-    queryKey: ['marketplaces'],
+    queryKey: ['marketplaces', providerKey],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<MarketplaceInfo[]>>('/api/claude-config/marketplaces');
+      const response = await api.get<ApiResponse<MarketplaceInfo[]>>(withProvider('/api/claude-config/marketplaces'));
       return response.data.data || [];
     },
   });
 
   // Fetch installed plugins to check which are already installed
   const { data: installedPlugins } = useQuery({
-    queryKey: ['installed-plugins'],
+    queryKey: ['installed-plugins', providerKey],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<InstalledPluginInfo[]>>('/api/claude-config/plugins');
+      const response = await api.get<ApiResponse<InstalledPluginInfo[]>>(withProvider('/api/claude-config/plugins'));
       return response.data.data || [];
     },
   });
@@ -86,11 +92,11 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
   // Add marketplace mutation
   const addMarketplaceMutation = useMutation({
     mutationFn: async (data: typeof newMarketplace) => {
-      const response = await api.post<ApiResponse<MarketplaceInfo>>('/api/claude-config/marketplaces', data);
+      const response = await api.post<ApiResponse<MarketplaceInfo>>(withProvider('/api/claude-config/marketplaces'), data);
       return response.data.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['marketplaces'] });
+      queryClient.invalidateQueries({ queryKey: ['marketplaces', providerKey] });
       setShowAddForm(false);
       setNewMarketplace({ name: '', source: 'github', repo: '', url: '' });
       toast({ title: 'Marketplace added successfully' });
@@ -103,11 +109,11 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
   // Refresh marketplace mutation
   const refreshMarketplaceMutation = useMutation({
     mutationFn: async (marketplaceId: string) => {
-      const response = await api.post<ApiResponse<MarketplaceInfo>>(`/api/claude-config/marketplace/${marketplaceId}/refresh`);
+      const response = await api.post<ApiResponse<MarketplaceInfo>>(withProvider(`/api/claude-config/marketplace/${marketplaceId}/refresh`));
       return response.data.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['marketplaces'] });
+      queryClient.invalidateQueries({ queryKey: ['marketplaces', providerKey] });
       toast({ title: 'Marketplace refreshed' });
     },
     onError: (error: Error) => {
@@ -118,11 +124,11 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
   // Delete marketplace mutation
   const deleteMarketplaceMutation = useMutation({
     mutationFn: async (marketplaceId: string) => {
-      await api.delete(`/api/claude-config/marketplace/${marketplaceId}`);
+      await api.delete(withProvider(`/api/claude-config/marketplace/${marketplaceId}`));
       return marketplaceId;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['marketplaces'] });
+      queryClient.invalidateQueries({ queryKey: ['marketplaces', providerKey] });
       setSelectedMarketplace(null);
       toast({ title: 'Marketplace removed' });
     },
@@ -134,15 +140,15 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
   // Install plugin mutation
   const installPluginMutation = useMutation({
     mutationFn: async ({ pluginName, marketplaceId }: { pluginName: string; marketplaceId: string }) => {
-      const response = await api.post<ApiResponse<unknown>>('/api/claude-config/plugins/install', {
+      const response = await api.post<ApiResponse<unknown>>(withProvider('/api/claude-config/plugins/install'), {
         pluginName,
         marketplaceId,
       });
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
-      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['installed-plugins', providerKey] });
+      queryClient.invalidateQueries({ queryKey: ['plugins', providerKey] });
       toast({ title: 'Plugin installed successfully' });
     },
     onError: (error: Error) => {
@@ -628,10 +634,11 @@ export function MarketplaceBrowser({ onClose }: MarketplaceBrowserProps) {
 interface MarketplaceBrowserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  configProvider?: string;
 }
 
-export function MarketplaceBrowserDialog({ open, onOpenChange }: MarketplaceBrowserDialogProps) {
+export function MarketplaceBrowserDialog({ open, onOpenChange, configProvider }: MarketplaceBrowserDialogProps) {
   if (!open) return null;
 
-  return <MarketplaceBrowser onClose={() => onOpenChange(false)} />;
+  return <MarketplaceBrowser onClose={() => onOpenChange(false)} configProvider={configProvider} />;
 }

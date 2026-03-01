@@ -24,8 +24,6 @@ import {
   Eye,
   EyeOff,
   Sparkles,
-  Palette,
-  Wrench,
   KeyRound,
   Zap,
   AlertCircle,
@@ -45,11 +43,18 @@ import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { AgentSkillEditorDialog } from '@/components/ui/agent-skill-editor';
 import { PluginEditorDialog } from '@/components/ui/plugin-editor';
 import { MarketplaceBrowserDialog } from '@/components/ui/marketplace-browser';
-import { ProvidersSettings } from '@/components/providers';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { UserSettings, McpServer, CliTool, ApiResponse, Theme } from '@claude-code-webui/shared';
+import type {
+  UserSettings,
+  McpServer,
+  ApiResponse,
+  Theme,
+  CliProviderUpdateResponse,
+  CliProviderUpdateResult,
+} from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
+import { CLI_PROVIDER_LABEL } from '@/lib/providers';
 
 interface AgentInfo {
   id: string;
@@ -89,6 +94,11 @@ interface PluginInfo {
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const configProvider = useMemo(() => 'claude' as const, []);
+  const configQuery = useMemo(() => `provider=${encodeURIComponent(configProvider)}`, [configProvider]);
+  const withProvider = useMemo(() => {
+    return (endpoint: string) => `${endpoint}${endpoint.includes('?') ? '&' : '?'}${configQuery}`;
+  }, [configQuery]);
   const [showMcpForm, setShowMcpForm] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
@@ -106,19 +116,7 @@ export function SettingsPage() {
     url: '',
   });
 
-  // CLI Tools state
-  const [showCliToolForm, setShowCliToolForm] = useState(false);
-  const [newCliTool, setNewCliTool] = useState<{
-    name: string;
-    command: string;
-    description: string;
-    timeoutSeconds: number;
-  }>({
-    name: '',
-    command: '',
-    description: '',
-    timeoutSeconds: 300,
-  });
+  const [cliUpdateResults, setCliUpdateResults] = useState<CliProviderUpdateResult[] | null>(null);
 
   // Agent/Skill editor state
   const [editorOpen, setEditorOpen] = useState(false);
@@ -140,6 +138,10 @@ export function SettingsPage() {
   // Gemini API key state
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+
+  // Z.AI API key state
+  const [zaiKeyInput, setZaiKeyInput] = useState('');
+  const [showZaiKey, setShowZaiKey] = useState(false);
 
   // GitHub token state
   const [githubTokenInput, setGithubTokenInput] = useState('');
@@ -174,15 +176,6 @@ export function SettingsPage() {
     },
   });
 
-  // Fetch CLI tools
-  const { data: cliTools, isLoading: cliToolsLoading } = useQuery({
-    queryKey: ['cli-tools'],
-    queryFn: async () => {
-      const response = await api.get<ApiResponse<CliTool[]>>('/api/cli-tools');
-      return response.data.data || [];
-    },
-  });
-
   // Check Claude CLI status
   const { data: claudeStatus, refetch: refetchClaudeStatus, isFetching: isRefetching } = useQuery({
     queryKey: ['claude-status'],
@@ -194,34 +187,34 @@ export function SettingsPage() {
 
   // Fetch Claude agents from ~/.claude/agents/
   const { data: claudeAgents } = useQuery({
-    queryKey: ['claude-agents'],
+    queryKey: ['claude-agents', configProvider],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<AgentInfo[]>>('/api/claude-config/agents');
+      const response = await api.get<ApiResponse<AgentInfo[]>>(withProvider('/api/claude-config/agents'));
       return response.data.data || [];
     },
   });
 
   // Fetch Claude skills from ~/.claude/skills/
   const { data: claudeSkills } = useQuery({
-    queryKey: ['claude-skills'],
+    queryKey: ['claude-skills', configProvider],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<SkillInfo[]>>('/api/claude-config/skills');
+      const response = await api.get<ApiResponse<SkillInfo[]>>(withProvider('/api/claude-config/skills'));
       return response.data.data || [];
     },
   });
 
   // Fetch installed plugins
   const { data: installedPlugins } = useQuery({
-    queryKey: ['installed-plugins'],
+    queryKey: ['installed-plugins', configProvider],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<PluginInfo[]>>('/api/claude-config/plugins');
+      const response = await api.get<ApiResponse<PluginInfo[]>>(withProvider('/api/claude-config/plugins'));
       return response.data.data || [];
     },
   });
 
   // Fetch known marketplaces
   const { data: marketplaces } = useQuery({
-    queryKey: ['marketplaces'],
+    queryKey: ['marketplaces', configProvider],
     queryFn: async () => {
       const response = await api.get<ApiResponse<{
         id: string;
@@ -229,7 +222,7 @@ export function SettingsPage() {
         source: { source: string; repo?: string; url?: string };
         lastUpdated: string;
         plugins?: { name: string; description: string; version: string }[];
-      }[]>>('/api/claude-config/marketplaces');
+      }[]>>(withProvider('/api/claude-config/marketplaces'));
       return response.data.data || [];
     },
   });
@@ -239,6 +232,15 @@ export function SettingsPage() {
     queryKey: ['gemini-key'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<{ hasKey: boolean; keyPreview: string | null }>>('/api/settings/gemini-key');
+      return response.data.data;
+    },
+  });
+
+  // Fetch Z.AI API key status
+  const { data: zaiKeyStatus, refetch: refetchZaiKey } = useQuery({
+    queryKey: ['zai-key'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<{ hasKey: boolean; keyPreview: string | null; baseUrl?: string | null }>>('/api/settings/zai-key');
       return response.data.data;
     },
   });
@@ -293,6 +295,34 @@ export function SettingsPage() {
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const updateCliProvidersMutation = useMutation({
+    mutationFn: async () => {
+      const response = await api.post<ApiResponse<CliProviderUpdateResponse>>('/api/cli-providers/update', {});
+      return response.data.data;
+    },
+    onSuccess: (data) => {
+      const results = data?.results || [];
+      setCliUpdateResults(results);
+
+      const summary = results.length > 0
+        ? results
+          .map((result) => `${CLI_PROVIDER_LABEL[result.provider]}: ${result.status}`)
+          .join(', ')
+        : 'No update results returned.';
+      const hasFailure = results.some((result) => result.status === 'failed');
+      toast({
+        title: 'CLI update finished',
+        description: summary,
+        variant: hasFailure ? 'destructive' : undefined,
+      });
+      refetchClaudeStatus();
+      queryClient.invalidateQueries({ queryKey: ['cli-providers'] });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'CLI update failed', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -391,61 +421,14 @@ export function SettingsPage() {
     }
   };
 
-  // Create CLI tool mutation
-  const createCliToolMutation = useMutation({
-    mutationFn: async (data: typeof newCliTool) => {
-      const response = await api.post<ApiResponse<CliTool>>('/api/cli-tools', data);
-      return response.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cli-tools'] });
-      setShowCliToolForm(false);
-      setNewCliTool({ name: '', command: '', description: '', timeoutSeconds: 300 });
-      toast({ title: 'CLI tool added' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Toggle CLI tool mutation
-  const toggleCliToolMutation = useMutation({
-    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const response = await api.put<ApiResponse<CliTool>>(`/api/cli-tools/${id}`, { enabled });
-      return response.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cli-tools'] });
-      toast({ title: 'CLI tool updated' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Delete CLI tool mutation
-  const deleteCliToolMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await api.delete(`/api/cli-tools/${id}`);
-      return id;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cli-tools'] });
-      toast({ title: 'CLI tool deleted' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
   // Delete plugin mutation
   const deletePluginMutation = useMutation({
     mutationFn: async (id: string) => {
-      await api.delete(`/api/claude-config/plugin/${encodeURIComponent(id)}`);
+      await api.delete(withProvider(`/api/claude-config/plugin/${encodeURIComponent(id)}`));
       return id;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['installed-plugins', configProvider] });
       toast({ title: 'Plugin uninstalled' });
     },
     onError: (error: Error) => {
@@ -456,11 +439,11 @@ export function SettingsPage() {
   // Toggle agent mutation
   const toggleAgentMutation = useMutation({
     mutationFn: async (name: string) => {
-      const response = await api.put<ApiResponse<{ enabled: boolean }>>(`/api/claude-config/agent/${name}/toggle`);
+      const response = await api.put<ApiResponse<{ enabled: boolean }>>(withProvider(`/api/claude-config/agent/${name}/toggle`));
       return response.data.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['claude-agents'] });
+      queryClient.invalidateQueries({ queryKey: ['claude-agents', configProvider] });
       toast({ title: data?.enabled ? 'Agent enabled' : 'Agent disabled' });
     },
     onError: (error: Error) => {
@@ -471,11 +454,11 @@ export function SettingsPage() {
   // Toggle skill mutation
   const toggleSkillMutation = useMutation({
     mutationFn: async (name: string) => {
-      const response = await api.put<ApiResponse<{ enabled: boolean }>>(`/api/claude-config/skill/${name}/toggle`);
+      const response = await api.put<ApiResponse<{ enabled: boolean }>>(withProvider(`/api/claude-config/skill/${name}/toggle`));
       return response.data.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['claude-skills'] });
+      queryClient.invalidateQueries({ queryKey: ['claude-skills', configProvider] });
       toast({ title: data?.enabled ? 'Skill enabled' : 'Skill disabled' });
     },
     onError: (error: Error) => {
@@ -486,11 +469,11 @@ export function SettingsPage() {
   // Toggle plugin mutation
   const togglePluginMutation = useMutation({
     mutationFn: async (name: string) => {
-      const response = await api.put<ApiResponse<{ enabled: boolean }>>(`/api/claude-config/plugin/${name}/toggle`);
+      const response = await api.put<ApiResponse<{ enabled: boolean }>>(withProvider(`/api/claude-config/plugin/${name}/toggle`));
       return response.data.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['installed-plugins', configProvider] });
       toast({ title: data?.enabled ? 'Plugin enabled' : 'Plugin disabled' });
     },
     onError: (error: Error) => {
@@ -527,6 +510,40 @@ export function SettingsPage() {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     },
   });
+
+  // Set Z.AI API key mutation
+  const setZaiKeyMutation = useMutation({
+    mutationFn: async (apiKey: string) => {
+      const response = await api.put<ApiResponse<{ hasKey: boolean; keyPreview: string; baseUrl?: string | null }>>(
+        '/api/settings/zai-key',
+        { apiKey }
+      );
+      return response.data.data;
+    },
+    onSuccess: () => {
+      refetchZaiKey();
+      setZaiKeyInput('');
+      toast({ title: 'Z.AI API key saved' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // Delete Z.AI API key mutation
+  const deleteZaiKeyMutation = useMutation({
+    mutationFn: async () => {
+      await api.delete('/api/settings/zai-key');
+    },
+    onSuccess: () => {
+      refetchZaiKey();
+      toast({ title: 'Z.AI API key removed' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
 
   // Set GitHub token mutation
   const setGithubTokenMutation = useMutation({
@@ -679,7 +696,7 @@ export function SettingsPage() {
     { value: 'system' as Theme, label: 'Auto', icon: Monitor, description: 'Match your OS' },
   ];
 
-  if (settingsLoading || mcpLoading || cliToolsLoading) {
+  if (settingsLoading || mcpLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="loader" />
@@ -807,7 +824,7 @@ export function SettingsPage() {
 
         {/* Tabs Navigation */}
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-7 h-12">
+          <TabsList className="grid w-full grid-cols-4 h-12">
             <TabsTrigger value="general" className="gap-2">
               <Settings2 className="h-4 w-4" />
               <span className="hidden sm:inline">General</span>
@@ -816,21 +833,9 @@ export function SettingsPage() {
               <Shield className="h-4 w-4" />
               <span className="hidden sm:inline">Security</span>
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="gap-2">
-              <Palette className="h-4 w-4" />
-              <span className="hidden sm:inline">Appearance</span>
-            </TabsTrigger>
             <TabsTrigger value="api-keys" className="gap-2">
               <KeyRound className="h-4 w-4" />
               <span className="hidden sm:inline">API Keys</span>
-            </TabsTrigger>
-            <TabsTrigger value="providers" className="gap-2">
-              <Bot className="h-4 w-4" />
-              <span className="hidden sm:inline">AI Providers</span>
-            </TabsTrigger>
-            <TabsTrigger value="tools" className="gap-2">
-              <Wrench className="h-4 w-4" />
-              <span className="hidden sm:inline">Tools</span>
             </TabsTrigger>
             <TabsTrigger value="extensions" className="gap-2">
               <Puzzle className="h-4 w-4" />
@@ -1059,6 +1064,60 @@ export function SettingsPage() {
                   <FolderSearch className="h-4 w-4" />
                 </Button>
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Shared across all providers and used when creating new sessions.
+              </p>
+            </section>
+
+            {/* CLI Updates */}
+            <section>
+              <Card className="border border-border/70">
+                <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base">CLI Updates</CardTitle>
+                    <CardDescription>
+                      Update Claude, Codex, Gemini, and the separate GLM Claude Code CLI.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => updateCliProvidersMutation.mutate()}
+                    disabled={updateCliProvidersMutation.isPending}
+                  >
+                    {updateCliProvidersMutation.isPending ? 'Updating...' : 'Update CLI tools'}
+                  </Button>
+                </CardHeader>
+                {cliUpdateResults && (
+                  <CardContent className="space-y-3">
+                    <div className="grid gap-2 text-sm">
+                      {cliUpdateResults.map((result) => (
+                        <div key={result.provider} className="flex items-center justify-between">
+                          <span className="font-medium">{CLI_PROVIDER_LABEL[result.provider]}</span>
+                          <span
+                            className={cn(
+                              'text-xs font-semibold uppercase tracking-wide',
+                              result.status === 'updated'
+                                ? 'text-green-600 dark:text-green-400'
+                                : 'text-red-600 dark:text-red-400'
+                            )}
+                          >
+                            {result.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <pre className="max-h-64 overflow-auto rounded-lg border border-border/70 bg-muted/40 p-3 text-xs font-mono whitespace-pre-wrap">
+                      {cliUpdateResults
+                        .map((result) => {
+                          const label = CLI_PROVIDER_LABEL[result.provider];
+                          const output = result.output || 'No output.';
+                          return `# ${label} (${result.status})\n${output}`;
+                        })
+                        .join('\n\n')}
+                    </pre>
+                  </CardContent>
+                )}
+              </Card>
             </section>
 
             {/* Allowed Tools */}
@@ -1092,10 +1151,8 @@ export function SettingsPage() {
                 })}
               </div>
             </section>
-          </TabsContent>
 
-          {/* Appearance Tab */}
-          <TabsContent value="appearance" className="space-y-6">
+            {/* Theme */}
             <section>
               <h2 className="text-lg font-semibold mb-3">Theme</h2>
               <div className="flex gap-2 flex-wrap">
@@ -1134,6 +1191,143 @@ export function SettingsPage() {
 
           {/* API Keys Tab */}
           <TabsContent value="api-keys" className="space-y-6">
+            {/* Z.AI API Key */}
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="text-lg font-semibold">Z.AI (GLM) API Key</h2>
+                <Zap className="h-4 w-4 text-cyan-500" />
+              </div>
+              <Card className={cn(
+                "border",
+                zaiKeyStatus?.hasKey
+                  ? "border-green-500/30 bg-green-500/5"
+                  : "border-cyan-500/30 bg-cyan-500/5"
+              )}>
+                <CardContent className="pt-4 pb-4">
+                  {zaiKeyStatus?.hasKey ? (
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-green-500/15">
+                        <Key className="h-4 w-4 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-green-600 dark:text-green-400">API Key configured</p>
+                        <p className="text-xs text-muted-foreground font-mono">{zaiKeyStatus.keyPreview}</p>
+                        {zaiKeyStatus.baseUrl && (
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Base URL: <span className="font-mono">{zaiKeyStatus.baseUrl}</span>
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => deleteZaiKeyMutation.mutate()}
+                        disabled={deleteZaiKeyMutation.isPending}
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-cyan-500/15">
+                          <Key className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-cyan-600 dark:text-cyan-400">No API key set</p>
+                          <p className="text-xs text-muted-foreground">Used for GLM Coding Plan via Claude Code</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            type={showZaiKey ? 'text' : 'password'}
+                            value={zaiKeyInput}
+                            onChange={(e) => setZaiKeyInput(e.target.value)}
+                            placeholder="Paste your Z.AI API key"
+                            className="font-mono text-sm pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowZaiKey(!showZaiKey)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
+                          >
+                            {showZaiKey ? (
+                              <EyeOff className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <Eye className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </button>
+                        </div>
+                        <Button
+                          onClick={() => setZaiKeyMutation.mutate(zaiKeyInput)}
+                          disabled={!zaiKeyInput || setZaiKeyMutation.isPending}
+                        >
+                          {setZaiKeyMutation.isPending ? 'Saving...' : 'Save'}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        This writes <span className="font-mono">ANTHROPIC_AUTH_TOKEN</span> and
+                        <span className="font-mono"> ANTHROPIC_BASE_URL</span> to <span className="font-mono">~/.claude/settings.json</span>.
+                        Base URL defaults to <span className="font-mono">https://api.z.ai/api/anthropic</span>.
+                      </p>
+
+                      <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
+                        <p className="text-xs font-medium text-foreground">Z.AI Tools & MCP Servers:</p>
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer hover:text-foreground">Coding Tool Helper (Setup Wizard)</summary>
+                          <div className="mt-1 ml-3 space-y-1">
+                            <p><span className="font-mono">npx @z_ai/coding-helper</span></p>
+                            <p className="text-[11px]">Interactive wizard for API key setup, tool management, and MCP configuration.</p>
+                          </div>
+                        </details>
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer hover:text-foreground">Usage Query Plugin</summary>
+                          <div className="mt-1 ml-3 space-y-1">
+                            <p>1. <span className="font-mono">claude plugin marketplace add zai-org/zai-coding-plugins</span></p>
+                            <p>2. <span className="font-mono">claude plugin install glm-plan-usage@zai-coding-plugins</span></p>
+                            <p>3. Run <span className="font-mono">/glm-plan-usage:usage-query</span></p>
+                          </div>
+                        </details>
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer hover:text-foreground">Vision MCP Server (GLM-4.6V)</summary>
+                          <div className="mt-1 ml-3 space-y-1">
+                            <p className="text-[11px]">Image analysis, video understanding, OCR, UI-to-code. Requires Node.js 22+.</p>
+                            <p><span className="font-mono text-[11px]">claude mcp add -s user zai-mcp-server --env Z_AI_API_KEY=your_key Z_AI_MODE=ZAI -- npx -y "@z_ai/mcp-server"</span></p>
+                          </div>
+                        </details>
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer hover:text-foreground">Web Search MCP Server</summary>
+                          <div className="mt-1 ml-3 space-y-1">
+                            <p className="text-[11px]">Real-time web search. Remote server, no local install.</p>
+                            <p><span className="font-mono text-[11px]">claude mcp add -s user -t http web-search-prime https://api.z.ai/api/mcp/web_search_prime/mcp --header "Authorization: Bearer your_key"</span></p>
+                          </div>
+                        </details>
+
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer hover:text-foreground">Web Reader MCP Server</summary>
+                          <div className="mt-1 ml-3 space-y-1">
+                            <p className="text-[11px]">Fetch and parse web page content. Remote server, no local install.</p>
+                            <p><span className="font-mono text-[11px]">claude mcp add -s user -t http web-reader https://api.z.ai/api/mcp/web_reader/mcp --header "Authorization: Bearer your_key"</span></p>
+                          </div>
+                        </details>
+
+                        <p className="text-[11px] text-muted-foreground/70 pt-1">
+                          Docs: <a href="https://docs.z.ai/llms.txt" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">docs.z.ai/llms.txt</a>
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </section>
+
             {/* Gemini API Key */}
             <section>
               <div className="flex items-center gap-2 mb-3">
@@ -1314,13 +1508,8 @@ export function SettingsPage() {
             </section>
           </TabsContent>
 
-          {/* AI Providers Tab */}
-          <TabsContent value="providers" className="space-y-6">
-            <ProvidersSettings />
-          </TabsContent>
-
-          {/* Tools Tab */}
-          <TabsContent value="tools" className="space-y-6">
+          {/* Extensions Tab */}
+          <TabsContent value="extensions" className="space-y-6">
             {/* MCP Servers */}
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -1503,165 +1692,6 @@ export function SettingsPage() {
           )}
         </section>
 
-        {/* CLI Tools for AI Orchestration */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold">CLI Tools</h2>
-              {cliTools && cliTools.length > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded-full">
-                  {cliTools.length}
-                </span>
-              )}
-            </div>
-            <Button size="sm" onClick={() => setShowCliToolForm(true)} className="gap-1.5 h-8 px-3 text-xs bg-orange-600 hover:bg-orange-700">
-              <Plus className="h-3.5 w-3.5" />
-              Add
-            </Button>
-          </div>
-
-          {showCliToolForm && (
-            <Card className="mb-4 border-orange-500/30 bg-orange-500/5 animate-scale-in">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-base">New CLI Tool</CardTitle>
-                <CardDescription>Add an AI CLI tool for Claude to orchestrate</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Tool Name</label>
-                    <Input
-                      value={newCliTool.name}
-                      onChange={(e) => setNewCliTool({ ...newCliTool, name: e.target.value })}
-                      placeholder="Codex"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Timeout (seconds)</label>
-                    <Input
-                      type="number"
-                      value={newCliTool.timeoutSeconds}
-                      onChange={(e) => setNewCliTool({ ...newCliTool, timeoutSeconds: parseInt(e.target.value) || 300 })}
-                      min={10}
-                      max={3600}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Command</label>
-                  <Input
-                    value={newCliTool.command}
-                    onChange={(e) => setNewCliTool({ ...newCliTool, command: e.target.value })}
-                    placeholder="codex"
-                    className="font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">The prompt will be appended as an argument</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Description</label>
-                  <Input
-                    value={newCliTool.description}
-                    onChange={(e) => setNewCliTool({ ...newCliTool, description: e.target.value })}
-                    placeholder="OpenAI's Codex CLI for code generation"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <Button
-                    onClick={() => createCliToolMutation.mutate(newCliTool)}
-                    disabled={!newCliTool.name || !newCliTool.command || createCliToolMutation.isPending}
-                    className="bg-orange-600 hover:bg-orange-700"
-                  >
-                    {createCliToolMutation.isPending ? 'Adding...' : 'Add Tool'}
-                  </Button>
-                  <Button variant="ghost" onClick={() => setShowCliToolForm(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {cliTools && cliTools.length > 0 ? (
-            <div className="space-y-2">
-              {cliTools.map((tool) => (
-                <div
-                  key={tool.id}
-                  className={cn(
-                    "group flex items-center gap-4 p-4 rounded-xl border bg-card transition-all hover:shadow-sm",
-                    tool.enabled ? "hover:border-orange-500/30" : "opacity-60"
-                  )}
-                >
-                  <div className={cn(
-                    "p-2.5 rounded-lg transition-colors",
-                    tool.enabled
-                      ? "bg-orange-500/10 text-orange-600 dark:text-orange-400"
-                      : "bg-muted text-muted-foreground"
-                  )}>
-                    <Terminal className="h-4 w-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium">{tool.name}</p>
-                      {!tool.enabled && (
-                        <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground">
-                          Disabled
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground font-mono truncate">
-                      {tool.command}
-                    </p>
-                    {tool.description && (
-                      <p className="text-xs text-muted-foreground/70 truncate mt-0.5">
-                        {tool.description}
-                      </p>
-                    )}
-                  </div>
-                  <span className="px-2.5 py-1 text-xs rounded-full font-medium shrink-0 bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                    {tool.timeoutSeconds}s
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => toggleCliToolMutation.mutate({ id: tool.id, enabled: !tool.enabled })}
-                    className="h-8 w-8"
-                    title={tool.enabled ? 'Disable' : 'Enable'}
-                  >
-                    {tool.enabled ? (
-                      <ToggleRight className="h-4 w-4 text-orange-600" />
-                    ) : (
-                      <ToggleLeft className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => deleteCliToolMutation.mutate(tool.id)}
-                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : !showCliToolForm && (
-            <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <div className="p-4 rounded-full bg-orange-500/10 mb-4">
-                  <Terminal className="h-8 w-8 text-orange-500/50" />
-                </div>
-                <p className="font-medium text-muted-foreground mb-1">No CLI tools configured</p>
-                <p className="text-sm text-muted-foreground/70 max-w-xs">
-                  Add AI CLI tools like Codex or Aider for Claude to orchestrate
-                </p>
-              </CardContent>
-            </Card>
-          )}
-        </section>
-          </TabsContent>
-
-          {/* Extensions Tab */}
-          <TabsContent value="extensions" className="space-y-6">
             {/* Claude Agents */}
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -2175,6 +2205,7 @@ export function SettingsPage() {
           mode={editorMode}
           initialData={editingItem?.data}
           editName={editingItem?.name}
+          configProvider={configProvider}
         />
 
         <PluginEditorDialog
@@ -2183,11 +2214,13 @@ export function SettingsPage() {
           mode={pluginEditorMode}
           initialData={editingPlugin?.data}
           editName={editingPlugin?.name}
+          configProvider={configProvider}
         />
 
         <MarketplaceBrowserDialog
           open={marketplaceBrowserOpen}
           onOpenChange={setMarketplaceBrowserOpen}
+          configProvider={configProvider}
         />
       </div>
     </div>

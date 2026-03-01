@@ -2,17 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/claude-logo.png" />
-    <link rel="apple-touch-icon" href="/claude-logo.png" />
+    <link rel="icon" type="image/png" href="/logos/plum.png" />
+    <link rel="apple-touch-icon" href="/logos/plum.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#D97757" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Claude Code" />
+    <meta name="apple-mobile-web-app-title" content="Plum Code" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="description" content="Web Interface for Claude Code CLI" />
+    <meta name="description" content="Web Interface for Plum Code" />
     <link rel="manifest" href="/manifest.json" />
-    <title>Claude Code WebUI</title>
+    <title>Plum Code WebUI</title>
     <style>
       /* Prevent overscroll bounce on iOS */
       html, body {
@@ -29,11 +29,18 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Register service worker
+      // Disable service worker and clear caches to avoid stale assets after updates.
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
+          navigator.serviceWorker.getRegistrations().then((registrations) => {
+            registrations.forEach((registration) => registration.unregister());
+          }).catch(() => {});
         });
+      }
+      if ('caches' in window) {
+        caches.keys().then((names) => {
+          names.forEach((name) => caches.delete(name));
+        }).catch(() => {});
       }
     </script>
   </body>

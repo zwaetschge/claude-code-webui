@@ -1,0 +1,16 @@
+appId: ch.zwaetschge.claude-code-webui
+productName: Claude Code WebUI
+directories:
+  buildResources: resources
+  output: release
+linux:
+  target:
+    - AppImage
+    - rpm
+  category: Development
+  icon: resources/icon.png
+  maintainer: zwaetschge
+appImage:
+  artifactName: ${productName}-${version}.${ext}
+rpm:
+  artifactName: ${productName}-${version}.${ext}

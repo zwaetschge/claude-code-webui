@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { isValidGitHubRepo, isValidGitUrl, sanitizeShellArg } from '../utils/sanitize';
+import { resolveConfigHome } from '../utils/configPaths';
+import { syncExternalSkills } from '../utils/skillSync';
 
 const router = Router();
 
@@ -204,9 +205,9 @@ async function readSkillsFromDir(dir: string, source: 'user' | 'project'): Promi
 }
 
 // GET /api/claude-config/agents - List all agents
-router.get('/agents', requireAuth, asyncHandler(async (_req, res) => {
-  const homeDir = os.homedir();
-  const userAgentsDir = path.join(homeDir, '.claude', 'agents');
+router.get('/agents', requireAuth, asyncHandler(async (req, res) => {
+  const configHome = resolveConfigHome(req.query.provider);
+  const userAgentsDir = path.join(configHome, 'agents');
 
   const userAgents = await readAgentsFromDir(userAgentsDir, 'user');
 
@@ -217,10 +218,11 @@ router.get('/agents', requireAuth, asyncHandler(async (_req, res) => {
 }));
 
 // GET /api/claude-config/skills - List all skills
-router.get('/skills', requireAuth, asyncHandler(async (_req, res) => {
-  const homeDir = os.homedir();
-  const userSkillsDir = path.join(homeDir, '.claude', 'skills');
+router.get('/skills', requireAuth, asyncHandler(async (req, res) => {
+  const configHome = resolveConfigHome(req.query.provider);
+  const userSkillsDir = path.join(configHome, 'skills');
 
+  await syncExternalSkills(configHome);
   const userSkills = await readSkillsFromDir(userSkillsDir, 'user');
 
   res.json({
@@ -232,8 +234,8 @@ router.get('/skills', requireAuth, asyncHandler(async (_req, res) => {
 // GET /api/claude-config/agent/:name - Get agent content
 router.get('/agent/:name', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const agentsDir = path.join(homeDir, '.claude', 'agents');
+  const configHome = resolveConfigHome(req.query.provider);
+  const agentsDir = path.join(configHome, 'agents');
 
   // Try both enabled and disabled paths
   let filePath = path.join(agentsDir, `${name}.md`);
@@ -281,8 +283,8 @@ router.post('/agents', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
-  const homeDir = os.homedir();
-  const agentsDir = path.join(homeDir, '.claude', 'agents');
+  const configHome = resolveConfigHome(req.query.provider);
+  const agentsDir = path.join(configHome, 'agents');
   await ensureDir(agentsDir);
 
   const sanitizedName = sanitizeFilename(name);
@@ -329,8 +331,8 @@ router.put('/agent/:name', requireAuth, asyncHandler(async (req, res) => {
   const paramName = req.params.name ?? '';
   const { name, description, tools, model, prompt } = req.body;
 
-  const homeDir = os.homedir();
-  const agentsDir = path.join(homeDir, '.claude', 'agents');
+  const configHome = resolveConfigHome(req.query.provider);
+  const agentsDir = path.join(configHome, 'agents');
 
   // Find existing file (enabled or disabled)
   let oldFilePath = path.join(agentsDir, `${paramName}.md`);
@@ -389,8 +391,8 @@ router.put('/agent/:name', requireAuth, asyncHandler(async (req, res) => {
 // PUT /api/claude-config/agent/:name/toggle - Toggle agent enabled state
 router.put('/agent/:name/toggle', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const agentsDir = path.join(homeDir, '.claude', 'agents');
+  const configHome = resolveConfigHome(req.query.provider);
+  const agentsDir = path.join(configHome, 'agents');
 
   const enabledPath = path.join(agentsDir, `${name}.md`);
   const disabledPath = path.join(agentsDir, `${name}.md.disabled`);
@@ -418,8 +420,8 @@ router.put('/agent/:name/toggle', requireAuth, asyncHandler(async (req, res) => 
 // DELETE /api/claude-config/agent/:name - Delete agent
 router.delete('/agent/:name', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const agentsDir = path.join(homeDir, '.claude', 'agents');
+  const configHome = resolveConfigHome(req.query.provider);
+  const agentsDir = path.join(configHome, 'agents');
 
   // Try both enabled and disabled paths
   const enabledPath = path.join(agentsDir, `${name}.md`);
@@ -452,8 +454,8 @@ router.delete('/agent/:name', requireAuth, asyncHandler(async (req, res) => {
 // GET /api/claude-config/skill/:name - Get skill content
 router.get('/skill/:name', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  const configHome = resolveConfigHome(req.query.provider);
+  const skillsDir = path.join(configHome, 'skills');
 
   // Try both enabled and disabled paths
   let skillDir = path.join(skillsDir, name);
@@ -503,8 +505,8 @@ router.post('/skills', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
-  const homeDir = os.homedir();
-  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  const configHome = resolveConfigHome(req.query.provider);
+  const skillsDir = path.join(configHome, 'skills');
   const sanitizedName = sanitizeFilename(name);
   const skillDir = path.join(skillsDir, sanitizedName);
 
@@ -552,8 +554,8 @@ router.put('/skill/:name', requireAuth, asyncHandler(async (req, res) => {
   const paramName = req.params.name ?? '';
   const { name, description, allowedTools, model, content: prompt } = req.body;
 
-  const homeDir = os.homedir();
-  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  const configHome = resolveConfigHome(req.query.provider);
+  const skillsDir = path.join(configHome, 'skills');
 
   // Find existing directory (enabled or disabled)
   let oldSkillDir = path.join(skillsDir, paramName);
@@ -613,8 +615,8 @@ router.put('/skill/:name', requireAuth, asyncHandler(async (req, res) => {
 // PUT /api/claude-config/skill/:name/toggle - Toggle skill enabled state
 router.put('/skill/:name/toggle', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  const configHome = resolveConfigHome(req.query.provider);
+  const skillsDir = path.join(configHome, 'skills');
 
   const enabledPath = path.join(skillsDir, name);
   const disabledPath = path.join(skillsDir, `${name}.disabled`);
@@ -642,8 +644,8 @@ router.put('/skill/:name/toggle', requireAuth, asyncHandler(async (req, res) => 
 // DELETE /api/claude-config/skill/:name - Delete skill
 router.delete('/skill/:name', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  const configHome = resolveConfigHome(req.query.provider);
+  const skillsDir = path.join(configHome, 'skills');
 
   // Try both enabled and disabled paths
   const enabledPath = path.join(skillsDir, name);
@@ -676,9 +678,8 @@ router.delete('/skill/:name', requireAuth, asyncHandler(async (req, res) => {
 // ============== PLUGINS ==============
 
 // Read user-created plugins from ~/.claude/plugins/user/
-async function readUserPlugins(): Promise<PluginInfo[]> {
-  const homeDir = os.homedir();
-  const userPluginsDir = path.join(homeDir, '.claude', 'plugins', 'user');
+async function readUserPlugins(configHome: string): Promise<PluginInfo[]> {
+  const userPluginsDir = path.join(configHome, 'plugins', 'user');
   const plugins: PluginInfo[] = [];
 
   try {
@@ -722,9 +723,8 @@ async function readUserPlugins(): Promise<PluginInfo[]> {
 }
 
 // Read marketplace-installed plugins
-async function readMarketplacePlugins(): Promise<PluginInfo[]> {
-  const homeDir = os.homedir();
-  const pluginsFile = path.join(homeDir, '.claude', 'plugins', 'installed_plugins.json');
+async function readMarketplacePlugins(configHome: string): Promise<PluginInfo[]> {
+  const pluginsFile = path.join(configHome, 'plugins', 'installed_plugins.json');
   const plugins: PluginInfo[] = [];
 
   try {
@@ -769,18 +769,17 @@ async function readMarketplacePlugins(): Promise<PluginInfo[]> {
 }
 
 // Combined function to get all plugins
-async function readAllPlugins(): Promise<PluginInfo[]> {
+async function readAllPlugins(configHome: string): Promise<PluginInfo[]> {
   const [userPlugins, marketplacePlugins] = await Promise.all([
-    readUserPlugins(),
-    readMarketplacePlugins(),
+    readUserPlugins(configHome),
+    readMarketplacePlugins(configHome),
   ]);
   return [...userPlugins, ...marketplacePlugins];
 }
 
 // Read known marketplaces
-async function readMarketplaces(): Promise<MarketplaceInfo[]> {
-  const homeDir = os.homedir();
-  const marketplacesFile = path.join(homeDir, '.claude', 'plugins', 'known_marketplaces.json');
+async function readMarketplaces(configHome: string): Promise<MarketplaceInfo[]> {
+  const marketplacesFile = path.join(configHome, 'plugins', 'known_marketplaces.json');
   const marketplaces: MarketplaceInfo[] = [];
 
   try {
@@ -830,8 +829,9 @@ async function readMarketplaces(): Promise<MarketplaceInfo[]> {
 }
 
 // GET /api/claude-config/plugins - List all plugins (user + marketplace)
-router.get('/plugins', requireAuth, asyncHandler(async (_req, res) => {
-  const plugins = await readAllPlugins();
+router.get('/plugins', requireAuth, asyncHandler(async (req, res) => {
+  const configHome = resolveConfigHome(req.query.provider);
+  const plugins = await readAllPlugins(configHome);
 
   res.json({
     success: true,
@@ -842,8 +842,8 @@ router.get('/plugins', requireAuth, asyncHandler(async (_req, res) => {
 // GET /api/claude-config/plugin/:name - Get plugin content
 router.get('/plugin/:name', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const userPluginsDir = path.join(homeDir, '.claude', 'plugins', 'user');
+  const configHome = resolveConfigHome(req.query.provider);
+  const userPluginsDir = path.join(configHome, 'plugins', 'user');
 
   // Try both enabled and disabled paths
   let pluginDir = path.join(userPluginsDir, name);
@@ -894,8 +894,8 @@ router.post('/plugins', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
-  const homeDir = os.homedir();
-  const userPluginsDir = path.join(homeDir, '.claude', 'plugins', 'user');
+  const configHome = resolveConfigHome(req.query.provider);
+  const userPluginsDir = path.join(configHome, 'plugins', 'user');
   const sanitizedName = sanitizeFilename(name);
   const pluginDir = path.join(userPluginsDir, sanitizedName);
 
@@ -945,8 +945,8 @@ router.put('/plugin/:name', requireAuth, asyncHandler(async (req, res) => {
   const paramName = req.params.name ?? '';
   const { name, description, version, author, category, content: prompt } = req.body;
 
-  const homeDir = os.homedir();
-  const userPluginsDir = path.join(homeDir, '.claude', 'plugins', 'user');
+  const configHome = resolveConfigHome(req.query.provider);
+  const userPluginsDir = path.join(configHome, 'plugins', 'user');
 
   // Find existing directory (enabled or disabled)
   let oldPluginDir = path.join(userPluginsDir, paramName);
@@ -1008,8 +1008,8 @@ router.put('/plugin/:name', requireAuth, asyncHandler(async (req, res) => {
 // PUT /api/claude-config/plugin/:name/toggle - Toggle plugin enabled state
 router.put('/plugin/:name/toggle', requireAuth, asyncHandler(async (req, res) => {
   const name = req.params.name ?? '';
-  const homeDir = os.homedir();
-  const userPluginsDir = path.join(homeDir, '.claude', 'plugins', 'user');
+  const configHome = resolveConfigHome(req.query.provider);
+  const userPluginsDir = path.join(configHome, 'plugins', 'user');
 
   const enabledPath = path.join(userPluginsDir, name);
   const disabledPath = path.join(userPluginsDir, `${name}.disabled`);
@@ -1035,8 +1035,9 @@ router.put('/plugin/:name/toggle', requireAuth, asyncHandler(async (req, res) =>
 }));
 
 // GET /api/claude-config/marketplaces - List known marketplaces
-router.get('/marketplaces', requireAuth, asyncHandler(async (_req, res) => {
-  const marketplaces = await readMarketplaces();
+router.get('/marketplaces', requireAuth, asyncHandler(async (req, res) => {
+  const configHome = resolveConfigHome(req.query.provider);
+  const marketplaces = await readMarketplaces(configHome);
 
   res.json({
     success: true,
@@ -1092,8 +1093,8 @@ router.post('/marketplaces', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
-  const homeDir = os.homedir();
-  const pluginsDir = path.join(homeDir, '.claude', 'plugins');
+  const configHome = resolveConfigHome(req.query.provider);
+  const pluginsDir = path.join(configHome, 'plugins');
   const marketplacesFile = path.join(pluginsDir, 'known_marketplaces.json');
   const sanitizedName = sanitizeFilename(name);
   const installLocation = path.join(pluginsDir, 'marketplaces', sanitizedName);
@@ -1188,8 +1189,8 @@ router.post('/marketplaces', requireAuth, asyncHandler(async (req, res) => {
 // POST /api/claude-config/marketplace/:id/refresh - Refresh a marketplace
 router.post('/marketplace/:id/refresh', requireAuth, asyncHandler(async (req, res) => {
   const marketplaceId = req.params.id ?? '';
-  const homeDir = os.homedir();
-  const marketplacesFile = path.join(homeDir, '.claude', 'plugins', 'known_marketplaces.json');
+  const configHome = resolveConfigHome(req.query.provider);
+  const marketplacesFile = path.join(configHome, 'plugins', 'known_marketplaces.json');
 
   try {
     const content = await fs.readFile(marketplacesFile, 'utf-8');
@@ -1257,8 +1258,8 @@ router.post('/marketplace/:id/refresh', requireAuth, asyncHandler(async (req, re
 // DELETE /api/claude-config/marketplace/:id - Remove a marketplace
 router.delete('/marketplace/:id', requireAuth, asyncHandler(async (req, res) => {
   const marketplaceId = req.params.id ?? '';
-  const homeDir = os.homedir();
-  const marketplacesFile = path.join(homeDir, '.claude', 'plugins', 'known_marketplaces.json');
+  const configHome = resolveConfigHome(req.query.provider);
+  const marketplacesFile = path.join(configHome, 'plugins', 'known_marketplaces.json');
 
   try {
     const content = await fs.readFile(marketplacesFile, 'utf-8');
@@ -1304,8 +1305,8 @@ router.post('/plugins/install', requireAuth, asyncHandler(async (req, res) => {
     });
   }
 
-  const homeDir = os.homedir();
-  const pluginsDir = path.join(homeDir, '.claude', 'plugins');
+  const configHome = resolveConfigHome(req.query.provider);
+  const pluginsDir = path.join(configHome, 'plugins');
   const marketplacesFile = path.join(pluginsDir, 'known_marketplaces.json');
   const installedPluginsFile = path.join(pluginsDir, 'installed_plugins.json');
 
@@ -1416,12 +1417,12 @@ router.post('/plugins/install', requireAuth, asyncHandler(async (req, res) => {
 // DELETE /api/claude-config/plugin/:id - Uninstall a plugin
 router.delete('/plugin/:id', requireAuth, asyncHandler(async (req, res) => {
   const pluginId = decodeURIComponent(req.params.id ?? '');
-  const homeDir = os.homedir();
+  const configHome = resolveConfigHome(req.query.provider);
 
   // Check if it's a user plugin (id starts with 'user-')
   if (pluginId.startsWith('user-')) {
     const name = pluginId.replace('user-', '');
-    const userPluginsDir = path.join(homeDir, '.claude', 'plugins', 'user');
+    const userPluginsDir = path.join(configHome, 'plugins', 'user');
 
     // Try both enabled and disabled paths
     const enabledPath = path.join(userPluginsDir, name);
@@ -1453,7 +1454,7 @@ router.delete('/plugin/:id', requireAuth, asyncHandler(async (req, res) => {
   }
 
   // Handle marketplace plugin
-  const pluginsFile = path.join(homeDir, '.claude', 'plugins', 'installed_plugins.json');
+  const pluginsFile = path.join(configHome, 'plugins', 'installed_plugins.json');
 
   try {
     const content = await fs.readFile(pluginsFile, 'utf-8');

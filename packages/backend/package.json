@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@claude-code-webui/shared": "workspace:*",
+    "uuid": "^9.0.1",
     "@octokit/rest": "^21.0.2",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.7.0",
@@ -38,6 +39,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/uuid": "^9.0.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.12",
     "@types/cookie-parser": "^1.4.8",

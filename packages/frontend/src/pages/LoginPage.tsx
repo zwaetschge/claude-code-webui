@@ -1,17 +1,37 @@
-import { useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useState, useCallback } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Github, AlertCircle } from 'lucide-react';
+import { Github, AlertCircle, ExternalLink, CheckCircle2, ArrowRight, Sparkles, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { useAuthStore } from '@/stores/authStore';
+import { ProviderLogo } from '@/components/branding/ProviderLogo';
+import { UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
 import { api } from '@/services/api';
+import { cn } from '@/lib/utils';
+import { useTaskDelegation } from '@/hooks/useTaskDelegation';
+import type { GeminiOAuthTaskResult } from '@claude-code-webui/shared';
 
 const errorMessages: Record<string, string> = {
   github: 'GitHub authentication failed. Please try again.',
   google: 'Google authentication failed. Please try again.',
   claude: 'Claude authentication failed. Please try again.',
-  claude_not_logged_in: 'Claude CLI not logged in. Run "claude /login" first.',
+  claude_not_logged_in: 'Claude CLI not logged in. Use the WebUI login below or run "claude /login".',
+  codex: 'Codex authentication failed. Please try again.',
+  codex_not_logged_in: 'Codex CLI not logged in. Run "codex login" first.',
+  zai: 'Z.AI authentication failed. Please try again.',
+  zai_not_logged_in: 'Z.AI CLI not logged in. Run "glm auth login" first.',
+  gemini: 'Gemini authentication failed. Please try again.',
+  gemini_not_logged_in: 'Gemini CLI not logged in. Run "gemini auth login" first.',
   unauthorized: 'You are not authorized. Please sign in.',
   expired: 'Your session has expired. Please sign in again.',
 };
@@ -20,13 +40,109 @@ interface AuthProviders {
   github: boolean;
   google: boolean;
   claude: boolean;
+  codex?: boolean;
+  zai?: boolean;
+  gemini?: boolean;
 }
+
+type CliLoginStatus = 'starting' | 'awaiting_code' | 'completed' | 'error';
+
+interface CliLoginResponse {
+  success: boolean;
+  data: {
+    id: string;
+    status: CliLoginStatus;
+    loginUrl: string | null;
+    output: string;
+    error: string | null;
+  };
+}
+
+// Provider brand configurations
+type ProviderStyleKey = 'claude' | 'codex' | 'zai' | 'gemini';
+const providerStyles: Record<ProviderStyleKey, {
+  bg: string;
+  hover: string;
+  text: string;
+  gradient: string;
+  glow: string;
+}> = {
+  claude: {
+    bg: 'bg-[#CC785C]',
+    hover: 'hover:bg-[#B8694F]',
+    text: 'text-white',
+    gradient: 'from-[#CC785C] to-[#C377FF]',
+    glow: 'shadow-[#CC785C]/30',
+  },
+  codex: {
+    bg: 'bg-black',
+    hover: 'hover:bg-neutral-900',
+    text: 'text-white',
+    gradient: 'from-white to-[#74aa9c]',
+    glow: 'shadow-white/20',
+  },
+  zai: {
+    bg: 'bg-[#0EA5E9]',
+    hover: 'hover:bg-[#0284C7]',
+    text: 'text-white',
+    gradient: 'from-[#0EA5E9] to-[#06B6D4]',
+    glow: 'shadow-[#0EA5E9]/30',
+  },
+  gemini: {
+    bg: 'bg-[#078EFA]',
+    hover: 'hover:bg-[#0670C7]',
+    text: 'text-white',
+    gradient: 'from-[#078EFA] to-[#AD89EB]',
+    glow: 'shadow-[#078EFA]/30',
+  },
+};
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { isAuthenticated, isLoading } = useAuthStore();
   const error = searchParams.get('error');
+  const [claudeLoginOpen, setClaudeLoginOpen] = useState(false);
+  const [claudeLoginId, setClaudeLoginId] = useState<string | null>(null);
+  const [claudeLoginUrl, setClaudeLoginUrl] = useState<string | null>(null);
+  const [claudeLoginStatus, setClaudeLoginStatus] = useState<CliLoginStatus | 'idle'>('idle');
+  const [claudeLoginOutput, setClaudeLoginOutput] = useState('');
+  const [claudeLoginError, setClaudeLoginError] = useState<string | null>(null);
+  const [claudeLoginCode, setClaudeLoginCode] = useState('');
+  const [claudeLoginWorking, setClaudeLoginWorking] = useState(false);
+  const [claudeLoginOpened, setClaudeLoginOpened] = useState(false);
+  const [cliLoginProvider, setCliLoginProvider] = useState<"claude" | "gemini">("claude");
+  const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
+
+  // Gemini OAuth via task delegation
+  const [geminiOAuthOpen, setGeminiOAuthOpen] = useState(false);
+  const [geminiOAuthCode, setGeminiOAuthCode] = useState('');
+  const geminiTask = useTaskDelegation({ pollInterval: 1500 });
+
+  const geminiOAuthResult = geminiTask.taskInfo?.result as GeminiOAuthTaskResult | undefined;
+  const geminiAuthUrl = geminiOAuthResult?.authUrl;
+  const geminiIsAwaiting = geminiTask.taskInfo?.status === 'awaiting_input';
+  const geminiIsComplete = geminiTask.taskInfo?.status === 'completed';
+  const geminiIsError = geminiTask.taskInfo?.status === 'error';
+
+  const startGeminiOAuth = useCallback(async () => {
+    geminiTask.reset();
+    setGeminiOAuthCode('');
+    // Delegate to repair-bot (or self if repair-bot unavailable)
+    await geminiTask.submit('repair-bot', 'gemini-oauth', { mode: 'manual' });
+  }, [geminiTask]);
+
+  const submitGeminiOAuthCode = useCallback(async () => {
+    if (!geminiOAuthCode.trim()) return;
+    await geminiTask.sendInput({ code: geminiOAuthCode.trim() });
+  }, [geminiTask, geminiOAuthCode]);
+
+  useEffect(() => {
+    if (!geminiOAuthOpen) {
+      geminiTask.reset();
+      setGeminiOAuthCode('');
+    }
+  }, [geminiOAuthOpen]);
 
   // Fetch available auth providers
   const { data: providers } = useQuery({
@@ -43,6 +159,48 @@ export function LoginPage() {
     }
   }, [isAuthenticated, isLoading, navigate]);
 
+  useEffect(() => {
+    if (!claudeLoginOpen) {
+      setClaudeLoginId(null);
+      setClaudeLoginUrl(null);
+      setClaudeLoginStatus('idle');
+      setClaudeLoginOutput('');
+      setClaudeLoginError(null);
+      setClaudeLoginCode('');
+      setClaudeLoginWorking(false);
+      setClaudeLoginOpened(false);
+    }
+  }, [claudeLoginOpen]);
+
+  useEffect(() => {
+    if (!claudeLoginOpen || !claudeLoginId) return;
+    if (claudeLoginStatus === 'completed' || claudeLoginStatus === 'error') return;
+
+    const timer = setInterval(async () => {
+      try {
+        const response = await api.get<CliLoginResponse>(`/api/cli-login/${claudeLoginId}`);
+        const data = response.data.data;
+        setClaudeLoginStatus(data.status);
+        setClaudeLoginUrl(data.loginUrl);
+        setClaudeLoginOutput(data.output || '');
+        setClaudeLoginError(data.error);
+      } catch (err) {
+        setClaudeLoginError(err instanceof Error ? err.message : 'Failed to check login');
+        setClaudeLoginStatus('error');
+      }
+    }, 1500);
+
+    return () => clearInterval(timer);
+  }, [claudeLoginOpen, claudeLoginId, claudeLoginStatus]);
+
+  useEffect(() => {
+    if (!claudeLoginOpen || !claudeLoginUrl || claudeLoginOpened) return;
+    const popup = window.open(claudeLoginUrl, '_blank', 'noopener,noreferrer');
+    if (popup) {
+      setClaudeLoginOpened(true);
+    }
+  }, [claudeLoginOpen, claudeLoginUrl, claudeLoginOpened]);
+
   const handleGitHubLogin = () => {
     window.location.href = '/auth/github';
   };
@@ -51,103 +209,598 @@ export function LoginPage() {
     window.location.href = '/auth/google';
   };
 
-  const handleClaudeLogin = () => {
-    window.location.href = '/auth/claude';
+  const handleProviderLogin = (provider: UiProvider) => {
+    const routes: Record<string, string> = {
+      codex: '/auth/codex',
+      zai: '/auth/zai',
+      gemini: '/auth/gemini',
+      claude: '/auth/claude',
+    };
+    window.location.href = routes[provider] || '/auth/claude';
   };
 
+  const startClaudeLogin = async () => {
+    setClaudeLoginWorking(true);
+    setClaudeLoginError(null);
+    setClaudeLoginOutput('');
+    setClaudeLoginOpened(false);
+    setClaudeLoginStatus('starting');
+
+    try {
+      const response = await api.post<CliLoginResponse>(`/api/cli-login/${cliLoginProvider}/start`);
+      const data = response.data.data;
+      setClaudeLoginId(data.id);
+      setClaudeLoginStatus(data.status);
+      setClaudeLoginUrl(data.loginUrl);
+      setClaudeLoginOutput(data.output || '');
+      setClaudeLoginError(data.error);
+    } catch (err) {
+      setClaudeLoginError(err instanceof Error ? err.message : 'Failed to start login');
+      setClaudeLoginStatus('error');
+    } finally {
+      setClaudeLoginWorking(false);
+    }
+  };
+
+  const submitClaudeLoginCode = async () => {
+    if (!claudeLoginId || !claudeLoginCode.trim()) return;
+    setClaudeLoginWorking(true);
+    setClaudeLoginError(null);
+
+    try {
+      const response = await api.post<CliLoginResponse>(`/api/cli-login/${claudeLoginId}/code`, {
+        code: claudeLoginCode.trim(),
+      });
+      const data = response.data.data;
+      setClaudeLoginStatus(data.status);
+      setClaudeLoginUrl(data.loginUrl);
+      setClaudeLoginOutput(data.output || '');
+      setClaudeLoginError(data.error);
+    } catch (err) {
+      setClaudeLoginError(err instanceof Error ? err.message : 'Failed to submit code');
+      setClaudeLoginStatus('error');
+    } finally {
+      setClaudeLoginWorking(false);
+    }
+  };
+
+  // Count available CLI providers
+  const availableProviders = [
+    providers?.claude && 'claude',
+    providers?.codex && 'codex',
+    providers?.zai && 'zai',
+    providers?.gemini && 'gemini',
+  ].filter(Boolean);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background pattern-bg p-4">
-      {/* Decorative elements */}
+    <div className="relative min-h-screen bg-background overflow-hidden">
+      {/* Animated gradient mesh background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 -left-32 w-64 h-64 bg-[#D97757]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-[#D97757]/10 rounded-full blur-3xl" />
+        {/* Dynamic gradient orbs */}
+        <div
+          className={cn(
+            "absolute w-[800px] h-[800px] rounded-full blur-[120px] transition-all duration-1000 ease-out",
+            hoveredProvider === 'claude' && "bg-[#CC785C]/20",
+            hoveredProvider === 'codex' && "bg-white/10",
+            hoveredProvider === 'zai' && "bg-[#0EA5E9]/20",
+            hoveredProvider === 'gemini' && "bg-[#078EFA]/20",
+            !hoveredProvider && "bg-primary/10"
+          )}
+          style={{
+            top: '10%',
+            left: '-20%',
+            transform: hoveredProvider ? 'scale(1.2)' : 'scale(1)',
+          }}
+        />
+        <div
+          className={cn(
+            "absolute w-[600px] h-[600px] rounded-full blur-[100px] transition-all duration-1000 ease-out",
+            hoveredProvider === 'claude' && "bg-[#C377FF]/15",
+            hoveredProvider === 'codex' && "bg-[#74aa9c]/15",
+            hoveredProvider === 'zai' && "bg-[#06B6D4]/15",
+            hoveredProvider === 'gemini' && "bg-[#AD89EB]/20",
+            !hoveredProvider && "bg-accent/10"
+          )}
+          style={{
+            bottom: '5%',
+            right: '-10%',
+            transform: hoveredProvider ? 'scale(1.3) translateY(-20px)' : 'scale(1)',
+          }}
+        />
+
+        {/* Subtle grid pattern */}
+        <div
+          className="absolute inset-0 opacity-[0.015]"
+          style={{
+            backgroundImage: `
+              linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
+            `,
+            backgroundSize: '60px 60px',
+          }}
+        />
+
+        {/* Diagonal accent line */}
+        <div className="absolute top-0 right-0 w-px h-screen bg-gradient-to-b from-transparent via-primary/20 to-transparent transform rotate-12 translate-x-32" />
       </div>
 
-      <Card className="w-full max-w-md relative animate-fade-in card-hover gradient-border">
-        <CardHeader className="text-center pb-2">
-          <div className="flex justify-center mb-4">
-            <div className="p-4 rounded-2xl bg-[#D97757]/10 animate-glow">
+      {/* Main content */}
+      <div className="relative z-10 min-h-screen flex">
+        {/* Left side - Branding */}
+        <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 xl:p-16">
+          <div>
+            <div className="flex items-center gap-4 mb-16">
               <img
-                src="/claude-logo.png"
-                alt="Claude"
+                src="/logos/plum.png"
+                alt=""
                 className="h-12 w-12 object-contain"
               />
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight">Plum Code</h2>
+                <p className="text-sm text-muted-foreground">WebUI</p>
+              </div>
             </div>
-          </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">Claude Code</CardTitle>
-          <CardDescription className="text-base text-muted-foreground/80">
-            WebUI
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-4">
-          {error && (
-            <div className="flex items-center gap-3 rounded-xl bg-destructive/10 border border-destructive/20 p-4 text-sm text-destructive animate-scale-in">
-              <AlertCircle className="h-5 w-5 flex-shrink-0" />
-              <p>{errorMessages[error] || 'An error occurred. Please try again.'}</p>
-            </div>
-          )}
 
-          {providers?.claude && (
-            <Button
-              onClick={handleClaudeLogin}
-              className="w-full h-12 text-base gap-3 bg-[#D97757] hover:bg-[#C86747] text-white"
-              size="lg"
-            >
-              <img src="/claude-logo.png" alt="" className="h-5 w-5 object-contain brightness-0 invert" />
-              Continue with Claude
-            </Button>
-          )}
-
-          {providers?.github && (
-            <Button
-              onClick={handleGitHubLogin}
-              className="w-full h-12 text-base gap-3"
-              variant="outline"
-              size="lg"
-            >
-              <Github className="h-5 w-5" />
-              Continue with GitHub
-            </Button>
-          )}
-
-          {providers?.google && (
-            <Button
-              onClick={handleGoogleLogin}
-              variant="outline"
-              className="w-full h-12 text-base gap-3"
-              size="lg"
-            >
-              <svg className="h-5 w-5" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                />
-                <path
-                  fill="currentColor"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                />
-              </svg>
-              Continue with Google
-            </Button>
-          )}
-
-          {!providers?.claude && !providers?.github && !providers?.google && (
-            <div className="text-center py-4">
-              <p className="text-sm text-muted-foreground">
-                No authentication providers configured.
+            <div className="space-y-6 max-w-lg">
+              <h1 className="text-5xl xl:text-6xl font-bold tracking-tight leading-[1.1]">
+                <span className="block">Code with</span>
+                <span className="block bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent bg-[length:200%_auto] animate-[gradient_8s_linear_infinite]">
+                  Intelligence
+                </span>
+              </h1>
+              <p className="text-lg text-muted-foreground leading-relaxed">
+                A unified interface for AI-powered coding assistants.
+                Connect your favorite CLI tools and start building.
               </p>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+
+          {/* Provider showcase */}
+          <div className="space-y-4">
+            <p className="text-xs uppercase tracking-widest text-muted-foreground/60">
+              Supported Providers
+            </p>
+            <div className="flex items-center gap-6">
+              {['claude', 'codex', 'gemini', 'zai'].map((p, i) => (
+                <div
+                  key={p}
+                  className="opacity-40 hover:opacity-100 transition-opacity duration-300"
+                  style={{ animationDelay: `${i * 100}ms` }}
+                >
+                  <ProviderLogo
+                    provider={p as UiProvider}
+                    className="h-8 w-8 grayscale hover:grayscale-0 transition-all duration-300"
+                    alt={p}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Right side - Login form */}
+        <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-12 xl:px-20">
+          <div className="mx-auto w-full max-w-md">
+            {/* Mobile logo */}
+            <div className="lg:hidden mb-10 text-center">
+              <div className="inline-flex items-center gap-3 mb-4">
+                <img
+                  src="/logos/plum.png"
+                  alt=""
+                  className="h-10 w-10 object-contain"
+                />
+                <h1 className="text-2xl font-bold tracking-tight">Plum Code</h1>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Connect your CLI provider to continue
+              </p>
+            </div>
+
+            {/* Error message */}
+            {error && (
+              <div className="mb-6 flex items-start gap-3 rounded-xl bg-destructive/10 border border-destructive/20 p-4 text-sm text-destructive animate-in slide-in-from-top-2 duration-300">
+                <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                <p>{errorMessages[error] || 'An error occurred. Please try again.'}</p>
+              </div>
+            )}
+
+            {/* Provider buttons */}
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-muted-foreground mb-4 lg:hidden">
+                Connect a CLI provider
+              </p>
+
+              {providers?.claude && (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleProviderLogin('claude')}
+                    onMouseEnter={() => setHoveredProvider('claude')}
+                    onMouseLeave={() => setHoveredProvider(null)}
+                    className={cn(
+                      "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
+                      "flex items-center justify-between px-5",
+                      providerStyles.claude.bg,
+                      providerStyles.claude.hover,
+                      providerStyles.claude.text,
+                      "hover:shadow-lg hover:shadow-[#CC785C]/25 hover:scale-[1.02] active:scale-[0.98]"
+                    )}
+                  >
+                    <span className="flex items-center gap-3">
+                      <ProviderLogo provider="claude" className="h-6 w-6 brightness-0 invert" alt="" />
+                      <span>{UI_PROVIDER_META.claude.loginCta}</span>
+                    </span>
+                    <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                  </button>
+
+                  <Dialog open={claudeLoginOpen} onOpenChange={setClaudeLoginOpen}>
+                    <DialogTrigger asChild onClick={() => setCliLoginProvider("claude")}>
+                      <button className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 flex items-center justify-center gap-2">
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Login via WebUI instead
+                      </button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-xl">
+                      <DialogHeader>
+                        <DialogTitle>{cliLoginProvider === "gemini" ? "Gemini CLI Login" : "Claude CLI Login"}</DialogTitle>
+                        <DialogDescription>
+                          {cliLoginProvider === "gemini" ? "Sign in with your Google account to use Gemini CLI." : "Start a login session, open the authorization link, then paste the code."}
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="space-y-4">
+                        {claudeLoginError && (
+                          <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                            <p>{claudeLoginError}</p>
+                          </div>
+                        )}
+
+                        {claudeLoginStatus === 'completed' && (
+                          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-600">
+                            <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                            <p>{cliLoginProvider === "gemini" ? "Gemini CLI connected! You can now use Gemini sessions." : "Claude CLI connected. Refresh usage meters to confirm."}</p>
+                          </div>
+                        )}
+
+                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 1</p>
+                              <p className="text-sm font-medium">Start login session</p>
+                            </div>
+                            <Button
+                              type="button"
+                              onClick={startClaudeLogin}
+                              disabled={claudeLoginWorking || claudeLoginStatus === 'awaiting_code' || claudeLoginStatus === 'completed'}
+                            >
+                              {claudeLoginWorking && claudeLoginStatus === 'starting' ? 'Starting...' : 'Start login'}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 2</p>
+                            <p className="text-sm font-medium">Open the authorization link</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              value={claudeLoginUrl || ''}
+                              readOnly
+                              placeholder="Waiting for login link..."
+                              className="text-xs"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => claudeLoginUrl && window.open(claudeLoginUrl, '_blank', 'noopener,noreferrer')}
+                              disabled={!claudeLoginUrl}
+                            >
+                              Open
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 3</p>
+                            <p className="text-sm font-medium">Paste the code</p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="claude-login-code">Verification code</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="claude-login-code"
+                                value={claudeLoginCode}
+                                onChange={(event) => setClaudeLoginCode(event.target.value)}
+                                placeholder="Paste code from browser"
+                                disabled={!claudeLoginId || claudeLoginStatus === 'completed'}
+                              />
+                              <Button
+                                type="button"
+                                onClick={submitClaudeLoginCode}
+                                disabled={!claudeLoginId || !claudeLoginCode.trim() || claudeLoginWorking || claudeLoginStatus === 'completed'}
+                              >
+                                Submit
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {claudeLoginOutput && (
+                          <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-auto">
+                            {claudeLoginOutput}
+                          </div>
+                        )}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              )}
+
+              {providers?.codex && (
+                <button
+                  onClick={() => handleProviderLogin('codex')}
+                  onMouseEnter={() => setHoveredProvider('codex')}
+                  onMouseLeave={() => setHoveredProvider(null)}
+                  className={cn(
+                    "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
+                    "flex items-center justify-between px-5",
+                    providerStyles.codex.bg,
+                    providerStyles.codex.hover,
+                    providerStyles.codex.text,
+                    "hover:shadow-lg hover:shadow-white/10 hover:scale-[1.02] active:scale-[0.98]",
+                    "border border-neutral-800"
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <ProviderLogo provider="codex" className="h-6 w-6" alt="" />
+                    <span>{UI_PROVIDER_META.codex.loginCta}</span>
+                  </span>
+                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                </button>
+              )}
+
+              {providers?.gemini && (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleProviderLogin('gemini')}
+                    onMouseEnter={() => setHoveredProvider('gemini')}
+                    onMouseLeave={() => setHoveredProvider(null)}
+                    className={cn(
+                      "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
+                      "flex items-center justify-between px-5",
+                      providerStyles.gemini.bg,
+                      providerStyles.gemini.hover,
+                      providerStyles.gemini.text,
+                      "hover:shadow-lg hover:shadow-[#078EFA]/25 hover:scale-[1.02] active:scale-[0.98]"
+                    )}
+                  >
+                    <span className="flex items-center gap-3">
+                      <ProviderLogo provider="gemini" className="h-6 w-6" alt="" />
+                      <span>{UI_PROVIDER_META.gemini.loginCta}</span>
+                    </span>
+                    <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                  </button>
+                  <Dialog open={geminiOAuthOpen} onOpenChange={setGeminiOAuthOpen}>
+                    <DialogTrigger asChild>
+                      <button className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 flex items-center justify-center gap-2">
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Login via WebUI (Google OAuth)
+                      </button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-xl">
+                      <DialogHeader>
+                        <DialogTitle>Gemini OAuth Login</DialogTitle>
+                        <DialogDescription>
+                          Sign in with your Google account to use Gemini CLI.
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="space-y-4">
+                        {geminiIsError && (
+                          <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                            <p>{geminiTask.error || geminiTask.taskInfo?.error || 'OAuth failed'}</p>
+                          </div>
+                        )}
+
+                        {geminiIsComplete && (
+                          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-600">
+                            <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                            <p>{geminiOAuthResult?.message || 'Gemini CLI connected!'}</p>
+                          </div>
+                        )}
+
+                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 1</p>
+                              <p className="text-sm font-medium">Start OAuth flow</p>
+                            </div>
+                            <Button
+                              type="button"
+                              onClick={startGeminiOAuth}
+                              disabled={geminiTask.isLoading && !geminiIsError}
+                            >
+                              {geminiTask.isLoading && !geminiIsAwaiting && !geminiIsComplete && !geminiIsError ? (
+                                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Starting...</>
+                              ) : 'Start login'}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 2</p>
+                            <p className="text-sm font-medium">Open the authorization link</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              value={geminiAuthUrl || ''}
+                              readOnly
+                              placeholder="Waiting for OAuth link..."
+                              className="text-xs"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => geminiAuthUrl && window.open(geminiAuthUrl, '_blank', 'noopener,noreferrer')}
+                              disabled={!geminiAuthUrl}
+                            >
+                              Open
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 3</p>
+                            <p className="text-sm font-medium">Paste the authorization code</p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="gemini-oauth-code">Authorization code</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id="gemini-oauth-code"
+                                value={geminiOAuthCode}
+                                onChange={(e) => setGeminiOAuthCode(e.target.value)}
+                                placeholder="Paste code from browser"
+                                disabled={!geminiIsAwaiting || geminiIsComplete}
+                              />
+                              <Button
+                                type="button"
+                                onClick={submitGeminiOAuthCode}
+                                disabled={!geminiIsAwaiting || !geminiOAuthCode.trim() || geminiIsComplete}
+                              >
+                                Submit
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {geminiTask.taskInfo?.progress && !geminiIsComplete && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            {geminiTask.taskInfo.progress}
+                          </p>
+                        )}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              )}
+
+              {providers?.zai && (
+                <button
+                  onClick={() => handleProviderLogin('zai')}
+                  onMouseEnter={() => setHoveredProvider('zai')}
+                  onMouseLeave={() => setHoveredProvider(null)}
+                  className={cn(
+                    "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
+                    "flex items-center justify-between px-5",
+                    providerStyles.zai.bg,
+                    providerStyles.zai.hover,
+                    providerStyles.zai.text,
+                    "hover:shadow-lg hover:shadow-[#0EA5E9]/25 hover:scale-[1.02] active:scale-[0.98]"
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <ProviderLogo provider="zai" className="h-6 w-6" alt="" />
+                    <span>{UI_PROVIDER_META.zai.loginCta}</span>
+                  </span>
+                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                </button>
+              )}
+
+            </div>
+
+            {/* Divider */}
+            {(providers?.github || providers?.google) && availableProviders.length > 0 && (
+              <div className="relative my-8">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-border/50" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-3 text-muted-foreground/60 tracking-widest">
+                    or continue with
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* OAuth providers */}
+            <div className="grid grid-cols-2 gap-3">
+              {providers?.github && (
+                <button
+                  onClick={handleGitHubLogin}
+                  className={cn(
+                    "h-12 rounded-xl font-medium text-sm transition-all duration-300",
+                    "flex items-center justify-center gap-2 px-4",
+                    "bg-card border border-border/60 hover:border-border",
+                    "hover:bg-muted/50 active:scale-[0.98]"
+                  )}
+                >
+                  <Github className="h-5 w-5" />
+                  <span>GitHub</span>
+                </button>
+              )}
+
+              {providers?.google && (
+                <button
+                  onClick={handleGoogleLogin}
+                  className={cn(
+                    "h-12 rounded-xl font-medium text-sm transition-all duration-300",
+                    "flex items-center justify-center gap-2 px-4",
+                    "bg-card border border-border/60 hover:border-border",
+                    "hover:bg-muted/50 active:scale-[0.98]"
+                  )}
+                >
+                  <svg className="h-5 w-5" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                  </svg>
+                  <span>Google</span>
+                </button>
+              )}
+            </div>
+
+            {/* No providers message */}
+            {!providers?.claude && !providers?.codex && !providers?.zai && !providers?.gemini && !providers?.github && !providers?.google && (
+              <div className="text-center py-8">
+                <Sparkles className="h-10 w-10 mx-auto text-muted-foreground/40 mb-4" />
+                <p className="text-sm text-muted-foreground">
+                  No authentication providers configured.
+                </p>
+                <p className="text-xs text-muted-foreground/60 mt-1">
+                  Contact your administrator to set up CLI providers.
+                </p>
+              </div>
+            )}
+
+            {/* Footer note */}
+            <p className="mt-8 text-center text-xs text-muted-foreground/60">
+              Theme switching is available on the dashboard after connecting.
+            </p>
+
+            <Button variant="ghost" asChild className="mt-4 w-full text-muted-foreground hover:text-foreground">
+              <Link to="/">
+                <ArrowRight className="h-4 w-4 mr-2 rotate-180" />
+                Back to dashboard
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* CSS for gradient animation */}
+      <style>{`
+        @keyframes gradient {
+          0%, 100% { background-position: 0% center; }
+          50% { background-position: 100% center; }
+        }
+      `}</style>
     </div>
   );
 }

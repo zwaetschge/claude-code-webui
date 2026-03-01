@@ -13,11 +13,17 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, config: RequestConfig = {}): Promise<{ data: T }> {
+    const isFormData = config.body instanceof FormData;
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...this.getAuthHeader(),
       ...config.headers,
     };
+
+    // Remove Content-Type for FormData so the browser sets the boundary automatically
+    if (isFormData) {
+      delete headers['Content-Type'];
+    }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...config,
@@ -42,8 +48,8 @@ class ApiClient {
     return this.request<T>(endpoint, {
       ...config,
       method: 'POST',
-      body: body ? JSON.stringify(body) : undefined,
-    });
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+    } as RequestConfig);
   }
 
   put<T>(endpoint: string, body?: unknown, config?: RequestConfig) {

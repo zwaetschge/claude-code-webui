@@ -206,6 +206,13 @@ function runMigrations(db: Database.Database): void {
     // Column already exists, ignore error
   }
 
+  // Migration: Add cli_provider column to sessions table (claude, codex, gemini)
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN cli_provider TEXT DEFAULT 'claude'`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
   // Create session_categories table
   db.exec(`
     CREATE TABLE IF NOT EXISTS session_categories (
@@ -252,6 +259,84 @@ function runMigrations(db: Database.Database): void {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_ai_providers_user_id ON ai_providers(user_id);
+  `);
+
+  // Migration: Add OAuth columns to ai_providers for subscription-based auth
+  try {
+    db.exec(`ALTER TABLE ai_providers ADD COLUMN oauth_access_token TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE ai_providers ADD COLUMN oauth_refresh_token TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE ai_providers ADD COLUMN oauth_expires_at DATETIME`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE ai_providers ADD COLUMN auth_method TEXT DEFAULT 'api_key'`);
+  } catch {
+    // Column already exists
+  }
+
+  // Create orchestration tables for Multi-CLI orchestration
+  db.exec(`
+    -- Orchestration sessions table
+    CREATE TABLE IF NOT EXISTS orchestration_sessions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      config_json TEXT NOT NULL,
+      master_provider TEXT DEFAULT 'claude',
+      status TEXT DEFAULT 'idle',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_orchestration_sessions_session_id ON orchestration_sessions(session_id);
+
+    -- Orchestration workers table
+    CREATE TABLE IF NOT EXISTS orchestration_workers (
+      id TEXT PRIMARY KEY,
+      orchestration_id TEXT NOT NULL REFERENCES orchestration_sessions(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      status TEXT DEFAULT 'idle',
+      current_task_id TEXT,
+      last_activity_at DATETIME
+    );
+    CREATE INDEX IF NOT EXISTS idx_orchestration_workers_orchestration_id ON orchestration_workers(orchestration_id);
+
+    -- Orchestration tasks table
+    CREATE TABLE IF NOT EXISTS orchestration_tasks (
+      id TEXT PRIMARY KEY,
+      orchestration_id TEXT NOT NULL REFERENCES orchestration_sessions(id) ON DELETE CASCADE,
+      worker_id TEXT,
+      description TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      result TEXT,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      delegated_at DATETIME,
+      completed_at DATETIME
+    );
+    CREATE INDEX IF NOT EXISTS idx_orchestration_tasks_orchestration_id ON orchestration_tasks(orchestration_id);
+    CREATE INDEX IF NOT EXISTS idx_orchestration_tasks_worker_id ON orchestration_tasks(worker_id);
+
+    -- Trusted devices table (for Electron desktop app auth)
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      device_name TEXT NOT NULL,
+      fingerprint_hash TEXT NOT NULL UNIQUE,
+      platform TEXT,
+      last_seen_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_trusted_devices_user_id ON trusted_devices(user_id);
+    CREATE INDEX IF NOT EXISTS idx_trusted_devices_fingerprint ON trusted_devices(fingerprint_hash);
   `);
 }
 

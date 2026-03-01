@@ -6,10 +6,24 @@ import type {
   ServerToClientEvents,
   InterServerEvents,
   SocketData,
+  OrchestrationConfig,
 } from '@claude-code-webui/shared';
 import { config } from '../config';
 import { ClaudeProcessManager } from '../services/claude/ClaudeProcessManager';
 import { GeminiService } from '../services/gemini';
+import { getLastRebuildResult } from '../services/self-rebuild';
+import { orchestrationManager } from '../services/orchestration/index.js';
+import { getRalph } from '../services/ralph';
+
+// Module-level processManager reference for external access
+let _processManager: ClaudeProcessManager | null = null;
+
+export function getProcessManager(): ClaudeProcessManager {
+  if (!_processManager) {
+    throw new Error('ProcessManager not initialized. Call setupWebSocket first.');
+  }
+  return _processManager;
+}
 
 export function setupWebSocket(httpServer: HttpServer): Server {
   const io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>(
@@ -37,7 +51,11 @@ export function setupWebSocket(httpServer: HttpServer): Server {
   );
 
   const processManager = new ClaudeProcessManager(io);
+  _processManager = processManager;
   const geminiService = new GeminiService(io);
+
+  // Initialize orchestration manager with IO
+  orchestrationManager.setIO(io);
 
   // Check Gemini CLI availability on startup
   geminiService.checkAvailability().then((result) => {
@@ -214,7 +232,7 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     });
 
     // Reconnect to a running session
-    socket.on('session:reconnect', ({ sessionId, lastTimestamp }) => {
+    socket.on('session:reconnect', async ({ sessionId, lastTimestamp }) => {
       console.log(`Reconnect request for session ${sessionId} from socket ${socket.id}`);
 
       // ALWAYS subscribe to the session room, regardless of running state
@@ -222,6 +240,29 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       socket.data.subscribedSessions.add(sessionId);
       socket.join(`session:${sessionId}`);
       console.log(`Socket ${socket.id} joined session room ${sessionId}`);
+
+      // Check for recent rebuild and notify client
+      try {
+        const rebuildResult = await getLastRebuildResult();
+        if (rebuildResult && rebuildResult.completedAt) {
+          const completedTime = new Date(rebuildResult.completedAt).getTime();
+          const now = Date.now();
+          const fiveMinutesAgo = now - 5 * 60 * 1000;
+
+          // If rebuild completed within last 5 minutes, notify client
+          if (completedTime > fiveMinutesAgo) {
+            console.log(`[REBUILD] Notifying client about recent rebuild completion`);
+            socket.emit('self-rebuild:status', {
+              status: 'idle',
+              progress: rebuildResult.progress || 'Rebuild completed successfully',
+              startedAt: rebuildResult.startedAt,
+              completedAt: rebuildResult.completedAt,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[REBUILD] Error checking rebuild status:', err);
+      }
 
       const isRunning = processManager.isSessionRunning(sessionId);
 
@@ -247,6 +288,162 @@ export function setupWebSocket(httpServer: HttpServer): Server {
           bufferedMessages: [],
           isRunning: false,
         });
+      }
+    });
+
+    // ========== Orchestration Events ==========
+
+    // Configure orchestration
+    socket.on('orchestration:configure' as keyof ClientToServerEvents, async (data: { sessionId: string; config: Partial<OrchestrationConfig> }) => {
+      const { sessionId, config: orchestrationConfig } = data;
+      console.log(`Received orchestration:configure for ${sessionId}`);
+      try {
+        const updatedConfig = orchestrationManager.updateConfig(sessionId, orchestrationConfig);
+        if (!updatedConfig) {
+          socket.emit('orchestration:error' as keyof ServerToClientEvents, {
+            sessionId,
+            error: 'No active orchestration for this session',
+          } as never);
+        }
+      } catch (err) {
+        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to configure orchestration',
+        } as never);
+      }
+    });
+
+    // Start orchestration
+    socket.on('orchestration:start' as keyof ClientToServerEvents, async (data: { sessionId: string }) => {
+      const { sessionId } = data;
+      console.log(`Received orchestration:start for ${sessionId}`);
+      try {
+        await orchestrationManager.startOrchestration(sessionId, socket.data.userId);
+      } catch (err) {
+        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to start orchestration',
+        } as never);
+      }
+    });
+
+    // Stop orchestration
+    socket.on('orchestration:stop' as keyof ClientToServerEvents, async (data: { sessionId: string }) => {
+      const { sessionId } = data;
+      console.log(`Received orchestration:stop for ${sessionId}`);
+      try {
+        await orchestrationManager.stopOrchestration(sessionId);
+      } catch (err) {
+        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to stop orchestration',
+        } as never);
+      }
+    });
+
+    // Interrupt a specific worker
+    socket.on('orchestration:interrupt_worker' as keyof ClientToServerEvents, (data: { sessionId: string; workerId: string }) => {
+      const { sessionId, workerId } = data;
+      console.log(`Received orchestration:interrupt_worker for ${sessionId}, worker ${workerId}`);
+      try {
+        orchestrationManager.interruptWorker(sessionId, workerId);
+      } catch (err) {
+        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to interrupt worker',
+          workerId,
+        } as never);
+      }
+    });
+
+    // Cancel a task
+    socket.on('orchestration:cancel_task' as keyof ClientToServerEvents, (data: { sessionId: string; taskId: string }) => {
+      const { sessionId, taskId } = data;
+      console.log(`Received orchestration:cancel_task for ${sessionId}, task ${taskId}`);
+      try {
+        orchestrationManager.cancelTask(sessionId, taskId);
+      } catch (err) {
+        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
+          sessionId,
+          error: err instanceof Error ? err.message : 'Failed to cancel task',
+          taskId,
+        } as never);
+      }
+    });
+
+    // ========== Ralph Autonomous Loop Events ==========
+
+    socket.on('ralph:start', async (data: { sessionId?: string; idea: string; config?: Record<string, unknown> }) => {
+      console.log(`Received ralph:start: "${data.idea.substring(0, 50)}..."`);
+      const ralph = getRalph();
+      if (!ralph) {
+        socket.emit('ralph:error', {
+          sessionId: data.sessionId || '',
+          runId: '',
+          error: 'Ralph service not initialized',
+        });
+        return;
+      }
+
+      // Pre-join room if sessionId is known to avoid missing initial events
+      if (data.sessionId) {
+        socket.data.subscribedSessions.add(data.sessionId);
+        socket.join(`session:${data.sessionId}`);
+      }
+
+      try {
+        const run = await ralph.startRun(socket.data.userId, data.idea, {
+          ...data.config,
+          sessionId: data.sessionId,
+        });
+
+        // Join room for the actual session (may differ if new session was created)
+        if (run.sessionId !== data.sessionId) {
+          socket.data.subscribedSessions.add(run.sessionId);
+          socket.join(`session:${run.sessionId}`);
+        }
+
+        // Emit initial state AFTER joining the room (avoids race condition)
+        ralph.emitRunState(run.id);
+      } catch (err) {
+        socket.emit('ralph:error', {
+          sessionId: data.sessionId || '',
+          runId: '',
+          error: err instanceof Error ? err.message : 'Failed to start Ralph run',
+        });
+      }
+    });
+
+    socket.on('ralph:pause', async (data: { runId: string }) => {
+      console.log(`Received ralph:pause for run ${data.runId}`);
+      const ralph = getRalph();
+      if (!ralph) return;
+      try {
+        await ralph.pauseRun(data.runId);
+      } catch (err) {
+        console.error(`Failed to pause Ralph run ${data.runId}:`, err);
+      }
+    });
+
+    socket.on('ralph:resume', async (data: { runId: string }) => {
+      console.log(`Received ralph:resume for run ${data.runId}`);
+      const ralph = getRalph();
+      if (!ralph) return;
+      try {
+        await ralph.resumeRun(data.runId);
+      } catch (err) {
+        console.error(`Failed to resume Ralph run ${data.runId}:`, err);
+      }
+    });
+
+    socket.on('ralph:stop', async (data: { runId: string }) => {
+      console.log(`Received ralph:stop for run ${data.runId}`);
+      const ralph = getRalph();
+      if (!ralph) return;
+      try {
+        await ralph.stopRun(data.runId);
+      } catch (err) {
+        console.error(`Failed to stop Ralph run ${data.runId}:`, err);
       }
     });
 

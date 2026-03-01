@@ -146,8 +146,21 @@ export const ALLOWED_UPLOAD_MIME_TYPES = new Set([
   'application/octet-stream',
   'application/javascript',
   'application/typescript',
+  // Spreadsheets
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  // .xlsx
+  'application/vnd.ms-excel',                                          // .xls
+  'application/vnd.oasis.opendocument.spreadsheet',                    // .ods
+  // Word documents
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'application/msword',                                                     // .doc
+  'application/vnd.oasis.opendocument.text',                                // .odt
+  // Presentations
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+  'application/vnd.ms-powerpoint',                                             // .ppt
   // Archives
   'application/zip',
   'application/x-tar',
   'application/gzip',
+  'application/x-7z-compressed',
+  'application/x-rar-compressed',
 ]);

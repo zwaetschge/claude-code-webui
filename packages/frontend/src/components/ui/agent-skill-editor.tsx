@@ -39,18 +39,24 @@ interface EditorProps {
   mode: 'create' | 'edit';
   initialData?: Partial<AgentData | SkillData>;
   editName?: string; // Original name when editing
+  configProvider?: string;
   onClose: () => void;
   onSaved?: () => void;
 }
 
-export function AgentSkillEditor({ type, mode, initialData, editName, onClose, onSaved }: EditorProps) {
+export function AgentSkillEditor({ type, mode, initialData, editName, configProvider, onClose, onSaved }: EditorProps) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isAgent = type === 'agent';
+  const providerKey = configProvider || 'default';
+  const withProvider = (endpoint: string) => {
+    if (!configProvider) return endpoint;
+    return `${endpoint}${endpoint.includes('?') ? '&' : '?'}provider=${encodeURIComponent(configProvider)}`;
+  };
 
   // Fetch full content when editing
   const { data: fetchedData, isLoading: isLoadingContent } = useQuery({
-    queryKey: [isAgent ? 'claude-agent-detail' : 'claude-skill-detail', editName],
+    queryKey: [isAgent ? 'claude-agent-detail' : 'claude-skill-detail', providerKey, editName],
     queryFn: async () => {
       const endpoint = isAgent
         ? `/api/claude-config/agent/${editName}`
@@ -63,7 +69,7 @@ export function AgentSkillEditor({ type, mode, initialData, editName, onClose, o
         model?: string;
         prompt?: string;
         content?: string;
-      }>>(endpoint);
+      }>>(withProvider(endpoint));
       return response.data.data;
     },
     enabled: mode === 'edit' && !!editName,
@@ -118,11 +124,11 @@ export function AgentSkillEditor({ type, mode, initialData, editName, onClose, o
             model: formData.model || undefined,
             content: formData.content,
           };
-      const response = await api.post<ApiResponse<unknown>>(endpoint, payload);
+      const response = await api.post<ApiResponse<unknown>>(withProvider(endpoint), payload);
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills'] });
+      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey] });
       toast({ title: `${isAgent ? 'Agent' : 'Skill'} created successfully` });
       onSaved?.();
       onClose();
@@ -153,11 +159,11 @@ export function AgentSkillEditor({ type, mode, initialData, editName, onClose, o
             model: formData.model || undefined,
             content: formData.content,
           };
-      const response = await api.put<ApiResponse<unknown>>(endpoint, payload);
+      const response = await api.put<ApiResponse<unknown>>(withProvider(endpoint), payload);
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills'] });
+      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey] });
       toast({ title: `${isAgent ? 'Agent' : 'Skill'} updated successfully` });
       onSaved?.();
       onClose();
@@ -173,11 +179,11 @@ export function AgentSkillEditor({ type, mode, initialData, editName, onClose, o
       const endpoint = isAgent
         ? `/api/claude-config/agent/${editName}`
         : `/api/claude-config/skill/${editName}`;
-      const response = await api.delete<ApiResponse<unknown>>(endpoint);
+      const response = await api.delete<ApiResponse<unknown>>(withProvider(endpoint));
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills'] });
+      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey] });
       toast({ title: `${isAgent ? 'Agent' : 'Skill'} deleted` });
       onSaved?.();
       onClose();
@@ -381,6 +387,7 @@ interface AgentSkillEditorDialogProps {
   mode: 'create' | 'edit';
   initialData?: Partial<AgentData | SkillData>;
   editName?: string;
+  configProvider?: string;
 }
 
 export function AgentSkillEditorDialog({
@@ -390,6 +397,7 @@ export function AgentSkillEditorDialog({
   mode,
   initialData,
   editName,
+  configProvider,
 }: AgentSkillEditorDialogProps) {
   if (!open) return null;
 
@@ -399,6 +407,7 @@ export function AgentSkillEditorDialog({
       mode={mode}
       initialData={initialData}
       editName={editName}
+      configProvider={configProvider}
       onClose={() => onOpenChange(false)}
     />
   );

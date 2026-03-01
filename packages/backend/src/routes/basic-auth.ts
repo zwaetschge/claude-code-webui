@@ -6,6 +6,8 @@ import { config } from '../config';
 import { getAppConfig, setAppConfig } from '../db';
 import { requireAuth } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
+import { generateUserToken } from '../utils/authTokens';
+import { upsertSharedCliUser } from '../utils/cliUser';
 
 const router = Router();
 
@@ -21,11 +23,6 @@ const changeCredentialsSchema = z.object({
   newUsername: z.string().min(3).optional(),
   newPassword: z.string().min(6).optional(),
 });
-
-// Generate JWT token for basic auth session
-function generateBasicAuthToken(): string {
-  return jwt.sign({ basicAuth: true, timestamp: Date.now() }, config.jwtSecret, { expiresIn: '30d' });
-}
 
 // Check if basic auth is enabled
 router.get('/status', (_req, res) => {
@@ -72,8 +69,10 @@ router.post('/login', (req, res) => {
     throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
   }
 
-  // Generate token
-  const token = generateBasicAuthToken();
+  const displayName = storedUsername || 'admin';
+  const email = `${displayName}@local`;
+  const user = upsertSharedCliUser(email, displayName);
+  const token = generateUserToken(user.id, { basicAuth: true, expiresIn: '30d' });
 
   res.json({
     success: true,

@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
+import { applyProviderClass, getStoredUiProvider } from '@/lib/providers';
 
 // Initialize theme before render to prevent flash
 function initializeTheme() {
@@ -21,6 +22,14 @@ function initializeTheme() {
 }
 
 initializeTheme();
+
+// Initialize provider theme before render to prevent flash
+function initializeProvider() {
+  const provider = getStoredUiProvider();
+  applyProviderClass(provider);
+}
+
+initializeProvider();
 
 // Listen for system theme changes
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {

@@ -10,6 +10,10 @@ import {
   AlertCircle,
   CheckCircle,
   Settings2,
+  KeyRound,
+  LogIn,
+  RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +47,9 @@ interface Provider {
   models: string | null;
   default_model: string | null;
   enabled: number;
+  auth_method: 'api_key' | 'oauth' | null;
+  has_oauth_token: boolean;
+  oauth_expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,6 +60,7 @@ interface ProviderType {
   baseUrl: string;
   models: string[];
   requiresApiKey: boolean;
+  supportsOAuth: boolean;
   icon: string;
 }
 
@@ -76,6 +84,16 @@ interface ApiTestResponse {
   data?: { success: boolean; message: string };
 }
 
+interface ApiOAuthUrlResponse {
+  success: boolean;
+  data?: { url: string };
+}
+
+interface ApiOAuthAvailableResponse {
+  success: boolean;
+  data?: Record<string, boolean>;
+}
+
 const PROVIDER_ICONS: Record<string, string> = {
   anthropic: '\ud83d\udfe0',
   openai: '\ud83d\udfe2',
@@ -94,6 +112,8 @@ export function ProvidersSettings() {
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [oauthAvailable, setOAuthAvailable] = useState<Record<string, boolean>>({});
+  const [oauthLoading, setOAuthLoading] = useState<string | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -109,9 +129,10 @@ export function ProvidersSettings() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [providersRes, typesRes] = await Promise.all([
+      const [providersRes, typesRes, oauthRes] = await Promise.all([
         api.get<ApiProvidersResponse>('/api/providers'),
         api.get<ApiProviderTypesResponse>('/api/providers/types'),
+        api.get<ApiOAuthAvailableResponse>('/api/providers/oauth/available'),
       ]);
 
       if (providersRes.data.success && providersRes.data.data) {
@@ -119,6 +140,9 @@ export function ProvidersSettings() {
       }
       if (typesRes.data.success && typesRes.data.data) {
         setProviderTypes(typesRes.data.data);
+      }
+      if (oauthRes.data.success && oauthRes.data.data) {
+        setOAuthAvailable(oauthRes.data.data);
       }
     } catch (error) {
       console.error('Failed to fetch providers:', error);
@@ -236,6 +260,39 @@ export function ProvidersSettings() {
     }
   };
 
+  const startOAuth = async (providerType: string, providerId?: string) => {
+    setOAuthLoading(providerId || providerType);
+    try {
+      const params = new URLSearchParams({
+        redirectUrl: window.location.pathname + '?tab=providers',
+        ...(providerId && { providerId }),
+      });
+      const response = await api.get<ApiOAuthUrlResponse>(
+        `/api/providers/oauth/${providerType}/url?${params.toString()}`
+      );
+      if (response.data.success && response.data.data?.url) {
+        // Redirect to OAuth provider
+        window.location.href = response.data.data.url;
+      }
+    } catch (error) {
+      console.error('Failed to start OAuth:', error);
+    } finally {
+      setOAuthLoading(null);
+    }
+  };
+
+  const refreshOAuthToken = async (id: string) => {
+    setOAuthLoading(id);
+    try {
+      await api.post(`/api/providers/${id}/refresh-token`);
+      await fetchData(); // Refresh the list
+    } catch (error) {
+      console.error('Failed to refresh OAuth token:', error);
+    } finally {
+      setOAuthLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -273,71 +330,121 @@ export function ProvidersSettings() {
             </CardContent>
           </Card>
         ) : (
-          providers.map((provider) => (
-            <Card key={provider.id} className={cn(!provider.enabled && 'opacity-50')}>
-              <CardHeader className="py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">{PROVIDER_ICONS[provider.type] || '\u2699\ufe0f'}</span>
-                    <div>
-                      <CardTitle className="text-base">{provider.name}</CardTitle>
-                      <CardDescription className="text-xs">
-                        {provider.type} - {provider.default_model || 'No default model'}
-                      </CardDescription>
+          providers.map((provider) => {
+            const providerType = providerTypes.find(t => t.id === provider.type);
+            const supportsOAuth = providerType?.supportsOAuth && oauthAvailable[provider.type];
+
+            return (
+              <Card key={provider.id} className={cn(!provider.enabled && 'opacity-50')}>
+                <CardHeader className="py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{PROVIDER_ICONS[provider.type] || '\u2699\ufe0f'}</span>
+                      <div>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          {provider.name}
+                          {provider.auth_method === 'oauth' && provider.has_oauth_token && (
+                            <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-2 py-0.5 rounded-full">
+                              <ShieldCheck className="h-3 w-3" />
+                              OAuth
+                            </span>
+                          )}
+                        </CardTitle>
+                        <CardDescription className="text-xs flex items-center gap-2">
+                          <span>{provider.type} - {provider.default_model || 'No default model'}</span>
+                          {provider.auth_method === 'oauth' && provider.oauth_expires_at && (
+                            <span className="text-muted-foreground">
+                              Expires: {new Date(provider.oauth_expires_at).toLocaleDateString()}
+                            </span>
+                          )}
+                        </CardDescription>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* OAuth buttons for providers that support it */}
+                      {supportsOAuth && (
+                        provider.auth_method === 'oauth' && provider.has_oauth_token ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => refreshOAuthToken(provider.id)}
+                            disabled={oauthLoading === provider.id}
+                            title="Refresh OAuth token"
+                          >
+                            {oauthLoading === provider.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => startOAuth(provider.type, provider.id)}
+                            disabled={oauthLoading === provider.id}
+                            title="Connect with OAuth"
+                          >
+                            {oauthLoading === provider.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <LogIn className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => testProvider(provider.id)}
+                        disabled={testingId === provider.id}
+                      >
+                        {testingId === provider.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <TestTube className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => openEditDialog(provider)}>
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => deleteProvider(provider.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <Switch
+                        checked={!!provider.enabled}
+                        onCheckedChange={() => toggleProvider(provider)}
+                      />
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => testProvider(provider.id)}
-                      disabled={testingId === provider.id}
-                    >
-                      {testingId === provider.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <TestTube className="h-4 w-4" />
+                </CardHeader>
+                {testResult && testingId === null && (
+                  <CardContent className="pt-0 pb-4">
+                    <div
+                      className={cn(
+                        'flex items-center gap-2 text-sm px-3 py-2 rounded-md',
+                        testResult.success
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                          : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                       )}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => openEditDialog(provider)}>
-                      <Settings2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => deleteProvider(provider.id)}
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Switch
-                      checked={!!provider.enabled}
-                      onCheckedChange={() => toggleProvider(provider)}
-                    />
-                  </div>
-                </div>
-              </CardHeader>
-              {testResult && testingId === null && (
-                <CardContent className="pt-0 pb-4">
-                  <div
-                    className={cn(
-                      'flex items-center gap-2 text-sm px-3 py-2 rounded-md',
-                      testResult.success
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                        : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                    )}
-                  >
-                    {testResult.success ? (
-                      <CheckCircle className="h-4 w-4" />
-                    ) : (
-                      <AlertCircle className="h-4 w-4" />
-                    )}
-                    {testResult.message}
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          ))
+                      {testResult.success ? (
+                        <CheckCircle className="h-4 w-4" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4" />
+                      )}
+                      {testResult.message}
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+            );
+          })
         )}
       </div>
 
@@ -382,7 +489,10 @@ export function ProvidersSettings() {
             </div>
 
             <div>
-              <Label>API Key</Label>
+              <Label className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4" />
+                API Key
+              </Label>
               <div className="relative mt-1">
                 <Input
                   type={showApiKey ? 'text' : 'password'}
@@ -407,6 +517,36 @@ export function ProvidersSettings() {
                 </p>
               )}
             </div>
+
+            {/* OAuth option for supported providers */}
+            {providerTypes.find(t => t.id === formData.type)?.supportsOAuth && oauthAvailable[formData.type] && (
+              <div className="border rounded-lg p-4 bg-muted/50">
+                <div className="flex items-center gap-2 mb-2">
+                  <ShieldCheck className="h-4 w-4 text-primary" />
+                  <Label className="font-medium">Or connect with OAuth</Label>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Use your existing Google account to access Gemini API without an API key.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setDialogOpen(false);
+                    startOAuth(formData.type, editingProvider?.id);
+                  }}
+                  disabled={oauthLoading === formData.type}
+                >
+                  {oauthLoading === formData.type ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <LogIn className="h-4 w-4 mr-2" />
+                  )}
+                  Connect with Google
+                </Button>
+              </div>
+            )}
 
             <div>
               <Label>Base URL</Label>

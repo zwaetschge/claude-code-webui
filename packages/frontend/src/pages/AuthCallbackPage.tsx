@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { api } from '@/services/api';
+import { getStoredUiProvider } from '@/lib/providers';
 
 export function AuthCallbackPage() {
   const navigate = useNavigate();
@@ -12,16 +14,18 @@ export function AuthCallbackPage() {
     const error = searchParams.get('error');
 
     if (error) {
-      navigate(`/login?error=${error}`);
+      navigate(`/connect?error=${error}`);
       return;
     }
 
     if (token) {
       setToken(token).then(() => {
+        const storedProvider = getStoredUiProvider();
+        api.put('/api/settings', { uiProvider: storedProvider }).catch(() => {});
         navigate('/');
       });
     } else {
-      navigate('/login');
+      navigate('/connect');
     }
   }, [searchParams, setToken, navigate]);
 

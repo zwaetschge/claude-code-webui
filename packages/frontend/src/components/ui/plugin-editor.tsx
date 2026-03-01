@@ -29,17 +29,23 @@ interface EditorProps {
   mode: 'create' | 'edit';
   initialData?: Partial<PluginData>;
   editName?: string;
+  configProvider?: string;
   onClose: () => void;
   onSaved?: () => void;
 }
 
-export function PluginEditor({ mode, initialData, editName, onClose, onSaved }: EditorProps) {
+export function PluginEditor({ mode, initialData, editName, configProvider, onClose, onSaved }: EditorProps) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const providerKey = configProvider || 'default';
+  const withProvider = (endpoint: string) => {
+    if (!configProvider) return endpoint;
+    return `${endpoint}${endpoint.includes('?') ? '&' : '?'}provider=${encodeURIComponent(configProvider)}`;
+  };
 
   // Fetch full content when editing
   const { data: fetchedData, isLoading: isLoadingContent } = useQuery({
-    queryKey: ['claude-plugin-detail', editName],
+    queryKey: ['claude-plugin-detail', providerKey, editName],
     queryFn: async () => {
       const endpoint = `/api/claude-config/plugin/${editName}`;
       const response = await api.get<ApiResponse<{
@@ -49,7 +55,7 @@ export function PluginEditor({ mode, initialData, editName, onClose, onSaved }: 
         author?: string;
         category?: string;
         content?: string;
-      }>>(endpoint);
+      }>>(withProvider(endpoint));
       return response.data.data;
     },
     enabled: mode === 'edit' && !!editName,
@@ -90,11 +96,11 @@ export function PluginEditor({ mode, initialData, editName, onClose, onSaved }: 
         category: formData.category || undefined,
         content: formData.content,
       };
-      const response = await api.post<ApiResponse<unknown>>(endpoint, payload);
+      const response = await api.post<ApiResponse<unknown>>(withProvider(endpoint), payload);
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['installed-plugins', providerKey] });
       toast({ title: 'Plugin created successfully' });
       onSaved?.();
       onClose();
@@ -116,11 +122,11 @@ export function PluginEditor({ mode, initialData, editName, onClose, onSaved }: 
         category: formData.category || undefined,
         content: formData.content,
       };
-      const response = await api.put<ApiResponse<unknown>>(endpoint, payload);
+      const response = await api.put<ApiResponse<unknown>>(withProvider(endpoint), payload);
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['installed-plugins', providerKey] });
       toast({ title: 'Plugin updated successfully' });
       onSaved?.();
       onClose();
@@ -134,11 +140,11 @@ export function PluginEditor({ mode, initialData, editName, onClose, onSaved }: 
   const deleteMutation = useMutation({
     mutationFn: async () => {
       const endpoint = `/api/claude-config/plugin/user-${editName}`;
-      const response = await api.delete<ApiResponse<unknown>>(endpoint);
+      const response = await api.delete<ApiResponse<unknown>>(withProvider(endpoint));
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['installed-plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['installed-plugins', providerKey] });
       toast({ title: 'Plugin deleted' });
       onSaved?.();
       onClose();
@@ -343,6 +349,7 @@ interface PluginEditorDialogProps {
   mode: 'create' | 'edit';
   initialData?: Partial<PluginData>;
   editName?: string;
+  configProvider?: string;
 }
 
 export function PluginEditorDialog({
@@ -351,6 +358,7 @@ export function PluginEditorDialog({
   mode,
   initialData,
   editName,
+  configProvider,
 }: PluginEditorDialogProps) {
   if (!open) return null;
 
@@ -359,6 +367,7 @@ export function PluginEditorDialog({
       mode={mode}
       initialData={initialData}
       editName={editName}
+      configProvider={configProvider}
       onClose={() => onOpenChange(false)}
     />
   );

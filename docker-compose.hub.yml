@@ -20,6 +20,18 @@ services:
       - ALLOWED_BASE_PATHS=${ALLOWED_BASE_PATHS:-/home}
       - CLAUDE_USER_EMAIL=${CLAUDE_USER_EMAIL:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-opus,sonnet,haiku}
+      - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
+      - CLI_PROVIDER_GEMINI_MODELS=${CLI_PROVIDER_GEMINI_MODELS:-}
+      - CLI_PROVIDER_GLM_MODELS=${CLI_PROVIDER_GLM_MODELS:-glm-4.7,glm-4.5}
+      - CLI_PROVIDER_GLM_CREDENTIALS_PATH=${CLI_PROVIDER_GLM_CREDENTIALS_PATH:-/home/node/.glm}
+      - CLI_PROVIDER_GLM_PREFIX=${CLI_PROVIDER_GLM_PREFIX:-/home/node/.npm-glm}
+      - CLI_PROVIDER_GLM_COMMAND=${CLI_PROVIDER_GLM_COMMAND:-/home/node/.npm-glm/bin/claude}
+      - WEBUI_GLM_CONFIG_HOME=${WEBUI_GLM_CONFIG_HOME:-/home/node/.glm}
+      # CLI auto-update (optional)
+      - CLI_AUTO_UPDATE=${CLI_AUTO_UPDATE:-true}
+      - CLI_AUTO_UPDATE_INTERVAL_HOURS=${CLI_AUTO_UPDATE_INTERVAL_HOURS:-24}
+      - CLI_AUTO_UPDATE_PROVIDERS=${CLI_AUTO_UPDATE_PROVIDERS:-}
     volumes:
       # Persist database
       - claude-data:/app/packages/backend/data
@@ -27,6 +39,12 @@ services:
       - ${HOME}/.claude:/home/node/.claude
       # Optional: Mount Gemini config
       - ${HOME}/.gemini:/home/node/.gemini
+      # Optional: Mount GLM config
+      - ${HOME}/.glm:/home/node/.glm
+      # Persist GLM Claude Code CLI prefix
+      - ${HOME}/.npm-glm:/home/node/.npm-glm
+      # Persist npm global installs (CLI updates)
+      - ${HOME}/.npm-global:/home/node/.npm-global
       # Mount your project directories (adjust as needed)
       - ${HOME}:/home/hostuser
       # Optional: Docker socket for container access

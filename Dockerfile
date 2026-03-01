@@ -11,10 +11,27 @@ LABEL org.opencontainers.image.vendor="Claude Code WebUI"
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Install build dependencies for native modules (node-pty), git, and Docker CLI + Compose
-RUN apk add --no-cache python3 make g++ linux-headers git bash docker-cli docker-cli-compose
+RUN apk add --no-cache python3 python3-dev py3-pip make g++ linux-headers git bash unzip docker-cli docker-cli-compose curl openssh-client
 
-# Install Claude Code CLI and Gemini CLI globally
-RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli
+# Install global npm packages into user-writable prefixes
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV CLI_PROVIDER_GLM_PREFIX=/home/node/.npm-glm
+ENV PATH=/home/node/.local/bin:/home/node/.npm-global/bin:/home/node/.npm-glm/bin:$PATH
+RUN mkdir -p /home/node/.npm-global /home/node/.npm-glm
+
+# Install AI CLI tools globally (Claude, Codex, Gemini)
+RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
+
+# Install a separate Claude Code CLI instance for GLM
+RUN npm install -g --prefix /home/node/.npm-glm @anthropic-ai/claude-code
+
+# Install Mistral Vibe CLI (Python-based)
+RUN pip install --break-system-packages mistral-vibe
+
+# Install Kimi CLI (Python-based, requires uv)
+ENV UV_INSTALL_DIR=/home/node/.local/bin
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    HOME=/home/node /home/node/.local/bin/uv tool install --python 3.13 kimi-cli
 
 # The node:alpine image already has a 'node' user (uid 1000)
 
@@ -39,7 +56,7 @@ RUN pnpm --filter shared build
 RUN pnpm --filter frontend build
 
 # Create directories and set permissions for node user
-RUN mkdir -p /home/node/.claude && \
+RUN mkdir -p /home/node/.claude /home/node/.glm /home/node/.vibe /home/node/.kimi /home/node/.npm-global /home/node/.npm-glm && \
     chown -R node:node /app /home/node
 
 # Expose ports

@@ -12,6 +12,8 @@ import {
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@claude-code-webui/shared';
+import { useProviderStore } from '@/stores/providerStore';
+import { UI_PROVIDER_META } from '@/lib/providers';
 
 interface AllowedDirectoriesDialogProps {
   sessionId: string;
@@ -28,6 +30,8 @@ export function AllowedDirectoriesDialog({
 }: AllowedDirectoriesDialogProps) {
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const queryClient = useQueryClient();
+  const { uiProvider } = useProviderStore();
+  const providerLabel = UI_PROVIDER_META[uiProvider].label;
 
   // Fetch current allowed directories
   const { data: directories, isLoading } = useQuery({
@@ -89,7 +93,7 @@ export function AllowedDirectoriesDialog({
               Allowed Directories
             </DialogTitle>
             <DialogDescription>
-              Grant Claude access to additional directories beyond the working directory.
+              Grant {providerLabel} access to additional directories beyond the working directory.
               Changes will take effect when the session is restarted.
             </DialogDescription>
           </DialogHeader>
@@ -133,7 +137,7 @@ export function AllowedDirectoriesDialog({
                   <FolderKey className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">No additional directories allowed</p>
                   <p className="text-xs mt-1">
-                    Claude can only access the session's working directory
+                    {providerLabel} can only access the session's working directory
                   </p>
                 </div>
               )}
@@ -158,7 +162,7 @@ export function AllowedDirectoriesDialog({
             <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                Granting directory access allows Claude to read and modify files in that directory.
+                Granting directory access allows {providerLabel} to read and modify files in that directory.
                 Only grant access to directories you trust.
               </p>
             </div>
@@ -187,6 +191,8 @@ export function DirectoryAccessPrompt({ message, sessionId, onAccessGranted }: D
   const [showDialog, setShowDialog] = useState(false);
   const [isGranting, setIsGranting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const { uiProvider } = useProviderStore();
+  const providerLabel = UI_PROVIDER_META[uiProvider].label;
 
   // Detect directory access request patterns
   const detectDirectoryRequest = (text: string): string | null => {
@@ -239,7 +245,7 @@ export function DirectoryAccessPrompt({ message, sessionId, onAccessGranted }: D
           <span className="font-medium">Directory Access Requested</span>
         </div>
         <p className="text-xs text-muted-foreground">
-          Claude is requesting access to: <code className="px-1 py-0.5 rounded bg-muted">{path}</code>
+          {providerLabel} is requesting access to: <code className="px-1 py-0.5 rounded bg-muted">{path}</code>
         </p>
         <div className="flex gap-2">
           <Button

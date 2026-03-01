@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { socketService } from '@/services/socket';
 import { cn } from '@/lib/utils';
 import type { PermissionDenial } from '@claude-code-webui/shared';
+import { useProviderStore } from '@/stores/providerStore';
+import { UI_PROVIDER_META } from '@/lib/providers';
 
 interface PermissionRequestCardProps {
   sessionId: string;
@@ -44,6 +46,8 @@ export function PermissionRequestCard({
   originalMessage,
   className,
 }: PermissionRequestCardProps) {
+  const { uiProvider } = useProviderStore();
+  const providerLabel = UI_PROVIDER_META[uiProvider].label;
   const handleApprove = () => {
     const toolNames = denials.map(d => d.tool_name);
     socketService.approvePermission(sessionId, toolNames, originalMessage);
@@ -72,7 +76,7 @@ export function PermissionRequestCard({
               Permission Required
             </h3>
             <p className="text-sm text-muted-foreground">
-              Claude wants to use the following tools:
+              {providerLabel} wants to use the following tools:
             </p>
           </div>
         </div>

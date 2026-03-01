@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { addPatternToSettings } from './claude-settings';
 import { getDatabase } from '../db';
+import { getWatchdog } from '../services/watchdog/WatchdogService';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ interface PendingPermission {
   status: 'pending' | 'approved' | 'denied';
   pattern?: string;
   createdAt: number;
+  watchdogDecided?: boolean;  // Track if watchdog made the decision
 }
 
 // In-memory storage for pending permission requests
@@ -61,7 +63,7 @@ const permissionRespondSchema = z.object({
 /**
  * POST /api/permissions/request
  * Called by the permission-prompt script when Claude needs permission.
- * Stores the request and emits to frontend via WebSocket.
+ * First checks watchdog rules, then stores the request and emits to frontend.
  * No authentication required (called by local script).
  */
 router.post('/request', async (req: Request, res: Response) => {
@@ -76,7 +78,82 @@ router.post('/request', async (req: Request, res: Response) => {
 
   const { sessionId, requestId, toolName, toolInput, description, suggestedPattern } = parsed.data;
 
-  // Store the pending request
+  const watchdog = getWatchdog();
+  if (watchdog) {
+    watchdog.initSession(sessionId);
+    watchdog.recordToolCall(sessionId);
+  }
+
+  // Check watchdog first
+  if (watchdog && watchdog.isEnabled(sessionId)) {
+    const decision = await watchdog.evaluatePermission({
+      requestId,
+      sessionId,
+      toolName,
+      toolInput,
+      description,
+      timestamp: Date.now(),
+    });
+
+    if (decision) {
+      // Watchdog made a decision
+      if (decision.action === 'approve') {
+        // Auto-approve: store as already approved so long-poll returns immediately
+        const pendingRequest: PendingPermission = {
+          sessionId,
+          requestId,
+          toolName,
+          toolInput,
+          description: description || `${toolName} tool`,
+          suggestedPattern: suggestedPattern || `${toolName}(:*)`,
+          status: 'approved',
+          createdAt: Date.now(),
+          watchdogDecided: true,
+        };
+        pendingRequests.set(requestId, pendingRequest);
+
+        console.log(`[PERMISSIONS] Request ${requestId} auto-approved by watchdog: ${decision.reason}`);
+        return res.json({ success: true, requestId, watchdogDecision: 'approved' });
+      } else if (decision.action === 'deny') {
+        // Auto-deny
+        const pendingRequest: PendingPermission = {
+          sessionId,
+          requestId,
+          toolName,
+          toolInput,
+          description: description || `${toolName} tool`,
+          suggestedPattern: suggestedPattern || `${toolName}(:*)`,
+          status: 'denied',
+          createdAt: Date.now(),
+          watchdogDecided: true,
+        };
+        pendingRequests.set(requestId, pendingRequest);
+
+        console.log(`[PERMISSIONS] Request ${requestId} auto-denied by watchdog: ${decision.reason}`);
+        return res.json({ success: true, requestId, watchdogDecision: 'denied' });
+      } else if (decision.action === 'pause') {
+        // Session paused - deny this request
+        const pendingRequest: PendingPermission = {
+          sessionId,
+          requestId,
+          toolName,
+          toolInput,
+          description: description || `${toolName} tool`,
+          suggestedPattern: suggestedPattern || `${toolName}(:*)`,
+          status: 'denied',
+          createdAt: Date.now(),
+          watchdogDecided: true,
+        };
+        pendingRequests.set(requestId, pendingRequest);
+
+        console.log(`[PERMISSIONS] Request ${requestId} denied - session paused by watchdog`);
+        return res.json({ success: true, requestId, watchdogDecision: 'paused' });
+      }
+      // 'notify' action doesn't make a decision, continues to normal flow
+    }
+  }
+
+  // No watchdog decision - proceed with normal flow
   const pendingRequest: PendingPermission = {
     sessionId,
     requestId,
@@ -102,6 +179,11 @@ router.post('/request', async (req: Request, res: Response) => {
   });
 
   console.log(`[PERMISSIONS] Request ${requestId} created for session ${sessionId}: ${toolName}`);
+
+  // Notify watchdog that manual approval is needed (Telegram alert)
+  if (watchdog) {
+    watchdog.notifyNeedsInput(sessionId, toolName, description).catch(() => {});
+  }
 
   res.json({ success: true, requestId });
 });
@@ -134,18 +216,20 @@ router.get('/response/:requestId', async (req: Request, res: Response) => {
     }
 
     if (request.status !== 'pending') {
-      // User has responded
+      // User (or watchdog) has responded
       const approved = request.status === 'approved';
       const pattern = request.pattern;
 
       // Clean up the request
       pendingRequests.delete(requestId);
 
-      console.log(`[PERMISSIONS] Request ${requestId} resolved: ${request.status}`);
+      const decidedBy = request.watchdogDecided ? 'watchdog' : 'user';
+      console.log(`[PERMISSIONS] Request ${requestId} resolved by ${decidedBy}: ${request.status}`);
 
       return res.json({
         approved,
         pattern,
+        decidedBy,
       });
     }
 
@@ -182,6 +266,11 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
 
   if (!request) {
     throw new AppError('Permission request not found or expired', 404, 'NOT_FOUND');
+  }
+
+  // If watchdog already decided, don't allow override (for security)
+  if (request.watchdogDecided) {
+    throw new AppError('This request was already handled by watchdog', 400, 'ALREADY_HANDLED');
   }
 
   // Update request status

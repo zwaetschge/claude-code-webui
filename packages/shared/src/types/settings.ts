@@ -1,4 +1,7 @@
+import type { CLIProvider } from './session';
+
 export type Theme = 'dark' | 'light' | 'system';
+export type UiProvider = 'plum' | 'claude' | 'codex' | 'zai' | 'gemini' | 'multi';
 
 export interface UserSettings {
   userId: string;
@@ -6,6 +9,11 @@ export interface UserSettings {
   defaultWorkingDir: string | null;
   allowedTools: string[];
   customSystemPrompt: string | null;
+  uiProvider?: UiProvider;
+  defaultCliProvider?: CLIProvider;
+  cliProviderModels?: Partial<Record<CLIProvider, string>>;
+  cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
+  cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
 }
 
 export interface UpdateSettingsInput {
@@ -13,6 +21,11 @@ export interface UpdateSettingsInput {
   defaultWorkingDir?: string | null;
   allowedTools?: string[];
   customSystemPrompt?: string | null;
+  uiProvider?: UiProvider;
+  defaultCliProvider?: CLIProvider;
+  cliProviderModels?: Partial<Record<CLIProvider, string>>;
+  cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
+  cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
 }
 
 export interface ClaudeSettings {

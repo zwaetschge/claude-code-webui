@@ -15,6 +15,7 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ de
 const SessionPage = lazy(() => import('@/pages/SessionPage').then(m => ({ default: m.SessionPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const WatchdogPage = lazy(() => import('@/pages/WatchdogPage').then(m => ({ default: m.WatchdogPage })));
 
 // Loading fallback component
 function PageLoader() {
@@ -47,7 +48,7 @@ function BasicAuthRoute({ children }: { children: React.ReactNode }) {
 
   // If basic auth is enabled but not authenticated, redirect to basic login
   if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
-    return <Navigate to="/basic-login" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
@@ -92,9 +93,10 @@ export default function App() {
     <>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/basic-login" element={<BasicLoginPage />} />
+          <Route path="/login" element={<BasicLoginPage />} />
+          <Route path="/basic-login" element={<Navigate to="/login" replace />} />
           <Route
-            path="/login"
+            path="/connect"
             element={
               <BasicAuthRoute>
                 <LoginPage />
@@ -115,6 +117,7 @@ export default function App() {
             <Route path="session/:id" element={<SessionPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="watchdog" element={<WatchdogPage />} />
           </Route>
         </Routes>
       </Suspense>

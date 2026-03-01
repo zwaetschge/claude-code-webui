@@ -76,12 +76,19 @@ const storage = multer.diskStorage({
 
 // File filter for MIME type validation
 const fileFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
+  // Allow known MIME types
   if (ALLOWED_UPLOAD_MIME_TYPES.has(file.mimetype)) {
     cb(null, true);
-  } else {
-    console.warn(`Upload rejected: unsupported MIME type ${file.mimetype} for file ${file.originalname}`);
-    cb(null, false);
+    return;
   }
+  // Browsers often send empty or generic MIME types for code/config files.
+  // Allow files with no MIME type or with a text/* type we haven't listed.
+  if (!file.mimetype || file.mimetype === '' || file.mimetype.startsWith('text/')) {
+    cb(null, true);
+    return;
+  }
+  console.warn(`Upload rejected: unsupported MIME type ${file.mimetype} for file ${file.originalname}`);
+  cb(null, false);
 };
 
 const upload = multer({
@@ -530,6 +537,38 @@ router.get('/preview', requireAuth, asyncHandler(async (req, res) => {
         size: stats.size,
       },
     });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new AppError('File not found', 404, 'NOT_FOUND');
+    }
+    throw err;
+  }
+}));
+
+// Download file as attachment
+router.get('/download', requireAuth, asyncHandler(async (req, res) => {
+  const filePath = req.query.path as string;
+
+  if (!filePath) {
+    throw new AppError('Path is required', 400, 'MISSING_PATH');
+  }
+
+  const resolvedPath = validatePath(filePath);
+
+  try {
+    const stats = await fs.stat(resolvedPath);
+
+    if (stats.isDirectory()) {
+      throw new AppError('Path is a directory', 400, 'IS_DIRECTORY');
+    }
+
+    const filename = path.basename(resolvedPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', stats.size);
+
+    const stream = createReadStream(resolvedPath);
+    stream.pipe(res);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new AppError('File not found', 404, 'NOT_FOUND');
