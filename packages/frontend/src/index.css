@@ -287,251 +287,6 @@
     letter-spacing: -0.02em;
   }
 
-  :root.provider-zai {
-    --background: 210 35% 96%;
-    --foreground: 220 24% 12%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 24% 12%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 24% 12%;
-    --primary: 200 85% 45%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 18% 92%;
-    --secondary-foreground: 220 18% 25%;
-    --muted: 210 16% 94%;
-    --muted-foreground: 220 10% 45%;
-    --accent: 200 85% 45%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 196 70% 40%;
-    --success-foreground: 0 0% 100%;
-    --border: 210 16% 88%;
-    --input: 210 16% 88%;
-    --ring: 200 85% 45%;
-
-    --claude-crail: 200 85% 45%;
-    --claude-terracotta: 190 90% 50%;
-    --claude-pampas: 210 35% 96%;
-    --claude-cloudy: 210 10% 70%;
-
-    --brand-accent: var(--claude-crail);
-    --brand-accent-2: var(--claude-terracotta);
-    --pattern-color: 210 12% 70%;
-    --pattern-opacity: 0.07;
-
-    --shadow-color: 215 18% 18%;
-    --glow-color: 200 85% 45%;
-    --font-ui: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-    --font-body: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  }
-
-  :root.provider-zai.dark {
-    --background: 220 22% 9%;
-    --foreground: 210 20% 92%;
-    --card: 220 18% 12%;
-    --card-foreground: 210 20% 92%;
-    --popover: 220 18% 12%;
-    --popover-foreground: 210 20% 92%;
-    --primary: 200 80% 55%;
-    --primary-foreground: 220 22% 9%;
-    --secondary: 220 14% 17%;
-    --secondary-foreground: 210 12% 80%;
-    --muted: 220 14% 15%;
-    --muted-foreground: 210 10% 55%;
-    --accent: 200 80% 55%;
-    --accent-foreground: 220 22% 9%;
-    --destructive: 0 60% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 196 65% 45%;
-    --success-foreground: 0 0% 100%;
-    --border: 220 14% 20%;
-    --input: 220 14% 20%;
-    --ring: 200 80% 55%;
-
-    --claude-crail: 200 80% 55%;
-    --claude-terracotta: 190 80% 52%;
-    --claude-pampas: 210 20% 92%;
-    --claude-cloudy: 210 8% 48%;
-
-    --brand-accent: var(--claude-crail);
-    --brand-accent-2: var(--claude-terracotta);
-    --pattern-color: 210 8% 34%;
-    --pattern-opacity: 0.08;
-
-    --shadow-color: 220 20% 4%;
-    --glow-color: 200 80% 55%;
-  }
-
-  :root.provider-gemini {
-    /* Gemini Google 2025 Brand Colors */
-    /* Primary Blue: #078EFA | Primary Purple: #AD89EB */
-    --background: 210 30% 98%;
-    --foreground: 220 20% 10%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 20% 10%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 10%;
-    --primary: 207 97% 50%;              /* #078EFA - Gemini Blue */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 262 40% 95%;            /* Light purple tint */
-    --secondary-foreground: 262 50% 30%;
-    --muted: 210 20% 94%;
-    --muted-foreground: 220 12% 45%;
-    --accent: 262 71% 73%;               /* #AD89EB - Gemini Purple */
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 70% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 152 60% 40%;
-    --success-foreground: 0 0% 100%;
-    --border: 210 18% 90%;
-    --input: 210 18% 90%;
-    --ring: 207 97% 50%;
-
-    --gemini-blue: 207 97% 50%;          /* #078EFA */
-    --gemini-purple: 262 71% 73%;        /* #AD89EB */
-    --claude-crail: var(--gemini-blue);
-    --claude-terracotta: var(--gemini-purple);
-    --brand-accent: var(--gemini-blue);
-    --brand-accent-2: var(--gemini-purple);
-    --pattern-color: 262 50% 80%;
-    --pattern-opacity: 0.05;
-    --shadow-color: 220 20% 15%;
-    --glow-color: 207 97% 50%;
-
-    /* Google Sans fallback to Product Sans-like fonts */
-    --font-ui: 'Google Sans', 'Product Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-body: 'Google Sans', 'Product Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'Google Sans Mono', 'JetBrains Mono', ui-monospace, monospace;
-  }
-
-  :root.provider-gemini.dark {
-    /* Gemini Google 2025 Dark Mode */
-    --background: 220 20% 8%;
-    --foreground: 210 25% 95%;
-    --card: 220 18% 12%;
-    --card-foreground: 210 25% 95%;
-    --popover: 220 18% 12%;
-    --popover-foreground: 210 25% 95%;
-    --primary: 207 95% 58%;              /* Brighter blue for dark mode */
-    --primary-foreground: 220 20% 8%;
-    --secondary: 262 30% 20%;
-    --secondary-foreground: 262 50% 85%;
-    --muted: 220 16% 15%;
-    --muted-foreground: 210 12% 55%;
-    --accent: 262 65% 70%;               /* Softer purple for dark */
-    --accent-foreground: 220 20% 8%;
-    --destructive: 0 60% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 152 50% 45%;
-    --success-foreground: 0 0% 100%;
-    --border: 220 16% 20%;
-    --input: 220 16% 20%;
-    --ring: 207 95% 58%;
-
-    --gemini-blue: 207 95% 58%;
-    --gemini-purple: 262 65% 70%;
-    --claude-crail: var(--gemini-blue);
-    --claude-terracotta: var(--gemini-purple);
-    --brand-accent: var(--gemini-blue);
-    --brand-accent-2: var(--gemini-purple);
-    --pattern-color: 262 30% 40%;
-    --pattern-opacity: 0.06;
-    --shadow-color: 220 25% 4%;
-    --glow-color: 207 95% 58%;
-  }
-
-  :root.provider-kimi {
-    /* Moonshot AI / Kimi "Dark Side Minimalism"
-     * Inspired by 月之暗面 (The Dark Side of the Moon)
-     * Monochromatisch, reduziert, kosmisch
-     * Always-dark: no separate light mode — the dark IS the brand */
-    --background: 240 10% 4%;              /* Deep space black #0a0a0f */
-    --foreground: 0 0% 93%;               /* Soft white #ededed */
-    --card: 240 8% 8%;                    /* Void card #131318 */
-    --card-foreground: 0 0% 93%;
-    --popover: 240 8% 8%;
-    --popover-foreground: 0 0% 93%;
-    --primary: 0 0% 93%;                  /* White as primary — stark contrast */
-    --primary-foreground: 240 10% 4%;
-    --secondary: 240 6% 12%;              /* Darker surface */
-    --secondary-foreground: 0 0% 80%;
-    --muted: 240 6% 10%;
-    --muted-foreground: 0 0% 45%;
-    --accent: 220 15% 50%;                /* Muted steel blue — subtle moonlight */
-    --accent-foreground: 0 0% 93%;
-    --destructive: 0 65% 48%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 160 40% 42%;
-    --success-foreground: 0 0% 100%;
-    --border: 240 6% 16%;
-    --input: 240 6% 16%;
-    --ring: 0 0% 60%;
-
-    --kimi-void: 240 10% 4%;             /* Deep background */
-    --kimi-surface: 240 8% 8%;           /* Card surface */
-    --kimi-moonlight: 220 15% 50%;       /* Subtle blue accent */
-    --kimi-lunar: 220 20% 70%;           /* Lighter blue for hover */
-    --claude-crail: 0 0% 93%;
-    --claude-terracotta: var(--kimi-moonlight);
-    --claude-pampas: 0 0% 93%;
-    --claude-cloudy: 0 0% 35%;
-
-    --brand-accent: 0 0% 93%;
-    --brand-accent-2: var(--kimi-moonlight);
-    --pattern-color: 220 10% 30%;
-    --pattern-opacity: 0;                 /* No pattern — void is the aesthetic */
-
-    --shadow-color: 240 15% 2%;
-    --glow-color: 220 15% 50%;
-    /* Geometric sans-serif — precision and clarity */
-    --font-ui: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-body: 'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'DM Mono', 'JetBrains Mono', ui-monospace, Consolas, monospace;
-  }
-
-  :root.provider-kimi.dark {
-    /* Kimi is always-dark. Dark mode = same as default */
-    --background: 240 10% 4%;
-    --foreground: 0 0% 93%;
-    --card: 240 8% 8%;
-    --card-foreground: 0 0% 93%;
-    --popover: 240 8% 8%;
-    --popover-foreground: 0 0% 93%;
-    --primary: 0 0% 93%;
-    --primary-foreground: 240 10% 4%;
-    --secondary: 240 6% 12%;
-    --secondary-foreground: 0 0% 80%;
-    --muted: 240 6% 10%;
-    --muted-foreground: 0 0% 45%;
-    --accent: 220 15% 50%;
-    --accent-foreground: 0 0% 93%;
-    --destructive: 0 60% 50%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 160 40% 42%;
-    --success-foreground: 0 0% 100%;
-    --border: 240 6% 16%;
-    --input: 240 6% 16%;
-    --ring: 0 0% 60%;
-
-    --kimi-void: 240 10% 4%;
-    --kimi-surface: 240 8% 8%;
-    --kimi-moonlight: 220 15% 50%;
-    --kimi-lunar: 220 20% 70%;
-    --claude-crail: 0 0% 93%;
-    --claude-terracotta: var(--kimi-moonlight);
-    --claude-pampas: 0 0% 93%;
-    --claude-cloudy: 0 0% 35%;
-
-    --brand-accent: 0 0% 93%;
-    --brand-accent-2: var(--kimi-moonlight);
-    --pattern-color: 220 10% 30%;
-    --pattern-opacity: 0;
-
-    --shadow-color: 240 15% 2%;
-    --glow-color: 220 15% 50%;
-  }
-
   :root.provider-mistral {
     /* Mistral AI Brand: Orange/Red/Yellow Rainbow + Beige backgrounds */
     /* Pixelated/blocky aesthetic - no rounded corners */
@@ -600,82 +355,92 @@
     --glow-color: 28 100% 55%;
   }
 
-  /* Multi-CLI Mode: Uses Plum theme as base with orchestration accents */
-  :root.provider-multi {
-    /* Inherit from Plum Light Theme */
-    --background: 280 35% 96%;
-    --foreground: 275 35% 14%;
-    --card: 280 30% 98%;
-    --card-foreground: 275 35% 14%;
-    --popover: 280 30% 98%;
-    --popover-foreground: 275 35% 14%;
-    --primary: 282 56% 43%;       /* Plum primary */
+  :root.provider-opencode {
+    /* OpenCode: Electric Purple & Cyan Tech Theme */
+    /* Inspired by the lightning bolt (⚡) - energy, speed, multi-provider */
+    --background: 260 40% 6%;             /* Deep purple-black */
+    --foreground: 0 0% 98%;               /* Off-white */
+    --card: 260 35% 10%;                  /* Dark purple cards */
+    --card-foreground: 0 0% 98%;
+    --popover: 260 35% 12%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 280 85% 60%;               /* Electric Purple */
     --primary-foreground: 0 0% 100%;
-    --secondary: 280 25% 92%;
-    --secondary-foreground: 275 30% 25%;
-    --muted: 280 20% 88%;
-    --muted-foreground: 275 15% 40%;
-    --accent: 292 65% 55%;        /* Vibrant violet accent */
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 84% 60%;
+    --secondary: 260 30% 20%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 260 25% 18%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 185 85% 50%;                /* Cyan */
+    --accent-foreground: 260 40% 6%;
+    --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
-    --border: 280 20% 85%;
-    --input: 280 20% 85%;
-    --ring: 282 56% 43%;
-    --radius: 0.75rem;
-    --claude-crail: 282 56% 43%;
-    --claude-terracotta: 292 65% 55%;
-    --brand-accent: var(--claude-crail);
-    --brand-accent-2: var(--claude-terracotta);
-    --pattern-color: 280 35% 50%;
-    --pattern-opacity: 0.04;
-    --shadow-color: 280 30% 10%;
-    --glow-color: 292 65% 55%;
-    /* Multi-CLI specific */
-    --multi-master: 282 56% 43%;   /* Master agent color */
-    --multi-slave-1: 200 80% 50%;  /* Codex blue-green */
-    --multi-slave-2: 220 90% 56%;  /* Gemini blue */
-    --multi-slave-3: 195 85% 50%;  /* Z.AI cyan */
-    --font-ui: 'Syne', ui-sans-serif, system-ui, sans-serif;
-    --font-body: 'Instrument Serif', ui-serif, Georgia, Cambria, serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --success: 160 70% 45%;
+    --success-foreground: 0 0% 100%;
+    --border: 260 30% 25%;
+    --input: 260 30% 25%;
+    --ring: 280 85% 60%;
+
+    /* OpenCode brand colors */
+    --opencode-purple: 280 85% 60%;       /* Electric Purple */
+    --opencode-cyan: 185 85% 50%;         /* Cyan */
+    --opencode-pink: 320 85% 60%;         /* Hot Pink accent */
+    --claude-crail: var(--opencode-purple);
+    --claude-terracotta: var(--opencode-cyan);
+    --claude-pampas: 260 35% 96%;
+    --claude-cloudy: 260 15% 30%;
+
+    --brand-accent: var(--opencode-purple);
+    --brand-accent-2: var(--opencode-cyan);
+    --pattern-color: 280 70% 50%;
+    --pattern-opacity: 0.12;
+
+    --shadow-color: 280 60% 20%;
+    --glow-color: 280 85% 60%;
+
+    --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
   }
 
-  :root.provider-multi.dark {
-    /* Multi-CLI Dark Mode */
-    --background: 280 30% 10%;
-    --foreground: 280 25% 92%;
-    --card: 280 25% 14%;
-    --card-foreground: 280 25% 92%;
-    --popover: 280 25% 14%;
-    --popover-foreground: 280 25% 92%;
-    --primary: 285 60% 58%;
-    --primary-foreground: 280 30% 8%;
-    --secondary: 280 20% 18%;
-    --secondary-foreground: 280 20% 75%;
-    --muted: 280 15% 16%;
-    --muted-foreground: 280 10% 55%;
-    --accent: 290 70% 62%;
-    --accent-foreground: 280 30% 8%;
-    --destructive: 0 72% 50%;
+  :root.provider-opencode.dark {
+    /* OpenCode Dark (same as base - always dark theme) */
+    --background: 260 40% 6%;
+    --foreground: 0 0% 98%;
+    --card: 260 35% 10%;
+    --card-foreground: 0 0% 98%;
+    --popover: 260 35% 12%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 280 85% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 260 30% 20%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 260 25% 18%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 185 85% 50%;
+    --accent-foreground: 260 40% 6%;
+    --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
-    --border: 280 15% 22%;
-    --input: 280 15% 22%;
-    --ring: 285 60% 58%;
-    --radius: 0.75rem;
-    --claude-crail: 285 60% 58%;
-    --claude-terracotta: 290 70% 62%;
-    --brand-accent: var(--claude-crail);
-    --brand-accent-2: var(--claude-terracotta);
-    --pattern-color: 280 25% 35%;
-    --pattern-opacity: 0.06;
-    --shadow-color: 280 30% 4%;
-    --glow-color: 290 70% 62%;
-    /* Multi-CLI specific */
-    --multi-master: 285 60% 58%;
-    --multi-slave-1: 200 80% 55%;
-    --multi-slave-2: 220 90% 60%;
-    --multi-slave-3: 195 85% 55%;
+    --success: 160 70% 45%;
+    --success-foreground: 0 0% 100%;
+    --border: 260 30% 25%;
+    --input: 260 30% 25%;
+    --ring: 280 85% 60%;
+
+    --opencode-purple: 280 85% 60%;
+    --opencode-cyan: 185 85% 50%;
+    --opencode-pink: 320 85% 60%;
+    --claude-crail: var(--opencode-purple);
+    --claude-terracotta: var(--opencode-cyan);
+    --claude-pampas: 260 35% 96%;
+    --claude-cloudy: 260 15% 30%;
+
+    --brand-accent: var(--opencode-purple);
+    --brand-accent-2: var(--opencode-cyan);
+    --pattern-color: 280 70% 50%;
+    --pattern-opacity: 0.12;
+
+    --shadow-color: 280 60% 20%;
+    --glow-color: 280 85% 60%;
   }
 
   * {
@@ -809,11 +574,11 @@
   }
 
   /* Anthropic "Gradient Pro" - Purple to Blue */
-  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .gradient-pro {
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-mistral) .gradient-pro {
     background: linear-gradient(135deg, #C377FF 0%, #2B75E2 100%);
   }
 
-  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .gradient-pro-text {
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-mistral) .gradient-pro-text {
     background: linear-gradient(135deg, #C377FF 0%, #2B75E2 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -821,7 +586,7 @@
   }
 
   /* Anthropic gradient border effect */
-  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .gradient-border::before {
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-mistral) .gradient-border::before {
     background: linear-gradient(135deg, hsl(var(--anthropic-accent)) 0%, #C377FF 50%, #2B75E2 100%);
   }
 
@@ -831,7 +596,7 @@
   }
 
   /* Claude/Anthropic: dot pattern */
-  :root:not(.provider-plum):not(.provider-codex):not(.provider-zai):not(.provider-gemini):not(.provider-kimi):not(.provider-mistral) .pattern-bg {
+  :root:not(.provider-plum):not(.provider-codex):not(.provider-mistral) .pattern-bg {
     background-image:
       radial-gradient(circle at 1px 1px, hsl(var(--pattern-color) / var(--pattern-opacity)) 1px, transparent 0);
     background-size: 20px 20px;
@@ -896,6 +661,58 @@
     background-clip: text;
   }
 
+  /* OpenCode: Electric theme styles */
+  :root.provider-opencode .claude-card {
+    border: 1px solid hsl(260 30% 25%);
+    box-shadow: 0 0 20px hsl(280 60% 20% / 0.3);
+  }
+
+  :root.provider-opencode .claude-card:hover {
+    border-color: hsl(280 70% 50%);
+    box-shadow: 0 0 30px hsl(280 70% 50% / 0.4);
+  }
+
+  /* Electric buttons with glow */
+  :root.provider-opencode .claude-button-primary {
+    background: linear-gradient(135deg, hsl(280 85% 60%) 0%, hsl(280 75% 55%) 100%);
+    border: 1px solid hsl(280 70% 50%);
+    box-shadow: 0 0 15px hsl(280 70% 50% / 0.4);
+  }
+
+  :root.provider-opencode .claude-button-primary:hover {
+    background: linear-gradient(135deg, hsl(280 75% 65%) 0%, hsl(280 65% 60%) 100%);
+    box-shadow: 0 0 25px hsl(280 70% 50% / 0.6);
+  }
+
+  /* Cyan accent on hover */
+  :root.provider-opencode a:hover,
+  :root.provider-opencode .text-primary:hover {
+    color: hsl(185 85% 50%);
+  }
+
+  /* Glowing focus states */
+  :root.provider-opencode input:focus,
+  :root.provider-opencode textarea:focus {
+    border-color: hsl(280 85% 60%);
+    box-shadow: 0 0 15px hsl(280 70% 50% / 0.3);
+    outline: none;
+  }
+
+  /* Electric gradient text - purple to cyan */
+  :root.provider-opencode .gradient-text {
+    background: linear-gradient(135deg, hsl(280 85% 60%) 0%, hsl(185 85% 50%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* OpenCode lightning pattern */
+  :root.provider-opencode .pattern-bg {
+    background-image:
+      radial-gradient(circle at 20% 30%, hsl(280 70% 50% / 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 80% 70%, hsl(185 70% 50% / 0.1) 0%, transparent 50%);
+  }
+
   /* Mistral: Blocky/pixelated aesthetic - remove all rounded corners */
   :root.provider-mistral *,
   :root.provider-mistral *::before,
@@ -909,145 +726,6 @@
       linear-gradient(90deg, hsl(var(--pattern-color) / var(--pattern-opacity)) 1px, transparent 1px),
       linear-gradient(hsl(var(--pattern-color) / var(--pattern-opacity)) 1px, transparent 1px);
     background-size: 8px 8px;
-  }
-
-  /* Gemini: Signature blue-to-purple gradient glow effect */
-  :root.provider-gemini .claude-card,
-  :root.provider-gemini .card {
-    position: relative;
-    overflow: visible;
-  }
-
-  :root.provider-gemini .claude-card::before,
-  :root.provider-gemini [data-glow]::before {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border-radius: inherit;
-    background: linear-gradient(135deg, #078EFA 0%, #AD89EB 50%, #E879F9 100%);
-    opacity: 0;
-    z-index: -1;
-    filter: blur(12px);
-    transition: opacity 0.3s ease;
-  }
-
-  :root.provider-gemini .claude-card:hover::before,
-  :root.provider-gemini [data-glow]:hover::before {
-    opacity: 0.5;
-  }
-
-  /* Gemini glow on buttons */
-  :root.provider-gemini .claude-button-primary {
-    position: relative;
-    overflow: visible;
-    box-shadow: 0 0 20px -5px rgba(7, 142, 250, 0.4),
-                0 0 30px -5px rgba(173, 137, 235, 0.3);
-    transition: box-shadow 0.3s ease, transform 0.2s ease;
-  }
-
-  :root.provider-gemini .claude-button-primary:hover {
-    box-shadow: 0 0 25px -2px rgba(7, 142, 250, 0.6),
-                0 0 40px -2px rgba(173, 137, 235, 0.5);
-  }
-
-  /* Gemini animated glow border for focus states */
-  :root.provider-gemini input:focus,
-  :root.provider-gemini textarea:focus,
-  :root.provider-gemini select:focus {
-    box-shadow: 0 0 0 2px hsl(var(--background)),
-                0 0 0 4px rgba(7, 142, 250, 0.5),
-                0 0 20px -5px rgba(173, 137, 235, 0.4);
-  }
-
-  /* Gemini gradient border on cards */
-  :root.provider-gemini .gradient-border::before {
-    background: linear-gradient(135deg, #078EFA 0%, #AD89EB 50%, #E879F9 100%);
-  }
-
-  /* Gemini pattern - soft gradient orbs */
-  :root.provider-gemini .pattern-bg {
-    background-image:
-      radial-gradient(ellipse 80% 50% at 20% 40%, rgba(7, 142, 250, 0.06) 0%, transparent 50%),
-      radial-gradient(ellipse 60% 80% at 80% 60%, rgba(173, 137, 235, 0.06) 0%, transparent 50%);
-    background-size: 100% 100%;
-  }
-
-  /* Gemini pulsing glow animation for active elements */
-  @keyframes gemini-glow {
-    0%, 100% {
-      box-shadow: 0 0 20px -5px rgba(7, 142, 250, 0.4),
-                  0 0 30px -5px rgba(173, 137, 235, 0.3);
-    }
-    50% {
-      box-shadow: 0 0 30px -2px rgba(7, 142, 250, 0.6),
-                  0 0 45px -2px rgba(173, 137, 235, 0.5);
-    }
-  }
-
-  :root.provider-gemini .animate-glow {
-    animation: gemini-glow 3s ease-in-out infinite;
-  }
-
-  /* ── Kimi / Moonshot AI: "Dark Side Minimalism" ── */
-  /* Void aesthetic — no patterns, no glow, pure reduction */
-  :root.provider-kimi .pattern-bg {
-    background-image: none;
-  }
-
-  :root.provider-kimi {
-    --radius: 0.375rem;  /* Subtle rounding — geometric precision */
-  }
-
-  /* Cards: thin border, no shadow — floating in the void */
-  :root.provider-kimi .claude-card {
-    border: 1px solid hsl(240 6% 16%);
-    box-shadow: none;
-    transition: border-color 0.2s ease;
-  }
-
-  :root.provider-kimi .claude-card:hover {
-    border-color: hsl(220 15% 35%);
-    box-shadow: none;
-  }
-
-  /* Buttons: understated, no glow — quiet confidence */
-  :root.provider-kimi .claude-button-primary {
-    border: 1px solid hsl(0 0% 93%);
-    box-shadow: none;
-    transition: all 0.2s ease;
-  }
-
-  :root.provider-kimi .claude-button-primary:hover {
-    background: hsl(0 0% 93%);
-    color: hsl(240 10% 4%);
-  }
-
-  /* Moonlight accent on interactive elements */
-  :root.provider-kimi a:hover,
-  :root.provider-kimi .text-primary:hover {
-    color: hsl(220 20% 70%);  /* Lunar blue */
-  }
-
-  /* Minimal focus states — thin lunar ring */
-  :root.provider-kimi input:focus,
-  :root.provider-kimi textarea:focus {
-    border-color: hsl(220 15% 35%);
-    box-shadow: none;
-    outline: 1px solid hsl(220 15% 35%);
-    outline-offset: -1px;
-  }
-
-  /* Gradient text: white to steel moonlight */
-  :root.provider-kimi .gradient-text {
-    background: linear-gradient(135deg, hsl(0 0% 93%) 0%, hsl(220 15% 50%) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  /* Gradient border: subtle lunar gradient */
-  :root.provider-kimi .gradient-border::before {
-    background: linear-gradient(135deg, hsl(0 0% 30%) 0%, hsl(220 15% 40%) 100%);
   }
 
   .ui-pill {
@@ -1067,6 +745,171 @@
     background: hsl(var(--card) / 0.85);
     backdrop-filter: blur(16px) saturate(180%);
     -webkit-backdrop-filter: blur(16px) saturate(180%);
+  }
+
+  /* Liquid Glass — atmospheric glass over aurora backgrounds */
+  .glass-panel {
+    background: hsl(var(--card) / 0.45);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid hsl(var(--foreground) / 0.08);
+    box-shadow:
+      0 8px 32px hsl(var(--shadow-color) / 0.35),
+      inset 0 1px 0 hsl(var(--foreground) / 0.08);
+  }
+
+  html.dark .glass-panel,
+  :root.dark .glass-panel {
+    background: hsl(0 0% 100% / 0.04);
+    border-color: hsl(0 0% 100% / 0.08);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  }
+
+  .glass-chrome {
+    background: hsl(var(--card) / 0.55);
+    backdrop-filter: blur(18px) saturate(180%);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    border: 1px solid hsl(var(--foreground) / 0.06);
+  }
+
+  html.dark .glass-chrome,
+  :root.dark .glass-chrome {
+    background: hsl(0 0% 100% / 0.03);
+    border-color: hsl(0 0% 100% / 0.07);
+  }
+
+  .glass-input {
+    background: hsl(var(--card) / 0.35);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border: 1px solid hsl(var(--foreground) / 0.08);
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+
+  html.dark .glass-input,
+  :root.dark .glass-input {
+    background: hsl(0 0% 100% / 0.025);
+    border-color: hsl(0 0% 100% / 0.08);
+  }
+
+  .glass-input:focus-within {
+    border-color: hsl(var(--brand-accent) / 0.5);
+    background: hsl(var(--card) / 0.55);
+  }
+
+  html.dark .glass-input:focus-within,
+  :root.dark .glass-input:focus-within {
+    background: hsl(0 0% 100% / 0.05);
+  }
+
+  @supports not (backdrop-filter: blur(1px)) {
+    .glass-panel,
+    .glass-chrome,
+    .glass-input {
+      background: hsl(var(--card) / 0.92);
+    }
+    html.dark .glass-panel,
+    html.dark .glass-chrome,
+    html.dark .glass-input {
+      background: hsl(var(--card) / 0.95);
+    }
+  }
+
+  /* Premium tracking on display text */
+  .tracking-display {
+    letter-spacing: -0.035em;
+  }
+  .tracking-display-tight {
+    letter-spacing: -0.04em;
+  }
+
+  /* Panels bar — session chrome triggers (Files, Tasks, Config, Tools) */
+  .panel-trigger {
+    @apply inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium;
+    border-radius: calc(var(--radius) - 2px);
+    background: hsl(var(--card) / 0.4);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    border: 1px solid hsl(var(--foreground) / 0.08);
+    color: hsl(var(--muted-foreground));
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  }
+
+  .panel-trigger:hover {
+    background: hsl(var(--card) / 0.65);
+    border-color: hsl(var(--foreground) / 0.14);
+    color: hsl(var(--foreground));
+  }
+
+  .panel-trigger[data-state="open"],
+  .panel-trigger.is-active {
+    background: hsl(var(--brand-accent) / 0.12);
+    border-color: hsl(var(--brand-accent) / 0.35);
+    color: hsl(var(--foreground));
+  }
+
+  html.dark .panel-trigger,
+  :root.dark .panel-trigger {
+    background: hsl(0 0% 100% / 0.025);
+    border-color: hsl(0 0% 100% / 0.08);
+  }
+
+  html.dark .panel-trigger:hover,
+  :root.dark .panel-trigger:hover {
+    background: hsl(0 0% 100% / 0.06);
+    border-color: hsl(0 0% 100% / 0.15);
+  }
+
+  /* Panels dropdown content — liquid glass over aurora */
+  .panel-dropdown {
+    background: hsl(var(--card) / 0.45);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid hsl(var(--foreground) / 0.08);
+    box-shadow:
+      0 12px 40px hsl(var(--shadow-color) / 0.35),
+      inset 0 1px 0 hsl(var(--foreground) / 0.08);
+  }
+
+  html.dark .panel-dropdown,
+  :root.dark .panel-dropdown {
+    background: hsl(0 0% 100% / 0.04);
+    border-color: hsl(0 0% 100% / 0.08);
+    box-shadow:
+      0 16px 48px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  }
+
+  @supports not (backdrop-filter: blur(1px)) {
+    .panel-trigger { background: hsl(var(--card) / 0.9); }
+    .panel-dropdown { background: hsl(var(--card) / 0.92); }
+    html.dark .panel-dropdown { background: hsl(240 6% 10% / 0.95); }
+  }
+
+  /* Inline count badge on panel triggers */
+  .panel-badge {
+    @apply inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-semibold;
+    border-radius: 999px;
+    background: hsl(var(--brand-accent) / 0.9);
+    color: hsl(var(--primary-foreground));
+    line-height: 1;
+  }
+
+  .panel-badge-pulse {
+    background: hsl(var(--brand-accent));
+    box-shadow: 0 0 0 0 hsl(var(--brand-accent) / 0.5);
+    animation: panel-badge-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes panel-badge-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 hsl(var(--brand-accent) / 0.45); }
+    50%      { box-shadow: 0 0 0 4px hsl(var(--brand-accent) / 0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel-badge-pulse { animation: none; }
   }
 
   /* Claude-style button */
@@ -1222,6 +1065,86 @@
   text-wrap: balance;
 }
 
+/* Aurora background — animated colored orbs floating behind glass panels */
+.aurora-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform;
+  mix-blend-mode: screen;
+}
+
+.aurora-orb-1 {
+  top: -15%;
+  left: -10%;
+  width: 55vw;
+  height: 55vw;
+  max-width: 720px;
+  max-height: 720px;
+  background: radial-gradient(circle, hsl(var(--brand-accent) / 0.85) 0%, transparent 70%);
+  animation: aurora-drift-1 32s ease-in-out infinite;
+}
+
+.aurora-orb-2 {
+  top: 25%;
+  right: -15%;
+  width: 50vw;
+  height: 50vw;
+  max-width: 680px;
+  max-height: 680px;
+  background: radial-gradient(circle, hsl(var(--brand-accent-2) / 0.75) 0%, transparent 70%);
+  animation: aurora-drift-2 28s ease-in-out infinite;
+}
+
+.aurora-orb-3 {
+  bottom: -20%;
+  left: 20%;
+  width: 60vw;
+  height: 60vw;
+  max-width: 780px;
+  max-height: 780px;
+  background: radial-gradient(circle, hsl(var(--glow-color) / 0.6) 0%, transparent 70%);
+  animation: aurora-drift-3 36s ease-in-out infinite;
+}
+
+.aurora-grain {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.65' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 182px;
+  opacity: 0.06;
+  mix-blend-mode: overlay;
+}
+
+html.dark .aurora-grain,
+:root.dark .aurora-grain {
+  opacity: 0.1;
+}
+
+@keyframes aurora-drift-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(10vw, 8vh) scale(1.12); }
+  66%      { transform: translate(-6vw, 14vh) scale(0.92); }
+}
+
+@keyframes aurora-drift-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(-12vw, 10vh) scale(1.1); }
+  66%      { transform: translate(8vw, -6vh) scale(0.95); }
+}
+
+@keyframes aurora-drift-3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(-8vw, -12vh) scale(1.15); }
+  66%      { transform: translate(10vw, -6vh) scale(0.9); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-orb {
+    animation: none !important;
+  }
+}
+
 /* Claude-style prose for content areas */
 .claude-prose {
   font-family: var(--font-body);
@@ -1237,4 +1160,669 @@
   letter-spacing: -0.025em;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
+}
+
+/* =============================================================
+ * Provider-specific loader animations (Template A — Organic Loaders)
+ * ============================================================= */
+
+/* Claude — Metaball morph (#01): 3 orbiting lobes + breathing; the whole
+ * orbit rotates continuously while each lobe independently swells and
+ * shrinks, creating a visibly morphing goo-merged blob. */
+@keyframes pl-claude-orbit {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes pl-claude-breathe-a {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.25); }
+}
+@keyframes pl-claude-breathe-b {
+  0%, 100% { transform: scale(1.2); }
+  50%      { transform: scale(0.85); }
+}
+@keyframes pl-claude-breathe-c {
+  0%, 100% { transform: scale(0.9); }
+  50%      { transform: scale(1.15); }
+}
+.pl-claude-orbit {
+  animation: pl-claude-orbit 4s linear infinite;
+}
+.pl-claude-a, .pl-claude-b, .pl-claude-c {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.pl-claude-a { animation: pl-claude-breathe-a 2.2s ease-in-out infinite; }
+.pl-claude-b { animation: pl-claude-breathe-b 2.2s ease-in-out infinite; animation-delay: -0.73s; }
+.pl-claude-c { animation: pl-claude-breathe-c 2.2s ease-in-out infinite; animation-delay: -1.47s; }
+
+/* Codex — Radial blobs (#15) */
+@keyframes pl-codex-spin { to { transform: rotate(360deg); } }
+@keyframes pl-codex-r {
+  0%, 100% { transform: scale(0.6); }
+  50%      { transform: scale(1.4); }
+}
+.pl-codex-spin { animation: pl-codex-spin 3s linear infinite; transform-origin: 50% 50%; }
+.pl-codex-k1, .pl-codex-k2, .pl-codex-k3,
+.pl-codex-k4, .pl-codex-k5, .pl-codex-k6 {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pl-codex-r 1.6s ease-in-out infinite;
+}
+.pl-codex-k1 { animation-delay: 0s; }
+.pl-codex-k2 { animation-delay: -0.27s; }
+.pl-codex-k3 { animation-delay: -0.53s; }
+.pl-codex-k4 { animation-delay: -0.8s; }
+.pl-codex-k5 { animation-delay: -1.07s; }
+.pl-codex-k6 { animation-delay: -1.33s; }
+
+/* OpenCode — Lava lamp (#07) */
+.pl-opencode-lamp {
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  overflow: hidden;
+  background: transparent;
+  position: relative;
+  display: inline-block;
+}
+.pl-opencode-lamp svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+@keyframes pl-opencode-b1 {
+  0%, 100% { transform: translateY(60px); }
+  50%      { transform: translateY(-10px); }
+}
+@keyframes pl-opencode-b2 {
+  0%, 100% { transform: translate(10px, 50px); }
+  50%      { transform: translate(-5px, 0); }
+}
+@keyframes pl-opencode-b3 {
+  0%, 100% { transform: translate(-10px, 55px); }
+  50%      { transform: translate(8px, 5px); }
+}
+.pl-opencode-b1 { animation: pl-opencode-b1 4s ease-in-out infinite; }
+.pl-opencode-b2 { animation: pl-opencode-b2 4s ease-in-out infinite; animation-delay: -1.3s; }
+.pl-opencode-b3 { animation: pl-opencode-b3 4s ease-in-out infinite; animation-delay: -2.6s; }
+
+/* =============================================================
+ * Provider-specific streaming-text cursors (Template B)
+ * ============================================================= */
+
+@keyframes pl-blink {
+  0%, 50%   { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Claude — thin cursor-lead caret with soft aura (#08 + glow) */
+.pl-cursor-claude {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  background: currentColor;
+  vertical-align: -2px;
+  margin-left: 2px;
+  border-radius: 1px;
+  box-shadow: 0 0 6px currentColor, 0 0 2px currentColor;
+  animation: pl-blink 1.1s ease-in-out infinite;
+}
+
+/* Codex — block typewriter caret (#01) */
+.pl-cursor-codex {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  background: currentColor;
+  vertical-align: -2px;
+  margin-left: 2px;
+  animation: pl-blink 1s steps(2, end) infinite;
+}
+
+/* OpenCode — soft rounded pill with blur halo (#04 char-blur-in spirit) */
+.pl-cursor-opencode {
+  display: inline-block;
+  width: 8px;
+  height: 0.9em;
+  background: currentColor;
+  border-radius: 4px;
+  vertical-align: -1px;
+  margin-left: 3px;
+  filter: blur(0.5px);
+  animation: pl-blink 1.2s ease-in-out infinite;
+  box-shadow: 0 0 6px currentColor;
+}
+
+/* Streaming — fade the trailing edge of freshly-arriving text so it eases
+ * in instead of popping. Combines a multi-stop mask (template #04/05) with
+ * per-block fade-in animations (template #02 WordFade) so newly-streamed
+ * paragraphs ease in instead of snapping. */
+.pl-stream-fade {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - 2.6em),
+    rgba(0, 0, 0, 0.78) calc(100% - 1.6em),
+    rgba(0, 0, 0, 0.32) calc(100% - 0.6em),
+    rgba(0, 0, 0, 0.08) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - 2.6em),
+    rgba(0, 0, 0, 0.78) calc(100% - 1.6em),
+    rgba(0, 0, 0, 0.32) calc(100% - 0.6em),
+    rgba(0, 0, 0, 0.08) 100%
+  );
+}
+
+/* Per-block reveal — runs once when each new paragraph/list item enters.
+ * React reconciles existing nodes between renders, so already-mounted
+ * blocks don't replay; only freshly-added ones animate. `backwards` keeps
+ * the initial state visible before the animation triggers. */
+@keyframes pl-block-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+    filter: blur(1.2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.pl-stream-fade :where(p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, table) {
+  animation: pl-block-in 320ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+/* Per-provider fine-tuning kept for back-compat / explicit targeting */
+.pl-stream-opencode {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - 3em),
+    rgba(0, 0, 0, 0.7) calc(100% - 1.8em),
+    rgba(0, 0, 0, 0.25) 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - 3em),
+    rgba(0, 0, 0, 0.7) calc(100% - 1.8em),
+    rgba(0, 0, 0, 0.25) 100%
+  );
+}
+
+/* ================================================================
+ * Per-tool loading animations — one distinctive motion per category.
+ * Kept lightweight (pure CSS keyframes driving inline SVG elements).
+ * ================================================================ */
+
+/* read: soft scan-wave sweeping top to bottom — beam is clipped at both
+ * ends of the translate so the 100%→0% jump happens off-viewport, giving
+ * a seamless continuous sweep instead of a visible pause. */
+@keyframes tl-read-scan {
+  0%   { transform: translateY(-8px); }
+  100% { transform: translateY(28px); }
+}
+.tl-read-beam { animation: tl-read-scan 1.8s linear infinite; }
+
+/* write: ink drop falling from a reservoir — merges via goo filter. Fade
+ * in at the reservoir and fade out below so the loop boundary is invisible. */
+@keyframes tl-write-drop {
+  0%   { transform: translateY(-2px) scaleY(0.6); opacity: 0; }
+  18%  { transform: translateY(0) scaleY(1); opacity: 1; }
+  58%  { transform: translateY(12px) scaleY(1.25); opacity: 1; }
+  88%  { transform: translateY(22px) scaleY(0.7); opacity: 0.5; }
+  100% { transform: translateY(26px) scaleY(0.4); opacity: 0; }
+}
+.tl-write-drop { transform-origin: center; animation: tl-write-drop 1.8s cubic-bezier(.5,.05,.7,.2) infinite; }
+
+/* edit: two blobs swap positions, merge at center through goo */
+@keyframes tl-edit-swap-a {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(14px); }
+}
+@keyframes tl-edit-swap-b {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(-14px); }
+}
+.tl-edit-blob-a { animation: tl-edit-swap-a 1.8s ease-in-out infinite; }
+.tl-edit-blob-b { animation: tl-edit-swap-b 1.8s ease-in-out infinite; }
+
+/* shell: row of blobs, sine-wave hop; merge via goo */
+@keyframes tl-shell-hop {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.tl-shell-s1 { animation: tl-shell-hop 1.2s ease-in-out infinite; animation-delay: 0s; }
+.tl-shell-s2 { animation: tl-shell-hop 1.2s ease-in-out infinite; animation-delay: -0.15s; }
+.tl-shell-s3 { animation: tl-shell-hop 1.2s ease-in-out infinite; animation-delay: -0.3s; }
+.tl-shell-s4 { animation: tl-shell-hop 1.2s ease-in-out infinite; animation-delay: -0.45s; }
+
+/* web: satellite orbits the globe, merging briefly through goo */
+@keyframes tl-web-rotate {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.tl-web-orbit { animation: tl-web-rotate 2.8s linear infinite; }
+
+/* agent: three satellites orbit a breathing core */
+@keyframes tl-agent-rotate {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes tl-agent-core-pulse {
+  0%, 100% { transform: scale(0.9); }
+  50%      { transform: scale(1.3); }
+}
+.tl-agent-orbit { animation: tl-agent-rotate 2.4s linear infinite; }
+.tl-agent-core  {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tl-agent-core-pulse 1.4s ease-in-out infinite;
+}
+
+/* generic: breathing ring + outer ripple */
+@keyframes tl-generic-pulse {
+  0%   { transform: scale(0.55); opacity: 0.9; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+.tl-generic-a { transform-origin: 20px 20px; animation: tl-generic-pulse 1.6s ease-out infinite; }
+.tl-generic-b { transform-origin: 20px 20px; animation: tl-generic-pulse 1.6s ease-out infinite 0.8s; }
+
+/* Reduce motion: disable loader + cursor animations for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .pl-claude-a, .pl-claude-b, .pl-claude-c, .pl-claude-orbit,
+  .pl-codex-spin,
+  .pl-codex-k1, .pl-codex-k2, .pl-codex-k3, .pl-codex-k4, .pl-codex-k5, .pl-codex-k6,
+  .pl-opencode-b1, .pl-opencode-b2, .pl-opencode-b3,
+  .pl-cursor-claude, .pl-cursor-codex, .pl-cursor-opencode,
+  .tl-read-beam,
+  .tl-write-drop,
+  .tl-edit-blob-a, .tl-edit-blob-b,
+  .tl-shell-s1, .tl-shell-s2, .tl-shell-s3, .tl-shell-s4,
+  .tl-web-orbit,
+  .tl-agent-orbit, .tl-agent-core,
+  .tl-generic-a, .tl-generic-b {
+    animation: none !important;
+  }
+}
+
+/* ================================================================
+ * Chat Interface Structure (template adoption — Apr 2026)
+ * Centered stream column, rail-based assistant turns, tail-bubble user
+ * turns, glass topbar/composer, right-rail turn map.
+ * Design tokens (liquid glass) preserved; structure mirrors template.
+ * ================================================================ */
+
+/* --- Centered stream column --- */
+.chat-stream {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+@media (max-width: 640px) {
+  .chat-stream { padding: 0 16px; gap: 28px; }
+}
+
+.chat-day-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: hsl(var(--muted-foreground));
+  font: 500 11px/1 var(--font-ui);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 4px 0 0;
+}
+.chat-day-divider::before,
+.chat-day-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, transparent, hsl(var(--border)), transparent);
+}
+
+/* --- User turn (right-aligned tinted glass bubble with tail) --- */
+.turn-user {
+  display: flex;
+  justify-content: flex-end;
+}
+.turn-user > div { max-width: 78%; }
+
+.ub-bubble {
+  background: hsl(var(--primary) / 0.42);
+  color: #fff;
+  border: 1px solid hsl(var(--primary) / 0.45);
+  border-radius: 16px 16px 6px 16px;
+  padding: 12px 16px;
+  font: 400 14.5px/1.55 var(--font-ui);
+  letter-spacing: -0.005em;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 8px 20px rgba(0, 0, 0, 0.10);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+.ub-bubble * { color: #fff; }
+.ub-bubble a { text-decoration: underline; text-underline-offset: 2px; }
+
+.user-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+  font: 400 11px/1 var(--font-ui);
+  color: hsl(var(--muted-foreground));
+}
+.user-meta .label { font-weight: 500; }
+.user-meta .actions {
+  display: none;
+  gap: 4px;
+}
+.turn-user:hover .user-meta .actions,
+.turn-user:focus-within .user-meta .actions { display: inline-flex; }
+
+.mini-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.mini-btn:hover {
+  background: hsl(var(--card) / 0.6);
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground) / 0.75);
+}
+
+/* --- Assistant turn (left rail + body) --- */
+.turn-asst {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 14px;
+}
+.ai-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.ai-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(160deg, hsl(var(--card)) 0%, hsl(var(--muted)) 100%);
+  border: 1px solid hsl(var(--border));
+  display: grid;
+  place-items: center;
+  color: hsl(var(--primary));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 0 rgba(255, 255, 255, 0.5) inset;
+  flex: 0 0 auto;
+}
+.ai-thread {
+  width: 1px;
+  flex: 1;
+  background: hsl(var(--border));
+}
+
+/* --- Continuous assistant turn rail across timeline items --- */
+/* The avatar rail (.turn-asst) inside MessageBubble draws its own thread.
+   Tool calls and generated images that belong to the same assistant turn get
+   shifted right (under the assistant body) and a continuous 1px line is drawn
+   on the wrapper level so it bridges the inter-item gap. Same x-offset as the
+   ai-mark center: px-padding + 18px (half of the 36px rail). */
+.asst-turn-item {
+  position: relative;
+  padding-bottom: 14px;
+}
+.asst-turn-item::before {
+  content: '';
+  position: absolute;
+  left: calc(1rem + 18px);          /* matches px-4 */
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: hsl(var(--border));
+  pointer-events: none;
+}
+@media (min-width: 640px) {
+  .asst-turn-item::before {
+    left: calc(1.75rem + 18px);     /* matches sm:px-7 */
+  }
+}
+/* Continuation items (tool / image cards): align under the assistant body. */
+.asst-turn-cont > * {
+  margin-left: 50px;                /* 36px rail + 14px gap */
+}
+/* The last item of an assistant turn (followed by a user message) ends the
+   rail with a soft fade so it doesn't run into the user bubble visually. */
+.asst-turn-item.asst-turn-end::before {
+  background: linear-gradient(to bottom, hsl(var(--border)) 0%, hsl(var(--border)) 60%, transparent 100%);
+  bottom: -22px;
+}
+.ai-body { min-width: 0; }
+
+.asst-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.asst-name {
+  font: 600 13.5px/1 var(--font-ui);
+  letter-spacing: -0.01em;
+  color: hsl(var(--foreground));
+}
+.asst-model {
+  font: 500 11px/1 var(--font-mono, ui-monospace, monospace);
+  color: hsl(var(--muted-foreground));
+}
+.asst-time {
+  margin-left: auto;
+  font: 400 11px/1 var(--font-ui);
+  color: hsl(var(--muted-foreground));
+}
+
+.asst-actions {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.turn-asst:hover .asst-actions,
+.turn-asst:focus-within .asst-actions { opacity: 1; }
+.asst-actions .a {
+  height: 28px;
+  padding: 0 9px;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  font: 500 12px/1 var(--font-ui);
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.asst-actions .a:hover {
+  background: hsl(var(--card) / 0.6);
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground) / 0.85);
+}
+.asst-actions .a.danger:hover { color: rgb(245 158 11); }
+.asst-actions .sep {
+  width: 1px;
+  height: 14px;
+  background: hsl(var(--border));
+  margin: 0 4px;
+}
+
+/* --- Sticky chat topbar --- */
+.chat-topbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: transparent;
+}
+
+/* --- Centered composer (replaces floating input pill) --- */
+.composer-wrap {
+  position: relative;
+  z-index: 10;
+  padding: 14px 16px 16px;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* --- Chat scroll viewport — soft fade-in/fade-out at top + bottom edges --- */
+.chat-scroll-fade {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 4%,
+    black 96%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 4%,
+    black 96%,
+    transparent 100%
+  );
+}
+.composer-wrap > * { pointer-events: auto; }
+.composer-inner {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+/* --- Right rail (turn map) — overlay anchored below the topbar --- */
+.turn-map-rail {
+  position: absolute;
+  top: var(--chat-header-h, 52px);
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  z-index: 15;
+  border-left: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--card) / 0.55);
+  backdrop-filter: blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 14px 14px;
+  box-shadow: -8px 0 24px -12px rgba(0, 0, 0, 0.25);
+  animation: turn-map-slide-in 0.18s ease-out;
+}
+@keyframes turn-map-slide-in {
+  from { transform: translateX(8px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.turn-map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 4px 12px;
+}
+.turn-map-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.turn-map-close:hover {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
+}
+.turn-map-rail h3 {
+  font: 600 11px/1 var(--font-ui);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  margin: 0;
+}
+.turn-map-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.turn-map-item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.turn-map-item:hover { background: hsl(var(--foreground) / 0.04); }
+.turn-map-item.active {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border));
+}
+.turn-map-tick {
+  display: grid;
+  place-items: center;
+  padding-top: 3px;
+}
+.turn-map-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.6);
+}
+.turn-map-pip.user { background: hsl(var(--foreground)); }
+.turn-map-pip.asst { background: hsl(var(--primary)); }
+.turn-map-text { min-width: 0; }
+.turn-map-text .role {
+  font: 600 10px/1 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+}
+.turn-map-text .role.asst { color: hsl(var(--primary)); }
+.turn-map-text .preview {
+  font: 400 12.5px/1.4 var(--font-ui);
+  color: hsl(var(--foreground) / 0.78);
+  margin-top: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 1180px) {
+  .turn-map-rail { display: none; }
 }

@@ -1,7 +1,7 @@
 import type { CLIProvider } from './session';
 
 export type Theme = 'dark' | 'light' | 'system';
-export type UiProvider = 'plum' | 'claude' | 'codex' | 'zai' | 'gemini' | 'multi';
+export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode';
 
 export interface UserSettings {
   userId: string;

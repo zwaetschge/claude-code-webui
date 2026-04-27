@@ -70,15 +70,23 @@ config/
 # Attachments
 .claude-webui-attachments/
 
-# Rebuild status files
+# Rebuild / deploy status files (runtime artifacts)
 LAST_REBUILD.md
+LAST_DEPLOY.md
 REBUILD_ROBOT_REPORT.md
+ROOT_OWNED_FIXES.md
 
 # Backup files
 .tmp-backup-*/
+*.bak
+*.bak-*
 
-# Logo assets (local only)
-logos/
+# Local UI mockups / scratch
+html templates/
+
+# Logo assets — only the top-level host bind-mount dir is local-only.
+# Frontend bundled logos at packages/frontend/public/logos/ DO ship in the build.
+/logos/
 
 # Credentials and secrets
 *.key
@@ -90,3 +98,20 @@ credentials.json
 # Lock files (using pnpm)
 package-lock.json
 yarn.lock
+
+# Compose overrides — site-specific (Traefik labels, absolute paths, external networks)
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# Android build artifacts
+packages/android/.gradle/
+packages/android/.kotlin/
+packages/android/build/
+packages/android/app/build/
+packages/android/local.properties
+packages/android/.cxx/
+packages/android/captures/
+packages/android/*.apk
+packages/android/*.aab
+packages/android/test_*.png
+packages/android/ui_dump*.xml

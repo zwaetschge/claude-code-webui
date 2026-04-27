@@ -1,6 +1,5 @@
 import express from 'express';
 import fs from 'fs';
-import fsPromises from 'fs/promises';
 import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -17,8 +16,10 @@ const __dirname = path.dirname(__filename);
 import { initDatabase } from './db';
 import { setupPassport } from './auth/passport';
 import { setupWebSocket } from './websocket';
-import { errorHandler } from './middleware/errorHandler';
+import { errorHandler, requestIdMiddleware } from './middleware/errorHandler';
+import { previewVhostMiddleware, handlePreviewUpgrade, previewVhostEnabled } from './middleware/preview-vhost';
 import { ensureCliPath } from './utils/cliPaths';
+import { syncOpencodeAgents } from './utils/providerLinks';
 import type { CLIProvider } from '@claude-code-webui/shared';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from './services/cli-updates.js';
 
@@ -36,7 +37,6 @@ import claudeSettingsRoutes from './routes/claude-settings';
 import permissionsRoutes from './routes/permissions';
 import usageRoutes from './routes/usage';
 import cliToolsRoutes from './routes/cli-tools';
-import geminiRoutes from './routes/gemini';
 import projectsRoutes from './routes/projects';
 import githubRoutes from './routes/github';
 import commandsRoutes from './routes/commands';
@@ -49,18 +49,13 @@ import providersRoutes from './routes/providers';
 import providerOAuthRoutes from './routes/provider-oauth';
 import cliProvidersRoutes from './routes/cli-providers';
 import cliLoginRoutes from './routes/cli-login';
-import selfRebuildRoutes from './routes/self-rebuild';
-import watchdogRoutes from './routes/watchdog';
-import ralphRoutes from './routes/ralph';
+import opencodeRoutes from './routes/opencode';
 import memoriesRoutes from './routes/memories';
-import handoverRoutes from './routes/handover';
 import taskRoutes from './routes/tasks';
 import devicesRoutes from './routes/devices';
-import { initSelfRebuild, setSocketIO } from './services/self-rebuild';
-import { initWatchdog } from './services/watchdog/WatchdogService';
-import { initRalph } from './services/ralph';
+import previewRoutes from './routes/preview';
+import adminRoutes from './routes/admin';
 import { initTaskManager } from './services/tasks';
-import { getProcessManager } from './websocket';
 
 function parseBooleanEnv(value?: string): boolean {
   if (!value) return false;
@@ -88,55 +83,124 @@ function logUpdateSummary(results: { provider: CLIProvider; status: string }[]):
   console.log(`[CLI UPDATE] ${summary}`);
 }
 
+function installProcessGuards(): void {
+  // Global guards: without these, a stray unhandled rejection from any long-running service
+  // (ClaudeProcessManager, task runners, etc.) crashes the server silently.
+  process.on('unhandledRejection', (reason, promise) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', err.stack || err.message);
+  });
+
+  process.on('uncaughtException', (err, origin) => {
+    console.error(`[CRITICAL] Uncaught Exception (${origin}):`, err.stack || err.message);
+    // After an uncaught exception the process may be in an undefined state — exit so a supervisor restarts us.
+    process.exit(1);
+  });
+}
+
+/**
+ * Register graceful shutdown hooks. Closes the HTTP server first (so inbound
+ * traffic stops), then kills all Claude child processes, then forces exit.
+ * A hard timeout prevents a wedged process from lingering forever.
+ */
+function registerGracefulShutdown(
+  httpServer: import('http').Server,
+  io: import('socket.io').Server
+): void {
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[SHUTDOWN] Received ${signal}, draining.`);
+
+    const forceExit = setTimeout(() => {
+      console.error('[SHUTDOWN] Grace period elapsed, forcing exit.');
+      process.exit(1);
+    }, 10_000);
+    forceExit.unref();
+
+    try {
+      // Stop accepting new HTTP connections / upgrades.
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      // Disconnect all WebSocket clients so they reconnect to the new instance.
+      io.disconnectSockets(true);
+      // Dynamically import to avoid circular load if shutdown fires before setup.
+      const { getProcessManager } = await import('./websocket');
+      try {
+        await getProcessManager().shutdownAll();
+      } catch (err) {
+        console.warn('[SHUTDOWN] processManager shutdown skipped:', err);
+      }
+    } catch (err) {
+      console.error('[SHUTDOWN] Drain error:', err);
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+}
+
 async function main() {
+  installProcessGuards();
+
   // Initialize database
   initDatabase();
   ensureCliPath();
+  syncOpencodeAgents();
 
   const app = express();
 
-  // Trust proxy headers when behind nginx/reverse proxy
-  // This enables proper handling of X-Forwarded-Proto, X-Forwarded-Host, etc.
-  app.set('trust proxy', true);
+  // Trust proxy headers when behind nginx/reverse proxy. `true` is dangerous
+  // without a guard proxy — any client can spoof X-Forwarded-For and defeat
+  // IP-based rate limiting. Configure via TRUST_PROXY (default: 1 hop).
+  app.set('trust proxy', config.trustProxy);
 
   const httpServer = createServer(app);
 
   // Setup WebSocket
   const io = setupWebSocket(httpServer);
 
-  // Initialize self-rebuild service with Socket.IO for broadcasting
-  setSocketIO(io);
-  await initSelfRebuild();
-
-  // Read handover file from previous container lifecycle
-  const handoverFile = path.join(process.cwd(), 'data', 'container-handover.json');
-  try {
-    const handoverData = JSON.parse(await fsPromises.readFile(handoverFile, 'utf-8'));
-    console.log(`[handover] ========================================`);
-    console.log(`[handover] Container neugestartet durch: ${handoverData.from}`);
-    console.log(`[handover] Grund: ${handoverData.reason || 'unbekannt'}`);
-    console.log(`[handover] Unterbrochene Sessions: ${handoverData.activeSessions || 0}`);
-    if (handoverData.message) {
-      console.log(`[handover] Nachricht: ${handoverData.message}`);
-    }
-    console.log(`[handover] ========================================`);
-    await fsPromises.unlink(handoverFile);
-  } catch {
-    // No handover file — normal startup
-  }
-
-  // Initialize watchdog service (with process manager for CLI integration)
-  initWatchdog(io, getProcessManager());
-
-  // Initialize Ralph autonomous loop service
-  initRalph(io, getProcessManager());
-
   // Initialize task delegation system
   initTaskManager();
 
+  // Preview vhost — must run BEFORE any other middleware so helmet/CORS/body-parsers
+  // don't rewrite or consume proxied traffic. Authelia (Traefik ForwardAuth) guards the
+  // subdomain at the edge, so only authenticated users reach this handler.
+  if (previewVhostEnabled()) {
+    app.use(previewVhostMiddleware);
+    httpServer.on('upgrade', (req, socket, head) => {
+      handlePreviewUpgrade(req, socket as import('net').Socket, head);
+    });
+    console.log(`[PREVIEW] Proxy vhost enabled for ${config.previewHostname}`);
+  }
+
   // Middleware
+  app.use(requestIdMiddleware);
   app.use(helmet({
-    contentSecurityPolicy: false,
+    // The Vite build emits no inline scripts, so `script-src 'self'` is a strict
+    // policy without needing per-request nonce injection. Style injection from
+    // Radix UI and the inline <style> block in index.html requires
+    // 'unsafe-inline' on style-src — style-based attacks have a much smaller
+    // blast radius than script-based ones, so this tradeoff is acceptable.
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        // Socket.IO upgrades same-origin XHR to WebSocket. Browsers differ on
+        // whether 'self' implicitly covers ws:/wss:, so we list both explicitly.
+        connectSrc: ["'self'", 'ws:', 'wss:'],
+        fontSrc: ["'self'", 'data:'],
+        frameSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
     crossOriginOpenerPolicy: false,
     originAgentCluster: false,
   }));
@@ -196,13 +260,6 @@ async function main() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Instance info (used by frontend to show repair-bot banner)
-  app.get('/api/instance-info', (_req, res) => {
-    res.json({
-      repairBotMode: process.env.DISABLE_SELF_REBUILD === 'true',
-    });
-  });
-
   // Routes
   app.use('/auth', authRoutes);
   app.use('/api/basic-auth', basicAuthRoutes);
@@ -217,7 +274,6 @@ async function main() {
   app.use('/api/permissions', permissionsRoutes);
   app.use('/api/usage', usageRoutes);
   app.use('/api/cli-tools', cliToolsRoutes);
-  app.use('/api/gemini', geminiRoutes);
   app.use('/api/projects', projectsRoutes);
   app.use('/api/github', githubRoutes);
   app.use('/api/commands', commandsRoutes);
@@ -230,18 +286,36 @@ async function main() {
   app.use('/api/providers', providerOAuthRoutes);
   app.use('/api/cli-providers', cliProvidersRoutes);
   app.use('/api/cli-login', cliLoginRoutes);
-  app.use('/api/self-rebuild', selfRebuildRoutes);
-  app.use('/api/watchdog', watchdogRoutes);
-  app.use('/api/ralph', ralphRoutes);
+  app.use('/api/opencode', opencodeRoutes);
   app.use('/api/memories', memoriesRoutes);
-  app.use('/api/handover', handoverRoutes);
   app.use('/api/tasks', taskRoutes);
   app.use('/api/devices', devicesRoutes);
+  app.use('/api/preview', previewRoutes);
+  app.use('/api/admin', adminRoutes);
 
   const logosDir = process.env.LOGOS_DIR || path.join(process.cwd(), 'logos');
   if (fs.existsSync(logosDir)) {
     app.use('/logos', express.static(logosDir));
   }
+
+  // Generated images from the ComfyUI MCP tool. Session-cookie-gated so <img>
+  // tags in chat bubbles work (Authorization headers aren't sent with images).
+  // Filenames are UUIDs, but we still require a session to avoid leaking generated
+  // content to unauthenticated users on the same origin.
+  const generatedDir = process.env.COMFYUI_OUTPUT_DIR
+    || path.join(process.cwd(), 'packages/backend/data/generated');
+  if (!fs.existsSync(generatedDir)) {
+    fs.mkdirSync(generatedDir, { recursive: true });
+  }
+  app.use('/generated', (req, res, next) => {
+    if (req.isAuthenticated && req.isAuthenticated()) return next();
+    res.status(401).send('unauthorized');
+  }, express.static(generatedDir, {
+    fallthrough: false,
+    maxAge: '1h',
+    index: false,
+    dotfiles: 'deny',
+  }));
 
   // Serve frontend static files in production
   if (config.isProduction) {
@@ -250,7 +324,7 @@ async function main() {
 
     // Backend auth routes that should NOT be handled by SPA
     const backendAuthRoutes = [
-      '/auth/github', '/auth/google', '/auth/claude', '/auth/codex', '/auth/zai', '/auth/dev',
+      '/auth/github', '/auth/google', '/auth/claude', '/auth/codex', '/auth/dev',
       '/auth/dev-login', '/auth/me', '/auth/logout', '/auth/providers'
     ];
 
@@ -278,6 +352,8 @@ async function main() {
     console.log(`Server running on http://${config.host}:${config.port}`);
     console.log(`Frontend URL: ${config.frontendUrl}`);
   });
+
+  registerGracefulShutdown(httpServer, io);
 
   const autoUpdateEnabled = parseBooleanEnv(process.env.CLI_AUTO_UPDATE);
   const intervalHours = Number(process.env.CLI_AUTO_UPDATE_INTERVAL_HOURS || 0);

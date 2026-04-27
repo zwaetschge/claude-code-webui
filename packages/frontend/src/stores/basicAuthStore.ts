@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api } from '@/services/api';
+import { api, ApiError } from '@/services/api';
+
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
+}
 
 interface BasicAuthState {
   isBasicAuthenticated: boolean;
@@ -76,8 +80,14 @@ export const useBasicAuthStore = create<BasicAuthState>()(
           } else {
             set({ isBasicAuthenticated: false, basicAuthToken: null });
           }
-        } catch {
-          set({ isBasicAuthenticated: false, basicAuthToken: null });
+        } catch (err) {
+          if (isAuthFailure(err)) {
+            set({ isBasicAuthenticated: false, basicAuthToken: null });
+          } else {
+            // Transient network error: keep the persisted token so a new tab
+            // can recover once the backend is reachable again. Leaving
+            // isBasicAuthenticated at its current value avoids a false logout.
+          }
         }
       },
 
@@ -100,7 +110,17 @@ export const useBasicAuthStore = create<BasicAuthState>()(
       initializeAuth: async () => {
         set({ isLoading: true });
         try {
-          // Run both checks in parallel
+          // Wait for persist rehydration before reading the token. Otherwise a
+          // fresh tab can read basicAuthToken=null and incorrectly flip
+          // isBasicAuthenticated to false before the persisted token arrives.
+          if (!useBasicAuthStore.persist.hasHydrated()) {
+            await new Promise<void>((resolve) => {
+              const unsub = useBasicAuthStore.persist.onFinishHydration(() => {
+                unsub();
+                resolve();
+              });
+            });
+          }
           await Promise.all([
             get().checkBasicAuthStatus(),
             get().checkBasicAuth(),

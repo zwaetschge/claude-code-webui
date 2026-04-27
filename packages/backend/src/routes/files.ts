@@ -156,7 +156,10 @@ router.get('/home', requireAuth, asyncHandler(async (_req, res) => {
 // Validate path is within allowed directories
 function validatePath(filePath: string): string {
   const resolvedPath = path.resolve(filePath);
-  const isAllowed = config.allowedBasePaths.some((base) => resolvedPath.startsWith(base));
+  const isAllowed = config.allowedBasePaths.some((base) => {
+    const resolvedBase = path.resolve(base);
+    return resolvedPath === resolvedBase || resolvedPath.startsWith(resolvedBase + path.sep);
+  });
 
   if (!isAllowed) {
     throw new AppError('Path not allowed', 403, 'FORBIDDEN_PATH');
@@ -458,32 +461,43 @@ router.get('/preview', requireAuth, asyncHandler(async (req, res) => {
     }
 
     if (ext === '.xlsx' || ext === '.xls') {
-      // Dynamic import for xlsx
+      // exceljs replaces xlsx (CVE-2023-30533 / prototype pollution). .xls (legacy BIFF)
+      // is not supported by exceljs — reject early with a clear message.
+      if (ext === '.xls') {
+        throw new AppError(
+          'Legacy .xls files are not supported. Re-save as .xlsx.',
+          415,
+          'UNSUPPORTED_FORMAT'
+        );
+      }
       try {
-        const XLSX = await import('xlsx');
+        const ExcelJS = await import('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(resolvedPath);
 
-        // Read workbook
-        const workbook = XLSX.read(await fs.readFile(resolvedPath), { type: 'buffer' });
-
-        // Get all sheet names and data
         const sheets: Record<string, { headers: string[]; rows: string[][]; totalRows: number }> = {};
+        const sheetNames: string[] = [];
 
-        for (const sheetName of workbook.SheetNames) {
-          const sheet = workbook.Sheets[sheetName];
-          if (!sheet) continue;
+        workbook.eachSheet((sheet) => {
+          sheetNames.push(sheet.name);
 
-          const data = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
-          const headers = (data[0] || []).map(String);
-          const rows = data.slice(1, maxRows + 1).map(row =>
-            Array.isArray(row) ? row.map(cell => String(cell ?? '')) : []
-          );
+          const allRows: string[][] = [];
+          sheet.eachRow({ includeEmpty: false }, (row) => {
+            const values = row.values as unknown[];
+            // ExcelJS row.values is 1-indexed with index 0 undefined — drop it.
+            const cells = Array.isArray(values) ? values.slice(1) : [];
+            allRows.push(cells.map((c) => (c == null ? '' : String(c))));
+          });
 
-          sheets[sheetName] = {
+          const headers = allRows[0] ?? [];
+          const dataRows = allRows.slice(1, maxRows + 1);
+
+          sheets[sheet.name] = {
             headers,
-            rows,
-            totalRows: data.length - 1,
+            rows: dataRows,
+            totalRows: Math.max(allRows.length - 1, 0),
           };
-        }
+        });
 
         return res.json({
           success: true,
@@ -491,10 +505,11 @@ router.get('/preview', requireAuth, asyncHandler(async (req, res) => {
             type: 'xlsx',
             path: resolvedPath,
             sheets,
-            sheetNames: workbook.SheetNames,
+            sheetNames,
           },
         });
-      } catch {
+      } catch (err) {
+        if (err instanceof AppError) throw err;
         throw new AppError('Failed to parse Excel file', 400, 'PARSE_ERROR');
       }
     }
@@ -562,8 +577,12 @@ router.get('/download', requireAuth, asyncHandler(async (req, res) => {
       throw new AppError('Path is a directory', 400, 'IS_DIRECTORY');
     }
 
-    const filename = path.basename(resolvedPath);
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    const filename = path.basename(resolvedPath).replace(/[\r\n"]/g, '');
+    const asciiFallback = filename.replace(/[^\x20-\x7E]/g, '_') || 'download';
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', stats.size);
 

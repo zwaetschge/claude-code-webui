@@ -412,7 +412,7 @@ export function FileTree({
 
           {/* Filename with search highlight and metadata */}
           <div className="flex-1 min-w-0 flex items-center gap-2">
-            <span className="text-sm truncate">
+            <span className="text-sm truncate flex-1 min-w-0">
               {searchQuery ? highlightMatch(file.name, searchQuery) : file.name}
             </span>
             {/* Compact mode: show size for files */}
@@ -503,7 +503,7 @@ export function FileTree({
   }, [rootFiles, searchQuery, filterFiles]);
 
   return (
-    <div className={cn('flex flex-col h-full bg-card', className)}>
+    <div className={cn('flex flex-col h-full', className)}>
       {/* Header */}
       <div className="shrink-0 p-2 border-b space-y-2">
         <div className="flex items-center justify-between">

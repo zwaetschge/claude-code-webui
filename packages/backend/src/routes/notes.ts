@@ -1,10 +1,35 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
+import { z } from 'zod';
 import { getDatabase } from '../db/index.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import type { ApiResponse } from '@claude-code-webui/shared';
 
 const router = Router();
+
+const NOTE_TITLE_MAX = 200;
+const NOTE_CONTENT_MAX = 64_000;
+
+const createNoteSchema = z.object({
+  title: z.string().max(NOTE_TITLE_MAX).optional(),
+  content: z.string().max(NOTE_CONTENT_MAX).optional(),
+  sessionId: z.string().min(1).max(128).nullish(),
+  pinned: z.boolean().optional(),
+});
+
+const updateNoteSchema = z.object({
+  title: z.string().max(NOTE_TITLE_MAX).optional(),
+  content: z.string().max(NOTE_CONTENT_MAX).optional(),
+  sessionId: z.string().min(1).max(128).nullish(),
+  pinned: z.boolean().optional(),
+});
+
+function userOwnsSession(db: ReturnType<typeof getDatabase>, sessionId: string, userId: string): boolean {
+  const row = db.prepare(`SELECT 1 AS ok FROM sessions WHERE id = ? AND user_id = ?`).get(sessionId, userId) as
+    | { ok: number }
+    | undefined;
+  return !!row;
+}
 
 interface Note {
   id: string;
@@ -25,7 +50,7 @@ router.get('/', requireAuth, (req, res) => {
   try {
     const notes = db
       .prepare(
-        `SELECT * FROM notes WHERE user_id = ? ORDER BY pinned DESC, updated_at DESC`
+        `SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY pinned DESC, updated_at DESC`
       )
       .all(authReq.userId) as Note[];
 
@@ -52,7 +77,7 @@ router.get('/session/:sessionId', requireAuth, (req, res) => {
   try {
     const notes = db
       .prepare(
-        `SELECT * FROM notes WHERE user_id = ? AND session_id = ? ORDER BY pinned DESC, updated_at DESC`
+        `SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE user_id = ? AND session_id = ? ORDER BY pinned DESC, updated_at DESC`
       )
       .all(authReq.userId, sessionId) as Note[];
 
@@ -74,7 +99,24 @@ router.get('/session/:sessionId', requireAuth, (req, res) => {
 router.post('/', requireAuth, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const db = getDatabase();
-  const { title, content, sessionId, pinned } = req.body;
+
+  const parsed = createNoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const response: ApiResponse<null> = {
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0]?.message || 'Invalid request' },
+    };
+    return res.status(400).json(response);
+  }
+  const { title, content, sessionId, pinned } = parsed.data;
+
+  if (sessionId && !userOwnsSession(db, sessionId, authReq.userId)) {
+    const response: ApiResponse<null> = {
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'Session not found or access denied' },
+    };
+    return res.status(403).json(response);
+  }
 
   try {
     const id = nanoid();
@@ -82,7 +124,7 @@ router.post('/', requireAuth, (req, res) => {
       `INSERT INTO notes (id, user_id, session_id, title, content, pinned) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(id, authReq.userId, sessionId || null, title || 'Untitled', content || '', pinned ? 1 : 0);
 
-    const note = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id) as Note;
+    const note = db.prepare(`SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ?`).get(id) as Note;
 
     const response: ApiResponse<Note> = {
       success: true,
@@ -103,12 +145,21 @@ router.patch('/:id', requireAuth, (req, res) => {
   const authReq = req as AuthenticatedRequest;
   const db = getDatabase();
   const { id } = req.params;
-  const { title, content, pinned, sessionId } = req.body;
+
+  const parsed = updateNoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const response: ApiResponse<null> = {
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0]?.message || 'Invalid request' },
+    };
+    return res.status(400).json(response);
+  }
+  const { title, content, pinned, sessionId } = parsed.data;
 
   try {
     // Check ownership
     const existing = db
-      .prepare(`SELECT * FROM notes WHERE id = ? AND user_id = ?`)
+      .prepare(`SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?`)
       .get(id, authReq.userId) as Note | undefined;
 
     if (!existing) {
@@ -117,6 +168,14 @@ router.patch('/:id', requireAuth, (req, res) => {
         error: { code: 'NOT_FOUND', message: 'Note not found' },
       };
       return res.status(404).json(response);
+    }
+
+    if (sessionId && !userOwnsSession(db, sessionId, authReq.userId)) {
+      const response: ApiResponse<null> = {
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Session not found or access denied' },
+      };
+      return res.status(403).json(response);
     }
 
     // Build update query
@@ -143,7 +202,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     values.push(id as string);
     db.prepare(`UPDATE notes SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-    const note = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id) as Note;
+    const note = db.prepare(`SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ?`).get(id) as Note;
 
     const response: ApiResponse<Note> = {
       success: true,

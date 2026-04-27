@@ -50,7 +50,7 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const provider = activeSession?.cliProvider || 'claude';
-  const limitsSupported = provider === 'claude' || provider === 'glm' || provider === 'codex';
+  const limitsSupported = provider === 'claude' || provider === 'codex' || provider === 'opencode';
 
   // Context usage from the active session
   const currentUsage = activeSessionId ? usage[activeSessionId] : undefined;
@@ -81,20 +81,23 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
       label: labels.session.title,
       sublabel: labels.session.subtitle,
       value: usageLimits.fiveHour.utilization,
+      resetsAt: usageLimits.fiveHour.resetsAt,
     },
     usageLimits.sevenDay && labels.weeklyAll && {
       key: 'weekly',
       label: labels.weeklyAll.title,
       sublabel: labels.weeklyAll.subtitle,
       value: usageLimits.sevenDay.utilization,
+      resetsAt: usageLimits.sevenDay.resetsAt,
     },
     usageLimits.sevenDaySonnet && labels.weeklySonnet && {
       key: 'sonnet',
       label: labels.weeklySonnet.title,
       sublabel: labels.weeklySonnet.subtitle,
       value: usageLimits.sevenDaySonnet.utilization,
+      resetsAt: usageLimits.sevenDaySonnet.resetsAt,
     },
-  ].filter(Boolean) as Array<{ key: string; label: string; sublabel?: string; value: number }>;
+  ].filter(Boolean) as Array<{ key: string; label: string; sublabel?: string; value: number; resetsAt?: string | null }>;
 
   // Show nothing if no session
   if (!activeSessionId) {
@@ -111,6 +114,7 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
         ? `${formatTokens(currentUsage.totalTokens)} / ${formatTokens(currentUsage.contextWindow)}`
         : undefined,
       value: contextPercent,
+      resetsAt: null as string | null,
     },
   ];
 
@@ -139,6 +143,9 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
               {bar.label}
               {bar.sublabel && <span className="text-foreground/60"> {bar.sublabel}</span>}
               <span className="ml-1 font-semibold">{bar.value}%</span>
+              {bar.resetsAt && (
+                <span className="ml-1 text-foreground/50">· {formatResetDelta(bar.resetsAt)}</span>
+              )}
             </span>
           </div>
 
@@ -148,6 +155,9 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
               <span className="font-medium">{bar.label}</span>
               {bar.sublabel && <span className="text-muted-foreground"> ({bar.sublabel})</span>}
               <span className="ml-1.5 font-semibold">{bar.value}%</span>
+              {bar.resetsAt && (
+                <span className="ml-1.5 text-muted-foreground">resets {formatResetAbsolute(bar.resetsAt)}</span>
+              )}
             </div>
           </div>
         </div>
@@ -167,4 +177,34 @@ function formatTokens(count: number): string {
     return `${(count / 1000).toFixed(1)}k`;
   }
   return count.toString();
+}
+
+/**
+ * "in 2h 15m" / "in 4d 6h" — compact countdown to the reset timestamp.
+ */
+function formatResetDelta(iso: string): string {
+  const target = Date.parse(iso);
+  if (!Number.isFinite(target)) return '';
+  const diffMs = target - Date.now();
+  if (diffMs <= 0) return 'now';
+  const mins = Math.floor(diffMs / 60000);
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const remainMins = mins % 60;
+  if (days > 0) return `in ${days}d ${hours}h`;
+  if (hours > 0) return `in ${hours}h ${remainMins}m`;
+  return `in ${remainMins}m`;
+}
+
+/**
+ * Absolute local time like "Mon 14:30" for the tooltip.
+ */
+function formatResetAbsolute(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

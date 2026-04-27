@@ -7,7 +7,7 @@ import type {
   BufferedMessage,
   SessionMode,
 } from '@claude-code-webui/shared';
-import { getDatabase } from '../../db';
+import { getAppConfig, getDatabase } from '../../db';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -18,12 +18,11 @@ import { ChildProcess, spawn as cpSpawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { config } from '../../config';
 import { CLI_PROVIDERS, getCLIArgs, formatInputMessage, type CLIProvider } from '../cli-providers.js';
+import { opencodeServer, type OpencodeEvent } from '../opencode/OpencodeServer.js';
 import { resolveConfigHome } from '../../utils/configPaths.js';
 import { syncExternalSkills } from '../../utils/skillSync.js';
-import { safeDecrypt } from '../../utils/encryption.js';
+import { scanProject, formatProjectContext } from '../../utils/projectScanner.js';
 import { safeJsonParse } from '../../utils/json.js';
-import { getWatchdog } from '../watchdog/WatchdogService';
-import { GeminiApiAdapter } from '../gemini/GeminiApiAdapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,20 +30,90 @@ const __dirname = path.dirname(__filename);
 // Circular buffer for storing messages for reconnection
 const BUFFER_SIZE = 5000;
 const DISCONNECT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const CONTEXT_REMINDER_MAX_CHARS = 4000;
-const CONTEXT_REMINDER_MAX_MESSAGES = 4;
 const HANDOFF_CONTEXT_MAX_CHARS = 60000;
 const HANDOFF_CONTEXT_MAX_MESSAGES = 80;
 const WEBUI_MANAGED_MARKER = '<!-- webui-managed: shared-config -->';
 const WEBUI_MANAGED_BLOCK_START = '<!-- webui-managed: shared-config:start -->';
 const WEBUI_MANAGED_BLOCK_END = '<!-- webui-managed: shared-config:end -->';
-const ZAI_BASE_URL_DEFAULT = 'https://api.z.ai/api/anthropic';
+const PROJECT_CONTEXT_BLOCK_START = '<!-- webui-managed: project-context:start -->';
+const PROJECT_CONTEXT_BLOCK_END = '<!-- webui-managed: project-context:end -->';
 
 interface SharedAgent {
   name: string;
   prompt: string;
   tools?: string[];
   model?: string;
+}
+
+// Streaming filter for Gemma's thought-channel markers. Gemma 4 emits
+// `<|channel>thought ... <channel|>` around its internal reasoning when
+// llama-server runs with `--reasoning-format none`. The markers appear inline
+// in the content stream and must be stripped before the UI sees them.
+interface ThoughtStripState {
+  inside: boolean;
+  pending: string;
+}
+
+const THOUGHT_OPEN = '<|channel>thought';
+const THOUGHT_CLOSE = '<channel|>';
+
+function longestBoundarySuffix(haystack: string, marker: string): number {
+  const max = Math.min(haystack.length, marker.length - 1);
+  for (let len = max; len > 0; len--) {
+    if (marker.startsWith(haystack.slice(haystack.length - len))) return len;
+  }
+  return 0;
+}
+
+function stripThoughtChunk(
+  state: ThoughtStripState,
+  chunk: string,
+): { state: ThoughtStripState; emit: string } {
+  let buf = state.pending + chunk;
+  let out = '';
+  let inside = state.inside;
+
+  while (buf.length > 0) {
+    if (inside) {
+      const idx = buf.indexOf(THOUGHT_CLOSE);
+      if (idx >= 0) {
+        buf = buf.slice(idx + THOUGHT_CLOSE.length);
+        inside = false;
+        continue;
+      }
+      const keep = longestBoundarySuffix(buf, THOUGHT_CLOSE);
+      buf = buf.slice(buf.length - keep);
+      break;
+    }
+
+    const openIdx = buf.indexOf(THOUGHT_OPEN);
+    const closeIdx = buf.indexOf(THOUGHT_CLOSE);
+
+    // Orphan close marker (no preceding open): Gemma retries emit the closing
+    // `thought\n<channel|>` without the matching `<|channel>thought` in some
+    // continuation parts. Treat the text before the orphan as discarded
+    // thought content and drop it along with the marker itself.
+    if (closeIdx >= 0 && (openIdx < 0 || closeIdx < openIdx)) {
+      buf = buf.slice(closeIdx + THOUGHT_CLOSE.length);
+      continue;
+    }
+
+    if (openIdx >= 0) {
+      out += buf.slice(0, openIdx);
+      buf = buf.slice(openIdx + THOUGHT_OPEN.length);
+      inside = true;
+      continue;
+    }
+
+    const keepOpen = longestBoundarySuffix(buf, THOUGHT_OPEN);
+    const keepClose = longestBoundarySuffix(buf, THOUGHT_CLOSE);
+    const keep = Math.max(keepOpen, keepClose);
+    out += buf.slice(0, buf.length - keep);
+    buf = buf.slice(buf.length - keep);
+    break;
+  }
+
+  return { state: { inside, pending: buf }, emit: out };
 }
 
 interface SharedSkill {
@@ -65,38 +134,6 @@ interface SharedPlugin {
   marketplace?: string;
 }
 
-async function readClaudeEnvFromConfigHome(configHome: string): Promise<Record<string, string>> {
-  const candidates = [
-    path.join(configHome, 'settings.json'),
-    path.join(configHome, 'settings.local.json'),
-  ];
-
-  for (const settingsPath of candidates) {
-    try {
-      const content = await fs.readFile(settingsPath, 'utf-8');
-      const settings = JSON.parse(content) as { env?: Record<string, string> };
-      if (settings.env && typeof settings.env === 'object') {
-        return settings.env;
-      }
-    } catch {
-      // Ignore missing or invalid files.
-    }
-  }
-
-  return {};
-}
-
-async function getZaiApiKeyForUser(userId: string): Promise<string | null> {
-  const db = getDatabase();
-  const row = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json?: string | null } | undefined;
-
-  const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
-  const encryptedKey = settingsJson.zaiApiKey;
-  return typeof encryptedKey === 'string' ? safeDecrypt(encryptedKey) : null;
-}
-
 async function getCliModelForUser(userId: string, provider: CLIProvider): Promise<string | null> {
   const db = getDatabase();
   const row = db.prepare(
@@ -113,7 +150,24 @@ async function getCliModelForUser(userId: string, provider: CLIProvider): Promis
   return typeof model === 'string' && model.trim() ? model.trim() : null;
 }
 
-const CODEX_REASONING_LEVELS = new Set(['low', 'medium', 'high', 'extra_high']);
+const VALID_REASONING_LEVELS = new Set(['low', 'medium', 'high', 'extra_high', 'max']);
+
+const DEFAULT_CONTEXT_WINDOW = 200_000;
+const ONE_MILLION_CONTEXT = 1_000_000;
+
+// Map a Claude model identifier to its context window. Anthropic ships 1M-token
+// context for all current 4.x and 5.x Claude families (Opus, Sonnet, Haiku).
+// Older 3.x models remain at 200k. The CLI reports the actual window via
+// modelUsage when available; this helper is the fallback so the frontend
+// tracker stops claiming 200k for a 1M-capable model.
+function contextWindowFor(model: string | null | undefined): number {
+  if (!model) return DEFAULT_CONTEXT_WINDOW;
+  const id = model.toLowerCase();
+  if (/(opus|sonnet|haiku)-?(4|5)/.test(id)) {
+    return ONE_MILLION_CONTEXT;
+  }
+  return DEFAULT_CONTEXT_WINDOW;
+}
 
 function normalizeReasoningLevel(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -126,7 +180,7 @@ function normalizeReasoningLevel(value: unknown): string | null {
   if (!normalized) {
     return null;
   }
-  return CODEX_REASONING_LEVELS.has(normalized) ? normalized : null;
+  return VALID_REASONING_LEVELS.has(normalized) ? normalized : null;
 }
 
 async function getCliReasoningForUser(userId: string, provider: CLIProvider): Promise<string | null> {
@@ -145,9 +199,19 @@ async function getCliReasoningForUser(userId: string, provider: CLIProvider): Pr
   return normalizeReasoningLevel(level);
 }
 
+/**
+ * Fixed-size FIFO buffer used to replay recent session events to a reconnecting client.
+ *
+ * Thread safety: All methods are synchronous and contain no `await`, so the Node.js event
+ * loop itself serializes access — no external mutex is needed. Readers get defensive copies
+ * (`slice` / spread), so a reader's returned array is stable even if a subsequent tick writes.
+ * If any method is later changed to be `async`, revisit this invariant.
+ */
 class CircularBuffer<T> {
   private buffer: T[] = [];
   private maxSize: number;
+  /** True once a push has evicted an item — used to detect buffer rollover for reconnects. */
+  private hasEvicted = false;
 
   constructor(maxSize: number) {
     this.maxSize = maxSize;
@@ -156,6 +220,7 @@ class CircularBuffer<T> {
   push(item: T): void {
     if (this.buffer.length >= this.maxSize) {
       this.buffer.shift();
+      this.hasEvicted = true;
     }
     this.buffer.push(item);
   }
@@ -164,14 +229,30 @@ class CircularBuffer<T> {
     return [...this.buffer];
   }
 
-  getSince(predicate: (item: T) => boolean): T[] {
+  /**
+   * Returns items matching the predicate and everything after, plus a flag indicating
+   * whether the buffer has rolled over since the caller last saw data.
+   * If predicate doesn't match and the buffer has evicted items, caller should full-resync.
+   */
+  getSinceWithStatus(predicate: (item: T) => boolean): { items: T[]; needsFullResync: boolean } {
     const startIndex = this.buffer.findIndex(predicate);
-    if (startIndex === -1) return [];
-    return this.buffer.slice(startIndex);
+    if (startIndex !== -1) {
+      return { items: this.buffer.slice(startIndex), needsFullResync: false };
+    }
+    return { items: [], needsFullResync: this.hasEvicted };
+  }
+
+  getSince(predicate: (item: T) => boolean): T[] {
+    return this.getSinceWithStatus(predicate).items;
+  }
+
+  getSize(): number {
+    return this.buffer.length;
   }
 
   clear(): void {
     this.buffer = [];
+    this.hasEvicted = false;
   }
 }
 
@@ -347,41 +428,23 @@ function formatCodexSharedContext(
 
   const lines: string[] = [];
   lines.push('[Shared Claude Config]');
-  lines.push('These Claude skills and agents are available in this session. Use them when relevant.');
+  lines.push('Registry of available skills, agents, and plugins. Load full instructions from their files only when needed.');
 
   if (skills.length > 0) {
     lines.push('');
-    lines.push('Skills:');
+    lines.push('Skills (~/.claude/skills/<name>/SKILL.md):');
     for (const skill of skills) {
-      lines.push(`- ${skill.name}`);
-      if (skill.allowedTools && skill.allowedTools.length > 0) {
-        lines.push(`  Allowed tools: ${skill.allowedTools.join(', ')}`);
-      }
-      if (skill.model) {
-        lines.push(`  Model: ${skill.model}`);
-      }
-      if (skill.content.trim()) {
-        lines.push('  Instructions:');
-        lines.push(skill.content.trim());
-      }
+      const desc = extractFrontmatterDescription(skill.content);
+      lines.push(desc ? `- ${skill.name} — ${desc}` : `- ${skill.name}`);
     }
   }
 
   if (agents.length > 0) {
     lines.push('');
-    lines.push('Agents:');
+    lines.push('Agents (~/.claude/agents/<name>.md):');
     for (const agent of agents) {
-      lines.push(`- ${agent.name}`);
-      if (agent.tools && agent.tools.length > 0) {
-        lines.push(`  Tools: ${agent.tools.join(', ')}`);
-      }
-      if (agent.model) {
-        lines.push(`  Model: ${agent.model}`);
-      }
-      if (agent.prompt.trim()) {
-        lines.push('  Prompt:');
-        lines.push(agent.prompt.trim());
-      }
+      const desc = extractFrontmatterDescription(agent.prompt);
+      lines.push(desc ? `- ${agent.name} — ${desc}` : `- ${agent.name}`);
     }
   }
 
@@ -389,26 +452,8 @@ function formatCodexSharedContext(
     lines.push('');
     lines.push('Plugins:');
     for (const plugin of plugins) {
-      lines.push(`- ${plugin.name}`);
-      if (plugin.version) {
-        lines.push(`  Version: ${plugin.version}`);
-      }
-      if (plugin.author) {
-        lines.push(`  Author: ${plugin.author}`);
-      }
-      if (plugin.category) {
-        lines.push(`  Category: ${plugin.category}`);
-      }
-      if (plugin.marketplace) {
-        lines.push(`  Marketplace: ${plugin.marketplace}`);
-      }
-      if (plugin.description) {
-        lines.push(`  Description: ${plugin.description}`);
-      }
-      if (plugin.content) {
-        lines.push('  Instructions:');
-        lines.push(plugin.content.trim());
-      }
+      const desc = plugin.description ? ` — ${plugin.description}` : '';
+      lines.push(`- ${plugin.name}${desc}`);
     }
   }
 
@@ -416,6 +461,18 @@ function formatCodexSharedContext(
   lines.push('[End Shared Claude Config]');
 
   return lines.join('\n');
+}
+
+function extractFrontmatterDescription(content: string): string | null {
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith('---')) return null;
+  const end = trimmed.indexOf('\n---', 3);
+  if (end === -1) return null;
+  const fm = trimmed.slice(3, end);
+  const match = fm.match(/^\s*description\s*:\s*(.+?)\s*$/m);
+  const raw = match?.[1];
+  if (!raw) return null;
+  return raw.replace(/^["']|["']$/g, '').trim() || null;
 }
 
 function formatSharedInstructionFile(
@@ -426,24 +483,26 @@ function formatSharedInstructionFile(
   const lines: string[] = [];
   lines.push(WEBUI_MANAGED_BLOCK_START);
   lines.push('# Shared Provider Context');
-  lines.push('This file is generated by Claude Code WebUI to share config across providers.');
-  lines.push('Remove this block to opt out of automatic updates.');
+  lines.push('Registry of available skills and agents. Full instructions live in their own files — loaded on demand.');
+  lines.push('');
+  lines.push('- Skills: `~/.claude/skills/<name>/SKILL.md`');
+  lines.push('- Agents: `~/.claude/agents/<name>.md`');
+  lines.push('- Remove this block to opt out of automatic updates.');
 
   if (skills.length > 0) {
     lines.push('');
     lines.push('## Skills');
     for (const skill of skills) {
-      lines.push(`- ${skill.name}`);
+      const desc = extractFrontmatterDescription(skill.content);
+      const suffixParts: string[] = [];
       if (skill.allowedTools && skill.allowedTools.length > 0) {
-        lines.push(`  - Allowed tools: ${skill.allowedTools.join(', ')}`);
+        suffixParts.push(`tools: ${skill.allowedTools.join(', ')}`);
       }
       if (skill.model) {
-        lines.push(`  - Model: ${skill.model}`);
+        suffixParts.push(`model: ${skill.model}`);
       }
-      if (skill.content.trim()) {
-        lines.push('  - Instructions:');
-        lines.push(skill.content.trim());
-      }
+      const suffix = suffixParts.length > 0 ? ` _(${suffixParts.join('; ')})_` : '';
+      lines.push(desc ? `- **${skill.name}** — ${desc}${suffix}` : `- **${skill.name}**${suffix}`);
     }
   }
 
@@ -451,17 +510,16 @@ function formatSharedInstructionFile(
     lines.push('');
     lines.push('## Agents');
     for (const agent of agents) {
-      lines.push(`- ${agent.name}`);
+      const desc = extractFrontmatterDescription(agent.prompt);
+      const suffixParts: string[] = [];
       if (agent.tools && agent.tools.length > 0) {
-        lines.push(`  - Tools: ${agent.tools.join(', ')}`);
+        suffixParts.push(`tools: ${agent.tools.join(', ')}`);
       }
       if (agent.model) {
-        lines.push(`  - Model: ${agent.model}`);
+        suffixParts.push(`model: ${agent.model}`);
       }
-      if (agent.prompt.trim()) {
-        lines.push('  - Prompt:');
-        lines.push(agent.prompt.trim());
-      }
+      const suffix = suffixParts.length > 0 ? ` _(${suffixParts.join('; ')})_` : '';
+      lines.push(desc ? `- **${agent.name}** — ${desc}${suffix}` : `- **${agent.name}**${suffix}`);
     }
   }
 
@@ -469,26 +527,13 @@ function formatSharedInstructionFile(
     lines.push('');
     lines.push('## Plugins');
     for (const plugin of plugins) {
-      lines.push(`- ${plugin.name}`);
-      if (plugin.version) {
-        lines.push(`  - Version: ${plugin.version}`);
-      }
-      if (plugin.author) {
-        lines.push(`  - Author: ${plugin.author}`);
-      }
-      if (plugin.category) {
-        lines.push(`  - Category: ${plugin.category}`);
-      }
-      if (plugin.marketplace) {
-        lines.push(`  - Marketplace: ${plugin.marketplace}`);
-      }
-      if (plugin.description) {
-        lines.push(`  - Description: ${plugin.description}`);
-      }
-      if (plugin.content) {
-        lines.push('  - Instructions:');
-        lines.push(plugin.content.trim());
-      }
+      const metaParts: string[] = [];
+      if (plugin.version) metaParts.push(`v${plugin.version}`);
+      if (plugin.category) metaParts.push(plugin.category);
+      if (plugin.marketplace) metaParts.push(plugin.marketplace);
+      const meta = metaParts.length > 0 ? ` _(${metaParts.join('; ')})_` : '';
+      const desc = plugin.description ? ` — ${plugin.description}` : '';
+      lines.push(`- **${plugin.name}**${desc}${meta}`);
     }
   }
 
@@ -501,62 +546,230 @@ function formatSharedInstructionFile(
   return lines.join('\n');
 }
 
-function replaceManagedBlock(existing: string, block: string): string | null {
-  const start = WEBUI_MANAGED_BLOCK_START;
-  const end = WEBUI_MANAGED_BLOCK_END;
-  const pattern = new RegExp(`${start}[\\s\\S]*?${end}`, 'm');
+function replaceManagedBlock(existing: string, startMarker: string, endMarker: string, newBlock: string): string | null {
+  const pattern = new RegExp(`${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`, 'm');
   if (!pattern.test(existing)) {
     return null;
   }
-  return existing.replace(pattern, block);
+  return existing.replace(pattern, newBlock);
 }
 
-async function ensureSharedInstructionFiles(workingDir: string, configHome: string): Promise<void> {
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Resolve parent dir via realpath and ensure the final file path stays inside it.
+ * Blocks symlink-based escapes: /foo/bar/CLAUDE.md where bar -> /etc would otherwise land in /etc/CLAUDE.md.
+ */
+async function resolveSafeFilePath(filePath: string): Promise<string> {
+  const absolute = path.resolve(filePath);
+  const parentDir = path.dirname(absolute);
+  const baseName = path.basename(absolute);
+  let realParent: string;
+  try {
+    realParent = await fs.realpath(parentDir);
+  } catch {
+    realParent = parentDir;
+  }
+  const resolved = path.join(realParent, baseName);
+  if (!resolved.startsWith(realParent + path.sep) && resolved !== path.join(realParent, baseName)) {
+    throw new Error(`Refusing to write outside resolved parent directory: ${filePath}`);
+  }
+  return resolved;
+}
+
+/**
+ * Write managed block to a file, handling create/replace/append.
+ * Errors are logged but never thrown — writes to CLAUDE.md are best-effort and
+ * must not break session startup (e.g. read-only mounts, permission issues).
+ */
+async function writeManagedBlock(
+  filePath: string,
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  legacyMarker?: string,
+): Promise<void> {
+  let safePath: string;
+  try {
+    safePath = await resolveSafeFilePath(filePath);
+  } catch (err) {
+    console.warn(`[writeManagedBlock] Skipping unsafe path ${filePath}:`, err instanceof Error ? err.message : err);
+    return;
+  }
+
+  let existing: string | null = null;
+  try {
+    existing = await fs.readFile(safePath, 'utf-8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      console.warn(`[writeManagedBlock] Failed to read ${safePath}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  try {
+    if (existing !== null) {
+      const replaced = replaceManagedBlock(existing, startMarker, endMarker, content);
+      if (replaced) {
+        if (replaced.trim() !== existing.trim()) {
+          await fs.writeFile(safePath, replaced, 'utf-8');
+        }
+        return;
+      }
+
+      if (legacyMarker && existing.includes(legacyMarker)) {
+        await fs.writeFile(safePath, content, 'utf-8');
+        return;
+      }
+
+      const appended = `${existing.trimEnd()}\n\n${content}\n`;
+      await fs.writeFile(safePath, appended, 'utf-8');
+      return;
+    }
+
+    await fs.writeFile(safePath, content, 'utf-8');
+  } catch (err) {
+    console.warn(`[writeManagedBlock] Failed to write ${safePath}:`, err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Remove old shared-config block from a file (migration from old format).
+ */
+async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
+  try {
+    const existing = await fs.readFile(filePath, 'utf-8');
+    const pattern = new RegExp(`${escapeRegex(WEBUI_MANAGED_BLOCK_START)}[\\s\\S]*?${escapeRegex(WEBUI_MANAGED_BLOCK_END)}`, 'm');
+    if (pattern.test(existing)) {
+      const cleaned = existing.replace(pattern, '').replace(/\n{3,}/g, '\n\n').trim();
+      await fs.writeFile(filePath, cleaned + '\n', 'utf-8');
+    }
+  } catch {
+    // File doesn't exist or can't be read — nothing to clean
+  }
+}
+
+/**
+ * Write skills/agents/plugins to the global ~/.claude/CLAUDE.md.
+ * Claude CLI loads this automatically for all sessions.
+ */
+async function ensureGlobalInstructions(configHome: string): Promise<void> {
   const [agents, skills, plugins] = await Promise.all([
     readSharedAgents(configHome),
     readSharedSkills(configHome),
     readSharedPlugins(configHome),
   ]);
   const content = formatSharedInstructionFile(agents, skills, plugins);
-  const files = ['AGENTS.md', 'CLAUDE.md'];
 
-  for (const filename of files) {
-    const filePath = path.join(workingDir, filename);
-    try {
-      const existing = await fs.readFile(filePath, 'utf-8');
-      const replaced = replaceManagedBlock(existing, content);
-      if (replaced) {
-        if (replaced.trim() === existing.trim()) {
-          continue;
-        }
-        await fs.writeFile(filePath, replaced, 'utf-8');
-        continue;
-      }
+  const globalClaudeMd = path.join(os.homedir(), '.claude', 'CLAUDE.md');
 
-      if (existing.includes(WEBUI_MANAGED_MARKER)) {
-        await fs.writeFile(filePath, content, 'utf-8');
-        continue;
-      }
+  // Ensure directory exists
+  const globalDir = path.dirname(globalClaudeMd);
+  try {
+    await fs.mkdir(globalDir, { recursive: true });
+  } catch {
+    // Already exists
+  }
 
-      const appended = `${existing.trimEnd()}\n\n${content}\n`;
-      await fs.writeFile(filePath, appended, 'utf-8');
-      continue;
-    } catch {
-      // File doesn't exist or can't be read; we'll attempt to write below.
-    }
+  await writeManagedBlock(
+    globalClaudeMd,
+    content,
+    WEBUI_MANAGED_BLOCK_START,
+    WEBUI_MANAGED_BLOCK_END,
+    WEBUI_MANAGED_MARKER,
+  );
+}
 
-    try {
-      await fs.writeFile(filePath, content, 'utf-8');
-    } catch {
-      // Ignore failures in project dirs without write permission
+/**
+ * Build a short skills summary line (names only, no instructions).
+ * Used for non-Claude providers that don't read ~/.claude/CLAUDE.md.
+ */
+function formatSkillsSummary(skills: SharedSkill[], agents: SharedAgent[]): string {
+  const parts: string[] = [];
+  if (skills.length > 0) {
+    parts.push(`Available Skills: ${skills.map((s) => s.name).join(', ')}`);
+  }
+  if (agents.length > 0) {
+    parts.push(`Available Agents: ${agents.map((a) => a.name).join(', ')}`);
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Write lightweight project context to the project's CLAUDE.md.
+ * For Claude provider: just project info (skills are in global CLAUDE.md).
+ * For other providers: project info + skills summary (names only).
+ */
+async function ensureProjectInstructions(
+  workingDir: string,
+  configHome: string,
+  cliProvider: string,
+): Promise<void> {
+  // Scan project for auto-detected context
+  let projectContext: string;
+  try {
+    const info = await scanProject(workingDir);
+    projectContext = formatProjectContext(info);
+  } catch {
+    projectContext = `# Project: ${path.basename(workingDir)}`;
+  }
+
+  const lines: string[] = [PROJECT_CONTEXT_BLOCK_START];
+  lines.push(projectContext);
+
+  // For non-Claude providers, include skills/agents names as a reference
+  if (cliProvider !== 'claude') {
+    const [agents, skills] = await Promise.all([
+      readSharedAgents(configHome),
+      readSharedSkills(configHome),
+    ]);
+    const summary = formatSkillsSummary(skills, agents);
+    if (summary) {
+      lines.push('');
+      lines.push(summary);
     }
   }
+
+  lines.push(PROJECT_CONTEXT_BLOCK_END);
+  const content = lines.join('\n');
+
+  const claudeMdPath = path.join(workingDir, 'CLAUDE.md');
+
+  // First: remove old shared-config block if it exists (migration)
+  await removeOldSharedConfigBlock(claudeMdPath);
+
+  // Then: write/update the new project-context block
+  await writeManagedBlock(
+    claudeMdPath,
+    content,
+    PROJECT_CONTEXT_BLOCK_START,
+    PROJECT_CONTEXT_BLOCK_END,
+  );
+
+  // Also clean up old AGENTS.md managed block (no longer generated)
+  const agentsMdPath = path.join(workingDir, 'AGENTS.md');
+  await removeOldSharedConfigBlock(agentsMdPath);
 }
 
 interface FileAttachmentData {
   data: string; // base64
   mimeType: string;
   filename?: string;
+}
+
+function buildIntegrationEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  const comfyuiUrl = getAppConfig('comfyui_url');
+  if (comfyuiUrl) {
+    env.COMFYUI_URL = comfyuiUrl;
+  }
+  const loraTesterUrl = getAppConfig('lora_tester_url');
+  if (loraTesterUrl) {
+    env.LORA_TESTER_URL = loraTesterUrl;
+  }
+  return env;
 }
 
 
@@ -679,6 +892,28 @@ interface StreamJsonMessage {
   permission_denials?: PermissionDenial[];
 }
 
+// Build a no-op ChildProcess stub for server-backed sessions (opencode HTTP/SSE).
+// The manager expects every ClaudeProcess to carry a ChildProcess, but when the
+// CLI is driven over HTTP there is no local child to own. stdin is null so the
+// existing `proc.process.stdin?.write/end` chains become no-ops; kill() is a
+// noop whose real equivalent runs via opencodeServer.abort()/shutdown().
+function createVirtualChildProcess(): ChildProcess {
+  const em = new EventEmitter() as unknown as ChildProcess;
+  Object.assign(em, {
+    stdin: null,
+    stdout: null,
+    stderr: null,
+    pid: undefined,
+    killed: false,
+    exitCode: null,
+    kill: () => true,
+    ref: () => em,
+    unref: () => em,
+    disconnect: () => undefined,
+  });
+  return em;
+}
+
 interface ClaudeProcess {
   process: ChildProcess;
   sessionId: string;
@@ -727,17 +962,27 @@ interface ClaudeProcess {
   sharedContextInjected: boolean;
   modePromptInjected: SessionMode | null;
   lastContextLimitAt?: number;
-  kimiIdleTimer?: ReturnType<typeof setTimeout>; // Timer to detect Kimi idle after tool results
+  codexIdle?: boolean; // True when codex process exited after turn.completed, awaiting respawn
+  // Server-backed providers (opencode in HTTP/SSE mode) have no child process.
+  // `process` is a no-op stub; all lifecycle goes through HTTP + SSE subscription.
+  serverBacked?: boolean;
+  // Accumulates content per opencode part.id so we can emit streaming deltas
+  // and a final isComplete=true when the session goes idle.
+  partStreams?: Map<string, { type: 'text' | 'reasoning'; text: string; cleaned?: string; thoughtState?: ThoughtStripState }>;
+  // Track tool callIDs we've already emitted 'started' for, so we don't
+  // re-emit on every status transition (pending → running → completed).
+  emittedTools?: Set<string>;
+  lastSavedAssistantContent?: string;
+  lastSavedAssistantAt?: number;
 }
 
 export class ClaudeProcessManager {
   private processes: Map<string, ClaudeProcess> = new Map();
-  private geminiAdapters: Map<string, GeminiApiAdapter> = new Map();
   private pendingModes: Map<string, SessionMode> = new Map(); // Store modes for sessions not yet started
   private pendingContextReminders: Map<string, { summary: string; reason: 'mode-change' | 'provider-switch' | 'context-limit' }> = new Map();
   private io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
-  /** Public event emitter for external consumers (e.g. RalphService) */
+  /** Public event emitter for external consumers */
   public events = new EventEmitter();
 
   constructor(
@@ -762,11 +1007,6 @@ export class ClaudeProcessManager {
         return ['--permission-mode', 'default'];
       case 'danger':
         return ['--dangerously-skip-permissions'];
-      case 'orchestration':
-        return [
-          '--dangerously-skip-permissions',
-          '--append-system-prompt', this.getOrchestrationPrompt()
-        ];
       default:
         return ['--permission-mode', 'acceptEdits'];
     }
@@ -846,62 +1086,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 `;
   }
 
-  // Get orchestration mode system prompt
-  private getOrchestrationPrompt(): string {
-    return `
-## ORCHESTRATION MODE ACTIVE
-
-You are operating in Orchestration Mode. Your PRIMARY role is to coordinate and delegate work to specialized subagents rather than doing everything yourself.
-
-### Core Principles:
-1. **Delegate First**: Before implementing anything yourself, consider which specialized agent is best suited for the task
-2. **Use the Task Tool**: Invoke subagents using the Task tool with appropriate subagent_type
-3. **Coordinate Results**: Synthesize outputs from multiple agents when needed
-4. **Maintain Overview**: Keep track of the overall goal while delegating subtasks
-
-### Available Subagent Types and When to Use:
-- **Explore** - Codebase exploration, finding files, understanding structure
-- **Plan** - Creating implementation plans, breaking down complex tasks
-- **research-bot** - Researching solutions, best practices, documentation
-- **frontend-developer** - React, CSS, UI components, client-side work
-- **backend-dev** - APIs, database operations, server-side logic
-- **fullstack-dev** - Cross-cutting features spanning frontend and backend
-- **api-designer** - API design, OpenAPI specs, endpoint planning
-- **ui-designer** - UI/UX design decisions, component layouts
-- **devops-engineer** - CI/CD, Docker, Kubernetes, infrastructure
-- **database-specialist** - SQL, schema design, migrations, query optimization
-- **git-operations** - Complex git workflows, merge conflicts, rebasing
-- **debugging-expert** - Error diagnosis, profiling, root cause analysis
-- **system-architect** - System design, architecture decisions, technical specs
-
-### Delegation Guidelines:
-- **Small, focused tasks**: Delegate to a single specialist
-- **Complex features**: Break down and delegate to multiple agents in sequence
-- **Cross-cutting concerns**: Use fullstack-dev or coordinate multiple specialists
-- **Always provide clear context** and objectives to subagents
-
-### When NOT to Delegate:
-- Simple questions or explanations that don't require code changes
-- Quick file reads or searches (use Read/Grep directly)
-- Trivial edits (< 5 lines of obvious changes)
-- Direct clarifying questions to the user
-
-### Example Delegation:
-For "Add authentication to the API":
-1. Use Plan agent to create implementation plan
-2. Use database-specialist for schema/migrations
-3. Use backend-dev for API endpoints
-4. Use frontend-developer for login UI
-5. Synthesize and verify the complete solution
-`;
-  }
-
   private getModePrompt(mode: SessionMode): string | null {
     if (mode === 'planning') {
       return this.getPlanningPrompt();
-    }
-    if (mode === 'orchestration') {
-      return this.getOrchestrationPrompt();
     }
     return null;
   }
@@ -948,18 +1135,36 @@ For "Add authentication to the API":
 
   // Get buffered messages since a timestamp for reconnection
   getSessionBuffer(sessionId: string, sinceTimestamp?: number): BufferedMessage[] {
+    return this.getSessionBufferStatus(sessionId, sinceTimestamp).items;
+  }
+
+  /**
+   * Returns buffered items plus a rollover flag. needsFullResync=true means the buffer
+   * evicted data older than sinceTimestamp — client cannot reconstruct state from the buffer alone.
+   */
+  getSessionBufferStatus(
+    sessionId: string,
+    sinceTimestamp?: number,
+  ): { items: BufferedMessage[]; needsFullResync: boolean } {
     const proc = this.processes.get(sessionId);
-    if (!proc) return [];
+    if (!proc) return { items: [], needsFullResync: false };
 
     if (sinceTimestamp) {
-      return proc.outputBuffer.getSince((msg) => msg.timestamp >= sinceTimestamp);
+      return proc.outputBuffer.getSinceWithStatus((msg) => msg.timestamp >= sinceTimestamp);
     }
-    return proc.outputBuffer.getAll();
+    return { items: proc.outputBuffer.getAll(), needsFullResync: false };
   }
 
   // Check if a session is running (for reconnection)
   isSessionRunning(sessionId: string): boolean {
     return this.processes.has(sessionId);
+  }
+
+  // Empty the replay buffer so a rewound session doesn't replay messages that were
+  // just deleted from the DB. Safe to call whether the session is running or not.
+  clearSessionBuffer(sessionId: string): void {
+    const proc = this.processes.get(sessionId);
+    proc?.outputBuffer.clear();
   }
 
   // Mark session as disconnected (client disconnected but process keeps running)
@@ -995,15 +1200,6 @@ For "Add authentication to the API":
     const proc = this.processes.get(sessionId);
     if (!proc) return;
 
-    // For Gemini API adapter, abort any in-flight request and kill the fake process
-    const adapter = this.geminiAdapters.get(sessionId);
-    if (adapter) {
-      adapter.interrupt();
-      proc.process.kill();
-      this.cleanupProcess(sessionId);
-      return;
-    }
-
     proc.process.stdin?.end();
     setTimeout(() => {
       if (this.processes.has(sessionId)) {
@@ -1027,7 +1223,7 @@ For "Add authentication to the API":
     if (this.processes.has(sessionId)) {
       return;
     }
-    getWatchdog()?.initSession(sessionId);
+
 
     // Use provided mode, or pending mode, or default to 'auto-accept'
     const effectiveMode = mode ?? this.pendingModes.get(sessionId) ?? 'auto-accept';
@@ -1049,9 +1245,96 @@ For "Add authentication to the API":
     const isResuming = !!session.claude_session_id;
     let args: string[] = [];
 
-    await ensureSharedInstructionFiles(session.working_directory, configHome);
+    // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project context
+    await ensureGlobalInstructions(configHome);
+    await ensureProjectInstructions(session.working_directory, configHome, cliProvider);
 
-    if (cliProvider === 'claude' || cliProvider === 'glm') {
+    if (cliProvider === 'opencode') {
+      // Server-backed path: opencode HTTP/SSE via the singleton `opencode serve`.
+      // Unlike claude/codex, there is no per-session child process to own; events
+      // arrive over the shared SSE subscription and are demultiplexed by sessionID.
+      await opencodeServer.ensureStarted();
+
+      let remoteId = isResuming && session.claude_session_id ? session.claude_session_id : null;
+      if (remoteId && !(await opencodeServer.sessionExists(remoteId))) {
+        console.log(`[OPENCODE-SERVER] Prior session ${remoteId} not found on server; recreating`);
+        remoteId = null;
+      }
+      if (!remoteId) {
+        remoteId = await opencodeServer.createSession(session.working_directory);
+        db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(remoteId, sessionId);
+      }
+
+      console.log(`[SESSION] ========== Starting Session (opencode server) ==========`);
+      console.log(`[SESSION] Session ID: ${sessionId}`);
+      console.log(`[SESSION] OpenCode sessionID: ${remoteId}`);
+      console.log(`[SESSION] Working directory: ${session.working_directory}`);
+      console.log(`[SESSION] Mode: ${effectiveMode}`);
+      console.log(`[SESSION] Model: ${selectedModel ?? '(default)'}`);
+      console.log(`[SESSION] Resuming: ${isResuming}`);
+      console.log(`[SESSION] ==============================================`);
+
+      const virtualProc = createVirtualChildProcess();
+      const claudeProcess: ClaudeProcess = {
+        process: virtualProc,
+        sessionId,
+        cliProvider,
+        userId,
+        workingDirectory: session.working_directory,
+        claudeSessionId: remoteId,
+        buffer: '',
+        streamingText: '',
+        isStreaming: false,
+        mode: effectiveMode,
+        currentToolName: null,
+        currentToolId: null,
+        currentToolInput: '',
+        pendingToolResults: new Map(),
+        currentAgentType: null,
+        model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
+        contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
+        turnInputTokens: 0,
+        turnCacheReadTokens: 0,
+        turnCacheCreationTokens: 0,
+        turnOutputTokens: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        previousTotalCostUsd: 0,
+        needsWorkingDirReminder: isResuming,
+        contextReminder: this.pendingContextReminders.get(sessionId) || null,
+        outputBuffer: new CircularBuffer<BufferedMessage>(BUFFER_SIZE),
+        lastActivityAt: Date.now(),
+        disconnectedAt: null,
+        lastUserMessage: null,
+        lastAttachments: null,
+        pendingPermissionDenials: null,
+        sharedContextInjected: false,
+        modePromptInjected: null,
+        lastContextLimitAt: undefined,
+        serverBacked: true,
+        partStreams: new Map(),
+        emittedTools: new Set(),
+      };
+
+      this.pendingContextReminders.delete(sessionId);
+      this.processes.set(sessionId, claudeProcess);
+
+      opencodeServer.subscribe(remoteId, (evt) => {
+        this.translateOpencodeServerEvent(sessionId, evt);
+      });
+
+      db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        'running',
+        sessionId
+      );
+      this.emitStatus(sessionId, { sessionId, status: 'running' });
+      return;
+    }
+
+    if (cliProvider === 'claude') {
       // Build command args for stream-json mode (hooks-based permissions)
       // IMPORTANT: Always use --dangerously-skip-permissions so our hook is the ONLY permission layer
       // Without this, Claude's internal permission system would still prompt after our hook approves
@@ -1069,6 +1352,10 @@ For "Add authentication to the API":
         args.push('--model', selectedModel);
       }
 
+      if (selectedReasoning) {
+        args.push('--effort', selectedReasoning);
+      }
+
       for (const dir of allowedDirs) {
         args.push('--add-dir', dir);
       }
@@ -1081,6 +1368,19 @@ For "Add authentication to the API":
         args.push('--settings', hookSettings);
       }
 
+      // The CLI does NOT auto-load mcpServers from ~/.claude/settings.json —
+      // only claude.ai-managed MCPs and project-local .mcp.json get picked
+      // up by default. Point it at our config so stdio servers (comfyui,
+      // android-builder, …) actually register on every spawn.
+      const mcpConfigPath = `${process.env.HOME || '/home/node'}/.claude/settings.json`;
+      try {
+        if (fsSync.existsSync(mcpConfigPath)) {
+          args.push('--mcp-config', mcpConfigPath);
+        }
+      } catch {
+        // best-effort — missing file just means no extra stdio MCPs
+      }
+
       if (isResuming && session.claude_session_id) {
         args.push('--resume', session.claude_session_id);
       }
@@ -1089,16 +1389,8 @@ For "Add authentication to the API":
         args.push('--append-system-prompt', this.getPlanningPrompt());
       }
 
-      if (effectiveMode === 'orchestration') {
-        args.push('--append-system-prompt', this.getOrchestrationPrompt());
-      }
     } else {
-      // For Kimi: Always pass sessionId as --session so context persists across process restarts.
-      // Kimi doesn't emit a session_id in its output (unlike Claude), so we use the WebUI sessionId directly.
-      // This ensures Kimi can restore conversation history from its context file when the process is restarted.
-      const resumeId = cliProvider === 'kimi'
-        ? sessionId
-        : (isResuming ? session.claude_session_id ?? undefined : undefined);
+      const resumeId = isResuming ? session.claude_session_id ?? undefined : undefined;
 
       // Build command args using CLI provider abstraction
       args = getCLIArgs(cliProvider, {
@@ -1125,24 +1417,11 @@ For "Add authentication to the API":
     console.log(`[SESSION] ==============================================`); 
 
     const extraEnv: Record<string, string> = {};
-    if (cliProvider === 'claude' || cliProvider === 'glm') {
+    if (cliProvider === 'claude') {
       extraEnv.CLAUDE_CONFIG_HOME = configHome;
     }
     extraEnv.WEBUI_SESSION_MODE = effectiveMode;
     extraEnv.WEBUI_CONFIG_HOME = configHome;
-    if (cliProvider === 'glm') {
-      const claudeEnv = await readClaudeEnvFromConfigHome(configHome);
-      const zaiKey = await getZaiApiKeyForUser(userId);
-      const authToken = claudeEnv.ANTHROPIC_AUTH_TOKEN || zaiKey || '';
-      const baseUrl = claudeEnv.ANTHROPIC_BASE_URL || ZAI_BASE_URL_DEFAULT;
-
-      if (authToken) {
-        extraEnv.ANTHROPIC_AUTH_TOKEN = authToken;
-      }
-      if (baseUrl) {
-        extraEnv.ANTHROPIC_BASE_URL = baseUrl;
-      }
-    }
     if (cliProvider === 'codex') {
       const codexHome = providerConfig.credentialsPath.replace('~', os.homedir());
       extraEnv.CODEX_HOME = codexHome;
@@ -1158,37 +1437,25 @@ For "Add authentication to the API":
         // Ignore missing or unreadable auth.json; codex will handle auth errors.
       }
     }
-    // Gemini provider: use direct API adapter instead of CLI subprocess
-    // (Gemini CLI is an Ink/React TUI that hangs in Docker with 0 bytes output)
-    let proc: ChildProcess;
-
-    if (cliProvider === 'gemini') {
-      const adapter = new GeminiApiAdapter(sessionId, selectedModel || undefined, session.working_directory);
-      this.geminiAdapters.set(sessionId, adapter);
-      const fakeProc = adapter.getProcess();
-      proc = fakeProc as unknown as ChildProcess;
-
-      // Initialize async (loads credentials, emits init message)
-      adapter.init().catch((err) => {
-        console.error(`[GeminiApi] Init error [${sessionId}]:`, err);
-      });
-    } else {
-      // Use regular spawn for other CLI providers
-      proc = cpSpawn(providerConfig.command, args, {
-        cwd: session.working_directory,
-        env: {
-          ...process.env,
-          ...extraEnv,
-          // Pass session ID so Claude can use it for image generation and permissions
-          WEBUI_SESSION_ID: sessionId,
-          // Pass backend URL for permission-prompt script
-          WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
-          // Pass project path for loading project-specific settings
-          WEBUI_PROJECT_PATH: session.working_directory,
-        },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    }
+    Object.assign(extraEnv, buildIntegrationEnv());
+    // Use regular spawn for CLI providers
+    const proc: ChildProcess = cpSpawn(providerConfig.command, args, {
+      cwd: session.working_directory,
+      env: {
+        ...process.env,
+        ...extraEnv,
+        // Pass session ID so Claude can use it for image generation and permissions
+        WEBUI_SESSION_ID: sessionId,
+        // Pass backend URL for permission-prompt script
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        // Pass project path for loading project-specific settings
+        WEBUI_PROJECT_PATH: session.working_directory,
+        // Shared secret the permission-prompt script sends back in a header so
+        // the backend can distinguish real hook calls from forged requests.
+        WEBUI_HOOK_SECRET: config.hookSecret,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
     const claudeProcess: ClaudeProcess = {
       process: proc,
@@ -1211,7 +1478,7 @@ For "Add authentication to the API":
       currentAgentType: null,
       // Usage tracking defaults
       model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
-      contextWindow: 200000, // Default for Opus
+      contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
       // Per-turn usage (for context display)
       turnInputTokens: 0,
       turnCacheReadTokens: 0,
@@ -1268,7 +1535,25 @@ For "Add authentication to the API":
       console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
       const managedProc = this.processes.get(sessionId);
       if (managedProc) {
-        // For providers that don't send a result message (e.g. Kimi),
+        // Codex/OpenCode: single-shot `run`/`exec` processes that exit after each turn.
+        // On clean exit (code 0), keep the session entry alive for respawn instead of
+        // tearing down the whole session.
+        if (managedProc.cliProvider === 'codex' && exitCode === 0) {
+          console.log(`[CODEX] Process exited cleanly, marking idle for respawn [${sessionId}]`);
+          if (managedProc.streamingText?.trim().length) {
+            this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
+          }
+          managedProc.codexIdle = true;
+          managedProc.streamingText = '';
+          managedProc.isStreaming = false;
+          managedProc.buffer = '';
+          this.io.to(`session:${sessionId}`).emit('session:thinking', {
+            sessionId,
+            isThinking: false,
+          });
+          return; // Do NOT clean up — session stays alive for respawn
+        }
+        // For providers that don't send a result message,
         // save any remaining streaming text and stop thinking indicator
         if (managedProc.streamingText?.trim().length) {
           this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
@@ -1281,14 +1566,14 @@ For "Add authentication to the API":
         });
       }
       if (typeof exitCode === 'number' && exitCode !== 0) {
-        getWatchdog()?.recordError(sessionId);
+
       }
       this.cleanupProcess(sessionId);
     });
 
     proc.on('error', (err) => {
       console.error(`Claude process error [${sessionId}]:`, err);
-      getWatchdog()?.recordError(sessionId);
+
       this.cleanupProcess(sessionId);
     });
   }
@@ -1319,33 +1604,11 @@ For "Add authentication to the API":
           }
           continue;
         }
-        if (proc.cliProvider === 'kimi') {
-          const translated = this.translateKimiMessage(sessionId, raw);
-          if (Array.isArray(translated)) {
-            for (const msg of translated) {
-              this.processStreamMessage(sessionId, msg);
-            }
-          } else if (translated) {
-            this.processStreamMessage(sessionId, translated);
-          }
-          // Reset Kimi idle timer — if no more output comes within 5s, assume turn is done
-          if (proc.kimiIdleTimer) clearTimeout(proc.kimiIdleTimer);
-          proc.kimiIdleTimer = setTimeout(() => {
-            const currentProc = this.processes.get(sessionId);
-            if (currentProc) {
-              this.io.to(`session:${sessionId}`).emit('session:thinking', {
-                sessionId,
-                isThinking: false,
-              });
-            }
-          }, 5000);
-          continue;
-        }
         this.processStreamMessage(sessionId, raw as StreamJsonMessage);
       } catch (e) {
-        // Not valid JSON, emit as raw output for debugging (skip noisy codex prompts)
+        // Not valid JSON, emit as raw output for debugging (skip noisy codex/opencode prompts)
         console.log(`Non-JSON output [${sessionId}]:`, line);
-        if (proc.cliProvider !== 'codex') {
+        if (proc.cliProvider !== 'codex' && proc.cliProvider !== 'opencode') {
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
             content: line + '\n',
@@ -1394,7 +1657,14 @@ For "Add authentication to the API":
           };
         }
         return null;
-      case 'turn.completed':
+      case 'turn.completed': {
+        // Codex process teardown is now handled in the exit handler (exit code 0 → codexIdle).
+        // If turn.completed arrives before process exit, just mark idle proactively.
+        const codexProc = this.processes.get(sessionId);
+        if (codexProc && codexProc.cliProvider === 'codex' && !codexProc.codexIdle) {
+          console.log(`[CODEX] turn.completed received, marking idle [${sessionId}]`);
+          codexProc.codexIdle = true;
+        }
         if (data.usage) {
           return {
             type: 'result',
@@ -1407,6 +1677,7 @@ For "Add authentication to the API":
           };
         }
         return null;
+      }
       case 'error':
         if (data.message) {
           this.io.to(`session:${sessionId}`).emit('session:output', {
@@ -1415,7 +1686,7 @@ For "Add authentication to the API":
             isComplete: false,
           });
         }
-        getWatchdog()?.recordError(sessionId);
+
         return null;
       default:
         return null;
@@ -1437,133 +1708,353 @@ For "Add authentication to the API":
   }
 
   /**
-   * Translate Kimi CLI stream-json messages to the internal StreamJsonMessage format.
+   * Translate a single opencode SSE event into our Socket.IO event stream.
    *
-   * Kimi emits complete JSONL messages per turn:
-   * - Assistant: {"role":"assistant","content":[{"type":"think","think":"..."},{"type":"text","text":"..."}],"tool_calls":[...]}
-   * - Tool result: {"role":"tool","content":[{"type":"text","text":"..."}],"tool_call_id":"..."}
+   * The OpenCode server emits `message.part.updated` many times per turn — once
+   * per delta for streaming text/reasoning, once per state transition for tools
+   * (pending → running → completed|error), and for step-start/step-finish
+   * boundaries. `session.idle` marks the turn's end, at which point we finalize
+   * the streaming buffer and persist the assistant message.
    */
-  private translateKimiMessage(sessionId: string, raw: unknown): StreamJsonMessage | StreamJsonMessage[] | null {
-    if (!raw || typeof raw !== 'object') return null;
-    const data = raw as {
-      role?: string;
-      content?: Array<{ type?: string; text?: string; think?: string }>;
-      tool_calls?: Array<{ type?: string; id?: string; function?: { name?: string; arguments?: string } }>;
-      tool_call_id?: string;
-    };
+  private processOpencodeTextChunk(
+    sessionId: string,
+    proc: ClaudeProcess,
+    partId: string,
+    rawChunk: string,
+  ): void {
+    if (!rawChunk) return;
+    const streams = proc.partStreams ??= new Map();
+    const existing = streams.get(partId);
+    const entry = existing ?? { type: 'text' as const, text: '', thoughtState: { inside: false, pending: '' } };
+    entry.thoughtState ??= { inside: false, pending: '' };
 
-    // Handle assistant messages (thinking, text, tool calls)
-    if (data.role === 'assistant') {
-      const messages: StreamJsonMessage[] = [];
-      const content = Array.isArray(data.content) ? data.content : [];
-      const hasToolCalls = data.tool_calls && data.tool_calls.length > 0;
+    entry.text += rawChunk;
+    const { state: nextState, emit } = stripThoughtChunk(entry.thoughtState, rawChunk);
+    entry.thoughtState = nextState;
+    entry.cleaned = (entry.cleaned ?? '') + emit;
+    streams.set(partId, entry);
 
-      // Extract thinking content
-      const thinkBlock = content.find(c => c.type === 'think' && c.think);
-      if (thinkBlock?.think) {
-        const summary = this.formatCodexReasoning(thinkBlock.think);
-        this.io.to(`session:${sessionId}`).emit('session:thinking', {
-          sessionId,
-          isThinking: true,
-          message: summary || undefined,
-        });
+    this.io.to(`session:${sessionId}`).emit('session:thinking', {
+      sessionId,
+      isThinking: nextState.inside,
+    });
+
+    if (emit) {
+      if (process.env.OPENCODE_DEBUG_EVENTS === '1') {
+        console.log(`[OC-EMIT] session=${sessionId} partId=${partId} chunk=${JSON.stringify(emit).slice(0, 80)} totalCleaned=${entry.cleaned.length}`);
+      }
+      this.io.to(`session:${sessionId}`).emit('session:output', {
+        sessionId,
+        content: emit,
+        isComplete: false,
+      });
+    }
+  }
+
+  private translateOpencodeServerEvent(sessionId: string, event: OpencodeEvent): void {
+    const proc = this.processes.get(sessionId);
+    if (!proc) {
+      if (process.env.OPENCODE_DEBUG_EVENTS === '1') {
+        console.log(`[OC-TRANSLATE] no proc for sessionId=${sessionId} type=${event.type}`);
+      }
+      return;
+    }
+
+    const type = event.type;
+    const props = (event.properties ?? {}) as Record<string, unknown>;
+
+    switch (type) {
+      case 'session.status': {
+        const status = props.status as { type?: string } | undefined;
+        if (status?.type === 'busy') {
+          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: true });
+        } else if (status?.type === 'idle') {
+          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+        }
+        return;
       }
 
-      // Extract text content
-      const textBlocks = content.filter(c => c.type === 'text' && c.text);
-      const textContent = textBlocks.map(c => c.text).join('');
+      case 'session.idle': {
+        // Turn complete: flush accumulated text parts as final, persist assistant
+        // message, and drop any partial streams so the next turn starts clean.
+        const streams = proc.partStreams;
+        if (streams && streams.size > 0) {
+          const finalText: string[] = [];
+          for (const entry of streams.values()) {
+            if (entry.type !== 'text') continue;
+            const out = (entry.cleaned ?? entry.text).trim();
+            if (out) finalText.push(out);
+          }
+          if (finalText.length > 0) {
+            const joined = finalText.join('\n');
+            this.io.to(`session:${sessionId}`).emit('session:output', {
+              sessionId,
+              content: '',
+              isComplete: true,
+            });
+            this.saveAssistantMessage(sessionId, joined);
+          }
+          streams.clear();
+        }
+        proc.streamingText = '';
+        proc.isStreaming = false;
+        proc.emittedTools?.clear();
+        this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+        return;
+      }
 
-      if (textContent) {
-        if (hasToolCalls) {
-          // Message has both text and tool_calls — emit text directly to avoid
-          // processStreamMessage setting thinking:false before tools start
+      case 'session.error': {
+        const err = props.error as { data?: { message?: string }; message?: string } | undefined;
+        const message = err?.data?.message || err?.message || 'OpenCode session error';
+        this.io.to(`session:${sessionId}`).emit('session:output', {
+          sessionId,
+          content: `${message}\n`,
+          isComplete: true,
+        });
+        this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+        return;
+      }
+
+      case 'message.part.updated': {
+        const part = props.part as Record<string, unknown> | undefined;
+        const delta = typeof props.delta === 'string' ? (props.delta as string) : undefined;
+        if (!part) return;
+        const partType = part.type as string;
+        const partId = part.id as string;
+
+        if (partType === 'text') {
+          let rawChunk = delta ?? '';
+          if (!rawChunk) {
+            const fullText = (part.text as string) ?? '';
+            const existing = proc.partStreams?.get(partId);
+            if (fullText.length > (existing?.text?.length ?? 0)) {
+              rawChunk = fullText.slice(existing?.text?.length ?? 0);
+            }
+          }
+          this.processOpencodeTextChunk(sessionId, proc, partId, rawChunk);
+          return;
+        }
+
+        if (partType === 'reasoning') {
+          const fullText = (part.text as string) ?? '';
+          if (!fullText.trim()) return;
+          const summary = this.formatCodexReasoning(fullText);
           this.io.to(`session:${sessionId}`).emit('session:thinking', {
             sessionId,
-            isThinking: false,
+            isThinking: true,
+            message: summary || undefined,
           });
-          this.saveAssistantMessage(sessionId, textContent.trim());
-        } else {
-          // Text-only message — use normal assistant path
-          messages.push({
-            type: 'assistant',
-            message: {
-              role: 'assistant',
-              content: textContent,
-            },
-          });
+          return;
         }
-      }
 
-      // Handle tool calls
-      if (hasToolCalls) {
-        for (const tc of data.tool_calls!) {
-          if (tc.function?.name) {
-            const toolId = tc.id || `kimi-tool-${Date.now()}`;
-            let parsedInput: unknown = undefined;
-            try {
-              parsedInput = tc.function.arguments ? JSON.parse(tc.function.arguments) : undefined;
-            } catch {
-              parsedInput = tc.function.arguments;
+        if (partType === 'tool') {
+          const callId = (part.callID as string) || partId;
+          const toolName = part.tool as string;
+          const state = part.state as { status?: string; input?: unknown; output?: string; error?: string } | undefined;
+          if (!toolName || !state) return;
+          const emittedTools = proc.emittedTools ??= new Set();
+
+          if (state.status === 'pending' || state.status === 'running') {
+            if (!emittedTools.has(callId)) {
+              emittedTools.add(callId);
+              this.emitToolUse(sessionId, {
+                sessionId,
+                toolName,
+                status: 'started',
+                toolId: callId,
+                input: state.input,
+              });
             }
-            // Track tool name by ID so we can use it in tool results
-            const proc = this.processes.get(sessionId);
-            if (proc) {
-              proc.pendingToolResults = proc.pendingToolResults || new Map();
-              proc.pendingToolResults.set(toolId, { toolName: tc.function.name, input: parsedInput });
-            }
-            messages.push({
-              type: 'tool_use',
-              tool_use: {
-                id: toolId,
-                name: tc.function.name,
-                input: parsedInput,
-              },
-            } as StreamJsonMessage);
+            return;
           }
+
+          if (state.status === 'completed') {
+            const output = typeof state.output === 'string' ? state.output : JSON.stringify(state.output ?? '');
+            this.emitToolUse(sessionId, {
+              sessionId,
+              toolName,
+              status: 'completed',
+              toolId: callId,
+              input: state.input,
+              result: output,
+            });
+            return;
+          }
+
+          if (state.status === 'error') {
+            this.emitToolUse(sessionId, {
+              sessionId,
+              toolName,
+              status: 'error',
+              toolId: callId,
+              input: state.input,
+              error: state.error || 'Tool error',
+            });
+            return;
+          }
+          return;
+        }
+
+        if (partType === 'step-start') {
+          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: true });
+          return;
+        }
+
+        if (partType === 'step-finish') {
+          const tokens = part.tokens as { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } | undefined;
+          const cost = typeof part.cost === 'number' ? (part.cost as number) : 0;
+          if (tokens) {
+            proc.turnInputTokens = tokens.input ?? 0;
+            proc.turnOutputTokens = tokens.output ?? 0;
+            proc.turnCacheReadTokens = tokens.cache?.read ?? 0;
+            proc.turnCacheCreationTokens = tokens.cache?.write ?? 0;
+            proc.totalInputTokens += tokens.input ?? 0;
+            proc.totalOutputTokens += tokens.output ?? 0;
+            proc.cacheReadTokens += tokens.cache?.read ?? 0;
+            proc.cacheCreationTokens += tokens.cache?.write ?? 0;
+          }
+          if (cost > 0) {
+            proc.previousTotalCostUsd = proc.totalCostUsd;
+            proc.totalCostUsd += cost;
+          }
+          this.emitUsage(sessionId, proc);
+          return;
+        }
+        return;
+      }
+
+      case 'message.part.delta': {
+        // Streaming text chunk. Shape: { sessionID, messageID, partID, field, delta }.
+        // Only text deltas need to reach the UI; other fields are metadata updates.
+        const field = typeof props.field === 'string' ? (props.field as string) : undefined;
+        if (field !== 'text') return;
+        const partId = typeof props.partID === 'string' ? (props.partID as string) : undefined;
+        const delta = typeof props.delta === 'string' ? (props.delta as string) : undefined;
+        if (!partId || !delta) return;
+        this.processOpencodeTextChunk(sessionId, proc, partId, delta);
+        return;
+      }
+
+      case 'permission.updated': {
+        // Forwarded for future UI wiring; no action required for now.
+        return;
+      }
+
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Respawn a codex process for the next turn.
+   * Codex CLI is single-shot (stdin EOF → response → exit), so we need a fresh
+   * process for each user message.  This reuses the existing ClaudeProcess entry
+   * (preserving usage counters, mode, etc.) and only replaces the child process.
+   */
+  private async respawnCodexProcess(sessionId: string, proc: ClaudeProcess): Promise<void> {
+    const providerConfig = CLI_PROVIDERS.codex;
+    const selectedModel = proc.model || providerConfig.defaultModel;
+    const selectedReasoning = await getCliReasoningForUser(proc.userId, 'codex');
+
+    const db = getDatabase();
+    const session = db
+      .prepare('SELECT working_directory, allowed_directories FROM sessions WHERE id = ?')
+      .get(sessionId) as { working_directory: string; allowed_directories: string | null } | undefined;
+
+    if (!session) throw new Error('Session not found for codex respawn');
+
+    const allowedDirs: string[] = session.allowed_directories
+      ? JSON.parse(session.allowed_directories)
+      : [];
+
+    const args = getCLIArgs('codex', {
+      mode: proc.mode,
+      allowedDirectories: allowedDirs,
+      workingDirectory: session.working_directory,
+      model: selectedModel || undefined,
+      reasoningLevel: selectedReasoning ?? undefined,
+    });
+
+    // Build env (same as startSession codex block)
+    const extraEnv: Record<string, string> = {};
+    const codexHome = providerConfig.credentialsPath.replace('~', os.homedir());
+    extraEnv.CODEX_HOME = codexHome;
+    try {
+      const authPath = path.join(codexHome, 'auth.json');
+      const auth = safeJsonParse<Record<string, unknown>>(await fs.readFile(authPath, 'utf-8'), {});
+      const hasTokens = typeof auth.tokens === 'object' && !!(auth.tokens as { access_token?: string }).access_token;
+      const hasApiKey = typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.length > 0;
+      if (hasTokens && !hasApiKey) {
+        args.push('--config', 'auth_mode="chatgpt"');
+      }
+    } catch {
+      // Ignore
+    }
+    Object.assign(extraEnv, buildIntegrationEnv());
+
+    const newChildProc = cpSpawn(providerConfig.command, args, {
+      cwd: session.working_directory,
+      env: {
+        ...process.env,
+        ...extraEnv,
+        WEBUI_SESSION_ID: sessionId,
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        WEBUI_PROJECT_PATH: session.working_directory,
+        WEBUI_HOOK_SECRET: config.hookSecret,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    // Replace process reference and reset state
+    proc.process = newChildProc;
+    proc.codexIdle = false;
+    proc.buffer = '';
+    proc.streamingText = '';
+    proc.isStreaming = false;
+
+    // Re-attach output handlers
+    newChildProc.stdout?.on('data', (data: Buffer) => {
+      this.handleJsonOutput(sessionId, data.toString());
+    });
+    newChildProc.stderr?.on('data', (data: Buffer) => {
+      console.error(`Claude stderr [${sessionId}]:`, data.toString());
+    });
+    newChildProc.on('exit', (exitCode) => {
+      console.log(`[CODEX] Respawned process for session ${sessionId} exited with code ${exitCode}`);
+      const managedProc = this.processes.get(sessionId);
+      if (managedProc) {
+        // Clean exit → mark idle for next respawn
+        if (exitCode === 0) {
+          console.log(`[CODEX] Respawned process exited cleanly, marking idle [${sessionId}]`);
+          if (managedProc.streamingText?.trim().length) {
+            this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
+          }
+          managedProc.codexIdle = true;
+          managedProc.streamingText = '';
+          managedProc.isStreaming = false;
+          managedProc.buffer = '';
+          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+          return;
+        }
+        if (managedProc.streamingText?.trim().length) {
+          this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
+          managedProc.streamingText = '';
+          managedProc.isStreaming = false;
         }
       }
+      this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+      if (typeof exitCode === 'number' && exitCode !== 0) {
 
-      return messages.length > 0 ? messages : null;
-    }
-
-    // Handle tool results
-    if (data.role === 'tool' && data.tool_call_id) {
-      // Kimi sends content as either a string or an array of {type, text} objects
-      let resultText = '';
-      if (typeof data.content === 'string') {
-        resultText = data.content;
-      } else if (Array.isArray(data.content)) {
-        resultText = data.content
-          .filter((c: Record<string, unknown>) => c.type === 'text' && c.text)
-          .map((c: Record<string, unknown>) => c.text as string)
-          .join('\n');
       }
+      this.cleanupProcess(sessionId);
+    });
+    newChildProc.on('error', (err) => {
+      console.error(`Claude process error [${sessionId}]:`, err);
 
-      // Look up the actual tool name from pending results
-      const proc = this.processes.get(sessionId);
-      const pending = proc?.pendingToolResults?.get(data.tool_call_id);
-      const toolName = pending?.toolName || 'Tool';
-      proc?.pendingToolResults?.delete(data.tool_call_id);
+      this.cleanupProcess(sessionId);
+    });
 
-      // Emit tool completion with the actual tool name
-      this.io.to(`session:${sessionId}`).emit('session:tool_use', {
-        sessionId,
-        toolId: data.tool_call_id,
-        toolName,
-        status: 'completed',
-        result: resultText,
-      });
-
-      // Set thinking state since Kimi will continue processing
-      this.io.to(`session:${sessionId}`).emit('session:thinking', {
-        sessionId,
-        isThinking: true,
-      });
-
-      return null;
-    }
-
-    return null;
+    console.log(`[CODEX] Respawned process [${sessionId}], args: ${args.join(' ')}`);
   }
 
   private emitUsage(sessionId: string, proc: ClaudeProcess): void {
@@ -1617,7 +2108,7 @@ For "Add authentication to the API":
     const turnTotalTokens = proc.turnInputTokens + proc.turnOutputTokens + proc.turnCacheReadTokens + proc.turnCacheCreationTokens;
 
     if (turnTotalTokens <= 0) return;
-    getWatchdog()?.recordTokenUsage(sessionId, turnTotalTokens);
+
 
     // Calculate cost from tokens (not from CLI cumulative value)
     const turnCostUsd = this.calculateTurnCost(proc);
@@ -1712,7 +2203,7 @@ For "Add authentication to the API":
         this.handleContextLimit(sessionId, proc, errorText);
         return;
       }
-      getWatchdog()?.recordError(sessionId);
+
     }
 
     // Debug: Log full message for stream_event
@@ -1734,6 +2225,7 @@ For "Add authentication to the API":
       const rawMsg = msg as { model?: string };
       if (rawMsg.model) {
         proc.model = rawMsg.model;
+        proc.contextWindow = contextWindowFor(rawMsg.model);
       }
     }
 
@@ -1752,6 +2244,7 @@ For "Add authentication to the API":
         if (event.message) {
           if (event.message.model) {
             proc.model = event.message.model;
+            proc.contextWindow = contextWindowFor(event.message.model);
           }
           if (event.message.usage) {
             // Set per-turn usage (this is the actual context used for this turn)
@@ -1795,7 +2288,7 @@ For "Add authentication to the API":
         // Check if this is a tool_use block or text block
         const contentBlock = (event as { content_block?: { type: string; name?: string; id?: string } }).content_block;
         if (contentBlock?.type === 'tool_use') {
-          getWatchdog()?.recordToolCall(sessionId);
+
           // Tool is being called - track it and show indicator
           proc.currentToolName = contentBlock.name || null;
           proc.currentToolId = contentBlock.id || nanoid();
@@ -1863,6 +2356,8 @@ For "Add authentication to the API":
         // Save any streaming text
         if (proc.streamingText.trim().length > 0) {
           this.saveAssistantMessage(sessionId, proc.streamingText.trim());
+          proc.streamingText = '';
+          proc.isStreaming = false;
         }
 
         // Process completed tool input and emit completion
@@ -2100,6 +2595,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       this.emitToolUse(sessionId, {
         sessionId,
         toolName: msg.tool_use.name,
+        toolId: msg.tool_use.id,
         status: 'started',
       });
     }
@@ -2167,7 +2663,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
     // Handle result/completion
     if (msg.type === 'result' || (msg.type === 'system' && msg.subtype === 'turn_end')) {
-      getWatchdog()?.clearErrors(sessionId);
+
       // Save any remaining streaming content
       if (proc.streamingText.trim().length > 0) {
         this.saveAssistantMessage(sessionId, proc.streamingText.trim());
@@ -2179,7 +2675,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
         sessionId,
         isThinking: false,
       });
-      // Emit turnComplete for external consumers (RalphService)
+      // Emit turnComplete for external consumers
       this.events.emit('turnComplete', sessionId, {
         inputTokens: proc.turnInputTokens,
         outputTokens: proc.turnOutputTokens,
@@ -2189,6 +2685,18 @@ The planning phase is complete. You are now in Auto-Accept mode.
   }
 
   private saveAssistantMessage(sessionId: string, content: string): void {
+    const proc = this.processes.get(sessionId);
+    const now = Date.now();
+    if (
+      proc &&
+      proc.lastSavedAssistantContent === content &&
+      proc.lastSavedAssistantAt !== undefined &&
+      now - proc.lastSavedAssistantAt < 2000
+    ) {
+      console.log(`[SAVE] Skipping duplicate assistant message [${sessionId}]`);
+      return;
+    }
+
     const db = getDatabase();
     const messageId = nanoid();
     const createdAt = new Date().toISOString();
@@ -2204,7 +2712,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
       sessionId
     );
 
-    // Emit for external consumers (RalphService)
+    if (proc) {
+      proc.lastSavedAssistantContent = content;
+      proc.lastSavedAssistantAt = now;
+    }
+
+    // Emit for external consumers
     this.events.emit('assistantMessage', sessionId, content);
 
     this.io.to(`session:${sessionId}`).emit('session:message', {
@@ -2330,7 +2843,7 @@ ${proc.contextReminder.summary}
       proc.sharedContextInjected = true;
     }
 
-    if ((proc.cliProvider === 'codex' || proc.cliProvider === 'gemini') && proc.modePromptInjected !== proc.mode) {
+    if ((proc.cliProvider === 'codex' || proc.cliProvider === 'opencode') && proc.modePromptInjected !== proc.mode) {
       const modePrompt = this.getModePrompt(proc.mode);
       if (modePrompt) {
         messageForClaude = `${modePrompt}\n\n${messageForClaude}`;
@@ -2412,6 +2925,13 @@ ${proc.contextReminder.summary}
         'user',
         message // Store only the user's original message
       );
+      // Keep the session list preview in sync with the newest activity — previously
+      // only assistant replies touched last_message, so user-only sessions showed
+      // a stale preview until Claude responded.
+      const preview = message.length > 200 ? message.slice(0, 200) : message;
+      db.prepare(
+        'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).run(preview, sessionId);
 
       // Emit user message to frontend so it appears in chat
       this.io.to(`session:${sessionId}`).emit('session:message', {
@@ -2424,7 +2944,6 @@ ${proc.contextReminder.summary}
         attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
       });
 
-      // Emit for external consumers (WatchdogService goal detection)
       this.events.emit('userMessage', sessionId, message);
     }
 
@@ -2434,7 +2953,6 @@ ${proc.contextReminder.summary}
       proc.lastAttachments = attachments || null;
     }
     proc.pendingPermissionDenials = null; // Clear any previous denials
-    if (proc.kimiIdleTimer) clearTimeout(proc.kimiIdleTimer); // Clear Kimi idle timer on new message
 
     // Emit thinking indicator
     this.io.to(`session:${sessionId}`).emit('session:thinking', {
@@ -2442,15 +2960,33 @@ ${proc.contextReminder.summary}
       isThinking: true,
     });
 
-    // Send message using provider-specific format
-    const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
-    if (proc.cliProvider === 'codex') {
-      // codex exec reads stdin until EOF before responding
-      proc.process.stdin?.end(formattedMessage);
-    } else {
-      proc.process.stdin?.write(formattedMessage);
+    // Codex respawn: codex CLI is single-shot (stdin EOF → response → exit), so we
+    // need a fresh process for each user message. OpenCode is now server-backed
+    // (HTTP/SSE), so it doesn't need respawn — the session lives in the singleton.
+    if (proc.cliProvider === 'codex' && proc.codexIdle) {
+      console.log(`[CODEX] Respawning process for next message [${sessionId}]`);
+      await this.respawnCodexProcess(sessionId, proc);
     }
-    console.log(`Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`);
+
+    // Dispatch: server-backed opencode uses HTTP/SSE; claude/codex use stdin.
+    if (proc.cliProvider === 'opencode' && proc.serverBacked && proc.claudeSessionId) {
+      await opencodeServer.sendPrompt(proc.claudeSessionId, {
+        text: messageForClaude,
+        model: proc.model,
+        mode: proc.mode,
+        directory: proc.workingDirectory,
+      });
+      console.log(`Sent message [${sessionId}] via opencode HTTP: ${messageForClaude.substring(0, 100)}...`);
+    } else {
+      const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
+      if (proc.cliProvider === 'codex') {
+        // codex: single-shot process reads stdin until EOF before responding.
+        proc.process.stdin?.end(formattedMessage);
+      } else {
+        proc.process.stdin?.write(formattedMessage);
+      }
+      console.log(`Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`);
+    }
   }
 
   interrupt(sessionId: string, userId: string): void {
@@ -2479,13 +3015,14 @@ ${proc.contextReminder.summary}
       isThinking: false,
     });
 
-    // Send interrupt signal (or abort fetch for Gemini API adapter)
-    const adapter = this.geminiAdapters.get(sessionId);
-    if (adapter) {
-      adapter.interrupt();
-    } else {
-      proc.process.kill('SIGINT');
+    // Server-backed opencode: abort the in-flight prompt via HTTP.
+    if (proc.serverBacked && proc.cliProvider === 'opencode' && proc.claudeSessionId) {
+      void opencodeServer.abort(proc.claudeSessionId);
+      return;
     }
+
+    // Send interrupt signal
+    proc.process.kill('SIGINT');
   }
 
   async sendRawInput(sessionId: string, userId: string, input: string): Promise<void> {
@@ -2600,10 +3137,6 @@ ${proc.contextReminder.summary}
     return `${formatted.slice(0, maxChars)}...`;
   }
 
-  private buildContextReminder(sessionId: string): string | null {
-    return this.buildContextSummary(sessionId, CONTEXT_REMINDER_MAX_MESSAGES, CONTEXT_REMINDER_MAX_CHARS);
-  }
-
   private buildHandoffSummary(sessionId: string): string | null {
     return this.buildContextSummary(sessionId, HANDOFF_CONTEXT_MAX_MESSAGES, HANDOFF_CONTEXT_MAX_CHARS);
   }
@@ -2633,29 +3166,12 @@ ${proc.contextReminder.summary}
     // Store the new mode
     const previousMode = proc.mode;
     proc.mode = mode;
-    const shouldDropResume = proc.cliProvider === 'glm' && !!proc.claudeSessionId;
-
     // For mode changes on running sessions, we need to restart the process
     // Save any pending streaming content first
     if (proc.streamingText.trim().length > 0) {
       this.saveAssistantMessage(sessionId, proc.streamingText.trim());
       proc.streamingText = '';
       proc.isStreaming = false;
-    }
-
-    if (shouldDropResume) {
-      const reminder = this.buildContextReminder(sessionId);
-      if (reminder) {
-        this.pendingContextReminders.set(sessionId, { summary: reminder, reason: 'mode-change' });
-      }
-      try {
-        const db = getDatabase();
-        db.prepare('UPDATE sessions SET claude_session_id = NULL WHERE id = ?').run(sessionId);
-        proc.claudeSessionId = null;
-        console.log(`[MODE] Cleared claude_session_id for ${sessionId} to apply mode change for glm`);
-      } catch (err) {
-        console.error(`[MODE] Failed to clear claude_session_id for ${sessionId}:`, err);
-      }
     }
 
     // Kill the current process and restart with new mode
@@ -2682,11 +3198,14 @@ ${proc.contextReminder.summary}
     const proc = this.processes.get(sessionId);
     if (!proc) return;
 
-    // Clear Kimi idle timer
-    if (proc.kimiIdleTimer) clearTimeout(proc.kimiIdleTimer);
+    // Server-backed opencode: drop the SSE handler so events for this session
+    // stop routing anywhere. The opencode session itself stays alive on the
+    // server (it can be resumed on next startSession).
+    if (proc.serverBacked && proc.cliProvider === 'opencode' && proc.claudeSessionId) {
+      opencodeServer.unsubscribe(proc.claudeSessionId);
+    }
 
     this.processes.delete(sessionId);
-    this.geminiAdapters.delete(sessionId);
 
     const db = getDatabase();
     db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
@@ -2702,6 +3221,51 @@ ${proc.contextReminder.summary}
 
   getRunningSessionIds(): string[] {
     return Array.from(this.processes.keys());
+  }
+
+  /**
+   * Gracefully stop every running Claude process. Used on SIGTERM/SIGINT so
+   * container restarts don't orphan processes or leave sessions flagged as
+   * 'running' in the DB. Sends SIGTERM, waits briefly for stdin/stdout drain,
+   * then SIGKILLs anything still alive.
+   */
+  async shutdownAll(timeoutMs = 3000): Promise<void> {
+    const sessionIds = Array.from(this.processes.keys());
+    if (sessionIds.length === 0) return;
+
+    console.log(`[SHUTDOWN] Terminating ${sessionIds.length} Claude process(es)`);
+    const db = getDatabase();
+
+    for (const sessionId of sessionIds) {
+      const proc = this.processes.get(sessionId);
+      if (!proc) continue;
+      try {
+        proc.process.stdin?.end();
+        proc.process.kill('SIGTERM');
+      } catch (err) {
+        console.error(`[SHUTDOWN] SIGTERM failed for ${sessionId}:`, err);
+      }
+      try {
+        db.prepare(`UPDATE sessions SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+          .run(sessionId);
+      } catch {
+        // DB may already be closing — best effort.
+      }
+    }
+
+    // Give processes a moment to exit cleanly before force-killing.
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+
+    for (const sessionId of sessionIds) {
+      const proc = this.processes.get(sessionId);
+      if (!proc) continue;
+      try {
+        proc.process.kill('SIGKILL');
+      } catch {
+        // Process may already have exited.
+      }
+      this.processes.delete(sessionId);
+    }
   }
 
   // Handle permission approval - restart session with allowed tools and resend message
@@ -2779,6 +3343,10 @@ ${proc.contextReminder.summary}
         args.push('--model', requestedModel);
       }
 
+      if (requestedReasoning) {
+        args.push('--effort', requestedReasoning);
+      }
+
       for (const toolName of toolNames) {
         args.push('--allowedTools', toolName);
       }
@@ -2817,6 +3385,7 @@ ${proc.contextReminder.summary}
         WEBUI_PROJECT_PATH: workingDirectory,
         WEBUI_SESSION_MODE: mode,
         WEBUI_CONFIG_HOME: configHome,
+        WEBUI_HOOK_SECRET: config.hookSecret,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -2838,7 +3407,7 @@ ${proc.contextReminder.summary}
       pendingToolResults: new Map(),
       currentAgentType: null,
       model: proc.model || 'unknown',
-      contextWindow: proc.contextWindow || 200000,
+      contextWindow: proc.contextWindow || contextWindowFor(proc.model),
       turnInputTokens: 0,
       turnCacheReadTokens: 0,
       turnCacheCreationTokens: 0,
@@ -2876,14 +3445,14 @@ ${proc.contextReminder.summary}
     newProc.on('exit', (exitCode) => {
       console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
       if (typeof exitCode === 'number' && exitCode !== 0) {
-        getWatchdog()?.recordError(sessionId);
+
       }
       this.cleanupProcess(sessionId);
     });
 
     newProc.on('error', (err) => {
       console.error(`Claude process error [${sessionId}]:`, err);
-      getWatchdog()?.recordError(sessionId);
+
       this.cleanupProcess(sessionId);
     });
 

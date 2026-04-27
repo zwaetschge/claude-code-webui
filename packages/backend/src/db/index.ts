@@ -4,6 +4,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
+import { nanoid } from 'nanoid';
+import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, '..', '..', 'data', 'claude-webui.db');
@@ -172,14 +174,24 @@ function runMigrations(db: Database.Database): void {
 
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_mcp_servers_user_id ON mcp_servers(user_id);
     CREATE INDEX IF NOT EXISTS idx_cli_tools_user_id ON cli_tools(user_id);
     CREATE INDEX IF NOT EXISTS idx_usage_history_user_id ON usage_history(user_id);
     CREATE INDEX IF NOT EXISTS idx_usage_history_session_id ON usage_history(session_id);
     CREATE INDEX IF NOT EXISTS idx_usage_history_created_at ON usage_history(created_at);
+    -- Composite index so analytics range queries (WHERE user_id = ? AND created_at >= ...)
+    -- use a single index seek instead of a full scan of the user's rows.
+    CREATE INDEX IF NOT EXISTS idx_usage_history_user_created ON usage_history(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_history_session_created ON usage_history(session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_id ON session_checkpoints(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_agents_user_id ON custom_agents(user_id);
+    CREATE INDEX IF NOT EXISTS idx_custom_agents_updated_at ON custom_agents(updated_at);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
   `);
 
   // Initialize default basic auth credentials
@@ -206,9 +218,17 @@ function runMigrations(db: Database.Database): void {
     // Column already exists, ignore error
   }
 
-  // Migration: Add cli_provider column to sessions table (claude, codex, gemini)
+  // Migration: Add cli_provider column to sessions table
   try {
     db.exec(`ALTER TABLE sessions ADD COLUMN cli_provider TEXT DEFAULT 'claude'`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Add mode column to sessions table (permission mode: auto-accept, plan, etc.)
+  // Persists per-session so it survives browser/device switches instead of living in localStorage.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT 'auto-accept'`);
   } catch {
     // Column already exists, ignore error
   }
@@ -225,7 +245,59 @@ function runMigrations(db: Database.Database): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_session_categories_user_id ON session_categories(user_id);
+
+    -- The sessions.category column was added via ALTER TABLE, so we can't add a FOREIGN KEY
+    -- constraint. This trigger enforces ON DELETE SET NULL semantics at the DB level, so
+    -- direct SQL category deletes (bypassing the route handler) don't leave orphan references.
+    CREATE TRIGGER IF NOT EXISTS trg_session_categories_after_delete
+    AFTER DELETE ON session_categories
+    BEGIN
+      UPDATE sessions SET category = NULL WHERE category = OLD.id;
+    END;
   `);
+
+  // FTS5 virtual table for message full-text search. LIKE '%x%' does a full scan and can't
+  // use a btree index; FTS5 provides fast prefix + phrase search across millions of rows.
+  // Triggers keep the FTS index in sync with the messages table automatically.
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content,
+        content='messages',
+        content_rowid='rowid',
+        tokenize='unicode61 remove_diacritics 2'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS trg_messages_fts_insert
+      AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_messages_fts_delete
+      AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_messages_fts_update
+      AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (new.rowid, new.content);
+      END;
+    `);
+
+    // Backfill: populate FTS table from existing messages if it is empty. Only runs once.
+    const ftsCount = db.prepare('SELECT COUNT(*) as c FROM messages_fts').get() as { c: number };
+    if (ftsCount.c === 0) {
+      const msgCount = db.prepare('SELECT COUNT(*) as c FROM messages').get() as { c: number };
+      if (msgCount.c > 0) {
+        db.exec(`INSERT INTO messages_fts(rowid, content) SELECT rowid, content FROM messages`);
+        console.log(`[DB] Backfilled messages_fts with ${msgCount.c} rows.`);
+      }
+    }
+  } catch (err) {
+    // FTS5 may be disabled in some SQLite builds — fail soft, keep LIKE fallback.
+    console.warn('[DB] FTS5 setup failed (search will fall back to LIKE):', err);
+  }
 
   // Create notes table for prompt notepad
   db.exec(`
@@ -283,49 +355,13 @@ function runMigrations(db: Database.Database): void {
     // Column already exists
   }
 
-  // Create orchestration tables for Multi-CLI orchestration
+  // Migration: Backfill-encrypt OAuth tokens stored before F2. Runs once,
+  // gated on the presence of ENCRYPTION_KEY so a misconfigured deploy does
+  // not silently leave tokens plaintext.
+  backfillEncryptOauthTokens(db);
+
+  // Create trusted devices table (for Electron desktop app auth)
   db.exec(`
-    -- Orchestration sessions table
-    CREATE TABLE IF NOT EXISTS orchestration_sessions (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      config_json TEXT NOT NULL,
-      master_provider TEXT DEFAULT 'claude',
-      status TEXT DEFAULT 'idle',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_orchestration_sessions_session_id ON orchestration_sessions(session_id);
-
-    -- Orchestration workers table
-    CREATE TABLE IF NOT EXISTS orchestration_workers (
-      id TEXT PRIMARY KEY,
-      orchestration_id TEXT NOT NULL REFERENCES orchestration_sessions(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL,
-      status TEXT DEFAULT 'idle',
-      current_task_id TEXT,
-      last_activity_at DATETIME
-    );
-    CREATE INDEX IF NOT EXISTS idx_orchestration_workers_orchestration_id ON orchestration_workers(orchestration_id);
-
-    -- Orchestration tasks table
-    CREATE TABLE IF NOT EXISTS orchestration_tasks (
-      id TEXT PRIMARY KEY,
-      orchestration_id TEXT NOT NULL REFERENCES orchestration_sessions(id) ON DELETE CASCADE,
-      worker_id TEXT,
-      description TEXT NOT NULL,
-      status TEXT DEFAULT 'pending',
-      result TEXT,
-      error TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      delegated_at DATETIME,
-      completed_at DATETIME
-    );
-    CREATE INDEX IF NOT EXISTS idx_orchestration_tasks_orchestration_id ON orchestration_tasks(orchestration_id);
-    CREATE INDEX IF NOT EXISTS idx_orchestration_tasks_worker_id ON orchestration_tasks(worker_id);
-
-    -- Trusted devices table (for Electron desktop app auth)
     CREATE TABLE IF NOT EXISTS trusted_devices (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -338,6 +374,115 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_trusted_devices_user_id ON trusted_devices(user_id);
     CREATE INDEX IF NOT EXISTS idx_trusted_devices_fingerprint ON trusted_devices(fingerprint_hash);
   `);
+
+  // Migration: Add password_hash column to users table for multi-user basic auth
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: Move legacy single-credential basic_auth password into the matching user record
+  try {
+    const legacyUsername = db.prepare("SELECT value FROM app_config WHERE key = 'basic_auth_username'").get() as { value: string } | undefined;
+    const legacyHash = db.prepare("SELECT value FROM app_config WHERE key = 'basic_auth_password'").get() as { value: string } | undefined;
+    if (legacyUsername?.value && legacyHash?.value) {
+      db.prepare(
+        "UPDATE users SET password_hash = ? WHERE name = ? AND (password_hash IS NULL OR password_hash = '')"
+      ).run(legacyHash.value, legacyUsername.value);
+    }
+  } catch {
+    // ignore migration errors
+  }
+
+  // Migration: Role/status columns for RBAC (admin console).
+  // role:  'user' | 'admin'   — admin unlocks /api/admin/* and can access any session
+  // status: 'active' | 'suspended' — suspended blocks login and WS auth
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`);
+  } catch { /* exists */ }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
+  } catch { /* exists */ }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN last_login_at DATETIME`);
+  } catch { /* exists */ }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`);
+
+  // Audit log — records privileged admin actions and auth events. Append-only from app code.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      ip TEXT,
+      user_agent TEXT,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_user_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+  `);
+
+  // Bootstrap: promote SEED_ADMIN_EMAIL to admin role, or promote the first existing user
+  // if no admin exists yet. Runs on every start so a fresh deploy with an env change takes
+  // effect without manual SQL.
+  try {
+    const adminCount = db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin'`).get() as { c: number };
+    const seedAdmin = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
+
+    if (seedAdmin) {
+      const promoted = db
+        .prepare(`UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP
+                  WHERE LOWER(email) = ? AND role != 'admin'`)
+        .run(seedAdmin);
+      if (promoted.changes > 0) {
+        console.log(`[DB] Promoted ${seedAdmin} to admin (SEED_ADMIN_EMAIL).`);
+      }
+    } else if (adminCount.c === 0) {
+      // No admin yet and no seed email — promote the earliest-created user so the system
+      // always has a reachable admin.
+      const first = db.prepare(`SELECT id, email FROM users ORDER BY created_at ASC LIMIT 1`).get() as
+        | { id: string; email: string }
+        | undefined;
+      if (first) {
+        db.prepare(`UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(first.id);
+        console.log(`[DB] No admin found — promoted ${first.email} (earliest user) to admin.`);
+      }
+    }
+  } catch (err) {
+    console.error('[DB] Admin bootstrap failed:', err);
+  }
+
+  // Optional seed user via ENV (for local dev / first-boot bootstrap).
+  // Set SEED_USER_EMAIL, SEED_USER_NAME, SEED_USER_PASSWORD to create a user on startup.
+  // Never commit credentials to source. Password is read from env only.
+  const seedEmail = process.env.SEED_USER_EMAIL?.trim();
+  const seedPassword = process.env.SEED_USER_PASSWORD;
+  const seedName = process.env.SEED_USER_NAME?.trim() || seedEmail?.split('@')[0];
+  if (seedEmail && seedPassword && seedName) {
+    try {
+      const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(seedEmail) as { id: string } | undefined;
+      if (!existing) {
+        const userId = nanoid();
+        const passwordHash = bcrypt.hashSync(seedPassword, 10);
+        db.prepare(
+          `INSERT INTO users (id, email, name, avatar_url, provider, provider_id, password_hash)
+           VALUES (?, ?, ?, ?, 'cli', ?, ?)`
+        ).run(userId, seedEmail, seedName, null, `local-cli-${seedName}`, passwordHash);
+        db.prepare(
+          `INSERT INTO user_settings (user_id, theme, allowed_tools)
+           VALUES (?, 'dark', '["Bash","Read","Write","Edit","Glob","Grep"]')`
+        ).run(userId);
+        console.log(`[DB] Seeded user ${seedEmail} from SEED_USER_* env vars.`);
+      }
+    } catch (err) {
+      console.error('[DB] Failed to seed user from env:', err);
+    }
+  }
 }
 
 function initializeBasicAuth(db: Database.Database): void {
@@ -364,6 +509,65 @@ function initializeBasicAuth(db: Database.Database): void {
     console.log('║  ⚠️  Change these in Settings > Security after first login ║');
     console.log('╚════════════════════════════════════════════════════════════╝');
     console.log('');
+  }
+}
+
+function backfillEncryptOauthTokens(database: Database.Database): void {
+  if (!isEncryptionAvailable()) return;
+
+  const flagRow = database
+    .prepare("SELECT value FROM app_config WHERE key = 'oauth_tokens_encrypted_at_rest'")
+    .get() as { value: string } | undefined;
+  if (flagRow?.value === 'true') return;
+
+  const rows = database
+    .prepare(
+      "SELECT id, oauth_access_token, oauth_refresh_token FROM ai_providers WHERE oauth_access_token IS NOT NULL OR oauth_refresh_token IS NOT NULL"
+    )
+    .all() as Array<{
+      id: string;
+      oauth_access_token: string | null;
+      oauth_refresh_token: string | null;
+    }>;
+
+  const looksEncrypted = (value: string): boolean => {
+    try {
+      decrypt(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const update = database.prepare(
+    'UPDATE ai_providers SET oauth_access_token = ?, oauth_refresh_token = ? WHERE id = ?'
+  );
+
+  const tx = database.transaction(() => {
+    for (const row of rows) {
+      const newAccess =
+        row.oauth_access_token && !looksEncrypted(row.oauth_access_token)
+          ? safeEncrypt(row.oauth_access_token)
+          : row.oauth_access_token;
+      const newRefresh =
+        row.oauth_refresh_token && !looksEncrypted(row.oauth_refresh_token)
+          ? safeEncrypt(row.oauth_refresh_token)
+          : row.oauth_refresh_token;
+      if (newAccess !== row.oauth_access_token || newRefresh !== row.oauth_refresh_token) {
+        update.run(newAccess, newRefresh, row.id);
+      }
+    }
+    database
+      .prepare(
+        "INSERT INTO app_config (key, value, updated_at) VALUES ('oauth_tokens_encrypted_at_rest', 'true', CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = CURRENT_TIMESTAMP"
+      )
+      .run();
+  });
+
+  try {
+    tx();
+  } catch (err) {
+    console.error('[migrations] Failed to backfill-encrypt OAuth tokens:', err);
   }
 }
 

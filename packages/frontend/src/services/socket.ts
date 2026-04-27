@@ -5,21 +5,9 @@ import type {
   BufferedMessage,
   SessionMode,
   PermissionAction,
-  OrchestrationState,
-  OrchestrationTask,
-  OrchestrationPhase,
-  WorkerState,
-  TaskResult,
-  CLIProvider,
-  RalphRunState,
-  RalphProgress,
-  RalphIteration,
-  RalphPlan,
 } from '@claude-code-webui/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useOrchestrationStore } from '@/stores/orchestrationStore';
-import { useRalphStore } from '@/stores/ralphStore';
 import { toast } from '@/hooks/use-toast';
 import { notificationService } from './notifications';
 
@@ -35,7 +23,6 @@ class SocketService {
   private subscribedSessions: Set<string> = new Set();
   private activeSessions: Set<string> = new Set(); // Track sessions that are actively working
   private modeListeners: Set<(data: { sessionId: string; mode: SessionMode }) => void> = new Set();
-  private lastRebuildNotified: string | null = null; // Track if we already notified about a rebuild
 
   connect(): TypedSocket {
     if (this.socket?.connected) {
@@ -58,8 +45,7 @@ class SocketService {
       this.subscribedSessions.forEach((sessionId) => {
         this.socket?.emit('session:subscribe', sessionId);
       });
-      // Check for recent rebuild completion
-      this.checkRebuildStatus();
+
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -72,13 +58,14 @@ class SocketService {
     });
 
     this.socket.on('session:message', (message) => {
-      const { addMessageIfNotExists, clearStreamingContent, clearToolExecutions, setActivity } = useSessionStore.getState();
+      const { addMessageIfNotExists, clearStreamingContent, setActivity } = useSessionStore.getState();
       // Use addMessageIfNotExists to prevent duplicates when reconnecting
       addMessageIfNotExists(message.sessionId, message);
       clearStreamingContent(message.sessionId);
-      // Clear tool executions when a new message is saved (Claude finished responding)
+      // Tool executions stay in the timeline — they're part of the assistant
+      // turn's history and we want them to remain visible alongside the
+      // assistant's reply, not disappear when the message is saved.
       if (message.role === 'assistant') {
-        clearToolExecutions(message.sessionId);
         setActivity(message.sessionId, { type: 'idle' });
       }
     });
@@ -261,127 +248,6 @@ class SocketService {
       console.error('Socket error:', message);
     });
 
-    // Self-rebuild status updates
-    this.socket.on('self-rebuild:status', (data) => {
-      console.log('[SOCKET] self-rebuild:status received:', data.status);
-
-      if (data.status === 'building') {
-        toast({
-          title: 'Container Rebuild',
-          description: data.progress || 'Building Docker image...',
-        });
-      } else if (data.status === 'restarting') {
-        toast({
-          title: 'Container Rebuild',
-          description: 'Container wird neu gestartet... Verbindung wird unterbrochen.',
-          variant: 'destructive',
-        });
-      } else if (data.status === 'idle' && data.completedAt) {
-        toast({
-          title: '✅ Rebuild erfolgreich',
-          description: `Container wurde erfolgreich neu gebaut und gestartet.`,
-        });
-      } else if (data.status === 'error') {
-        toast({
-          title: '❌ Rebuild fehlgeschlagen',
-          description: data.error || 'Unbekannter Fehler',
-          variant: 'destructive',
-        });
-      }
-    });
-
-    // Orchestration events
-    this.socket.on('orchestration:state', (data: OrchestrationState) => {
-      console.log('[SOCKET] orchestration:state received:', data.sessionId, data.currentPhase);
-      useOrchestrationStore.getState().setOrchestrationState(data.sessionId, data);
-    });
-
-    this.socket.on('orchestration:task_delegated', (data: { sessionId: string; task: OrchestrationTask; worker: WorkerState }) => {
-      console.log('[SOCKET] orchestration:task_delegated:', data.task.id, data.worker.provider);
-      useOrchestrationStore.getState().addTask(data.sessionId, data.task);
-      useOrchestrationStore.getState().updateWorkerStatus(data.sessionId, data.worker);
-    });
-
-    this.socket.on('orchestration:task_progress', (_data: { sessionId: string; taskId: string; workerId: string; content: string; isPartial: boolean }) => {
-      // Progress updates are handled via worker_output
-    });
-
-    this.socket.on('orchestration:task_completed', (data: { sessionId: string; task: OrchestrationTask; result: TaskResult }) => {
-      console.log('[SOCKET] orchestration:task_completed:', data.task.id, data.result.success ? 'success' : 'failed');
-      useOrchestrationStore.getState().updateTask(data.sessionId, data.task);
-      useOrchestrationStore.getState().addTaskResult(data.sessionId, data.task.id, data.result);
-    });
-
-    this.socket.on('orchestration:worker_status', (data: { sessionId: string; worker: WorkerState }) => {
-      console.log('[SOCKET] orchestration:worker_status:', data.worker.id, data.worker.status);
-      useOrchestrationStore.getState().updateWorkerStatus(data.sessionId, data.worker);
-    });
-
-    this.socket.on('orchestration:worker_output', (data: { sessionId: string; workerId: string; provider: CLIProvider; content: string; isPartial: boolean }) => {
-      useOrchestrationStore.getState().addWorkerOutput(
-        data.sessionId,
-        data.workerId,
-        data.provider,
-        data.content
-      );
-    });
-
-    this.socket.on('orchestration:phase', (data: { sessionId: string; phase: OrchestrationPhase; message?: string }) => {
-      console.log('[SOCKET] orchestration:phase:', data.sessionId, data.phase, data.message);
-      useOrchestrationStore.getState().updatePhase(data.sessionId, data.phase, data.message);
-    });
-
-    this.socket.on('orchestration:error', (data: { sessionId: string; error: string; taskId?: string; workerId?: string }) => {
-      console.error('[SOCKET] orchestration:error:', data.error);
-      toast({
-        title: 'Orchestration Fehler',
-        description: data.error,
-        variant: 'destructive',
-      });
-    });
-
-    // Ralph autonomous loop events
-    this.socket.on('ralph:state', (data: { sessionId: string; run: RalphRunState }) => {
-      console.log('[SOCKET] ralph:state received:', data.run.id, data.run.status);
-      useRalphStore.getState().setRunState(data.run);
-    });
-
-    this.socket.on('ralph:progress', (data: { sessionId: string; runId: string; progress: RalphProgress }) => {
-      console.log('[SOCKET] ralph:progress:', data.runId, `${data.progress.completedTasks}/${data.progress.totalTasks}`);
-      useRalphStore.getState().updateProgress(data.runId, data.progress);
-    });
-
-    this.socket.on('ralph:iteration', (data: { sessionId: string; runId: string; iteration: RalphIteration }) => {
-      console.log('[SOCKET] ralph:iteration:', data.runId, `#${data.iteration.iterationNumber}`);
-      useRalphStore.getState().addIteration(data.runId, data.iteration);
-    });
-
-    this.socket.on('ralph:plan', (data: { sessionId: string; runId: string; plan: RalphPlan }) => {
-      console.log('[SOCKET] ralph:plan:', data.runId, data.plan.title);
-      useRalphStore.getState().setPlan(data.runId, data.plan);
-    });
-
-    this.socket.on('ralph:completed', (data: { sessionId: string; runId: string; exitReason: string }) => {
-      console.log('[SOCKET] ralph:completed:', data.runId, data.exitReason);
-      useRalphStore.getState().setStatus(data.runId, 'completed');
-      toast({
-        title: 'Ralph completed',
-        description: data.exitReason,
-      });
-    });
-
-    this.socket.on('ralph:error', (data: { sessionId: string; runId: string; error: string }) => {
-      console.error('[SOCKET] ralph:error:', data.error);
-      if (data.runId) {
-        useRalphStore.getState().setError(data.runId, data.error);
-      }
-      toast({
-        title: 'Ralph Error',
-        description: data.error,
-        variant: 'destructive',
-      });
-    });
-
     return this.socket;
   }
 
@@ -407,9 +273,9 @@ class SocketService {
           }
           store.addMessageIfNotExists(sessionId, data);
           store.clearStreamingContent(sessionId);
-          // Clear tool executions when assistant message is received
+          // Tool executions stay in the timeline so the assistant turn's tool
+          // history reappears after a reconnect, matching the live-flow path.
           if (data.role === 'assistant') {
-            store.clearToolExecutions(sessionId);
             store.setActivity(sessionId, { type: 'idle' });
           }
           break;
@@ -520,48 +386,11 @@ class SocketService {
   }
 
   sendMessage(sessionId: string, message: string, images?: { data: string; mimeType: string }[]): void {
+    // clientMessageId lets the server dedupe if the socket reconnects and we retry:
+    // a single logical send keeps the same id regardless of transport hiccups.
+    const clientMessageId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     console.log(`sendMessage: sessionId=${sessionId}, message="${message}", socket=${!!this.socket}, connected=${this.socket?.connected}`);
-
-    // Check if we need to prepend rebuild status info
-    this.prependRebuildInfoIfNeeded(sessionId, message, images);
-  }
-
-  private async prependRebuildInfoIfNeeded(
-    sessionId: string,
-    message: string,
-    images?: { data: string; mimeType: string }[]
-  ): Promise<void> {
-    try {
-      const token = useAuthStore.getState().token;
-      if (token) {
-        const response = await fetch('/api/self-rebuild/last-result', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          const data = result.data;
-
-          if (data && data.completedAt && data.completedAt !== this.lastRebuildNotified) {
-            const completedAt = new Date(data.completedAt);
-            const now = new Date();
-            const diffMinutes = (now.getTime() - completedAt.getTime()) / 1000 / 60;
-
-            // If rebuild completed within last 5 minutes, prepend info
-            if (diffMinutes < 5) {
-              this.lastRebuildNotified = data.completedAt;
-              const rebuildInfo = `[SYSTEM-INFO: Der Container wurde gerade erfolgreich neu gebaut und gestartet (${completedAt.toLocaleTimeString()}). Die Code-Änderungen sind jetzt aktiv.]\n\n`;
-              message = rebuildInfo + message;
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[SOCKET] Failed to check rebuild status for message:', error);
-    }
-
-    // Send the message (with or without prepended info)
-    this.socket?.emit('session:send', { sessionId, message, images });
+    this.socket?.emit('session:send', { sessionId, message, images, clientMessageId });
   }
 
   // Send raw input for interactive prompts (trust dialogs, selections, etc.)
@@ -689,38 +518,6 @@ class SocketService {
     return this.socket;
   }
 
-  // Check for recent rebuild completion on reconnect
-  private async checkRebuildStatus(): Promise<void> {
-    try {
-      const token = useAuthStore.getState().token;
-      if (!token) return;
-
-      const response = await fetch('/api/self-rebuild/last-result', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) return;
-
-      const result = await response.json();
-      const data = result.data;
-
-      if (data && data.completedAt) {
-        const completedAt = new Date(data.completedAt);
-        const now = new Date();
-        const diffMinutes = (now.getTime() - completedAt.getTime()) / 1000 / 60;
-
-        // Show notification if rebuild completed within last 2 minutes
-        if (diffMinutes < 2) {
-          toast({
-            title: '✅ Rebuild erfolgreich',
-            description: `Container wurde erfolgreich neu gebaut und gestartet.`,
-          });
-        }
-      }
-    } catch (error) {
-      console.error('[SOCKET] Failed to check rebuild status:', error);
-    }
-  }
 }
 
 export const socketService = new SocketService();

@@ -29,7 +29,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { MultiCliConfig, useMultiCliConfig } from '@/components/multi-cli';
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -46,7 +45,6 @@ export function DashboardPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showCategories, setShowCategories] = useState(false);
   const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() => toCliProvider(uiProvider));
-  const [multiCliConfig, setMultiCliConfig] = useMultiCliConfig();
 
   // Fetch user settings
   const { data: settings } = useQuery({
@@ -323,12 +321,7 @@ export function DashboardPage() {
                 </div>
 
                 {/* Multi-CLI Configuration */}
-                {selectedCliProvider === 'multi' && (
-                  <MultiCliConfig
-                    config={multiCliConfig}
-                    onChange={setMultiCliConfig}
-                  />
-                )}
+                {/* Multi-CLI config removed - multi provider no longer exists */}
 
                 {sessionMode === 'existing' && (
                   <div className="space-y-2">

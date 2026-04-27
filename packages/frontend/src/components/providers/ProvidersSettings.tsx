@@ -99,7 +99,6 @@ const PROVIDER_ICONS: Record<string, string> = {
   openai: '\ud83d\udfe2',
   google: '\ud83d\udfe1',
   openrouter: '\ud83c\udf10',
-  zai: '\ud83c\udf0f',
   ollama: '\ud83e\udd99',
   custom: '\u2699\ufe0f',
 };

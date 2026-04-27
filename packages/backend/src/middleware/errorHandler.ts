@@ -1,5 +1,12 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { ApiError } from '@claude-code-webui/shared';
+import { randomUUID } from 'crypto';
+
+declare module 'express-serve-static-core' {
+  interface Request {
+    id?: string;
+  }
+}
 
 // Wrap async route handlers to properly catch errors
 export const asyncHandler = (
@@ -22,26 +29,55 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * Assigns a requestId to every incoming request (respecting X-Request-Id if provided)
+ * and echoes it back via the response header. Pair with errorHandler for correlated logs.
+ */
+export const requestIdMiddleware: RequestHandler = (req, res, next) => {
+  const incoming = req.header('x-request-id');
+  const id = incoming && /^[A-Za-z0-9._-]{1,128}$/.test(incoming) ? incoming : randomUUID();
+  req.id = id;
+  res.setHeader('X-Request-Id', id);
+  next();
+};
+
+interface ErrorLogContext {
+  requestId: string;
+  method: string;
+  path: string;
+  userId: string;
+  statusCode: number;
+}
+
 export function errorHandler(
   err: Error | AppError,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void {
-  console.error('Error:', err);
+  const isAppError = err instanceof AppError;
+  const statusCode = isAppError ? err.statusCode : 500;
+  const requestId = req.id || randomUUID();
+  const userId = (req.user as { id?: string } | undefined)?.id || 'anonymous';
 
-  if (err instanceof AppError) {
-    const errorResponse: ApiError = {
-      code: err.code,
-      message: err.message,
-    };
-    res.status(err.statusCode).json({ success: false, error: errorResponse });
-    return;
+  const context: ErrorLogContext = {
+    requestId,
+    method: req.method,
+    path: req.originalUrl || req.path,
+    userId,
+    statusCode,
+  };
+
+  if (statusCode >= 500) {
+    console.error(`[ERROR ${requestId}]`, context, err.stack || err.message);
+  } else {
+    console.warn(`[WARN ${requestId}]`, context, err.message);
   }
 
-  const errorResponse: ApiError = {
-    code: 'INTERNAL_ERROR',
-    message: 'An unexpected error occurred',
+  const errorResponse: ApiError & { requestId: string } = {
+    code: isAppError ? err.code : 'INTERNAL_ERROR',
+    message: isAppError ? err.message : 'An unexpected error occurred',
+    requestId,
   };
-  res.status(500).json({ success: false, error: errorResponse });
+  res.status(statusCode).json({ success: false, error: errorResponse });
 }

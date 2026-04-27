@@ -3,13 +3,11 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import * as pty from "node-pty";
 import os from "os";
-import fs from "fs";
 import path from "path";
 import { requireAuth, type AuthenticatedRequest } from "../middleware/auth";
 import { AppError } from "../middleware/errorHandler";
 import { CLI_PROVIDERS, type CLIProvider } from "../services/cli-providers";
 import { getCliEnv } from "../utils/cliPaths";
-import { resolveConfigHome } from "../utils/configPaths";
 
 const router = Router();
 
@@ -31,6 +29,12 @@ interface LoginSession {
 
 const LOGIN_TTL_MS = 10 * 60 * 1000;
 const OUTPUT_LIMIT = 8000;
+// Each `/start` spawns a `pty.spawn` that keeps an interactive CLI resident
+// for up to LOGIN_TTL_MS. Without caps, a single authed user could hold open
+// hundreds of Node TUIs in parallel and exhaust container resources. Caps
+// are applied against the active (non-terminated) sessions.
+const MAX_LOGIN_SESSIONS_PER_USER = 2;
+const MAX_LOGIN_SESSIONS_TOTAL = 10;
 const URL_REGEX = /(https?:\/\/[^\s"'"'<>]+)/i;
 const CODE_PROMPT_REGEX = /(enter|paste|type).*(code|verification|authorization)|device.*code/i;
 const ALREADY_LOGGED_REGEX = /already\s+logged\s+in|already\s+signed\s+in/i;
@@ -116,48 +120,62 @@ const startSchema = z.object({
   provider: z.string().optional(),
 });
 
+// Cap at 256 chars: real OAuth codes are <200. An upper bound here prevents an
+// authed user from piping arbitrary multi-KB payloads into the PTY stdin.
 const codeSchema = z.object({
-  code: z.string().min(1),
+  code: z.string().min(1).max(256),
 });
 
-/**
- * Ensure Gemini settings.json has oauth-personal auth type
- */
-function ensureGeminiOAuthConfig(): void {
-  const geminiDir = resolveConfigHome("gemini");
-  const settingsPath = path.join(geminiDir, "settings.json");
-  try {
-    fs.mkdirSync(geminiDir, { recursive: true });
-    let settings: Record<string, unknown> = {};
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-    } catch { /* new file */ }
-    if (!settings.security) settings.security = {};
-    const sec = settings.security as Record<string, unknown>;
-    if (!sec.auth) sec.auth = {};
-    const auth = sec.auth as Record<string, unknown>;
-    if (auth.selectedType !== "oauth-personal") {
-      auth.selectedType = "oauth-personal";
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-      console.log("[cli-login] Set Gemini auth to oauth-personal");
-    }
-  } catch (e) {
-    console.error("[cli-login] Failed to configure Gemini settings.json:", e);
-  }
-}
+// Per-provider login invocation. Claude drives its OAuth flow from inside its
+// TUI via the /login slash command, so we spawn the CLI with ["/login"] as the
+// first "prompt". OpenCode ships a dedicated `auth login` subcommand that walks
+// the user through provider selection and credential entry. Codex has no
+// interactive login path surfaced through the CLI today — it auths via files
+// in ~/.codex — so it's excluded here.
+const LOGIN_INVOCATION: Partial<Record<CLIProvider, readonly string[]>> = {
+  claude: ["/login"],
+  opencode: ["auth", "login"],
+};
 
 router.post("/:provider/start", requireAuth, async (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const provider = (req.params.provider || "").toLowerCase() as CLIProvider;
 
-  const supportedProviders = new Set(["claude", "gemini"]);
-  if (!supportedProviders.has(provider)) {
-    throw new AppError("CLI login is only supported for Claude and Gemini.", 400, "UNSUPPORTED_PROVIDER");
+  const invocationArgs = LOGIN_INVOCATION[provider];
+  if (!invocationArgs) {
+    throw new AppError(
+      `CLI login is not supported for provider '${provider}'.`,
+      400,
+      "UNSUPPORTED_PROVIDER",
+    );
   }
 
   const parsed = startSchema.safeParse(req.body || {});
   if (!parsed.success) {
     throw new AppError("Invalid input", 400, "VALIDATION_ERROR");
+  }
+
+  let activeForUser = 0;
+  let activeTotal = 0;
+  for (const existing of loginSessions.values()) {
+    if (existing.proc && existing.status !== "completed" && existing.status !== "error") {
+      activeTotal += 1;
+      if (existing.userId === userId) activeForUser += 1;
+    }
+  }
+  if (activeForUser >= MAX_LOGIN_SESSIONS_PER_USER) {
+    throw new AppError(
+      "You already have a CLI login in progress. Finish or wait for it to expire before starting another.",
+      429,
+      "LOGIN_CAP_USER",
+    );
+  }
+  if (activeTotal >= MAX_LOGIN_SESSIONS_TOTAL) {
+    throw new AppError(
+      "Too many concurrent CLI logins on this server. Try again shortly.",
+      429,
+      "LOGIN_CAP_GLOBAL",
+    );
   }
 
   const config = CLI_PROVIDERS[provider];
@@ -175,11 +193,6 @@ router.post("/:provider/start", requireAuth, async (req, res) => {
   };
 
   try {
-    // Gemini: configure settings.json for OAuth before starting
-    if (provider === "gemini") {
-      ensureGeminiOAuthConfig();
-    }
-
     const env = {
       ...getCliEnv(),
       HOME: os.homedir(),
@@ -189,26 +202,19 @@ router.post("/:provider/start", requireAuth, async (req, res) => {
 
     // Provider-specific env
     if (provider === "claude") {
-      env.CLAUDE_CONFIG_HOME = resolveConfigHome(provider);
-    } else if (provider === "gemini") {
-      // Prevent Gemini CLI from relaunching itself (breaks PTY output)
-      env.GEMINI_CLI_NO_RELAUNCH = "true";
-      // Prevent browser launch attempt in Docker
-      env.NO_BROWSER = "true";
-      env.SANDBOX = "true";
+      const configOverride = process.env.WEBUI_CONFIG_HOME || process.env.CLAUDE_CONFIG_HOME;
+      if (configOverride) {
+        env.CLAUDE_CONFIG_HOME = configOverride;
+      }
+    } else if (provider === "opencode") {
+      // Point OpenCode at the same XDG paths the session spawner uses, so login
+      // writes auth.json into the mounted volume and the resulting credentials
+      // are visible to later runs (see Dockerfile symlinks into ~/.opencode).
+      env.OPENCODE_CONFIG_DIR = path.join(os.homedir(), ".config", "opencode");
+      env.OPENCODE_DATA_DIR = path.join(os.homedir(), ".local", "share", "opencode");
     }
 
-    // Provider-specific login args
-    let loginArgs: string[];
-    if (provider === "gemini") {
-      // Gemini: start interactive session to trigger OAuth flow
-      // Note: Gemini CLI v0.29+ may still hang as an Ink/React TUI in Docker.
-      // Use the Gemini OAuth task delegation flow as a more reliable alternative.
-      loginArgs = ["--prompt", "say ok"];
-    } else {
-      // Claude: dedicated /login command
-      loginArgs = ["/login"];
-    }
+    const loginArgs = [...invocationArgs];
 
     const proc = pty.spawn(command, loginArgs, {
       name: "xterm-256color",
@@ -235,7 +241,7 @@ router.post("/:provider/start", requireAuth, async (req, res) => {
   }
 
   // Wait a bit for the process to start and output the URL
-  const waitTime = provider === "gemini" ? 3000 : 600;
+  const waitTime = 600;
   await new Promise((resolve) => setTimeout(resolve, waitTime));
 
   res.json({

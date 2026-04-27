@@ -1,73 +1,101 @@
-FROM node:20-alpine
+# syntax=docker/dockerfile:1.7
 
-# Metadata labels for Docker Hub
+# ============================================================================
+# builder — full toolchain: installs deps + compiles native modules + builds
+# shared types and frontend assets. Never deployed; image stays heavy.
+# ============================================================================
+FROM node:20-alpine AS builder
+
+# Native-module toolchain (better-sqlite3, node-pty build from source via node-gyp).
+RUN apk add --no-cache python3 python3-dev py3-pip make g++ linux-headers git bash
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# Manifest layer first — cache key for the dep install below.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/frontend/package.json ./packages/frontend/
+
+# --frozen-lockfile so CI and prod resolve identical versions; fails loud if the
+# lockfile drifts from package.json.
+RUN pnpm install --frozen-lockfile
+
+# Sources last — edits here don't bust the deps layer.
+COPY packages/shared ./packages/shared
+COPY packages/backend ./packages/backend
+COPY packages/frontend ./packages/frontend
+
+# Shared types compile before frontend (frontend imports from shared).
+# Backend stays as .ts source — runtime uses tsx (see CMD below).
+RUN pnpm --filter @claude-code-webui/shared build && \
+    pnpm --filter @claude-code-webui/frontend build
+
+
+# ============================================================================
+# runtime — slim image, no compiler toolchain. Native .node binaries are
+# already built in `builder` and copied over via node_modules.
+# ============================================================================
+FROM node:20-alpine AS runtime
+
 LABEL org.opencontainers.image.title="Claude Code WebUI"
 LABEL org.opencontainers.image.description="Web-based interface for Claude Code CLI"
 LABEL org.opencontainers.image.source="https://github.com/zwaetschge/claude-code-webui"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.vendor="Claude Code WebUI"
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Runtime OS tooling only — git for repo ops, docker-cli/compose for self-rebuild,
+# curl+openssh for CLI installers and remote auth flows. No python/g++ here.
+RUN apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick
 
-# Install build dependencies for native modules (node-pty), git, and Docker CLI + Compose
-RUN apk add --no-cache python3 python3-dev py3-pip make g++ linux-headers git bash unzip docker-cli docker-cli-compose curl openssh-client
-
-# Install global npm packages into user-writable prefixes
+# User-writable npm prefix: the `node` user must be able to upgrade the AI CLIs
+# at runtime (see services/cli-updates.ts). Mounted volume overlays this path.
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
-ENV CLI_PROVIDER_GLM_PREFIX=/home/node/.npm-glm
-ENV PATH=/home/node/.local/bin:/home/node/.npm-global/bin:/home/node/.npm-glm/bin:$PATH
-RUN mkdir -p /home/node/.npm-global /home/node/.npm-glm
-
-# Install AI CLI tools globally (Claude, Codex, Gemini)
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
-
-# Install a separate Claude Code CLI instance for GLM
-RUN npm install -g --prefix /home/node/.npm-glm @anthropic-ai/claude-code
-
-# Install Mistral Vibe CLI (Python-based)
-RUN pip install --break-system-packages mistral-vibe
-
-# Install Kimi CLI (Python-based, requires uv)
-ENV UV_INSTALL_DIR=/home/node/.local/bin
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    HOME=/home/node /home/node/.local/bin/uv tool install --python 3.13 kimi-cli
-
-# The node:alpine image already has a 'node' user (uid 1000)
+ENV PATH=/home/node/.local/bin:/home/node/.npm-global/bin:$PATH
+RUN mkdir -p /home/node/.npm-global && \
+    npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai && \
+    rm -f /home/node/.npm-global/lib/node_modules/opencode-ai/bin/.opencode
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/backend/package.json ./packages/backend/
-COPY packages/frontend/package.json ./packages/frontend/
+# Hoist artifacts from builder. Backend keeps its TS source because tsx runs it
+# directly; shared ships its compiled dist (consumed by backend + frontend via
+# the `@claude-code-webui/shared` workspace link); frontend ships only the
+# Vite-built static bundle.
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=builder /app/packages/backend/node_modules ./packages/backend/node_modules
+COPY --from=builder /app/packages/frontend/node_modules ./packages/frontend/node_modules
+COPY --from=builder /app/package.json /app/pnpm-workspace.yaml /app/tsconfig.base.json ./
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/backend/package.json ./packages/backend/package.json
+COPY --from=builder /app/packages/backend/tsconfig.json ./packages/backend/tsconfig.json
+COPY --from=builder /app/packages/backend/src ./packages/backend/src
+COPY --from=builder /app/packages/frontend/package.json ./packages/frontend/package.json
+COPY --from=builder /app/packages/frontend/dist ./packages/frontend/dist
 
-# Install dependencies (not using frozen-lockfile for self-hosted flexibility)
-RUN pnpm install
+# Helper scripts (mcp-comfyui, etc.) — no build step, copied as-is.
+COPY scripts ./scripts
 
-# Copy source code
-COPY . .
-
-# Build shared types
-RUN pnpm --filter shared build
-
-# Build frontend
-RUN pnpm --filter frontend build
-
-# Create directories and set permissions for node user
-RUN mkdir -p /home/node/.claude /home/node/.glm /home/node/.vibe /home/node/.kimi /home/node/.npm-global /home/node/.npm-glm && \
+# Volume-friendly runtime dirs, owned by node:node (uid 1000).
+# OpenCode uses XDG paths (~/.config/opencode for config, ~/.local/share/opencode
+# for auth). Symlink both into the single /home/node/.opencode mount so one
+# volume persists config + credentials across rebuilds.
+RUN mkdir -p /home/node/.claude /home/node/.codex \
+             /home/node/.opencode/config /home/node/.opencode/share \
+             /home/node/.config /home/node/.local/share && \
+    ln -sfn /home/node/.opencode/config /home/node/.config/opencode && \
+    ln -sfn /home/node/.opencode/share /home/node/.local/share/opencode && \
     chown -R node:node /app /home/node
 
-# Expose ports
 EXPOSE 3001
-
-# Set environment
 ENV NODE_ENV=production
 ENV HOME=/home/node
 
-# Switch to non-root user
 USER node
 
-# Start the server using tsx (handles ES module resolution)
+# tsx runs TypeScript directly so strict-mode compile errors never surface in
+# prod. Minor cold-start cost; equivalent steady-state performance.
 CMD ["npx", "tsx", "packages/backend/src/index.ts"]

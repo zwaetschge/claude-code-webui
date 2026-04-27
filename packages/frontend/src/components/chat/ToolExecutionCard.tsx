@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import {
   FileText,
   Search,
@@ -15,15 +15,72 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  Brain,
+  Bug,
+  Server,
+  Shield,
+  Gauge,
+  BookOpen,
+  Database,
+  Layers,
+  Rocket,
+  FlaskConical,
+  Palette,
+  Code2,
+  Smartphone,
 } from 'lucide-react';
 import type { ToolExecution } from '@claude-code-webui/shared';
+import { ToolLoader } from './providerAnimations/ToolLoader';
 
 interface ToolExecutionCardProps {
   execution: ToolExecution;
 }
 
+// Map subagent types to display info
+const agentTypeMap: Record<string, { icon: typeof Wrench; label: string }> = {
+  'Explore': { icon: Search, label: 'Explorer' },
+  'Plan': { icon: BookOpen, label: 'Planner' },
+  'general-purpose': { icon: Brain, label: 'General Agent' },
+  'research-bot': { icon: Globe, label: 'Research' },
+  'frontend-developer': { icon: Code2, label: 'Frontend Dev' },
+  'mobile-developer': { icon: Smartphone, label: 'Mobile Dev' },
+  'backend-dev': { icon: Server, label: 'Backend Dev' },
+  'fullstack-dev': { icon: Layers, label: 'Fullstack Dev' },
+  'api-designer': { icon: Wrench, label: 'API Designer' },
+  'ui-designer': { icon: Palette, label: 'UI Designer' },
+  'devops-engineer': { icon: Rocket, label: 'DevOps' },
+  'database-specialist': { icon: Database, label: 'Database' },
+  'git-operations': { icon: GitBranch, label: 'Git Ops' },
+  'debugging-expert': { icon: Bug, label: 'Debugger' },
+  'system-architect': { icon: Layers, label: 'Architect' },
+  'test-engineer': { icon: FlaskConical, label: 'Test Engineer' },
+  'security-auditor': { icon: Shield, label: 'Security' },
+  'performance-optimizer': { icon: Gauge, label: 'Performance' },
+  'release-manager': { icon: Rocket, label: 'Release' },
+  'data-engineer': { icon: Database, label: 'Data Engineer' },
+  'documentation-writer': { icon: BookOpen, label: 'Docs' },
+  'statusline-setup': { icon: Terminal, label: 'Status Line' },
+};
+
 // Map tool names to icons and labels
-export const getToolDisplay = (toolName: string): { icon: typeof Wrench; label: string; inputLabel: string } => {
+export const getToolDisplay = (toolName: string, input?: unknown): { icon: typeof Wrench; label: string; inputLabel: string } => {
+  // For Task/Agent tools, extract subagent_type for better display
+  if (toolName === 'Task' || toolName === 'Agent') {
+    const inputObj = input as Record<string, unknown> | undefined;
+    const subagentType = inputObj?.subagent_type as string | undefined;
+    
+    if (subagentType && agentTypeMap[subagentType]) {
+      const agent = agentTypeMap[subagentType];
+      return { icon: agent.icon, label: agent.label, inputLabel: 'Task' };
+    }
+    
+    if (subagentType) {
+      return { icon: Brain, label: subagentType, inputLabel: 'Task' };
+    }
+    
+    return { icon: Cpu, label: 'Agent', inputLabel: 'Task' };
+  }
+
   const toolMap: Record<string, { icon: typeof Wrench; label: string; inputLabel: string }> = {
     'Write': { icon: FileText, label: 'Write', inputLabel: 'File' },
     'Read': { icon: Search, label: 'Read', inputLabel: 'File' },
@@ -34,7 +91,6 @@ export const getToolDisplay = (toolName: string): { icon: typeof Wrench; label: 
     'Glob': { icon: FolderSearch, label: 'Glob', inputLabel: 'Pattern' },
     'Grep': { icon: Search, label: 'Grep', inputLabel: 'Pattern' },
     'LS': { icon: FolderSearch, label: 'List', inputLabel: 'Path' },
-    'Task': { icon: Cpu, label: 'Agent', inputLabel: 'Task' },
     'TodoWrite': { icon: CheckSquare, label: 'Todo', inputLabel: 'Tasks' },
     'Git': { icon: GitBranch, label: 'Git', inputLabel: 'Command' },
   };
@@ -64,6 +120,7 @@ const getInputPreview = (toolName: string, input: unknown): string => {
     case 'WebSearch':
       return String(inputObj.query || '');
     case 'Task':
+    case 'Agent':
       return String(inputObj.description || inputObj.prompt || '');
     default:
       return JSON.stringify(input).substring(0, 100);
@@ -115,8 +172,9 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
       if (inputObj.query) result.push({ label: 'Query', value: String(inputObj.query) });
       break;
     case 'Task':
+    case 'Agent':
       if (inputObj.description) result.push({ label: 'Description', value: String(inputObj.description) });
-      if (inputObj.prompt) result.push({ label: 'Prompt', value: String(inputObj.prompt) });
+      if (inputObj.prompt) result.push({ label: 'Prompt', value: String(inputObj.prompt).substring(0, 500) + (String(inputObj.prompt).length > 500 ? '...' : '') });
       if (inputObj.subagent_type) result.push({ label: 'Agent Type', value: String(inputObj.subagent_type) });
       break;
     default:
@@ -161,9 +219,9 @@ const StatusIcon = ({ status }: { status: 'started' | 'completed' | 'error' }) =
   }
 };
 
-export function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
+export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const { icon: Icon, label } = getToolDisplay(execution.toolName);
+  const { icon: Icon, label } = getToolDisplay(execution.toolName, execution.input);
 
   const hasInput = execution.input;
   const hasOutput = execution.result || execution.error;
@@ -183,15 +241,38 @@ export function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
     : null;
   const isRunning = execution.status === 'started';
 
+  // Subagent runs (Task/Agent tools) get distinct styling so that nested agent
+  // activity is obvious at a glance in the message timeline.
+  const isSubagent = execution.toolName === 'Task' || execution.toolName === 'Agent';
+
+  const containerClass = isSubagent
+    ? `flex flex-col gap-1 px-3 py-2 rounded-lg text-xs border-l-2 border border-primary/40 border-l-primary bg-primary/5 ${
+        isRunning ? 'shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]' : ''
+      }`
+    : 'flex flex-col gap-1 px-3 py-2 bg-muted/30 rounded-lg text-xs border border-border/50';
+
   return (
-    <div className="flex flex-col gap-1 px-3 py-2 bg-muted/30 rounded-lg text-xs border border-border/50">
+    <div className={containerClass}>
       {/* Header row */}
       <div
         className={`flex items-center gap-2 ${isClickable ? 'cursor-pointer hover:opacity-80' : ''}`}
         onClick={() => isClickable && setExpanded(!expanded)}
       >
-        <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-        <span className="font-medium text-foreground">{label}</span>
+        {isRunning ? (
+          <span className={`flex items-center justify-center w-6 h-6 flex-shrink-0 ${isSubagent ? 'text-primary' : 'text-primary'}`}>
+            <ToolLoader toolName={execution.toolName} size={24} />
+          </span>
+        ) : isSubagent ? (
+          <Icon className="h-4 w-4 text-primary flex-shrink-0" />
+        ) : (
+          <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+        )}
+        <span className={`font-medium ${isSubagent ? 'text-primary' : 'text-foreground'}`}>{label}</span>
+        {isSubagent && (
+          <span className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 flex-shrink-0">
+            Subagent
+          </span>
+        )}
         {truncatedPreview && (
           <code className="text-muted-foreground truncate flex-1 font-mono text-xs bg-muted/50 px-1 rounded">
             {truncatedPreview}
@@ -257,4 +338,4 @@ export function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
       )}
     </div>
   );
-}
+});

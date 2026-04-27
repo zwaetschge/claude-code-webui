@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 
 interface RateLimitConfig {
+  name: string;           // Stable limiter identifier used as the bucket key
   windowMs: number;       // Time window in milliseconds
   maxRequests: number;    // Max requests per window
   message?: string;       // Error message
@@ -25,33 +26,32 @@ setInterval(() => {
 }, 60000); // Cleanup every minute
 
 /**
- * Get client identifier for rate limiting
+ * Get client identifier for rate limiting. Relies on req.ip, which respects
+ * Express's `trust proxy` setting. Trusting X-Forwarded-For directly lets an
+ * attacker spoof any IP and defeat the limit, so that path is intentionally
+ * removed — configure TRUST_PROXY to the correct hop count instead.
  */
 function getClientId(req: Request): string {
-  // Use user ID if authenticated, otherwise use IP
   const userId = (req as unknown as { userId?: string }).userId;
   if (userId) {
     return `user:${userId}`;
   }
 
-  // Get IP address (handle proxies)
-  const forwarded = req.headers['x-forwarded-for'];
-  const ip = typeof forwarded === 'string'
-    ? forwarded.split(',')[0]?.trim()
-    : req.ip || req.socket.remoteAddress || 'unknown';
-
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
   return `ip:${ip}`;
 }
 
 /**
- * Create a rate limiter middleware
+ * Create a rate limiter middleware. `name` must be stable across all requests
+ * that share the limit — keying on req.path means `/api/sessions/abc` and
+ * `/api/sessions/def` get independent buckets, which is never what we want.
  */
 export function createRateLimiter(config: RateLimitConfig) {
-  const { windowMs, maxRequests, message = 'Too many requests, please try again later' } = config;
+  const { name, windowMs, maxRequests, message = 'Too many requests, please try again later' } = config;
 
   return (req: Request, res: Response, next: NextFunction) => {
     const clientId = getClientId(req);
-    const key = `${clientId}:${req.path}`;
+    const key = `${clientId}:${name}`;
     const now = Date.now();
 
     let entry = rateLimitStore.get(key);
@@ -88,12 +88,14 @@ export function createRateLimiter(config: RateLimitConfig) {
 export const rateLimiters = {
   // Standard API rate limit: 100 requests per minute
   standard: createRateLimiter({
+    name: 'standard',
     windowMs: 60 * 1000,
     maxRequests: 100,
   }),
 
   // Strict rate limit for sensitive operations: 10 per minute
   strict: createRateLimiter({
+    name: 'strict',
     windowMs: 60 * 1000,
     maxRequests: 10,
     message: 'Too many attempts, please wait before trying again',
@@ -101,6 +103,7 @@ export const rateLimiters = {
 
   // File upload limit: 20 uploads per minute
   upload: createRateLimiter({
+    name: 'upload',
     windowMs: 60 * 1000,
     maxRequests: 20,
     message: 'Too many file uploads, please wait before uploading more',
@@ -108,6 +111,7 @@ export const rateLimiters = {
 
   // Session creation: 5 per minute
   sessionCreation: createRateLimiter({
+    name: 'sessionCreation',
     windowMs: 60 * 1000,
     maxRequests: 5,
     message: 'Too many sessions created, please wait before creating more',
@@ -115,6 +119,7 @@ export const rateLimiters = {
 
   // Message sending: 30 per minute (per session)
   messaging: createRateLimiter({
+    name: 'messaging',
     windowMs: 60 * 1000,
     maxRequests: 30,
     message: 'Sending messages too quickly, please slow down',
@@ -122,6 +127,7 @@ export const rateLimiters = {
 
   // Image generation: 5 per minute
   imageGeneration: createRateLimiter({
+    name: 'imageGeneration',
     windowMs: 60 * 1000,
     maxRequests: 5,
     message: 'Too many image generation requests, please wait',

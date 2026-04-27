@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, type NativeImage } from 'electron';
 import path from 'path';
 import { tryDeviceAuth, registerDevice } from './auth';
 import { generateFingerprint, getDeviceName } from './fingerprint';
@@ -99,7 +99,7 @@ function setupIpcHandlers(): void {
 function setupTray(): void {
   // Create a simple tray icon (16x16 transparent PNG)
   const iconPath = path.join(__dirname, '..', '..', 'resources', 'icon.png');
-  let trayIcon: nativeImage;
+  let trayIcon: NativeImage;
 
   try {
     trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });

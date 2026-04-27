@@ -10,8 +10,4 @@ export * from './types/api';
 export * from './types/websocket';
 export * from './types/github';
 export * from './types/commands';
-export * from './types/self-rebuild';
-export * from './types/orchestration';
-export * from './types/watchdog';
-export * from './types/ralph';
 export * from './types/tasks';

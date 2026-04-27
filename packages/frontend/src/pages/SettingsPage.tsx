@@ -23,7 +23,6 @@ import {
   Key,
   Eye,
   EyeOff,
-  Sparkles,
   KeyRound,
   Zap,
   AlertCircle,
@@ -39,6 +38,21 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { AgentSkillEditorDialog } from '@/components/ui/agent-skill-editor';
 import { PluginEditorDialog } from '@/components/ui/plugin-editor';
@@ -92,6 +106,15 @@ interface PluginInfo {
   installedAt?: string;
 }
 
+interface OpenCodeProvider {
+  id: string;
+  name: string;
+  apiKey: string;
+  hasKey: boolean;
+  baseUrl?: string;
+  enabled: boolean;
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const configProvider = useMemo(() => 'claude' as const, []);
@@ -135,17 +158,13 @@ export function SettingsPage() {
   // Plugin search state
   const [pluginSearchQuery, setPluginSearchQuery] = useState('');
 
-  // Gemini API key state
-  const [geminiKeyInput, setGeminiKeyInput] = useState('');
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
-
-  // Z.AI API key state
-  const [zaiKeyInput, setZaiKeyInput] = useState('');
-  const [showZaiKey, setShowZaiKey] = useState(false);
-
   // GitHub token state
   const [githubTokenInput, setGithubTokenInput] = useState('');
   const [showGithubToken, setShowGithubToken] = useState(false);
+
+  // Integration URLs state (ComfyUI, LoRA Tester)
+  const [comfyuiUrlInput, setComfyuiUrlInput] = useState('');
+  const [loraTesterUrlInput, setLoraTesterUrlInput] = useState('');
 
   // Basic auth credentials state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -173,6 +192,24 @@ export function SettingsPage() {
     queryFn: async () => {
       const response = await api.get<ApiResponse<McpServer[]>>('/api/mcp-servers');
       return response.data.data || [];
+    },
+  });
+
+  // Fetch OpenCode providers
+  const { data: openCodeProviders, refetch: refetchOpenCodeProviders } = useQuery({
+    queryKey: ['opencode-providers'],
+    queryFn: async () => {
+      const response = await api.get<{ success: boolean; data?: OpenCodeProvider[] }>('/api/opencode/providers');
+      return response.data.data || [];
+    },
+  });
+
+  // Fetch available OpenCode providers (with models)
+  const { data: availableProviders } = useQuery({
+    queryKey: ['opencode-available-providers'],
+    queryFn: async () => {
+      const response = await api.get<{ success: boolean; data?: Record<string, { name: string; models?: string[]; description?: string }> }>('/api/opencode/available-providers');
+      return response.data.data || {};
     },
   });
 
@@ -227,30 +264,24 @@ export function SettingsPage() {
     },
   });
 
-  // Fetch Gemini API key status
-  const { data: geminiKeyStatus, refetch: refetchGeminiKey } = useQuery({
-    queryKey: ['gemini-key'],
-    queryFn: async () => {
-      const response = await api.get<ApiResponse<{ hasKey: boolean; keyPreview: string | null }>>('/api/settings/gemini-key');
-      return response.data.data;
-    },
-  });
-
-  // Fetch Z.AI API key status
-  const { data: zaiKeyStatus, refetch: refetchZaiKey } = useQuery({
-    queryKey: ['zai-key'],
-    queryFn: async () => {
-      const response = await api.get<ApiResponse<{ hasKey: boolean; keyPreview: string | null; baseUrl?: string | null }>>('/api/settings/zai-key');
-      return response.data.data;
-    },
-  });
-
   // Fetch GitHub token status
   const { data: githubTokenStatus, refetch: refetchGithubToken } = useQuery({
     queryKey: ['github-token'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<{ hasToken: boolean; tokenPreview: string | null }>>('/api/settings/github-token');
       return response.data.data;
+    },
+  });
+
+  // Fetch integration URLs (ComfyUI, LoRA Tester)
+  const { data: integrations, refetch: refetchIntegrations } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<{ comfyuiUrl: string; loraTesterUrl: string }>>('/api/settings/integrations');
+      const data = response.data.data ?? { comfyuiUrl: '', loraTesterUrl: '' };
+      setComfyuiUrlInput(data.comfyuiUrl || '');
+      setLoraTesterUrlInput(data.loraTesterUrl || '');
+      return data;
     },
   });
 
@@ -481,70 +512,6 @@ export function SettingsPage() {
     },
   });
 
-  // Set Gemini API key mutation
-  const setGeminiKeyMutation = useMutation({
-    mutationFn: async (apiKey: string) => {
-      const response = await api.put<ApiResponse<{ hasKey: boolean; keyPreview: string }>>('/api/settings/gemini-key', { apiKey });
-      return response.data.data;
-    },
-    onSuccess: () => {
-      refetchGeminiKey();
-      setGeminiKeyInput('');
-      toast({ title: 'Gemini API key saved' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Delete Gemini API key mutation
-  const deleteGeminiKeyMutation = useMutation({
-    mutationFn: async () => {
-      await api.delete('/api/settings/gemini-key');
-    },
-    onSuccess: () => {
-      refetchGeminiKey();
-      toast({ title: 'Gemini API key removed' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Set Z.AI API key mutation
-  const setZaiKeyMutation = useMutation({
-    mutationFn: async (apiKey: string) => {
-      const response = await api.put<ApiResponse<{ hasKey: boolean; keyPreview: string; baseUrl?: string | null }>>(
-        '/api/settings/zai-key',
-        { apiKey }
-      );
-      return response.data.data;
-    },
-    onSuccess: () => {
-      refetchZaiKey();
-      setZaiKeyInput('');
-      toast({ title: 'Z.AI API key saved' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Delete Z.AI API key mutation
-  const deleteZaiKeyMutation = useMutation({
-    mutationFn: async () => {
-      await api.delete('/api/settings/zai-key');
-    },
-    onSuccess: () => {
-      refetchZaiKey();
-      toast({ title: 'Z.AI API key removed' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-
   // Set GitHub token mutation
   const setGithubTokenMutation = useMutation({
     mutationFn: async (token: string) => {
@@ -569,6 +536,24 @@ export function SettingsPage() {
     onSuccess: () => {
       refetchGithubToken();
       toast({ title: 'GitHub token removed' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // Save integration URLs mutation
+  const saveIntegrationsMutation = useMutation({
+    mutationFn: async (payload: { comfyuiUrl?: string; loraTesterUrl?: string }) => {
+      const response = await api.put<ApiResponse<{ comfyuiUrl: string; loraTesterUrl: string }>>(
+        '/api/settings/integrations',
+        payload,
+      );
+      return response.data.data;
+    },
+    onSuccess: () => {
+      refetchIntegrations();
+      toast({ title: 'Integrations saved', description: 'New sessions will use the updated URLs.' });
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -608,6 +593,78 @@ export function SettingsPage() {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     },
   });
+
+  // OpenCode providers mutations
+  const deleteOpenCodeProviderMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/api/opencode/providers/${id}`);
+      return id;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['opencode-providers'] });
+      toast({ title: 'Provider deleted' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // OpenCode models state
+  const [modelProviderId, setModelProviderId] = useState<string>('');
+  const [modelModelId, setModelModelId] = useState<string>('');
+  const openCodeModels = settings?.cliProviderModelLists?.opencode || [];
+
+  const removeOpenCodeModel = (model: string) => {
+    const current = openCodeModels || [];
+    const updated = current.filter(m => m !== model);
+    updateSettingsMutation.mutate({
+      cliProviderModelLists: {
+        ...settings?.cliProviderModelLists,
+        opencode: updated.length > 0 ? updated : undefined
+      }
+    });
+  };
+
+  // OpenCode providers state
+  const [openCodeProviderDialog, setOpenCodeProviderDialog] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('');
+  const [openCodeProviderForm, setOpenCodeProviderForm] = useState({
+    id: '',
+    name: '',
+    apiKey: '',
+    baseUrl: '',
+  });
+  const [showOpenCodeApiKey, setShowOpenCodeApiKey] = useState(false);
+
+  const saveOpenCodeProvider = async () => {
+    try {
+      const response = await api.put<{ success: boolean; data?: OpenCodeProvider; error?: any }>('/api/opencode/providers', {
+        id: openCodeProviderForm.id,
+        name: openCodeProviderForm.name,
+        apiKey: openCodeProviderForm.apiKey || undefined,
+        baseUrl: openCodeProviderForm.baseUrl || undefined,
+        enabled: true,
+      });
+
+      if (response.data.success) {
+        toast({ title: 'Provider erfolgreich gespeichert' });
+        setOpenCodeProviderDialog(false);
+        setSelectedProviderId('');
+        setOpenCodeProviderForm({ id: '', name: '', apiKey: '', baseUrl: '' });
+        refetchOpenCodeProviders();
+      } else {
+        toast({
+          title: 'Error saving provider',
+          description: response.data.error?.toString() || 'Unknown error',
+          variant: 'destructive'
+        });
+      }
+    } catch (error: any) {
+      console.error('Failed to save OpenCode provider:', error);
+      const errorMsg = error?.response?.data?.error || error?.message || 'Failed to save provider';
+      toast({ title: 'Error', description: errorMsg, variant: 'destructive' });
+    }
+  };
 
   const handleThemeChange = (theme: Theme) => {
     localStorage.setItem('theme', theme);
@@ -824,7 +881,7 @@ export function SettingsPage() {
 
         {/* Tabs Navigation */}
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 h-12">
+          <TabsList className="grid w-full grid-cols-5 h-12">
             <TabsTrigger value="general" className="gap-2">
               <Settings2 className="h-4 w-4" />
               <span className="hidden sm:inline">General</span>
@@ -836,6 +893,10 @@ export function SettingsPage() {
             <TabsTrigger value="api-keys" className="gap-2">
               <KeyRound className="h-4 w-4" />
               <span className="hidden sm:inline">API Keys</span>
+            </TabsTrigger>
+            <TabsTrigger value="integrations" className="gap-2">
+              <Wand2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Integrations</span>
             </TabsTrigger>
             <TabsTrigger value="extensions" className="gap-2">
               <Puzzle className="h-4 w-4" />
@@ -1076,7 +1137,7 @@ export function SettingsPage() {
                   <div className="space-y-1">
                     <CardTitle className="text-base">CLI Updates</CardTitle>
                     <CardDescription>
-                      Update Claude, Codex, Gemini, and the separate GLM Claude Code CLI.
+                      Update Claude, Codex, and OpenCode CLI tools.
                     </CardDescription>
                   </div>
                   <Button
@@ -1187,236 +1248,148 @@ export function SettingsPage() {
                 })}
               </div>
             </section>
-          </TabsContent>
 
-          {/* API Keys Tab */}
-          <TabsContent value="api-keys" className="space-y-6">
-            {/* Z.AI API Key */}
+            {/* OpenCode Models */}
             <section>
               <div className="flex items-center gap-2 mb-3">
-                <h2 className="text-lg font-semibold">Z.AI (GLM) API Key</h2>
-                <Zap className="h-4 w-4 text-cyan-500" />
+                <h2 className="text-lg font-semibold">OpenCode Models</h2>
+                <span className="text-xs text-muted-foreground">⚡ 75+ LLM providers</span>
               </div>
-              <Card className={cn(
-                "border",
-                zaiKeyStatus?.hasKey
-                  ? "border-green-500/30 bg-green-500/5"
-                  : "border-cyan-500/30 bg-cyan-500/5"
-              )}>
-                <CardContent className="pt-4 pb-4">
-                  {zaiKeyStatus?.hasKey ? (
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-green-500/15">
-                        <Key className="h-4 w-4 text-green-600 dark:text-green-400" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-green-600 dark:text-green-400">API Key configured</p>
-                        <p className="text-xs text-muted-foreground font-mono">{zaiKeyStatus.keyPreview}</p>
-                        {zaiKeyStatus.baseUrl && (
-                          <p className="text-[11px] text-muted-foreground mt-1">
-                            Base URL: <span className="font-mono">{zaiKeyStatus.baseUrl}</span>
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteZaiKeyMutation.mutate()}
-                        disabled={deleteZaiKeyMutation.isPending}
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
+              <Card className="border border-border/70">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-base">Modell auswählen</CardTitle>
+                  <CardDescription>
+                    Wähle einen Provider und dann ein Modell aus der Liste
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Provider Selection */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">1. Provider wählen</label>
+                    <Select
+                      value={modelProviderId}
+                      onValueChange={(value) => {
+                        setModelProviderId(value);
+                        setModelModelId('');
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Provider auswählen..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(availableProviders || {}).map(([id, provider]) => (
+                          <SelectItem key={id} value={id}>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{provider.name}</span>
+                              <span className="text-xs text-muted-foreground">{id}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Model Selection */}
+                  {modelProviderId && availableProviders?.[modelProviderId]?.models && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">2. Modell wählen</label>
+                      <Select value={modelModelId} onValueChange={setModelModelId}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Modell auswählen..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableProviders[modelProviderId].models?.map((model) => (
+                            <SelectItem key={model} value={model}>
+                              <code className="text-xs">{model}</code>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-cyan-500/15">
-                          <Key className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-cyan-600 dark:text-cyan-400">No API key set</p>
-                          <p className="text-xs text-muted-foreground">Used for GLM Coding Plan via Claude Code</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Input
-                            type={showZaiKey ? 'text' : 'password'}
-                            value={zaiKeyInput}
-                            onChange={(e) => setZaiKeyInput(e.target.value)}
-                            placeholder="Paste your Z.AI API key"
-                            className="font-mono text-sm pr-10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowZaiKey(!showZaiKey)}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
-                          >
-                            {showZaiKey ? (
-                              <EyeOff className="h-4 w-4 text-muted-foreground" />
-                            ) : (
-                              <Eye className="h-4 w-4 text-muted-foreground" />
-                            )}
-                          </button>
-                        </div>
+                  )}
+
+                  {/* Add Button */}
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => {
+                        if (modelProviderId && modelModelId) {
+                          const fullModel = `${modelProviderId}/${modelModelId}`;
+                          const current = openCodeModels || [];
+                          if (!current.includes(fullModel)) {
+                            updateSettingsMutation.mutate({
+                              cliProviderModelLists: {
+                                ...settings?.cliProviderModelLists,
+                                opencode: [...current, fullModel]
+                              }
+                            });
+                          }
+                          setModelModelId('');
+                        }
+                      }}
+                      disabled={!modelProviderId || !modelModelId}
+                      className="bg-purple-600 hover:bg-purple-700"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Modell hinzufügen
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setModelProviderId('');
+                        setModelModelId('');
+                      }}
+                    >
+                      Zurücksetzen
+                    </Button>
+                  </div>
+
+                  {/* Configured Models */}
+                  {openCodeModels && openCodeModels.length > 0 && (
+                    <div className="space-y-2 pt-4 border-t">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Konfigurierte Modelle ({openCodeModels.length})</span>
                         <Button
-                          onClick={() => setZaiKeyMutation.mutate(zaiKeyInput)}
-                          disabled={!zaiKeyInput || setZaiKeyMutation.isPending}
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-destructive"
+                          onClick={() => {
+                            updateSettingsMutation.mutate({
+                              cliProviderModelLists: {
+                                ...settings?.cliProviderModelLists,
+                                opencode: undefined
+                              }
+                            });
+                          }}
                         >
-                          {setZaiKeyMutation.isPending ? 'Saving...' : 'Save'}
+                          Alle entfernen
                         </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        This writes <span className="font-mono">ANTHROPIC_AUTH_TOKEN</span> and
-                        <span className="font-mono"> ANTHROPIC_BASE_URL</span> to <span className="font-mono">~/.claude/settings.json</span>.
-                        Base URL defaults to <span className="font-mono">https://api.z.ai/api/anthropic</span>.
-                      </p>
-
-                      <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
-                        <p className="text-xs font-medium text-foreground">Z.AI Tools & MCP Servers:</p>
-
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer hover:text-foreground">Coding Tool Helper (Setup Wizard)</summary>
-                          <div className="mt-1 ml-3 space-y-1">
-                            <p><span className="font-mono">npx @z_ai/coding-helper</span></p>
-                            <p className="text-[11px]">Interactive wizard for API key setup, tool management, and MCP configuration.</p>
+                      <div className="flex flex-wrap gap-2">
+                        {openCodeModels.map((model) => (
+                          <div
+                            key={model}
+                            className="group flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/30 text-sm font-mono"
+                          >
+                            <span>{model}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeOpenCodeModel(model)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
                           </div>
-                        </details>
-
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer hover:text-foreground">Usage Query Plugin</summary>
-                          <div className="mt-1 ml-3 space-y-1">
-                            <p>1. <span className="font-mono">claude plugin marketplace add zai-org/zai-coding-plugins</span></p>
-                            <p>2. <span className="font-mono">claude plugin install glm-plan-usage@zai-coding-plugins</span></p>
-                            <p>3. Run <span className="font-mono">/glm-plan-usage:usage-query</span></p>
-                          </div>
-                        </details>
-
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer hover:text-foreground">Vision MCP Server (GLM-4.6V)</summary>
-                          <div className="mt-1 ml-3 space-y-1">
-                            <p className="text-[11px]">Image analysis, video understanding, OCR, UI-to-code. Requires Node.js 22+.</p>
-                            <p><span className="font-mono text-[11px]">claude mcp add -s user zai-mcp-server --env Z_AI_API_KEY=your_key Z_AI_MODE=ZAI -- npx -y "@z_ai/mcp-server"</span></p>
-                          </div>
-                        </details>
-
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer hover:text-foreground">Web Search MCP Server</summary>
-                          <div className="mt-1 ml-3 space-y-1">
-                            <p className="text-[11px]">Real-time web search. Remote server, no local install.</p>
-                            <p><span className="font-mono text-[11px]">claude mcp add -s user -t http web-search-prime https://api.z.ai/api/mcp/web_search_prime/mcp --header "Authorization: Bearer your_key"</span></p>
-                          </div>
-                        </details>
-
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer hover:text-foreground">Web Reader MCP Server</summary>
-                          <div className="mt-1 ml-3 space-y-1">
-                            <p className="text-[11px]">Fetch and parse web page content. Remote server, no local install.</p>
-                            <p><span className="font-mono text-[11px]">claude mcp add -s user -t http web-reader https://api.z.ai/api/mcp/web_reader/mcp --header "Authorization: Bearer your_key"</span></p>
-                          </div>
-                        </details>
-
-                        <p className="text-[11px] text-muted-foreground/70 pt-1">
-                          Docs: <a href="https://docs.z.ai/llms.txt" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">docs.z.ai/llms.txt</a>
-                        </p>
+                        ))}
                       </div>
                     </div>
                   )}
                 </CardContent>
               </Card>
             </section>
+          </TabsContent>
 
-            {/* Gemini API Key */}
-            <section>
-              <div className="flex items-center gap-2 mb-3">
-                <h2 className="text-lg font-semibold">Gemini API Key</h2>
-            <Sparkles className="h-4 w-4 text-amber-500" />
-          </div>
-          <Card className={cn(
-            "border",
-            geminiKeyStatus?.hasKey
-              ? "border-green-500/30 bg-green-500/5"
-              : "border-amber-500/30 bg-amber-500/5"
-          )}>
-            <CardContent className="pt-4 pb-4">
-              {geminiKeyStatus?.hasKey ? (
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-green-500/15">
-                    <Key className="h-4 w-4 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-green-600 dark:text-green-400">API Key configured</p>
-                    <p className="text-xs text-muted-foreground font-mono">{geminiKeyStatus.keyPreview}</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => deleteGeminiKeyMutation.mutate()}
-                    disabled={deleteGeminiKeyMutation.isPending}
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  >
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Remove
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-amber-500/15">
-                      <Key className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-amber-600 dark:text-amber-400">No API key set</p>
-                      <p className="text-xs text-muted-foreground">Required for Gemini image generation</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Input
-                        type={showGeminiKey ? 'text' : 'password'}
-                        value={geminiKeyInput}
-                        onChange={(e) => setGeminiKeyInput(e.target.value)}
-                        placeholder="AIzaSy..."
-                        className="font-mono text-sm pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowGeminiKey(!showGeminiKey)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
-                      >
-                        {showGeminiKey ? (
-                          <EyeOff className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <Eye className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </button>
-                    </div>
-                    <Button
-                      onClick={() => setGeminiKeyMutation.mutate(geminiKeyInput)}
-                      disabled={!geminiKeyInput || setGeminiKeyMutation.isPending}
-                    >
-                      {setGeminiKeyMutation.isPending ? 'Saving...' : 'Save'}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Get your API key from{' '}
-                    <a
-                      href="https://aistudio.google.com/apikey"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Google AI Studio
-                    </a>
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-            </section>
-
+          {/* API Keys Tab */}
+          <TabsContent value="api-keys" className="space-y-6">
             {/* GitHub Token */}
             <section>
               <div className="flex items-center gap-2 mb-3">
@@ -1503,6 +1476,151 @@ export function SettingsPage() {
                       </p>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* OpenCode Providers */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-base">OpenCode Providers</CardTitle>
+                      <CardDescription>Configure API keys for OpenCode-compatible providers</CardDescription>
+                    </div>
+                    <Button size="sm" onClick={() => {
+                      setSelectedProviderId('');
+                      setOpenCodeProviderForm({ id: '', name: '', apiKey: '', baseUrl: '' });
+                      setOpenCodeProviderDialog(true);
+                    }} className="gap-1.5 h-8 px-3 text-xs">
+                      <Plus className="h-3.5 w-3.5" />
+                      Add Provider
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {openCodeProviders && openCodeProviders.length > 0 ? (
+                    <div className="space-y-2">
+                      {openCodeProviders.map((provider) => (
+                        <div
+                          key={provider.id}
+                          className="group flex items-center gap-4 p-4 rounded-xl border bg-card transition-all hover:border-primary/30 hover:shadow-sm"
+                        >
+                          <div className="p-2.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                            <Key className="h-4 w-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{provider.name}</p>
+                              <span className="text-xs text-muted-foreground font-mono">{provider.id}</span>
+                              {!provider.enabled && (
+                                <span className="text-xs text-muted-foreground">(disabled)</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {provider.hasKey ? 'API key configured' : 'No API key'}
+                              {provider.baseUrl && ` • ${provider.baseUrl}`}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteOpenCodeProviderMutation.mutate(provider.id)}
+                            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <div className="p-4 rounded-full bg-muted/50 mb-4">
+                        <Key className="h-8 w-8 text-muted-foreground/50" />
+                      </div>
+                      <p className="font-medium text-muted-foreground mb-1">No providers configured</p>
+                      <p className="text-sm text-muted-foreground/70 max-w-xs">
+                        Add OpenCode-compatible providers like OpenAI, Anthropic, or custom endpoints
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </section>
+          </TabsContent>
+
+          {/* Integrations Tab */}
+          <TabsContent value="integrations" className="space-y-6">
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="text-lg font-semibold">ComfyUI Integration</h2>
+                <Wand2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Image generation endpoints</CardTitle>
+                  <CardDescription>
+                    Configure the URL of your ComfyUI container (and optionally a LoRA Tester backend that wraps it).
+                    These URLs are exposed as <code className="px-1 py-0.5 rounded bg-muted text-xs">COMFYUI_URL</code>{' '}
+                    and <code className="px-1 py-0.5 rounded bg-muted text-xs">LORA_TESTER_URL</code> env vars inside
+                    CLI sessions, so the{' '}
+                    <code className="px-1 py-0.5 rounded bg-muted text-xs">comfyui-asset-gen</code> skill can reach them.
+                    Changes apply to new sessions.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">ComfyUI URL</label>
+                    <Input
+                      type="url"
+                      value={comfyuiUrlInput}
+                      onChange={(e) => setComfyuiUrlInput(e.target.value)}
+                      placeholder="http://192.168.1.23:8188"
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Direct ComfyUI server (used for <code className="px-1 py-0.5 rounded bg-muted text-xs">/view</code>{' '}
+                      image downloads). Leave blank to disable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">LoRA Tester Backend URL (optional)</label>
+                    <Input
+                      type="url"
+                      value={loraTesterUrlInput}
+                      onChange={(e) => setLoraTesterUrlInput(e.target.value)}
+                      placeholder="http://192.168.1.126:8850"
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      LoRA Tester backend that proxies generation requests (T2I/I2I, workflows, LoRA browsing).
+                      Leave blank if you only use ComfyUI directly.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      onClick={() =>
+                        saveIntegrationsMutation.mutate({
+                          comfyuiUrl: comfyuiUrlInput.trim(),
+                          loraTesterUrl: loraTesterUrlInput.trim(),
+                        })
+                      }
+                      disabled={saveIntegrationsMutation.isPending}
+                    >
+                      {saveIntegrationsMutation.isPending ? 'Saving...' : 'Save'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setComfyuiUrlInput(integrations?.comfyuiUrl || '');
+                        setLoraTesterUrlInput(integrations?.loraTesterUrl || '');
+                      }}
+                      disabled={saveIntegrationsMutation.isPending}
+                    >
+                      Reset
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </section>
@@ -2222,6 +2340,145 @@ export function SettingsPage() {
           onOpenChange={setMarketplaceBrowserOpen}
           configProvider={configProvider}
         />
+
+        {/* OpenCode Provider Dialog */}
+        <Dialog open={openCodeProviderDialog} onOpenChange={setOpenCodeProviderDialog}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Add OpenCode Provider</DialogTitle>
+              <DialogDescription>
+                Wähle einen Provider aus der Liste und gib deinen API Key ein
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              {/* Provider Selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Provider auswählen</label>
+                <Select
+                  value={selectedProviderId}
+                  onValueChange={(value) => {
+                    setSelectedProviderId(value);
+                    const provider = availableProviders?.[value];
+                    if (provider) {
+                      setOpenCodeProviderForm({
+                        ...openCodeProviderForm,
+                        id: value,
+                        name: provider.name,
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Provider auswählen..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(availableProviders || {}).map(([id, provider]) => (
+                      <SelectItem key={id} value={id}>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{provider.name}</span>
+                          <span className="text-xs text-muted-foreground">{id} - {provider.description}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Available Models for selected provider */}
+              {selectedProviderId && availableProviders?.[selectedProviderId]?.models && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Verfügbare Modelle</label>
+                  <div className="p-3 bg-muted/50 rounded-lg space-y-1">
+                    {availableProviders[selectedProviderId].models?.map((model) => (
+                      <div key={model} className="flex items-center justify-between text-sm">
+                        <code className="text-xs bg-background px-2 py-1 rounded font-mono">
+                          {selectedProviderId}/{model}
+                        </code>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => {
+                            const fullModel = `${selectedProviderId}/${model}`;
+                            const current = openCodeModels || [];
+                            if (!current.includes(fullModel)) {
+                              updateSettingsMutation.mutate({
+                                cliProviderModelLists: {
+                                  ...settings?.cliProviderModelLists,
+                                  opencode: [...current, fullModel]
+                                }
+                              });
+                            }
+                          }}
+                        >
+                          {openCodeModels.includes(`${selectedProviderId}/${model}`) ? 'Hinzugefügt' : 'Hinzufügen'}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* API Key */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">API Key</label>
+                <div className="relative">
+                  <Input
+                    type={showOpenCodeApiKey ? 'text' : 'password'}
+                    value={openCodeProviderForm.apiKey}
+                    onChange={(e) => setOpenCodeProviderForm({ ...openCodeProviderForm, apiKey: e.target.value })}
+                    placeholder="sk-... oder provider-spezifischer Key"
+                    className="font-mono text-sm pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOpenCodeApiKey(!showOpenCodeApiKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
+                  >
+                    {showOpenCodeApiKey ? (
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Der API Key wird verschlüsselt gespeichert
+                </p>
+              </div>
+
+              {/* Optional Base URL */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Base URL (optional)</label>
+                <Input
+                  value={openCodeProviderForm.baseUrl}
+                  onChange={(e) => setOpenCodeProviderForm({ ...openCodeProviderForm, baseUrl: e.target.value })}
+                  placeholder="https://api.example.com/v1"
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Nur erforderlich für Custom Endpoints
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => {
+                setOpenCodeProviderDialog(false);
+                setSelectedProviderId('');
+                setOpenCodeProviderForm({ id: '', name: '', apiKey: '', baseUrl: '' });
+              }}>
+                Abbrechen
+              </Button>
+              <Button
+                onClick={saveOpenCodeProvider}
+                disabled={!openCodeProviderForm.id || !openCodeProviderForm.apiKey}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                Provider speichern
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

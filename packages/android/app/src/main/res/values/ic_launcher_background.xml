@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand color: plum purple — the Plum Code WebUI accent color -->
+    <color name="ic_launcher_background">#6B2D8B</color>
+</resources>

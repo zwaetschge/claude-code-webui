@@ -1,9 +1,11 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useBasicAuthStore } from '@/stores/basicAuthStore';
 import { useSocket } from '@/hooks/useSocket';
 import { Layout } from '@/components/layout/Layout';
+import { AdminRoute } from '@/components/AdminRoute';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Toaster } from '@/components/ui/toaster';
 
 // Lazy load pages for code splitting
@@ -15,7 +17,10 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ de
 const SessionPage = lazy(() => import('@/pages/SessionPage').then(m => ({ default: m.SessionPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
-const WatchdogPage = lazy(() => import('@/pages/WatchdogPage').then(m => ({ default: m.WatchdogPage })));
+const AdminLayout = lazy(() => import('@/pages/admin/AdminLayout').then(m => ({ default: m.AdminLayout })));
+const AdminOverviewPage = lazy(() => import('@/pages/admin/AdminOverviewPage').then(m => ({ default: m.AdminOverviewPage })));
+const AdminUsersPage = lazy(() => import('@/pages/admin/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
+const AdminAuditLogPage = lazy(() => import('@/pages/admin/AdminAuditLogPage').then(m => ({ default: m.AdminAuditLogPage })));
 
 // Loading fallback component
 function PageLoader() {
@@ -32,6 +37,7 @@ function PageLoader() {
 // Route that requires basic auth (if enabled)
 function BasicAuthRoute({ children }: { children: React.ReactNode }) {
   const { isBasicAuthenticated, isBasicAuthEnabled, isLoading } = useBasicAuthStore();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -48,7 +54,7 @@ function BasicAuthRoute({ children }: { children: React.ReactNode }) {
 
   // If basic auth is enabled but not authenticated, redirect to basic login
   if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return <>{children}</>;
@@ -57,6 +63,7 @@ function BasicAuthRoute({ children }: { children: React.ReactNode }) {
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuthStore();
   const { isBasicAuthenticated, isBasicAuthEnabled, isLoading: isBasicLoading } = useBasicAuthStore();
+  const location = useLocation();
 
   // Initialize socket connection when authenticated
   useSocket();
@@ -71,28 +78,33 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   // First check basic auth if enabled
   if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
-    return <Navigate to="/basic-login" replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return <>{children}</>;
 }
 
 export default function App() {
-  const { initializeAuth } = useBasicAuthStore();
+  const { initializeAuth: initializeBasicAuth } = useBasicAuthStore();
+  const { initializeAuth: initializeUserAuth } = useAuthStore();
 
-  // Initialize basic auth check on app mount
+  // Initialize both auth stores on mount. Running them in parallel lets the
+  // UI finish loading as soon as persisted tokens are verified against the
+  // backend, avoiding a flash of the login page on new tabs.
   useEffect(() => {
-    initializeAuth();
-  }, [initializeAuth]);
+    initializeBasicAuth();
+    initializeUserAuth();
+  }, [initializeBasicAuth, initializeUserAuth]);
 
   return (
     <>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
+      <ErrorBoundary>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
           <Route path="/login" element={<BasicLoginPage />} />
           <Route path="/basic-login" element={<Navigate to="/login" replace />} />
           <Route
@@ -117,10 +129,22 @@ export default function App() {
             <Route path="session/:id" element={<SessionPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="watchdog" element={<WatchdogPage />} />
+            <Route
+              path="admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route index element={<AdminOverviewPage />} />
+              <Route path="users" element={<AdminUsersPage />} />
+              <Route path="audit-log" element={<AdminAuditLogPage />} />
+            </Route>
           </Route>
         </Routes>
-      </Suspense>
+        </Suspense>
+      </ErrorBoundary>
       <Toaster />
     </>
   );

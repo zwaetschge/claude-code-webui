@@ -3,11 +3,14 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { config } from '../config';
-import { getAppConfig, setAppConfig } from '../db';
+import { getAppConfig, getDatabase, setAppConfig } from '../db';
 import { requireAuth } from '../middleware/auth';
+import { rateLimiters } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
 import { generateUserToken } from '../utils/authTokens';
-import { upsertSharedCliUser } from '../utils/cliUser';
+import { findUserForBasicAuth } from '../utils/cliUser';
+import { stampLogin, auditFromRequest } from '../utils/auditLog';
+import { isEmailAllowed } from '../auth/passport';
 
 const router = Router();
 
@@ -16,6 +19,13 @@ const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
 });
+
+// Fixed hash used only to equalize timing when the username doesn't match any
+// user — prevents username enumeration via response-time side channel.
+// `bcrypt.compareSync` against a real hash costs ~80-120ms; matching that
+// against an arbitrary value keeps the attacker from distinguishing
+// "user not found" from "bad password". The plaintext is irrelevant.
+const TIMING_SAFE_DUMMY_HASH = '$2a$10$CwTycUXWue0Thq9StjUM0uJ8T3oB5Ec6sTh6bN1/FphR6dXy.cLLG';
 
 // Change credentials schema
 const changeCredentialsSchema = z.object({
@@ -35,8 +45,8 @@ router.get('/status', (_req, res) => {
   });
 });
 
-// Login with username/password
-router.post('/login', (req, res) => {
+// Login with username/password — rate limited to prevent brute-force
+router.post('/login', rateLimiters.strict, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
 
   if (!parsed.success) {
@@ -51,34 +61,62 @@ router.post('/login', (req, res) => {
     throw new AppError('Basic authentication is disabled', 403, 'AUTH_DISABLED');
   }
 
-  // Get stored credentials
-  const storedUsername = getAppConfig('basic_auth_username');
-  const storedPasswordHash = getAppConfig('basic_auth_password');
-
-  if (!storedUsername || !storedPasswordHash) {
-    throw new AppError('Basic auth not configured', 500, 'AUTH_NOT_CONFIGURED');
-  }
-
-  // Verify credentials
-  if (username !== storedUsername) {
+  // Multi-user lookup: match by email OR name, then verify password.
+  // When the user doesn't exist, still run bcrypt against a dummy hash so the
+  // response time doesn't reveal whether the username was valid.
+  const lookup = findUserForBasicAuth(username);
+  if (!lookup) {
+    bcrypt.compareSync(password, TIMING_SAFE_DUMMY_HASH);
+    auditFromRequest(req, 'auth.login.failure', { metadata: { method: 'basic', username, reason: 'user_not_found' } });
     throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
   }
 
-  const passwordValid = bcrypt.compareSync(password, storedPasswordHash);
+  const passwordValid = bcrypt.compareSync(password, lookup.passwordHash);
   if (!passwordValid) {
+    auditFromRequest(req, 'auth.login.failure', {
+      resourceType: 'user',
+      resourceId: lookup.user.id,
+      metadata: { method: 'basic', username, reason: 'bad_password' },
+    });
     throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
   }
 
-  const displayName = storedUsername || 'admin';
-  const email = `${displayName}@local`;
-  const user = upsertSharedCliUser(email, displayName);
+  const { user } = lookup;
+  // Even if a basic-auth row exists in the local DB (e.g. legacy seed, or a
+  // user the operator hasn't removed yet), enforce the allowlist as the
+  // single source of truth so revoking access is just an env-var change.
+  if (!isEmailAllowed(user.email)) {
+    auditFromRequest(req, 'auth.login.failure', {
+      resourceType: 'user',
+      resourceId: user.id,
+      metadata: { method: 'basic', username, reason: 'email_not_allowed' },
+    });
+    throw new AppError('Account not permitted on this instance', 403, 'EMAIL_NOT_ALLOWED');
+  }
+
+  stampLogin(user.id, 'basic', req);
   const token = generateUserToken(user.id, { basicAuth: true, expiresIn: '30d' });
+
+  // Also establish a Passport session so cookie-only requests (e.g. <img> tags
+  // hitting /generated/*.png) can authenticate without an Authorization header.
+  await new Promise<void>((resolve, reject) => {
+    req.login(user, (err) => (err ? reject(err) : resolve()));
+  });
 
   res.json({
     success: true,
     data: {
       token,
-      message: 'Login successful',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+        provider: user.provider,
+        providerId: user.providerId,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
     },
   });
 });
@@ -111,20 +149,22 @@ router.post('/logout', (_req, res) => {
 });
 
 // Get current credentials info (not the actual password)
-router.get('/credentials', requireAuth, (_req, res) => {
-  const username = getAppConfig('basic_auth_username');
+router.get('/credentials', requireAuth, (req, res) => {
+  const userId = (req as unknown as { userId: string }).userId;
+  const db = getDatabase();
+  const row = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string | null } | undefined;
   const enabled = getAppConfig('basic_auth_enabled');
 
   res.json({
     success: true,
     data: {
-      username: username || 'admin',
+      username: row?.name || 'admin',
       enabled: enabled === 'true',
     },
   });
 });
 
-// Change credentials (requires current password)
+// Change credentials for the currently authenticated user
 router.put('/credentials', requireAuth, (req, res) => {
   const parsed = changeCredentialsSchema.safeParse(req.body);
 
@@ -133,35 +173,44 @@ router.put('/credentials', requireAuth, (req, res) => {
   }
 
   const { currentPassword, newUsername, newPassword } = parsed.data;
+  const userId = (req as unknown as { userId: string }).userId;
+  const db = getDatabase();
 
-  // Verify current password
-  const storedPasswordHash = getAppConfig('basic_auth_password');
-  if (!storedPasswordHash) {
-    throw new AppError('Basic auth not configured', 500, 'AUTH_NOT_CONFIGURED');
+  const userRow = db.prepare('SELECT name, password_hash FROM users WHERE id = ?').get(userId) as
+    | { name: string | null; password_hash: string | null }
+    | undefined;
+
+  if (!userRow || !userRow.password_hash) {
+    throw new AppError('User has no password set', 500, 'AUTH_NOT_CONFIGURED');
   }
 
-  const passwordValid = bcrypt.compareSync(currentPassword, storedPasswordHash);
+  const passwordValid = bcrypt.compareSync(currentPassword, userRow.password_hash);
   if (!passwordValid) {
     throw new AppError('Current password is incorrect', 401, 'INVALID_PASSWORD');
   }
 
-  // Update username if provided
   if (newUsername) {
-    setAppConfig('basic_auth_username', newUsername);
+    db.prepare('UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newUsername, userId);
+    // Keep legacy app_config in sync for the admin account so the single-credential initializer stays consistent
+    if (getAppConfig('basic_auth_username') === userRow.name) {
+      setAppConfig('basic_auth_username', newUsername);
+    }
   }
 
-  // Update password if provided
   if (newPassword) {
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
-    setAppConfig('basic_auth_password', hashedPassword);
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hashedPassword, userId);
+    if (getAppConfig('basic_auth_username') === (newUsername || userRow.name)) {
+      setAppConfig('basic_auth_password', hashedPassword);
+    }
   }
 
-  const updatedUsername = getAppConfig('basic_auth_username');
+  const updatedRow = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string | null } | undefined;
 
   res.json({
     success: true,
     data: {
-      username: updatedUsername,
+      username: updatedRow?.name,
       message: 'Credentials updated successfully',
     },
   });

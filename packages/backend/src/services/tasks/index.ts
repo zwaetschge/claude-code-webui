@@ -1,5 +1,4 @@
 import { TaskManager } from "./TaskManager";
-import { GeminiOAuthRunner } from "./runners/GeminiOAuthRunner";
 
 export { TaskManager } from "./TaskManager";
 export type { TaskRunner, TaskContext } from "./TaskManager";
@@ -17,9 +16,8 @@ export function initTaskManager(): TaskManager {
   if (taskManager) return taskManager;
 
   taskManager = new TaskManager();
-  taskManager.registerRunner(new GeminiOAuthRunner());
   taskManager.start();
 
-  console.log("[tasks] TaskManager initialized with runners: gemini-oauth");
+  console.log("[tasks] TaskManager initialized");
   return taskManager;
 }

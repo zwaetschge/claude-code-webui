@@ -1,7 +1,15 @@
 import { useState, useRef, useCallback, useMemo, memo, useEffect } from 'react';
-import { Send, Paperclip, Loader2, X, FileText, FileCode, File as FileIcon, StopCircle } from 'lucide-react';
+import { Send, Paperclip, Loader2, X, FileText, FileCode, File as FileIcon, StopCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CommandMenu } from '@/components/chat/CommandMenu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { Command } from '@claude-code-webui/shared';
 
@@ -64,7 +72,10 @@ interface ChatInputProps {
   commands?: Command[];
   selectedToolName?: string | null;
   selectedCliTool?: string | null;
-  quickPrompts?: Array<{ label: string; value: string }>;
+  quickPrompts?: Array<
+    | { label: string; value: string; hint?: string }
+    | { heading: string }
+  >;
   disabled?: boolean;
   isSending?: boolean;
   isExecutingTool?: boolean;
@@ -252,39 +263,20 @@ export const ChatInput = memo(function ChatInput({
   };
 
   return (
-    <div className="shrink-0 pt-4 border-t space-y-3">
-      {quickPrompts && quickPrompts.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto sm:overflow-visible sm:flex-wrap pb-1 sm:pb-0 -mx-1 px-1 scrollbar-none">
-          {quickPrompts.map((prompt) => (
-            <button
-              key={prompt.label}
-              type="button"
-              onClick={() => handleQuickPrompt(prompt.value)}
-              disabled={disabled || isSending || isExecutingTool}
-              className={cn(
-                "ui-pill ui-pill-subtle transition-colors shrink-0",
-                "hover:bg-muted/70 hover:text-foreground",
-                "disabled:opacity-50 disabled:cursor-not-allowed"
-              )}
-            >
-              {prompt.label}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="shrink-0 space-y-2">
       {/* File attachments preview */}
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 p-3 rounded-xl bg-muted/50 border animate-scale-in">
+        <div className="glass-panel inline-flex flex-wrap gap-2 p-3 rounded-2xl animate-scale-in w-fit max-w-full">
           {attachments.map((attachment) => (
             <div key={attachment.id} className="relative group">
               {attachment.type === 'image' && attachment.preview ? (
                 <img
                   src={attachment.preview}
                   alt="Attachment"
-                  className="h-16 w-16 object-cover rounded-lg border shadow-sm"
+                  className="h-16 w-16 object-cover rounded-lg border border-border/40 shadow-sm"
                 />
               ) : (
-                <div className="h-16 w-40 flex items-center gap-2 px-3 rounded-lg border shadow-sm bg-background">
+                <div className="h-16 w-40 flex items-center gap-2 px-3 rounded-lg border border-border/40 shadow-sm bg-background/60">
                   {getAttachmentIcon(attachment.type)}
                   <span className="text-xs truncate flex-1" title={attachment.file.name}>
                     {attachment.file.name}
@@ -303,7 +295,13 @@ export const ChatInput = memo(function ChatInput({
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="flex gap-2 items-center">
+      <form
+        onSubmit={handleSubmit}
+        className={cn(
+          "glass-chrome flex gap-1 items-end p-1.5 rounded-2xl relative shadow-lg shadow-black/5 dark:shadow-black/20",
+          selectedCliTool && "ring-1 ring-orange-500/30"
+        )}
+      >
         {/* Hidden file input */}
         <input
           ref={fileInputRef}
@@ -314,13 +312,62 @@ export const ChatInput = memo(function ChatInput({
           onChange={handleFileSelect}
         />
 
+        {/* Quick prompts dropdown */}
+        {quickPrompts && quickPrompts.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={disabled || isSending || isExecutingTool}
+                className="h-10 w-10 shrink-0 text-muted-foreground hover:text-foreground hover:bg-foreground/5 rounded-xl"
+                title="Quick prompts"
+              >
+                <Sparkles className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              side="top"
+              sideOffset={8}
+              className="glass-panel min-w-[240px] max-h-[70vh] overflow-y-auto border-foreground/10 rounded-xl p-1"
+            >
+              {quickPrompts.map((prompt, index) => {
+                if ('heading' in prompt) {
+                  return (
+                    <div key={`heading-${index}`}>
+                      {index > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuLabel className="text-xs uppercase tracking-wider text-muted-foreground font-medium px-3 pt-2 pb-1">
+                        {prompt.heading}
+                      </DropdownMenuLabel>
+                    </div>
+                  );
+                }
+                return (
+                  <DropdownMenuItem
+                    key={`${prompt.label}-${index}`}
+                    onSelect={() => handleQuickPrompt(prompt.value)}
+                    className="cursor-pointer rounded-lg px-3 py-2 focus:bg-foreground/10 flex items-center justify-between gap-3"
+                  >
+                    <span>{prompt.label}</span>
+                    {prompt.hint && (
+                      <span className="text-xs text-muted-foreground font-mono">{prompt.hint}</span>
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
         {/* File upload button */}
         <Button
           type="button"
           variant="ghost"
           size="icon"
           onClick={() => fileInputRef.current?.click()}
-          className="h-12 w-12 md:h-10 md:w-10 shrink-0"
+          className="h-10 w-10 shrink-0 text-muted-foreground hover:text-foreground hover:bg-foreground/5 rounded-xl"
           title="Attach files (images, text, pdf, code)"
         >
           <Paperclip className="h-5 w-5" />
@@ -349,8 +396,7 @@ export const ChatInput = memo(function ChatInput({
             }
             rows={1}
             className={cn(
-              "w-full min-h-[48px] md:min-h-[40px] max-h-[200px] px-4 py-3 md:py-2 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-ring text-base md:text-sm resize-none",
-              selectedCliTool && "border-orange-500/30 focus:ring-orange-500/50"
+              "w-full min-h-[40px] max-h-[200px] px-2 py-2 bg-transparent border-0 focus:outline-none focus:ring-0 text-base md:text-sm resize-none placeholder:text-muted-foreground/60 text-foreground"
             )}
             style={{ height: 'auto', overflow: 'hidden' }}
             onInput={(e) => {
@@ -366,10 +412,13 @@ export const ChatInput = memo(function ChatInput({
           <Button
             type="button"
             size="icon"
-            variant={isActive ? "destructive" : "outline"}
+            variant={isActive ? "destructive" : "ghost"}
             onClick={onInterrupt}
             disabled={!isActive}
-            className={cn("h-12 w-12 md:h-10 md:w-10 shrink-0 transition-opacity", !isActive && "opacity-30")}
+            className={cn(
+              "h-10 w-10 shrink-0 rounded-xl transition-all",
+              !isActive && "opacity-30 hover:bg-foreground/5"
+            )}
             title="Stop (Escape)"
           >
             <StopCircle className="h-5 w-5" />
@@ -382,7 +431,8 @@ export const ChatInput = memo(function ChatInput({
           size="icon"
           disabled={(!input.trim() && attachments.length === 0) || isSending || isExecutingTool}
           className={cn(
-            "h-12 w-12 md:h-10 md:w-10 shrink-0",
+            "h-10 w-10 shrink-0 rounded-xl shadow-sm transition-all",
+            "hover:shadow-md hover:scale-105 active:scale-95",
             selectedCliTool && "bg-orange-600 hover:bg-orange-700"
           )}
         >

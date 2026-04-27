@@ -2,14 +2,63 @@ import { nanoid } from 'nanoid';
 import type { User } from '@claude-code-webui/shared';
 import { getDatabase } from '../db';
 
-const CLI_LOCAL_PROVIDERS = ['cli', 'claude', 'codex', 'zai', 'gemini'] as const;
+const CLI_LOCAL_PROVIDERS = ['cli', 'claude', 'codex', 'opencode'] as const;
 const CLI_LOCAL_PROVIDER_ID = 'local-cli';
+
+interface UserRow {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  provider: User['provider'];
+  provider_id: string;
+  password_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthLookupResult {
+  user: User;
+  passwordHash: string;
+}
+
+export function findUserForBasicAuth(usernameOrEmail: string): AuthLookupResult | null {
+  const db = getDatabase();
+  const lookup = usernameOrEmail.trim();
+  if (!lookup) return null;
+
+  const row = db.prepare(
+    `SELECT id, email, name, avatar_url, provider, provider_id, password_hash, created_at, updated_at
+     FROM users
+     WHERE (LOWER(email) = LOWER(?) OR LOWER(name) = LOWER(?))
+       AND password_hash IS NOT NULL AND password_hash <> ''
+     LIMIT 1`
+  ).get(lookup, lookup) as UserRow | undefined;
+
+  if (!row) return null;
+
+  return {
+    user: {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      avatarUrl: row.avatar_url,
+      provider: row.provider,
+      providerId: row.provider_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    },
+    passwordHash: row.password_hash!,
+  };
+}
 
 export function upsertSharedCliUser(email: string, name: string): User {
   const db = getDatabase();
 
   const existingUsers = db.prepare(
-    `SELECT * FROM users WHERE provider_id = ? AND provider IN (${CLI_LOCAL_PROVIDERS.map(() => '?').join(',')})`
+    `SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
+            created_at as createdAt, updated_at as updatedAt
+     FROM users WHERE provider_id = ? AND provider IN (${CLI_LOCAL_PROVIDERS.map(() => '?').join(',')})`
   ).all(CLI_LOCAL_PROVIDER_ID, ...CLI_LOCAL_PROVIDERS) as User[];
 
   let user = existingUsers.find((candidate) => candidate.provider === 'cli') || existingUsers[0];

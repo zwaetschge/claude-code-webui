@@ -1,21 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Outlet, Link } from 'react-router-dom';
-import { Menu, Plus, AlertTriangle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Outlet, Link, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Menu, Plus } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 // UsageLimitsBar removed - limits now in ContextPopover
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { useProviderStore } from '@/stores/providerStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { api } from '@/services/api';
+import type { Session, ApiResponse } from '@claude-code-webui/shared';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { CLI_PROVIDER_ICON, CLI_PROVIDER_LABEL, UI_PROVIDER_META } from '@/lib/providers';
-import { PlumBackground } from '@/components/effects/PlumBackground';
+import { AuroraBackground } from '@/components/effects/AuroraBackground';
+import { CommandPalette } from '@/components/CommandPalette';
 
 export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isRepairBot, setIsRepairBot] = useState(false);
   const { uiProvider } = useProviderStore();
-  const { sessions, activeSessionId } = useSessionStore();
+  const { sessions, activeSessionId, setSessions } = useSessionStore();
+  const location = useLocation();
+  // Session page manages its own scroll + floating chat bars, so it renders
+  // edge-to-edge inside <main>. Every other page uses the default padded scroll.
+  const isFullBleed = location.pathname.startsWith('/session/');
+
+  // Populate session list on every authenticated page so the sidebar works
+  // when a user lands directly on a session URL (bypassing the dashboard).
+  useQuery({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
+      if (response.data.success && response.data.data) {
+        setSessions(response.data.data);
+        return response.data.data;
+      }
+      return [];
+    },
+  });
   const activeMeta = UI_PROVIDER_META[uiProvider];
   const activeSessionProvider = useMemo(() => {
     if (!activeSessionId) return null;
@@ -23,36 +44,22 @@ export function Layout() {
     return session?.cliProvider || null;
   }, [activeSessionId, sessions]);
 
-  useEffect(() => {
-    fetch('/api/instance-info')
-      .then((r) => r.json())
-      .then((data) => setIsRepairBot(!!data.repairBotMode))
-      .catch(() => {});
-  }, []);
-
   // Close mobile menu on navigation
   const handleNavigation = () => {
     setMobileMenuOpen(false);
   };
 
   const isPlumProvider = uiProvider === 'plum';
+  const isClaudeProvider = uiProvider === 'claude';
+  const useAurora = isPlumProvider || isClaudeProvider;
 
   return (
-    <div className={`relative flex h-screen bg-background ${isRepairBot ? 'pt-8' : ''}`}>
+    <div className="relative flex h-screen bg-background">
       {/* Background effects */}
-      {isPlumProvider ? (
-        <PlumBackground enableCursorGlow />
+      {useAurora ? (
+        <AuroraBackground intensity={isPlumProvider ? 'vivid' : 'default'} />
       ) : (
         <div className="absolute inset-0 pattern-bg pointer-events-none" />
-      )}
-
-      {/* Repair Bot Banner */}
-      {isRepairBot && (
-        <div className="absolute top-0 left-0 right-0 z-50 bg-amber-600 text-white text-center py-1.5 px-4 text-sm font-semibold flex items-center justify-center gap-2 shadow-md">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          EMERGENCY REPAIR WEBUI
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-        </div>
       )}
 
       {/* Desktop Sidebar */}
@@ -110,10 +117,13 @@ export function Layout() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-auto p-4 md:p-6">
+        <main className={isFullBleed ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1 overflow-auto p-4 md:p-6'}>
           <Outlet />
         </main>
       </div>
+
+      {/* Global command palette (Cmd/Ctrl+K) */}
+      <CommandPalette />
     </div>
   );
 }

@@ -1,13 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ExternalLink,
+  RefreshCw,
   Plus,
   Trash2,
-  Globe,
   Server,
   Zap,
+  Globe,
   Database,
-  Settings,
+  Settings as SettingsIcon,
+  AlertTriangle,
+  Play,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,17 +20,23 @@ interface WebPreviewProps {
   className?: string;
 }
 
-interface SavedUrl {
-  url: string;
+interface SavedPort {
+  port: number;
   name: string;
   icon: 'globe' | 'server' | 'zap' | 'database' | 'settings';
+  path?: string;
 }
 
-const DEFAULT_URLS: SavedUrl[] = [
-  { url: 'http://localhost:3000', name: 'Dev Server (3000)', icon: 'server' },
-  { url: 'http://localhost:5173', name: 'Vite (5173)', icon: 'zap' },
-  { url: 'http://localhost:8080', name: 'App (8080)', icon: 'globe' },
-  { url: 'http://localhost:4000', name: 'API (4000)', icon: 'database' },
+interface PreviewConfig {
+  enabled: boolean;
+  hostname: string | null;
+}
+
+const DEFAULT_PORTS: SavedPort[] = [
+  { port: 3000, name: 'Dev Server', icon: 'server' },
+  { port: 5173, name: 'Vite', icon: 'zap' },
+  { port: 8080, name: 'App', icon: 'globe' },
+  { port: 4000, name: 'API', icon: 'database' },
 ];
 
 const ICON_MAP = {
@@ -35,205 +44,310 @@ const ICON_MAP = {
   server: Server,
   zap: Zap,
   database: Database,
-  settings: Settings,
+  settings: SettingsIcon,
 };
 
-function getStoredUrls(): SavedUrl[] {
+const STORAGE_KEY = 'webpreview_ports_v2';
+
+function loadPorts(): SavedPort[] {
   try {
-    const stored = localStorage.getItem('webpreview_urls');
-    if (stored) {
-      return JSON.parse(stored);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as SavedPort[];
+      if (Array.isArray(parsed) && parsed.every((p) => typeof p.port === 'number')) {
+        return parsed;
+      }
     }
   } catch {
-    // Ignore parsing errors
+    // ignore
   }
-  return DEFAULT_URLS;
+  return DEFAULT_PORTS;
 }
 
-function saveUrls(urls: SavedUrl[]): void {
-  localStorage.setItem('webpreview_urls', JSON.stringify(urls));
+function savePorts(ports: SavedPort[]): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(ports));
+}
+
+function buildPreviewUrl(hostname: string, path = '/'): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `https://${hostname}${normalizedPath === '/' ? '/' : normalizedPath}`;
+}
+
+function buildInitUrl(hostname: string, port: number): string {
+  return `https://${hostname}/__preview-init?port=${port}`;
 }
 
 export function WebPreview({ className }: WebPreviewProps) {
-  const [urls, setUrls] = useState<SavedUrl[]>(getStoredUrls);
-  const [newUrl, setNewUrl] = useState('');
-  const [newName, setNewName] = useState('');
+  const [config, setConfig] = useState<PreviewConfig | null>(null);
+  const [ports, setPorts] = useState<SavedPort[]>(loadPorts);
+  const [activePort, setActivePort] = useState<number | null>(null);
+  const [iframeKey, setIframeKey] = useState(0);
   const [isAdding, setIsAdding] = useState(false);
+  const [newPort, setNewPort] = useState('');
+  const [newName, setNewName] = useState('');
+  const [configError, setConfigError] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Save to localStorage when URLs change
   useEffect(() => {
-    saveUrls(urls);
-  }, [urls]);
+    savePorts(ports);
+  }, [ports]);
 
-  const openUrl = (url: string) => {
-    // Ensure URL has protocol
-    let targetUrl = url;
-    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-      targetUrl = `http://${targetUrl}`;
-    }
-    window.open(targetUrl, '_blank', 'noopener,noreferrer');
-  };
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/preview/config', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data: PreviewConfig) => {
+        if (!cancelled) setConfig(data);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setConfigError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const addUrl = () => {
-    if (!newUrl.trim()) return;
+  const activate = useCallback((port: number) => {
+    if (!config?.enabled || !config.hostname) return;
+    setActivePort(port);
+    setIframeKey((k) => k + 1);
+  }, [config]);
 
-    const url = newUrl.trim().startsWith('http') ? newUrl.trim() : `http://${newUrl.trim()}`;
-    const name = newName.trim() || new URL(url).host;
+  const refresh = useCallback(() => {
+    setIframeKey((k) => k + 1);
+  }, []);
 
-    setUrls([...urls, { url, name, icon: 'globe' }]);
-    setNewUrl('');
+  const openExternal = useCallback(() => {
+    if (!config?.hostname || activePort === null) return;
+    window.open(buildPreviewUrl(config.hostname), '_blank', 'noopener,noreferrer');
+  }, [config, activePort]);
+
+  const addPort = useCallback(() => {
+    const parsed = parseInt(newPort, 10);
+    if (!Number.isInteger(parsed) || parsed < 1024 || parsed > 65535) return;
+    const name = newName.trim() || `Port ${parsed}`;
+    setPorts((prev) => {
+      if (prev.some((p) => p.port === parsed)) return prev;
+      return [...prev, { port: parsed, name, icon: 'globe' }];
+    });
+    setNewPort('');
     setNewName('');
     setIsAdding(false);
-  };
+  }, [newPort, newName]);
 
-  const removeUrl = (index: number) => {
-    setUrls(urls.filter((_, i) => i !== index));
-  };
+  const removePort = useCallback((port: number) => {
+    setPorts((prev) => prev.filter((p) => p.port !== port));
+    if (activePort === port) setActivePort(null);
+  }, [activePort]);
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      addUrl();
-    }
-    if (e.key === 'Escape') {
-      setIsAdding(false);
-      setNewUrl('');
-      setNewName('');
-    }
-  };
+  const iframeSrc = useMemo(() => {
+    if (!config?.hostname || activePort === null) return null;
+    // On every activation cycle, hit __preview-init to (re)set the cookie,
+    // then it redirects to /. This guarantees the cookie is fresh when we
+    // start browsing.
+    return buildInitUrl(config.hostname, activePort);
+  }, [config, activePort]);
+
+  if (configError) {
+    return <PreviewError title="Preview service unreachable" body={configError} className={className} />;
+  }
+
+  if (!config) {
+    return <PreviewLoading className={className} />;
+  }
+
+  if (!config.enabled || !config.hostname) {
+    return (
+      <PreviewError
+        title="Preview not configured"
+        body="Set PREVIEW_HOSTNAME in the backend environment and add a Traefik router for that subdomain."
+        className={className}
+      />
+    );
+  }
 
   return (
-    <div className={cn('flex flex-col h-full bg-card border rounded-lg overflow-hidden', className)}>
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between p-3 border-b bg-muted/30">
-        <div className="flex items-center gap-2">
-          <Globe className="h-5 w-5 text-muted-foreground" />
-          <h3 className="font-medium">Quick Links</h3>
+    <div className={cn('flex h-full flex-col bg-card overflow-hidden rounded-lg border', className)}>
+      <div className="shrink-0 flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
+        <Globe className="h-4 w-4 text-muted-foreground" />
+        <div className="flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground">
+          {activePort !== null
+            ? `https://${config.hostname}  →  localhost:${activePort}`
+            : 'No port selected'}
         </div>
         <Button
           variant="ghost"
-          size="sm"
-          onClick={() => setIsAdding(!isAdding)}
-          className="gap-1"
+          size="icon"
+          className="h-8 w-8"
+          onClick={refresh}
+          disabled={activePort === null}
+          title="Reload preview"
         >
-          <Plus className="h-4 w-4" />
-          Add URL
+          <RefreshCw className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={openExternal}
+          disabled={activePort === null}
+          title="Open in new tab"
+        >
+          <ExternalLink className="h-4 w-4" />
         </Button>
       </div>
 
-      {/* Add URL form */}
-      {isAdding && (
-        <div className="shrink-0 p-3 border-b bg-muted/20 space-y-2">
-          <Input
-            type="text"
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            onKeyDown={handleKeyPress}
-            placeholder="URL (e.g., localhost:3000)"
-            className="h-9"
-            autoFocus
-          />
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder="Name (optional)"
-              className="h-9 flex-1"
-            />
-            <Button size="sm" onClick={addUrl} disabled={!newUrl.trim()}>
-              Add
-            </Button>
+      <div className="flex flex-1 min-h-0">
+        <aside className="shrink-0 w-56 border-r bg-muted/20 flex flex-col">
+          <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ports</span>
             <Button
-              size="sm"
               variant="ghost"
-              onClick={() => {
-                setIsAdding(false);
-                setNewUrl('');
-                setNewName('');
-              }}
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setIsAdding((s) => !s)}
+              title="Add port"
             >
-              Cancel
+              <Plus className="h-3.5 w-3.5" />
             </Button>
           </div>
-        </div>
-      )}
 
-      {/* URL list */}
-      <div className="flex-1 min-h-0 overflow-auto p-3">
-        {urls.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            <Globe className="h-12 w-12 mx-auto mb-3 opacity-50" />
-            <p className="text-sm">No saved URLs</p>
-            <p className="text-xs mt-1">Click "Add URL" to save quick links</p>
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {urls.map((item, index) => {
-              const IconComponent = ICON_MAP[item.icon];
-              return (
-                <div
-                  key={`${item.url}-${index}`}
-                  className="group flex items-center gap-3 p-3 rounded-lg border bg-background hover:bg-muted/50 transition-colors"
+          {isAdding && (
+            <div className="shrink-0 border-b bg-background/60 p-2 space-y-2">
+              <Input
+                type="number"
+                min={1024}
+                max={65535}
+                value={newPort}
+                onChange={(e) => setNewPort(e.target.value)}
+                placeholder="3000"
+                className="h-8 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addPort();
+                  if (e.key === 'Escape') {
+                    setIsAdding(false);
+                    setNewPort('');
+                    setNewName('');
+                  }
+                }}
+              />
+              <Input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Name (optional)"
+                className="h-8 text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addPort();
+                }}
+              />
+              <div className="flex gap-1">
+                <Button size="sm" className="h-7 flex-1" onClick={addPort} disabled={!newPort.trim()}>
+                  Add
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  onClick={() => {
+                    setIsAdding(false);
+                    setNewPort('');
+                    setNewName('');
+                  }}
                 >
-                  <div className="p-2 rounded-md bg-primary/10 shrink-0">
-                    <IconComponent className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{item.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{item.url}</p>
-                  </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                      onClick={() => removeUrl(index)}
-                      title="Remove"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => openUrl(item.url)}
-                    className="gap-1.5 shrink-0"
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <ul className="flex-1 overflow-auto p-2 space-y-1">
+            {ports.map((p) => {
+              const Icon = ICON_MAP[p.icon];
+              const isActive = activePort === p.port;
+              return (
+                <li key={p.port}>
+                  <div
+                    className={cn(
+                      'group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm cursor-pointer transition-colors',
+                      isActive
+                        ? 'bg-primary/15 text-primary'
+                        : 'hover:bg-muted/60 text-foreground',
+                    )}
+                    onClick={() => activate(p.port)}
                   >
-                    <ExternalLink className="h-4 w-4" />
-                    Open
-                  </Button>
-                </div>
+                    <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{p.name}</div>
+                      <div className="text-[10px] font-mono text-muted-foreground truncate">:{p.port}</div>
+                    </div>
+                    {isActive ? (
+                      <Play className="h-3 w-3 text-primary shrink-0" />
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removePort(p.port);
+                        }}
+                        title="Remove"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </li>
               );
             })}
-          </div>
-        )}
-      </div>
+            {ports.length === 0 && (
+              <li className="px-2 py-4 text-center text-xs text-muted-foreground">
+                No saved ports
+              </li>
+            )}
+          </ul>
+        </aside>
 
-      {/* Quick open */}
-      <div className="shrink-0 p-3 border-t bg-muted/20">
-        <div className="flex gap-2">
-          <div className="flex-1 flex items-center gap-1 px-3 py-2 rounded-md bg-background border">
-            <Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-            <Input
-              type="text"
-              placeholder="Enter URL and press Enter to open..."
-              className="h-7 border-0 shadow-none focus-visible:ring-0 text-sm"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const input = e.currentTarget.value.trim();
-                  if (input) {
-                    openUrl(input);
-                    e.currentTarget.value = '';
-                  }
-                }
-              }}
+        <main className="flex-1 min-w-0 relative bg-background">
+          {iframeSrc ? (
+            <iframe
+              ref={iframeRef}
+              key={iframeKey}
+              src={iframeSrc}
+              className="h-full w-full border-0"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+              title="Preview"
             />
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground mt-2 text-center">
-          URLs open in a new browser tab
-        </p>
+          ) : (
+            <div className="h-full w-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
+              <Globe className="h-10 w-10 opacity-40" />
+              <p className="text-sm">Pick a port on the left to preview the running dev server.</p>
+              <p className="text-xs">Served over <code className="font-mono">{config.hostname}</code> with Authelia SSO.</p>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function PreviewLoading({ className }: { className?: string }) {
+  return (
+    <div className={cn('flex h-full items-center justify-center text-muted-foreground text-sm', className)}>
+      Loading preview…
+    </div>
+  );
+}
+
+function PreviewError({ title, body, className }: { title: string; body: string; className?: string }) {
+  return (
+    <div className={cn('flex h-full items-center justify-center p-6', className)}>
+      <div className="max-w-md rounded-lg border bg-card p-6 text-center">
+        <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
+        <h3 className="font-semibold mb-1">{title}</h3>
+        <p className="text-sm text-muted-foreground">{body}</p>
       </div>
     </div>
   );

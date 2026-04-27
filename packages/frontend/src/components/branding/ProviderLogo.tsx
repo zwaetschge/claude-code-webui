@@ -41,34 +41,11 @@ export function ProviderLogo({ provider, className, alt }: ProviderLogoProps) {
     );
   }
 
-  if (provider === 'zai') {
-    const resolvedAlt = alt === undefined ? 'Z.AI' : alt;
+  if (provider === 'opencode') {
+    const resolvedAlt = alt === undefined ? 'OpenCode' : alt;
     return (
       <img
-        src="/logos/zai.png"
-        alt={resolvedAlt}
-        className={cn('object-contain', className)}
-      />
-    );
-  }
-
-  if (provider === 'gemini') {
-    const resolvedAlt = alt === undefined ? 'Gemini' : alt;
-    return (
-      <img
-        src="/logos/Gemini_CLI_logo.webp"
-        alt={resolvedAlt}
-        className={cn('object-contain', className)}
-      />
-    );
-  }
-
-  if (provider === 'multi') {
-    const resolvedAlt = alt === undefined ? 'Multi-CLI' : alt;
-    // Multi-CLI uses the Plum logo as it's part of the Plum branding
-    return (
-      <img
-        src="/logos/plum.png"
+        src="/logos/opencode.png"
         alt={resolvedAlt}
         className={cn('object-contain', className)}
       />

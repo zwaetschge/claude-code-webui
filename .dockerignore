@@ -10,3 +10,8 @@ data
 .env.local
 .DS_Store
 .tmp
+packages/android
+test-*.mjs
+ANDROID_CLIENT_SPEC.md
+AGENTS.md
+*.spec.md

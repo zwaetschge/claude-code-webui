@@ -1,147 +1,68 @@
+# Portable docker-compose for self-hosters. Defaults expect a vanilla Docker
+# host with the repo checked out into the working dir. Site-specific bits
+# (Traefik labels, absolute Unraid paths, external networks) belong in
+# docker-compose.override.yml — see docker-compose.override.yml.example.
+#
+# Quick start:
+#   1. cp .env.example .env && edit .env (set SESSION_SECRET, JWT_SECRET, AUTH_ALLOWED_EMAILS)
+#   2. docker compose up -d --build
+#   3. open http://localhost:${WEBUI_PORT:-4545}
+
 services:
   claude-code-webui:
     build: .
     image: claude-code-webui:latest
     container_name: claude-code-webui
     restart: unless-stopped
-    # Add docker group (GID 281 on Unraid) for docker.sock access
-    group_add:
-      - "281"
     ports:
-      - "4545:3001"
+      - "${WEBUI_PORT:-4545}:3001"
+    extra_hosts:
+      # Lets the bundled MCP servers reach host-side services (e.g. android-app-creator on the host bridge)
+      - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=production
-      - SESSION_SECRET=${SESSION_SECRET:-changeme-session-secret-at-least-32-chars}
-      - JWT_SECRET=${JWT_SECRET:-changeme-jwt-secret-at-least-32-chars}
-      # Use WEBUI_* prefix to avoid collision with repair-bot's FRONTEND_URL env
-      - FRONTEND_URL=${WEBUI_FRONTEND_URL:-http://localhost:4545}
-      - CORS_ALLOWED_ORIGINS=${WEBUI_CORS_ORIGINS:-http://localhost:4545,http://127.0.0.1:4545}
-      - ALLOWED_BASE_PATHS=/mnt/user
-      # Set your email here for display in the UI
-      - CLAUDE_USER_EMAIL=${CLAUDE_USER_EMAIL:-}
-      # Gemini API Key for image generation (set in .env file or environment)
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      # Google OAuth for Gemini API access (get from Google Cloud Console)
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:4545}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:4545}
+      - ALLOWED_BASE_PATHS=${ALLOWED_BASE_PATHS:-/workspace}
+      - CONTAINER_NAME=claude-code-webui
+      - PREVIEW_HOSTNAME=${PREVIEW_HOSTNAME:-}
+      - "SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}"
+      - "JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}"
+      # Email allowlist — REQUIRED for any deployment exposed to the public internet.
+      # Empty = no allowlist (only safe behind a private network or SSO proxy).
+      - AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}
+      - SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL:-}
+      # Optional CLI provider model overrides
+      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-opus,sonnet,haiku}
+      - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
+      - CLI_PROVIDER_OPENCODE_MODELS=${CLI_PROVIDER_OPENCODE_MODELS:-}
+      - CLI_PROVIDER_OPENCODE_DEFAULT_MODEL=${CLI_PROVIDER_OPENCODE_DEFAULT_MODEL:-z-ai/glm-5.1}
+      - OPENCODE_DEBUG_EVENTS=${OPENCODE_DEBUG_EVENTS:-0}
+      # Optional OAuth providers — leave empty to disable
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      - GOOGLE_CALLBACK_URL=${WEBUI_GOOGLE_CALLBACK_URL:-http://localhost:4545/auth/google/callback}
-      # Gemini OAuth credentials (Gemini CLI's public installed-app client)
-      - GEMINI_OAUTH_CLIENT_ID=${GEMINI_OAUTH_CLIENT_ID:-}
-      - GEMINI_OAUTH_CLIENT_SECRET=${GEMINI_OAUTH_CLIENT_SECRET:-}
-      # CLI provider overrides (optional)
-      - CLI_PROVIDER_GLM_CREDENTIALS_PATH=${CLI_PROVIDER_GLM_CREDENTIALS_PATH:-/home/node/.glm}
-      - CLI_PROVIDER_GLM_PREFIX=${CLI_PROVIDER_GLM_PREFIX:-/home/node/.npm-glm}
-      - CLI_PROVIDER_GLM_COMMAND=${CLI_PROVIDER_GLM_COMMAND:-/home/node/.npm-glm/bin/claude}
-      - CLI_PROVIDER_GLM_DEFAULT_MODEL=${CLI_PROVIDER_GLM_DEFAULT_MODEL:-}
-      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-opus,sonnet,haiku}
-      - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
-      - CLI_PROVIDER_GEMINI_MODELS=${CLI_PROVIDER_GEMINI_MODELS:-}
-      - CLI_PROVIDER_GLM_MODELS=${CLI_PROVIDER_GLM_MODELS:-glm-5,glm-4.7,glm-4.5}
-      - LOGOS_DIR=/app/logos
-      - WEBUI_GLM_CONFIG_HOME=${WEBUI_GLM_CONFIG_HOME:-/home/node/.glm}
-      # Codex usage meter (optional)
-      - CODEX_USAGE_COOKIE=${CODEX_USAGE_COOKIE:-}
-      - CODEX_USAGE_URL=${CODEX_USAGE_URL:-}
-      - CODEX_USER_AGENT=${CODEX_USER_AGENT:-}
-      # CLI auto-update (optional)
-      - CLI_AUTO_UPDATE=${CLI_AUTO_UPDATE:-true}
-      - CLI_AUTO_UPDATE_INTERVAL_HOURS=${CLI_AUTO_UPDATE_INTERVAL_HOURS:-24}
-      - CLI_AUTO_UPDATE_PROVIDERS=${CLI_AUTO_UPDATE_PROVIDERS:-}
-      # Container identity (used by Claude CLI to prevent self-destruction)
-      - CONTAINER_NAME=claude-code-webui
+      - GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-}
     volumes:
-      # Persist database
-      - /mnt/user/appdata/claude-code-webui/data:/app/packages/backend/data
-      # Persist provider configs on Unraid (avoid /root which is tmpfs on reboot)
-      - /mnt/user/appdata/claude-code-webui/config/claude:/home/node/.claude
-      - /mnt/user/appdata/claude-code-webui/config/codex:/home/node/.codex
-      - /mnt/user/appdata/claude-code-webui/config/gemini:/home/node/.gemini
-      - /mnt/user/appdata/claude-code-webui/config/glm:/home/node/.glm
-      - /mnt/user/appdata/claude-code-webui/config/kimi:/home/node/.kimi
-      - /mnt/user/appdata/claude-code-webui/config/npm-glm:/home/node/.npm-glm
-      # Persist npm global installs (CLI updates)
-      - /mnt/user/appdata/claude-code-webui/config/npm-global:/home/node/.npm-global
-      # Mount provider logos
-      - /mnt/user/appdata/claude-code-webui/logos:/app/logos
-      # Mount Unraid user shares for project access
-      - /mnt/user:/mnt/user
-      # SSH keys for git push
-      - /mnt/user/appdata/claude-code-webui/config/ssh:/home/node/.ssh:ro
-      # Docker socket for container access
-      - /var/run/docker.sock:/var/run/docker.sock
+      # SQLite, generated images, attachments
+      - ${DATA_DIR:-./data}:/app/packages/backend/data
+      # Per-CLI auth + state (claude /login, codex auth, opencode auth.json) — survive container rebuilds
+      - ${CONFIG_DIR:-./config}/claude:/home/node/.claude
+      - ${CONFIG_DIR:-./config}/codex:/home/node/.codex
+      - ${CONFIG_DIR:-./config}/opencode:/home/node/.opencode
+      - ${CONFIG_DIR:-./config}/npm-global:/home/node/.npm-global
+      # Workspace path the running CLI can read/write. Defaults to ./workspace; mount your project here.
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 45s
     networks:
-      - claude-network
-
-  repair-bot:
-    image: claude-code-webui:latest
-    container_name: repair-bot
-    restart: unless-stopped
-    group_add:
-      - "281"
-    ports:
-      - "4546:3001"
-    entrypoint: ["bash", "/webui/scripts/repair-bot-entrypoint.sh"]
-    environment:
-      - NODE_ENV=production
-      - SESSION_SECRET=${SESSION_SECRET:-changeme-session-secret-at-least-32-chars}
-      - JWT_SECRET=${JWT_SECRET:-changeme-jwt-secret-at-least-32-chars}
-      - FRONTEND_URL=${REPAIR_BOT_URL:-http://localhost:4546}
-      - CORS_ALLOWED_ORIGINS=${REPAIR_BOT_CORS:-http://localhost:4546}
-      - ALLOWED_BASE_PATHS=/mnt/user
-      - DISABLE_SELF_REBUILD=true
-      - CLAUDE_USER_EMAIL=${CLAUDE_USER_EMAIL:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      # CLI provider overrides (same as main)
-      - CLI_PROVIDER_GLM_CREDENTIALS_PATH=${CLI_PROVIDER_GLM_CREDENTIALS_PATH:-/home/node/.glm}
-      - CLI_PROVIDER_GLM_PREFIX=${CLI_PROVIDER_GLM_PREFIX:-/home/node/.npm-glm}
-      - CLI_PROVIDER_GLM_COMMAND=${CLI_PROVIDER_GLM_COMMAND:-/home/node/.npm-glm/bin/claude}
-      - CLI_PROVIDER_GLM_DEFAULT_MODEL=${CLI_PROVIDER_GLM_DEFAULT_MODEL:-}
-      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-opus,sonnet,haiku}
-      - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
-      - CLI_PROVIDER_GEMINI_MODELS=${CLI_PROVIDER_GEMINI_MODELS:-}
-      - CLI_PROVIDER_GLM_MODELS=${CLI_PROVIDER_GLM_MODELS:-glm-5,glm-4.7,glm-4.5}
-      - LOGOS_DIR=/app/logos
-      - WEBUI_GLM_CONFIG_HOME=${WEBUI_GLM_CONFIG_HOME:-/home/node/.glm}
-      # Disable CLI auto-update on repair bot (main handles it)
-      - CLI_AUTO_UPDATE=false
-      # Container identity (used by Claude CLI to prevent self-destruction)
-      - CONTAINER_NAME=repair-bot
-    volumes:
-      # Own database (separate from main)
-      - /mnt/user/appdata/claude-code-webui/data-robot:/app/packages/backend/data
-      # Source code access (for Claude sessions + sidecar script)
-      - /mnt/user/appdata/claude-code-webui:/webui
-      # Shared provider configs
-      - /mnt/user/appdata/claude-code-webui/config/claude:/home/node/.claude
-      - /mnt/user/appdata/claude-code-webui/config/codex:/home/node/.codex
-      - /mnt/user/appdata/claude-code-webui/config/gemini:/home/node/.gemini
-      - /mnt/user/appdata/claude-code-webui/config/glm:/home/node/.glm
-      - /mnt/user/appdata/claude-code-webui/config/kimi:/home/node/.kimi
-      - /mnt/user/appdata/claude-code-webui/config/npm-glm:/home/node/.npm-glm
-      - /mnt/user/appdata/claude-code-webui/config/npm-global:/home/node/.npm-global
-      # Mount provider logos
-      - /mnt/user/appdata/claude-code-webui/logos:/app/logos
-      # Mount Unraid user shares for project access
-      - /mnt/user:/mnt/user
-      # SSH keys for git push
-      - /mnt/user/appdata/claude-code-webui/config/ssh:/home/node/.ssh:ro
-      # Docker socket for rebuilding main container
-      - /var/run/docker.sock:/var/run/docker.sock
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - claude-network
+      - default
 
 networks:
-  claude-network:
-    driver: bridge
+  default:

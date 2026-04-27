@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import passport from 'passport';
 import fs from 'fs/promises';
 import path from 'path';
@@ -6,27 +6,58 @@ import os from 'os';
 import { nanoid } from 'nanoid';
 import { config } from '../config';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
+import { rateLimiters } from '../middleware/rateLimiter';
 import { getDatabase } from '../db';
 import type { User } from '@claude-code-webui/shared';
 import { isProviderAvailable } from '../services/cli-providers';
 import { generateUserToken } from '../utils/authTokens';
 import { upsertSharedCliUser } from '../utils/cliUser';
+import { stampLogin } from '../utils/auditLog';
+import { EmailNotAllowedError, OAuthEmailCollisionError } from '../auth/passport';
 
 const router = Router();
+
+// Wraps passport.authenticate so we can map OAuthEmailCollisionError to a user-friendly
+// redirect instead of returning a 500.
+function oauthCallbackHandler(
+  strategy: 'github' | 'google'
+): (req: Request, res: Response, next: NextFunction) => void {
+  return (req, res, next) => {
+    passport.authenticate(
+      strategy,
+      (err: unknown, user: User | false) => {
+        if (err) {
+          if (err instanceof OAuthEmailCollisionError) {
+            const params = new URLSearchParams({
+              error: 'email_in_use',
+              existing_provider: err.existingProvider,
+            });
+            return res.redirect(`${config.frontendUrl}/connect?${params.toString()}`);
+          }
+          if (err instanceof EmailNotAllowedError) {
+            return res.redirect(`${config.frontendUrl}/connect?error=email_not_allowed`);
+          }
+          return res.redirect(`${config.frontendUrl}/connect?error=${strategy}`);
+        }
+        if (!user) {
+          return res.redirect(`${config.frontendUrl}/connect?error=${strategy}`);
+        }
+
+        req.logIn(user, (loginErr) => {
+          if (loginErr) return next(loginErr);
+          stampLogin(user.id, strategy, req);
+          const token = generateUserToken(user.id);
+          res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+        });
+      }
+    )(req, res, next);
+  };
+}
 
 // GitHub OAuth (only if configured)
 if (config.github.clientId && config.github.clientSecret && config.github.callbackUrl) {
   router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
-
-  router.get(
-    '/github/callback',
-    passport.authenticate('github', { failureRedirect: `${config.frontendUrl}/connect?error=github` }),
-    (req, res) => {
-      const user = req.user as User;
-      const token = generateUserToken(user.id);
-      res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-    }
-  );
+  router.get('/github/callback', oauthCallbackHandler('github'));
 } else {
   router.get('/github', (_req, res) => {
     res.redirect(`${config.frontendUrl}/connect?error=github`);
@@ -36,16 +67,7 @@ if (config.github.clientId && config.github.clientSecret && config.github.callba
 // Google OAuth (only if configured)
 if (config.google.clientId && config.google.clientSecret && config.google.callbackUrl) {
   router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-
-  router.get(
-    '/google/callback',
-    passport.authenticate('google', { failureRedirect: `${config.frontendUrl}/connect?error=google` }),
-    (req, res) => {
-      const user = req.user as User;
-      const token = generateUserToken(user.id);
-      res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-    }
-  );
+  router.get('/google/callback', oauthCallbackHandler('google'));
 } else {
   router.get('/google', (_req, res) => {
     res.redirect(`${config.frontendUrl}/connect?error=google`);
@@ -133,7 +155,7 @@ async function refreshClaudeToken(refreshToken: string): Promise<ClaudeCredentia
 
 if (config.claude.oauthEnabled) {
   // Login using existing Claude CLI credentials
-  router.get('/claude', async (_req, res) => {
+  router.get('/claude', async (req, res) => {
     try {
       let credentials = await getClaudeCredentials();
 
@@ -177,6 +199,7 @@ if (config.claude.oauthEnabled) {
       }
 
       const user = upsertSharedCliUser(email, name);
+      stampLogin(user.id, 'claude', req);
       const token = generateUserToken(user.id);
       res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
     } catch (error) {
@@ -191,7 +214,7 @@ if (config.claude.oauthEnabled) {
 }
 
 // Codex CLI credentials login (uses ~/.codex presence)
-router.get('/codex', async (_req, res) => {
+router.get('/codex', async (req, res) => {
   try {
     const available = await isProviderAvailable('codex');
     if (!available) {
@@ -199,6 +222,7 @@ router.get('/codex', async (_req, res) => {
     }
 
     const user = upsertSharedCliUser('codex-user@local', 'Codex User');
+    stampLogin(user.id, 'codex', req);
     const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
   } catch (error) {
@@ -207,49 +231,37 @@ router.get('/codex', async (_req, res) => {
   }
 });
 
-// Gemini CLI credentials login (uses ~/.gemini presence)
-router.get('/gemini', async (_req, res) => {
+// OpenCode CLI credentials login (uses ~/.config/opencode presence)
+router.get('/opencode', async (req, res) => {
   try {
-    const available = await isProviderAvailable('gemini');
+    const available = await isProviderAvailable('opencode');
     if (!available) {
-      return res.redirect(`${config.frontendUrl}/connect?error=gemini_not_logged_in`);
+      return res.redirect(`${config.frontendUrl}/connect?error=opencode_not_logged_in`);
     }
 
-    const user = upsertSharedCliUser('gemini-user@local', 'Gemini User');
+    const user = upsertSharedCliUser('opencode-user@local', 'OpenCode User');
+    stampLogin(user.id, 'opencode', req);
     const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
   } catch (error) {
-    console.error('Gemini CLI auth error:', error);
-    res.redirect(`${config.frontendUrl}/connect?error=gemini`);
-  }
-});
-
-// Z.AI CLI credentials login (uses ~/.glm presence)
-router.get('/zai', async (_req, res) => {
-  try {
-    const available = await isProviderAvailable('glm');
-    if (!available) {
-      return res.redirect(`${config.frontendUrl}/connect?error=zai_not_logged_in`);
-    }
-
-    const user = upsertSharedCliUser('zai-user@local', 'Z.AI User');
-    const token = generateUserToken(user.id);
-    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-  } catch (error) {
-    console.error('Z.AI CLI auth error:', error);
-    res.redirect(`${config.frontendUrl}/connect?error=zai`);
+    console.error('OpenCode CLI auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=opencode`);
   }
 });
 
 // Dev login (only in development mode)
 if (config.isDevelopment) {
-  router.post('/dev-login', (req, res) => {
+  router.post('/dev-login', rateLimiters.strict, (req, res) => {
     const { email = 'dev@localhost', name = 'Dev User' } = req.body;
     const db = getDatabase();
 
     // Find or create dev user
     let user = db
-      .prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?')
+      .prepare(
+        `SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
+                created_at as createdAt, updated_at as updatedAt
+         FROM users WHERE provider = ? AND provider_id = ?`
+      )
       .get('dev', 'dev-user') as User | undefined;
 
     if (!user) {
@@ -277,17 +289,18 @@ if (config.isDevelopment) {
       } as User;
     }
 
+    stampLogin(user.id, 'dev', req);
     const token = generateUserToken(user.id);
     res.json({ success: true, data: { token, user } });
   });
 
   // Quick dev login redirect
-  router.get('/dev', (_req, res) => {
+  router.get('/dev', (req, res) => {
     const db = getDatabase();
 
     // Find or create dev user
     let user = db
-      .prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?')
+      .prepare('SELECT id FROM users WHERE provider = ? AND provider_id = ?')
       .get('dev', 'dev-user') as { id: string } | undefined;
 
     if (!user) {
@@ -305,6 +318,7 @@ if (config.isDevelopment) {
       user = { id: userId };
     }
 
+    stampLogin(user.id, 'dev', req);
     const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
   });
@@ -317,12 +331,23 @@ router.get('/me', requireAuth, (req, res) => {
 
   const user = db.prepare(`
     SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
+           role, status, last_login_at as lastLoginAt,
            created_at as createdAt, updated_at as updatedAt
     FROM users WHERE id = ?
-  `).get(userId);
+  `).get(userId) as (User & { status?: string }) | undefined;
 
   if (!user) {
     return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
+  }
+
+  // Suspended users can authenticate but can't use the app — surface the status
+  // here so the frontend can redirect them to a "suspended" screen instead of rendering
+  // normal UI that'll just throw 403s on every subsequent request.
+  if (user.status === 'suspended') {
+    return res.status(403).json({
+      success: false,
+      error: { code: 'ACCOUNT_SUSPENDED', message: 'Account suspended' },
+    });
   }
 
   res.json({ success: true, data: user });
@@ -337,10 +362,9 @@ router.post('/logout', requireAuth, (req, res) => {
 
 // Auth providers info
 router.get('/providers', async (_req, res) => {
-  const [codexAvailable, geminiAvailable, zaiAvailable] = await Promise.all([
+  const [codexAvailable, opencodeAvailable] = await Promise.all([
     isProviderAvailable('codex'),
-    isProviderAvailable('gemini'),
-    isProviderAvailable('glm'),
+    isProviderAvailable('opencode'),
   ]);
   res.json({
     success: true,
@@ -349,8 +373,7 @@ router.get('/providers', async (_req, res) => {
       google: !!(config.google.clientId && config.google.clientSecret),
       claude: config.claude.oauthEnabled,
       codex: codexAvailable,
-      gemini: geminiAvailable,
-      zai: zaiAvailable,
+      opencode: opencodeAvailable,
     },
   });
 });

@@ -7,7 +7,6 @@ import {
   Hand,
   Zap,
   ChevronDown,
-  Users,
   Activity,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,7 +16,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { CLI_PROVIDER_LIMIT_LABELS } from '@/lib/providers';
 import type { UsageData } from '@claude-code-webui/shared';
 
-type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger' | 'orchestration';
+type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
 
 interface SessionControlsProps {
   mode: SessionMode;
@@ -74,13 +73,6 @@ const modeConfig: Record<SessionMode, {
     color: 'text-red-500',
     bgColor: 'bg-red-500/10 hover:bg-red-500/20',
   },
-  orchestration: {
-    label: 'Orchestration',
-    description: 'Delegate to specialized subagents',
-    icon: Users,
-    color: 'text-purple-500',
-    bgColor: 'bg-purple-500/10 hover:bg-purple-500/20',
-  },
 };
 
 function ModeDropdown({
@@ -113,7 +105,7 @@ function ModeDropdown({
         onClick={() => setIsOpen(false)}
       />
       <div
-        className="fixed z-[101] w-56 rounded-xl border bg-card shadow-lg overflow-hidden animate-scale-in"
+        className="glass-panel fixed z-[101] w-56 rounded-xl border-foreground/10 overflow-hidden animate-scale-in"
         style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
       >
         {(Object.entries(modeConfig) as [SessionMode, typeof modeConfig[SessionMode]][]).map(
@@ -180,6 +172,30 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function formatResetDelta(iso: string): string {
+  const target = Date.parse(iso);
+  if (!Number.isFinite(target)) return '';
+  const diffMs = target - Date.now();
+  if (diffMs <= 0) return 'now';
+  const mins = Math.floor(diffMs / 60000);
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const remainMins = mins % 60;
+  if (days > 0) return `in ${days}d ${hours}h`;
+  if (hours > 0) return `in ${hours}h ${remainMins}m`;
+  return `in ${remainMins}m`;
+}
+
+function formatResetAbsolute(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function getGradientColor(percent: number): string {
   const p = Math.max(0, Math.min(100, percent));
   if (p <= 50) {
@@ -196,7 +212,7 @@ function getGradientColor(percent: number): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function ContextPopover({ usage }: { usage: UsageData }) {
+export function ContextPopover({ usage }: { usage: UsageData }) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -204,7 +220,7 @@ function ContextPopover({ usage }: { usage: UsageData }) {
   const { activeSessionId, sessions } = useSessionStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const provider = activeSession?.cliProvider || 'claude';
-  const limitsSupported = provider === 'claude' || provider === 'glm' || provider === 'codex';
+  const limitsSupported = provider === 'claude' || provider === 'codex' || provider === 'opencode';
 
   const { data: usageLimits } = useQuery({
     queryKey: ['usage-limits', provider],
@@ -225,7 +241,7 @@ function ContextPopover({ usage }: { usage: UsageData }) {
 
   // Build limit bars for popover
   const labels = CLI_PROVIDER_LIMIT_LABELS[provider];
-  const limitBars: Array<{ key: string; label: string; sublabel?: string; value: number }> = [];
+  const limitBars: Array<{ key: string; label: string; sublabel?: string; value: number; resetsAt: string | null }> = [];
   if (usageLimits) {
     if (usageLimits.fiveHour) {
       limitBars.push({
@@ -233,6 +249,7 @@ function ContextPopover({ usage }: { usage: UsageData }) {
         label: labels.session.title,
         sublabel: labels.session.subtitle,
         value: usageLimits.fiveHour.utilization,
+        resetsAt: usageLimits.fiveHour.resetsAt,
       });
     }
     if (usageLimits.sevenDay && labels.weeklyAll) {
@@ -241,6 +258,7 @@ function ContextPopover({ usage }: { usage: UsageData }) {
         label: labels.weeklyAll.title,
         sublabel: labels.weeklyAll.subtitle,
         value: usageLimits.sevenDay.utilization,
+        resetsAt: usageLimits.sevenDay.resetsAt,
       });
     }
     if (usageLimits.sevenDaySonnet && labels.weeklySonnet) {
@@ -249,6 +267,7 @@ function ContextPopover({ usage }: { usage: UsageData }) {
         label: labels.weeklySonnet.title,
         sublabel: labels.weeklySonnet.subtitle,
         value: usageLimits.sevenDaySonnet.utilization,
+        resetsAt: usageLimits.sevenDaySonnet.resetsAt,
       });
     }
   }
@@ -270,7 +289,7 @@ function ContextPopover({ usage }: { usage: UsageData }) {
     <>
       <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
       <div
-        className="fixed z-[101] w-[280px] rounded-xl border bg-card shadow-lg p-3 animate-scale-in"
+        className="glass-panel fixed z-[101] w-[280px] rounded-xl border-foreground/10 p-3 animate-scale-in"
         style={{ top: position.top, left: position.left }}
       >
         <div className="space-y-3">
@@ -297,6 +316,14 @@ function ContextPopover({ usage }: { usage: UsageData }) {
                       }}
                     />
                   </div>
+                  {bar.resetsAt && (
+                    <div
+                      className="text-[10px] text-muted-foreground mt-0.5"
+                      title={`Resets ${formatResetAbsolute(bar.resetsAt)}`}
+                    >
+                      Resets {formatResetDelta(bar.resetsAt)}
+                    </div>
+                  )}
                 </div>
               ))}
               <div className="border-t border-border/50" />

@@ -1,6 +1,47 @@
 import { create } from 'zustand';
 import type { Session, Message, SessionStatus, UsageData, ToolExecution, PermissionDenial, PendingPermission } from '@claude-code-webui/shared';
 
+// --- Streaming content buffer ---
+// Accumulates content chunks and flushes to Zustand at ~30fps via RAF
+const streamingBuffer: Record<string, string> = {};
+let rafId: number | null = null;
+
+function flushStreamingBuffer() {
+  rafId = null;
+  const entries = Object.entries(streamingBuffer);
+  if (entries.length === 0) return;
+
+  // Drain the buffer
+  const toFlush: Record<string, string> = {};
+  for (const [sid, chunk] of entries) {
+    toFlush[sid] = chunk;
+    delete streamingBuffer[sid];
+  }
+
+  // Single Zustand update for all sessions
+  useSessionStore.setState((state) => {
+    const newContent = { ...state.streamingContent };
+    const newTimestamp = { ...state.lastMessageTimestamp };
+    const now = Date.now();
+    for (const [sid, chunk] of Object.entries(toFlush)) {
+      newContent[sid] = (newContent[sid] || '') + chunk;
+      newTimestamp[sid] = now;
+    }
+    return { streamingContent: newContent, lastMessageTimestamp: newTimestamp };
+  });
+}
+
+function bufferStreamingContent(sessionId: string, content: string) {
+  streamingBuffer[sessionId] = (streamingBuffer[sessionId] || '') + content;
+  if (rafId === null) {
+    rafId = requestAnimationFrame(flushStreamingBuffer);
+  }
+}
+
+function dropPendingStreamingChunks(sessionId: string) {
+  delete streamingBuffer[sessionId];
+}
+
 // Activity state for showing what Claude is doing
 export interface ActivityState {
   type: 'idle' | 'thinking' | 'tool';
@@ -26,12 +67,12 @@ export interface TodoItem {
   activeForm?: string;
 }
 
-// Generated image from Gemini
+// Generated image
 export interface GeneratedImage {
   imageBase64?: string;
   mimeType: string;
   prompt: string;
-  generator: 'gemini' | 'other';
+  generator: 'opencode' | 'other';
   timestamp: number;
 }
 
@@ -207,26 +248,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       };
     }),
 
-  appendStreamingContent: (sessionId, content) =>
-    set((state) => ({
-      streamingContent: {
-        ...state.streamingContent,
-        [sessionId]: (state.streamingContent[sessionId] || '') + content,
-      },
-      // Update timestamp when receiving streaming content
-      lastMessageTimestamp: {
-        ...state.lastMessageTimestamp,
-        [sessionId]: Date.now(),
-      },
-    })),
+  appendStreamingContent: (sessionId, content) => {
+    // Buffer content and flush via RAF at ~30fps instead of per-character updates
+    bufferStreamingContent(sessionId, content);
+  },
 
-  clearStreamingContent: (sessionId) =>
+  clearStreamingContent: (sessionId) => {
+    dropPendingStreamingChunks(sessionId);
     set((state) => ({
       streamingContent: {
         ...state.streamingContent,
         [sessionId]: '',
       },
-    })),
+    }));
+  },
 
   updateSessionStatus: (sessionId, status) =>
     set((state) => ({
@@ -270,12 +305,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })),
 
   addToolExecution: (sessionId, execution) =>
-    set((state) => ({
-      toolExecutions: {
-        ...state.toolExecutions,
-        [sessionId]: [...(state.toolExecutions[sessionId] || []), execution],
-      },
-    })),
+    set((state) => {
+      const existing = state.toolExecutions[sessionId] || [];
+      if (existing.some((t) => t.toolId === execution.toolId)) {
+        return state;
+      }
+      return {
+        toolExecutions: {
+          ...state.toolExecutions,
+          [sessionId]: [...existing, execution],
+        },
+      };
+    }),
 
   updateToolExecution: (sessionId, toolId, update) =>
     set((state) => ({

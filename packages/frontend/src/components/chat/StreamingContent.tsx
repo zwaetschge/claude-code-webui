@@ -4,10 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useProviderStore } from '@/stores/providerStore';
-import { UI_PROVIDER_META } from '@/lib/providers';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import { UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
+import { MemoizedMarkdown } from './MemoizedMarkdown';
+import { ProviderLoader } from './providerAnimations/ProviderLoader';
+import { StreamingCursor, streamingContentClass } from './providerAnimations/StreamingCursor';
 import 'katex/dist/katex.min.css';
 
 interface StreamingContentProps {
@@ -408,21 +408,27 @@ function WelcomeScreen({
   );
 }
 
-// Thinking indicator
+// Thinking indicator — shows per-provider organic loader (Template A)
 function ThinkingIndicator({
   thinkingTime,
   isIdeating,
   providerLabel,
+  provider,
 }: {
   thinkingTime?: string;
   isIdeating?: boolean;
   providerLabel: string;
+  provider: UiProvider;
 }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3">
-      <div className="relative">
-        <Sparkles className={cn("h-5 w-5 animate-pulse", isIdeating ? "text-blue-500" : "text-primary")} />
-        <div className={cn("absolute inset-0 h-5 w-5 rounded-full animate-ping", isIdeating ? "bg-blue-500/20" : "bg-primary/20")} />
+      <div
+        className={cn(
+          'flex items-center justify-center w-14 h-14',
+          isIdeating ? 'text-blue-500' : 'text-primary'
+        )}
+      >
+        <ProviderLoader provider={provider} size={56} accent={isIdeating} />
       </div>
       <div className="flex flex-col">
         <span className="text-sm font-medium">
@@ -452,28 +458,36 @@ function PlanModeIndicator({ message, providerLabel }: { message?: string; provi
       </div>
       {sanitizedMessage && (
         <div className="p-4">
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-              {sanitizedMessage}
-            </ReactMarkdown>
-          </div>
+          <MemoizedMarkdown
+            content={sanitizedMessage}
+            className="prose prose-sm dark:prose-invert max-w-none"
+          />
         </div>
       )}
     </Card>
   );
 }
 
-// Claude response with markdown and LaTeX support
-function ClaudeResponse({ message }: { message: string }) {
+// Claude response with markdown and LaTeX support — renders streaming partial
+// text; trailing per-provider cursor (Template B) signals live streaming.
+function ClaudeResponse({
+  message,
+  provider,
+}: {
+  message: string;
+  provider: UiProvider;
+}) {
   return (
     <div className="flex gap-3">
       <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
         <Bot className="h-4 w-4 text-primary" />
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{message}</ReactMarkdown>
-        </div>
+      <div className={cn('flex-1 min-w-0', streamingContentClass(provider))}>
+        <MemoizedMarkdown
+          content={message}
+          className="prose prose-sm dark:prose-invert max-w-none"
+        />
+        <StreamingCursor provider={provider} />
       </div>
     </div>
   );
@@ -525,6 +539,7 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
           thinkingTime={parsed.thinkingTime}
           isIdeating={parsed.isIdeating}
           providerLabel={providerLabel}
+          provider={uiProvider}
         />
       </Card>
     );
@@ -533,10 +548,14 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
   if (parsed.type === 'response' && parsed.message) {
     return (
       <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-3 sm:p-4 bg-card border">
-        <ClaudeResponse message={parsed.message} />
+        <ClaudeResponse message={parsed.message} provider={uiProvider} />
         {parsed.thinkingTime && (
           <div className="mt-3 pt-3 border-t flex items-center gap-2">
-            <ThinkingIndicator thinkingTime={parsed.thinkingTime} providerLabel={providerLabel} />
+            <ThinkingIndicator
+              thinkingTime={parsed.thinkingTime}
+              providerLabel={providerLabel}
+              provider={uiProvider}
+            />
           </div>
         )}
       </Card>
@@ -546,7 +565,7 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
   // Empty or unrecognized - show minimal loading state
   return (
     <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 bg-card border overflow-hidden">
-      <ThinkingIndicator providerLabel={providerLabel} />
+      <ThinkingIndicator providerLabel={providerLabel} provider={uiProvider} />
     </Card>
   );
 }

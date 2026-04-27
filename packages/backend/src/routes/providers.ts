@@ -8,7 +8,7 @@ import type { ApiResponse } from '@claude-code-webui/shared';
 const router = Router();
 
 // Provider types supported
-export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'zai' | 'ollama' | 'custom';
+export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'ollama' | 'custom';
 
 interface AIProvider {
   id: string;
@@ -50,7 +50,6 @@ const DEFAULT_MODELS: Record<ProviderType, string[]> = {
   anthropic: ['claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001', 'claude-opus-4-1-20250805', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
   google: ['gemini-3-pro', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
   openrouter: ['openai/o3', 'openai/gpt-4.5', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-pro', 'meta-llama/llama-3.3-70b'],
-  zai: ['glm-4.7', 'glm-4.6v', 'glm-4.5', 'glm-4.5-air'],
   ollama: ['llama3.3', 'llama3.2', 'qwen2.5-coder', 'codellama', 'mistral', 'mixtral'],
   custom: [],
 };
@@ -61,7 +60,6 @@ const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com/v1',
   google: 'https://generativelanguage.googleapis.com/v1beta',
   openrouter: 'https://openrouter.ai/api/v1',
-  zai: 'https://api.z.ai/v1',
   ollama: 'http://localhost:11434',
   custom: '',
 };
@@ -91,7 +89,10 @@ router.get('/', requireAuth, (req, res) => {
 
   try {
     const providers = db
-      .prepare(`SELECT * FROM ai_providers WHERE user_id = ? ORDER BY name ASC`)
+      .prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+       auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
+       created_at, updated_at
+  FROM ai_providers WHERE user_id = ? ORDER BY name ASC`)
       .all(authReq.userId) as AIProvider[];
 
     const response: ApiResponse<AIProviderResponse[]> = {
@@ -117,7 +118,7 @@ router.get('/types', requireAuth, (_req, res) => {
     baseUrl: DEFAULT_BASE_URLS[type],
     models: DEFAULT_MODELS[type],
     requiresApiKey: type !== 'ollama',
-    supportsOAuth: type === 'google', // Currently only Google/Gemini supports OAuth
+    supportsOAuth: type === 'google',
     icon: type,
   }));
 
@@ -159,7 +160,10 @@ router.post('/', requireAuth, (req, res) => {
       defaultModel || null
     );
 
-    const provider = db.prepare(`SELECT * FROM ai_providers WHERE id = ?`).get(id) as AIProvider;
+    const provider = db.prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+       auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
+       created_at, updated_at
+  FROM ai_providers WHERE id = ?`).get(id) as AIProvider;
 
     const response: ApiResponse<AIProviderResponse> = {
       success: true,
@@ -185,7 +189,10 @@ router.patch('/:id', requireAuth, (req, res) => {
   try {
     // Check ownership
     const existing = db
-      .prepare(`SELECT * FROM ai_providers WHERE id = ? AND user_id = ?`)
+      .prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+       auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
+       created_at, updated_at
+  FROM ai_providers WHERE id = ? AND user_id = ?`)
       .get(id, authReq.userId) as AIProvider | undefined;
 
     if (!existing) {
@@ -228,7 +235,10 @@ router.patch('/:id', requireAuth, (req, res) => {
     values.push(id as string);
     db.prepare(`UPDATE ai_providers SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-    const provider = db.prepare(`SELECT * FROM ai_providers WHERE id = ?`).get(id) as AIProvider;
+    const provider = db.prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+       auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
+       created_at, updated_at
+  FROM ai_providers WHERE id = ?`).get(id) as AIProvider;
 
     const response: ApiResponse<AIProviderResponse> = {
       success: true,
@@ -285,7 +295,10 @@ router.post('/:id/test', requireAuth, async (req, res) => {
 
   try {
     const provider = db
-      .prepare(`SELECT * FROM ai_providers WHERE id = ? AND user_id = ?`)
+      .prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+       auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
+       created_at, updated_at
+  FROM ai_providers WHERE id = ? AND user_id = ?`)
       .get(id, authReq.userId) as AIProvider | undefined;
 
     if (!provider) {
@@ -300,16 +313,15 @@ router.post('/:id/test', requireAuth, async (req, res) => {
     let testResult = { success: false, message: 'Unknown provider type' };
 
     try {
-      // Decrypt API key for testing
+      // Decrypt API key / OAuth token for testing
       const apiKey = safeDecrypt(provider.api_key_encrypted);
-      const authToken = provider.auth_method === 'oauth' && provider.oauth_access_token
-        ? provider.oauth_access_token
+      const oauthAccessToken = safeDecrypt(provider.oauth_access_token);
+      const authToken = provider.auth_method === 'oauth' && oauthAccessToken
+        ? oauthAccessToken
         : apiKey;
 
       switch (provider.type) {
-        case 'openai':
-        case 'zai': {
-          // Z.AI uses OpenAI-compatible API
+        case 'openai': {
           const baseUrl = provider.base_url || DEFAULT_BASE_URLS[provider.type];
           if (!authToken) {
             testResult = { success: false, message: 'No API key or OAuth token configured' };
@@ -323,10 +335,10 @@ router.post('/:id/test', requireAuth, async (req, res) => {
         }
         case 'google': {
           // Test Gemini API
-          if (provider.auth_method === 'oauth' && provider.oauth_access_token) {
+          if (provider.auth_method === 'oauth' && oauthAccessToken) {
             const baseUrl = provider.base_url || DEFAULT_BASE_URLS.google;
             const response = await fetch(`${baseUrl}/models`, {
-              headers: { 'Authorization': `Bearer ${provider.oauth_access_token}` },
+              headers: { 'Authorization': `Bearer ${oauthAccessToken}` },
             });
             testResult = { success: response.ok, message: response.ok ? 'Connected via OAuth' : 'OAuth token may have expired' };
           } else if (apiKey) {

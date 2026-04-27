@@ -1,13 +1,9 @@
 import { Router } from 'express';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth } from '../middleware/auth';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
-import { getDatabase } from '../db';
-import { safeDecrypt } from '../utils/encryption';
-import { safeJsonParse } from '../utils/json';
-import { resolveConfigHome } from '../utils/configPaths';
 
 const router = Router();
 const claudeCredentialsRoot = CLI_PROVIDERS.claude.credentialsPath;
@@ -20,8 +16,6 @@ const codexAuthPath = path.join(
   codexCredentialsRoot.replace('~', os.homedir()),
   'auth.json'
 );
-const ZAI_BASE_URL_DEFAULT = 'https://api.z.ai/api/anthropic';
-
 interface ClaudeCredentials {
   claudeAiOauth?: {
     accessToken: string;
@@ -60,22 +54,6 @@ interface UsageLimitResponse {
   } | null;
   seven_day_oauth_apps?: unknown;
   iguana_necktie?: unknown;
-}
-
-interface ClaudeSettingsEnv {
-  env?: Record<string, string>;
-}
-
-interface ZaiQuotaLimitItem {
-  type?: string;
-  percentage?: number;
-  currentValue?: number;
-  usage?: number;
-  usageDetails?: unknown;
-}
-
-interface ZaiQuotaLimitResponse {
-  limits?: ZaiQuotaLimitItem[];
 }
 
 interface CodexLimitItem {
@@ -117,50 +95,6 @@ async function getCodexAuth(): Promise<CodexAuth | null> {
   }
 }
 
-async function readSettingsEnv(configHome: string): Promise<Record<string, string>> {
-  const settingsPaths = [
-    path.join(configHome, 'settings.json'),
-    path.join(configHome, 'settings.local.json'),
-  ];
-  for (const settingsPath of settingsPaths) {
-    try {
-      const content = await fs.readFile(settingsPath, 'utf-8');
-      const settings = JSON.parse(content) as ClaudeSettingsEnv;
-      if (settings.env && typeof settings.env === 'object') {
-        return settings.env;
-      }
-    } catch {
-      // Ignore missing or invalid files.
-    }
-  }
-  return {};
-}
-
-async function getZaiAuthForUser(userId: string): Promise<{ baseUrl?: string; authToken?: string }> {
-  const configHome = resolveConfigHome('glm');
-  const settingsEnv = await readSettingsEnv(configHome);
-  let baseUrl = settingsEnv.ANTHROPIC_BASE_URL || undefined;
-  let authToken = settingsEnv.ANTHROPIC_AUTH_TOKEN || undefined;
-
-  if (!authToken) {
-    const db = getDatabase();
-    const row = db.prepare(
-      'SELECT settings_json FROM user_settings WHERE user_id = ?'
-    ).get(userId) as { settings_json?: string | null } | undefined;
-    const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
-    const encryptedKey = settingsJson.zaiApiKey;
-    if (typeof encryptedKey === 'string') {
-      authToken = safeDecrypt(encryptedKey) || undefined;
-    }
-  }
-
-  if (!baseUrl) {
-    baseUrl = ZAI_BASE_URL_DEFAULT;
-  }
-
-  return { baseUrl, authToken };
-}
-
 function normalizePercent(value?: number): number {
   if (value === undefined || value === null) return 0;
   if (value < 1) return Math.round(value * 100);
@@ -180,27 +114,6 @@ function decodeJwtPayload(token?: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-async function fetchZaiQuotaLimit(baseUrl: string, authToken: string): Promise<ZaiQuotaLimitResponse> {
-  const baseDomain = new URL(baseUrl).origin;
-  const url = `${baseDomain}/api/monitor/usage/quota/limit`;
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: authToken,
-      'Accept-Language': 'en-US,en',
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Z.AI usage error: ${response.status} ${errorText}`);
-  }
-
-  const data = await response.json() as { data?: ZaiQuotaLimitResponse } | ZaiQuotaLimitResponse;
-  return (data as { data?: ZaiQuotaLimitResponse }).data ?? (data as ZaiQuotaLimitResponse);
 }
 
 async function refreshCodexToken(auth: CodexAuth): Promise<CodexAuth | null> {
@@ -400,51 +313,11 @@ async function fetchUsage(accessToken: string): Promise<{ ok: boolean; status: n
 // Fetch usage limits (Claude only)
 router.get('/limits', requireAuth, async (req, res) => {
   try {
-    const userId = (req as AuthenticatedRequest).userId;
     const providerParam = String(req.query.provider || 'claude').toLowerCase();
-    const allowedProviders: CLIProvider[] = ['claude', 'codex', 'gemini', 'glm', 'kimi'];
+    const allowedProviders: CLIProvider[] = ['claude', 'codex', 'opencode'];
     const provider = allowedProviders.includes(providerParam as CLIProvider)
       ? (providerParam as CLIProvider)
       : 'claude';
-
-    if (provider === 'glm') {
-      const { baseUrl, authToken } = await getZaiAuthForUser(userId);
-
-      if (!baseUrl || !authToken) {
-        return res.json({
-          success: false,
-          supported: false,
-          provider: 'glm',
-          data: null,
-          error: { code: 'NO_CREDENTIALS', message: 'Z.AI credentials not found' }
-        });
-      }
-
-      const quota = await fetchZaiQuotaLimit(baseUrl, authToken);
-      const limits = quota?.limits || [];
-      const tokenLimit = limits.find((item) => item.type === 'TOKENS_LIMIT');
-      const mcpLimit = limits.find((item) => item.type === 'TIME_LIMIT');
-
-      res.json({
-        success: true,
-        supported: true,
-        provider: 'glm',
-        data: {
-          subscriptionType: 'glm-plan',
-          rateLimitTier: 'glm-plan',
-          fiveHour: tokenLimit ? {
-            utilization: normalizePercent(tokenLimit.percentage),
-            resetsAt: null,
-          } : null,
-          sevenDay: mcpLimit ? {
-            utilization: normalizePercent(mcpLimit.percentage),
-            resetsAt: null,
-          } : null,
-          sevenDaySonnet: null,
-        },
-      });
-      return;
-    }
 
     if (provider === 'codex') {
       let codexAuth = await getCodexAuth();

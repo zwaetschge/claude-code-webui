@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { getDatabase } from '../db/index.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import { config } from '../config.js';
+import { safeEncrypt, safeDecrypt } from '../utils/encryption.js';
 import type { ApiResponse } from '@claude-code-webui/shared';
 
 const router = Router();
@@ -152,6 +153,11 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
       ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
       : null;
 
+    // Tokens go into the same DB as API keys — encrypt them at rest so a DB
+    // exfil does not yield long-lived Google refresh tokens in cleartext.
+    const encryptedAccess = safeEncrypt(tokens.access_token);
+    const encryptedRefresh = safeEncrypt(tokens.refresh_token || null);
+
     if (stateData.providerId) {
       // Update existing provider with OAuth tokens
       db.prepare(`
@@ -163,8 +169,8 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND user_id = ?
       `).run(
-        tokens.access_token,
-        tokens.refresh_token || null,
+        encryptedAccess,
+        encryptedRefresh,
         expiresAt,
         stateData.providerId,
         stateData.userId
@@ -182,8 +188,8 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
         stateData.userId,
         providerName,
         providerType,
-        tokens.access_token,
-        tokens.refresh_token || null,
+        encryptedAccess,
+        encryptedRefresh,
         expiresAt
       );
     }
@@ -203,7 +209,7 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
 
   try {
     const provider = db.prepare(`
-      SELECT * FROM ai_providers WHERE id = ? AND user_id = ?
+      SELECT id, type, oauth_refresh_token FROM ai_providers WHERE id = ? AND user_id = ?
     `).get(id, authReq.userId) as {
       id: string;
       type: string;
@@ -218,7 +224,8 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
       return res.status(404).json(response);
     }
 
-    if (!provider.oauth_refresh_token) {
+    const refreshToken = safeDecrypt(provider.oauth_refresh_token);
+    if (!refreshToken) {
       const response: ApiResponse<null> = {
         success: false,
         error: { code: 'NO_REFRESH_TOKEN', message: 'No refresh token available' },
@@ -242,7 +249,7 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        refresh_token: provider.oauth_refresh_token,
+        refresh_token: refreshToken,
         client_id: clientId!,
         client_secret: clientSecret!,
         grant_type: 'refresh_token',
@@ -272,7 +279,7 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
         oauth_expires_at = ?,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(tokens.access_token, expiresAt, id);
+    `).run(safeEncrypt(tokens.access_token), expiresAt, id);
 
     const response: ApiResponse<{ success: boolean }> = {
       success: true,

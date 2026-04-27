@@ -6,14 +6,90 @@ import type {
   ServerToClientEvents,
   InterServerEvents,
   SocketData,
-  OrchestrationConfig,
 } from '@claude-code-webui/shared';
 import { config } from '../config';
+import { getDatabase } from '../db';
 import { ClaudeProcessManager } from '../services/claude/ClaudeProcessManager';
-import { GeminiService } from '../services/gemini';
-import { getLastRebuildResult } from '../services/self-rebuild';
-import { orchestrationManager } from '../services/orchestration/index.js';
-import { getRalph } from '../services/ralph';
+
+// Per-socket token bucket for message-send events.
+// Each socket gets WS_MSG_BURST tokens that refill at WS_MSG_RATE per second.
+const WS_MSG_BURST = 10;
+const WS_MSG_RATE = 0.5; // 0.5 tokens/sec → steady-state ~30 msg/min
+
+// Per-socket idempotency: remember the last N clientMessageIds so a client's
+// retry during a network blip doesn't submit the same message twice.
+const SEEN_IDS_CAPACITY = 64;
+
+interface TokenBucket {
+  tokens: number;
+  lastRefill: number;
+}
+
+function makeBucket(): TokenBucket {
+  return { tokens: WS_MSG_BURST, lastRefill: Date.now() };
+}
+
+function takeToken(bucket: TokenBucket): boolean {
+  const now = Date.now();
+  const elapsed = (now - bucket.lastRefill) / 1000;
+  bucket.tokens = Math.min(WS_MSG_BURST, bucket.tokens + elapsed * WS_MSG_RATE);
+  bucket.lastRefill = now;
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
+// LRU-ish Set: insertion order is preserved, we evict the oldest when we exceed capacity.
+function rememberId(seen: Set<string>, id: string): boolean {
+  if (seen.has(id)) return false;
+  seen.add(id);
+  if (seen.size > SEEN_IDS_CAPACITY) {
+    const oldest = seen.values().next().value;
+    if (oldest !== undefined) seen.delete(oldest);
+  }
+  return true;
+}
+
+// Authorization helper: owner OR admin may access a session.
+// Returns false on any DB error (fail-closed).
+function canAccessSession(sessionId: string, userId: string): boolean {
+  if (!sessionId || !userId) return false;
+  try {
+    const db = getDatabase();
+    const row = db
+      .prepare(
+        `SELECT 1 FROM sessions s
+         WHERE s.id = ?
+           AND (s.user_id = ? OR EXISTS (
+             SELECT 1 FROM users u WHERE u.id = ? AND u.role = 'admin'
+           ))`
+      )
+      .get(sessionId, userId, userId);
+    return !!row;
+  } catch (err) {
+    console.error(`[WS] canAccessSession check failed sessionId=${sessionId} userId=${userId}:`, err);
+    return false;
+  }
+}
+
+// Authorization helper for write/control operations: owner ONLY (no admin bypass).
+// Admins may observe (subscribe/reconnect via canAccessSession) but must not drive
+// someone else's session. ProcessManager enforces the same rule downstream; this
+// is the outer layer so unauthorized writes never touch in-memory state like
+// pendingModes (which sits upstream of startSession's DB check).
+function canControlSession(sessionId: string, userId: string): boolean {
+  if (!sessionId || !userId) return false;
+  try {
+    const db = getDatabase();
+    const row = db
+      .prepare(`SELECT 1 FROM sessions WHERE id = ? AND user_id = ?`)
+      .get(sessionId, userId);
+    return !!row;
+  } catch (err) {
+    console.error(`[WS] canControlSession check failed sessionId=${sessionId} userId=${userId}:`, err);
+    return false;
+  }
+}
 
 // Module-level processManager reference for external access
 let _processManager: ClaudeProcessManager | null = null;
@@ -52,19 +128,6 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
   const processManager = new ClaudeProcessManager(io);
   _processManager = processManager;
-  const geminiService = new GeminiService(io);
-
-  // Initialize orchestration manager with IO
-  orchestrationManager.setIO(io);
-
-  // Check Gemini CLI availability on startup
-  geminiService.checkAvailability().then((result) => {
-    if (result.available) {
-      console.log(`[GEMINI] Gemini CLI available: ${result.version}`);
-    } else {
-      console.warn(`[GEMINI] Gemini CLI not available: ${result.error}`);
-    }
-  });
 
   // Authentication middleware
   io.use((socket, next) => {
@@ -86,6 +149,20 @@ export function setupWebSocket(httpServer: HttpServer): Server {
   io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id} (user: ${socket.data.userId})`);
 
+    // Per-socket rate limit bucket for outbound messages to Claude.
+    const messageBucket = makeBucket();
+    // Per-socket seen clientMessageIds (for idempotent session:send retries).
+    const seenSendIds = new Set<string>();
+
+    const rateLimited = (sessionId: string, event: string): boolean => {
+      if (takeToken(messageBucket)) return false;
+      console.warn(
+        `[WS] RATE_LIMITED event=${event} userId=${socket.data.userId} socketId=${socket.id}`
+      );
+      socket.emit('session:error', { sessionId, error: 'Rate limit exceeded. Slow down.' });
+      return true;
+    };
+
     // Debug: Log all incoming events
     socket.onAny((eventName, ...args) => {
       console.log(`[SOCKET EVENT] ${eventName}:`, args[0]?.sessionId || '', args[0]?.message?.substring(0, 30) || '');
@@ -93,6 +170,13 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
     // Subscribe to session output
     socket.on('session:subscribe', (sessionId) => {
+      if (!canAccessSession(sessionId, socket.data.userId)) {
+        console.warn(
+          `[WS] DENIED session:subscribe userId=${socket.data.userId} sessionId=${sessionId}`
+        );
+        socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
+        return;
+      }
       socket.data.subscribedSessions.add(sessionId);
       socket.join(`session:${sessionId}`);
       console.log(`Socket ${socket.id} subscribed to session ${sessionId}`);
@@ -103,130 +187,138 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       socket.data.subscribedSessions.delete(sessionId);
       socket.leave(`session:${sessionId}`);
       console.log(`Socket ${socket.id} unsubscribed from session ${sessionId}`);
+
+      // If the last subscriber just left, mark the session disconnected so the
+      // idle-cleanup job can reclaim it. Otherwise the process + its buffer live
+      // on forever after the only client navigated away.
+      const roomSize = io.sockets.adapter.rooms.get(`session:${sessionId}`)?.size ?? 0;
+      if (roomSize === 0) {
+        processManager.markSessionDisconnected(sessionId);
+      }
     });
 
+    const logError = (event: string, sessionId: string, err: unknown): string => {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error(
+        `[WS ERROR] event=${event} sessionId=${sessionId} userId=${socket.data.userId} socketId=${socket.id}`,
+        stack || message
+      );
+      return message;
+    };
+
+    const denyControl = (sessionId: string, event: string): boolean => {
+      if (canControlSession(sessionId, socket.data.userId)) return false;
+      console.warn(
+        `[WS] DENIED ${event} userId=${socket.data.userId} sessionId=${sessionId}`
+      );
+      socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
+      return true;
+    };
+
     // Send message to Claude
-    socket.on('session:send', async ({ sessionId, message, images }) => {
+    socket.on('session:send', async ({ sessionId, message, images, clientMessageId }) => {
+      // Dedupe BEFORE rate-limiting: a retried message should not burn a token.
+      if (clientMessageId && !rememberId(seenSendIds, clientMessageId)) {
+        console.log(
+          `[WS] session:send dedup clientMessageId=${clientMessageId} sessionId=${sessionId}`
+        );
+        return;
+      }
+      if (denyControl(sessionId, 'session:send')) return;
+      if (rateLimited(sessionId, 'session:send')) return;
       console.log(`Received session:send for ${sessionId}: "${message?.substring(0, 50)}..."`);
       try {
         await processManager.sendMessage(sessionId, socket.data.userId, message, images);
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to send message',
+          error: logError('session:send', sessionId, err) || 'Failed to send message',
         });
       }
     });
 
     // Interrupt Claude session
     socket.on('session:interrupt', (sessionId) => {
+      if (denyControl(sessionId, 'session:interrupt')) return;
       try {
         processManager.interrupt(sessionId, socket.data.userId);
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to interrupt session',
+          error: logError('session:interrupt', sessionId, err) || 'Failed to interrupt session',
         });
       }
     });
 
     // Set session permission mode
     socket.on('session:set-mode', ({ sessionId, mode }) => {
+      if (denyControl(sessionId, 'session:set-mode')) return;
       console.log(`Setting session ${sessionId} mode to ${mode}`);
       try {
         processManager.setMode(sessionId, socket.data.userId, mode);
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to set mode',
+          error: logError('session:set-mode', sessionId, err) || 'Failed to set mode',
         });
       }
     });
 
     // Restart session (stop and start fresh)
     socket.on('session:restart', async (sessionId) => {
+      if (denyControl(sessionId, 'session:restart')) return;
       console.log(`Restart request for session ${sessionId}`);
       try {
         await processManager.restartSession(sessionId, socket.data.userId);
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to restart session',
+          error: logError('session:restart', sessionId, err) || 'Failed to restart session',
         });
       }
     });
 
     // Send raw input for interactive prompts (trust dialogs, etc.)
     socket.on('session:input', async ({ sessionId, input }) => {
+      if (denyControl(sessionId, 'session:input')) return;
+      if (rateLimited(sessionId, 'session:input')) return;
       console.log(`Received session:input for ${sessionId}: "${input}"`);
       try {
         await processManager.sendRawInput(sessionId, socket.data.userId, input);
         console.log(`Input sent successfully to session ${sessionId}`);
       } catch (err) {
-        console.error(`Failed to send input to session ${sessionId}:`, err);
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to send input',
-        });
-      }
-    });
-
-    // Generate image using Gemini CLI
-    socket.on('session:generate-image', async ({ sessionId, prompt, model, referenceImages }) => {
-      console.log(`Received session:generate-image for ${sessionId}: "${prompt}"`);
-      try {
-        const result = await geminiService.generateImage(sessionId, prompt, {
-          model,
-          referenceImages,
-          userId: socket.data.userId,
-        });
-
-        if (result.success && result.imagePath) {
-          socket.emit('session:image', {
-            sessionId,
-            imagePath: result.imagePath,
-            imageBase64: result.imageBase64,
-            mimeType: result.mimeType || 'image/png',
-            prompt,
-            generator: 'gemini',
-          });
-        } else {
-          socket.emit('session:error', {
-            sessionId,
-            error: result.error || 'Failed to generate image',
-          });
-        }
-      } catch (err) {
-        console.error(`Failed to generate image for session ${sessionId}:`, err);
-        socket.emit('session:error', {
-          sessionId,
-          error: err instanceof Error ? err.message : 'Failed to generate image',
+          error: logError('session:input', sessionId, err) || 'Failed to send input',
         });
       }
     });
 
     // Approve permission request
     socket.on('session:approve_permission', async ({ sessionId, toolNames, originalMessage }) => {
+      if (denyControl(sessionId, 'session:approve_permission')) return;
       console.log(`Received session:approve_permission for ${sessionId}: tools=${toolNames.join(', ')}`);
       try {
         await processManager.approvePermission(sessionId, socket.data.userId, toolNames, originalMessage);
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to approve permission',
+          error: logError('session:approve_permission', sessionId, err) || 'Failed to approve permission',
         });
       }
     });
 
     // Deny permission request
     socket.on('session:deny_permission', ({ sessionId }) => {
+      if (denyControl(sessionId, 'session:deny_permission')) return;
       console.log(`Received session:deny_permission for ${sessionId}`);
       try {
         processManager.denyPermission(sessionId, socket.data.userId);
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: err instanceof Error ? err.message : 'Failed to deny permission',
+          error: logError('session:deny_permission', sessionId, err) || 'Failed to deny permission',
         });
       }
     });
@@ -235,215 +327,49 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     socket.on('session:reconnect', async ({ sessionId, lastTimestamp }) => {
       console.log(`Reconnect request for session ${sessionId} from socket ${socket.id}`);
 
+      if (!canAccessSession(sessionId, socket.data.userId)) {
+        console.warn(
+          `[WS] DENIED session:reconnect userId=${socket.data.userId} sessionId=${sessionId}`
+        );
+        socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
+        return;
+      }
+
       // ALWAYS subscribe to the session room, regardless of running state
       // This ensures the socket receives events when a session starts
       socket.data.subscribedSessions.add(sessionId);
       socket.join(`session:${sessionId}`);
       console.log(`Socket ${socket.id} joined session room ${sessionId}`);
 
-      // Check for recent rebuild and notify client
-      try {
-        const rebuildResult = await getLastRebuildResult();
-        if (rebuildResult && rebuildResult.completedAt) {
-          const completedTime = new Date(rebuildResult.completedAt).getTime();
-          const now = Date.now();
-          const fiveMinutesAgo = now - 5 * 60 * 1000;
-
-          // If rebuild completed within last 5 minutes, notify client
-          if (completedTime > fiveMinutesAgo) {
-            console.log(`[REBUILD] Notifying client about recent rebuild completion`);
-            socket.emit('self-rebuild:status', {
-              status: 'idle',
-              progress: rebuildResult.progress || 'Rebuild completed successfully',
-              startedAt: rebuildResult.startedAt,
-              completedAt: rebuildResult.completedAt,
-            });
-          }
-        }
-      } catch (err) {
-        console.error('[REBUILD] Error checking rebuild status:', err);
-      }
-
       const isRunning = processManager.isSessionRunning(sessionId);
 
       if (isRunning) {
-        // Mark session as reconnected
         processManager.markSessionReconnected(sessionId);
 
-        // Get buffered messages since last timestamp
-        const bufferedMessages = processManager.getSessionBuffer(sessionId, lastTimestamp);
+        // getSessionBufferStatus signals needsFullResync when the circular buffer rolled
+        // over since lastTimestamp — client should then fetch full state via REST instead
+        // of trusting the truncated replay.
+        const { items: bufferedMessages, needsFullResync } = processManager.getSessionBufferStatus(
+          sessionId,
+          lastTimestamp
+        );
 
-        console.log(`Session ${sessionId} reconnected with ${bufferedMessages.length} buffered messages`);
+        console.log(
+          `Session ${sessionId} reconnected with ${bufferedMessages.length} buffered messages (needsFullResync=${needsFullResync})`
+        );
 
-        // Send reconnection data
         socket.emit('session:reconnected', {
           sessionId,
           bufferedMessages,
           isRunning: true,
+          needsFullResync,
         });
       } else {
-        // Session is not running, send empty reconnection data
         socket.emit('session:reconnected', {
           sessionId,
           bufferedMessages: [],
           isRunning: false,
         });
-      }
-    });
-
-    // ========== Orchestration Events ==========
-
-    // Configure orchestration
-    socket.on('orchestration:configure' as keyof ClientToServerEvents, async (data: { sessionId: string; config: Partial<OrchestrationConfig> }) => {
-      const { sessionId, config: orchestrationConfig } = data;
-      console.log(`Received orchestration:configure for ${sessionId}`);
-      try {
-        const updatedConfig = orchestrationManager.updateConfig(sessionId, orchestrationConfig);
-        if (!updatedConfig) {
-          socket.emit('orchestration:error' as keyof ServerToClientEvents, {
-            sessionId,
-            error: 'No active orchestration for this session',
-          } as never);
-        }
-      } catch (err) {
-        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
-          sessionId,
-          error: err instanceof Error ? err.message : 'Failed to configure orchestration',
-        } as never);
-      }
-    });
-
-    // Start orchestration
-    socket.on('orchestration:start' as keyof ClientToServerEvents, async (data: { sessionId: string }) => {
-      const { sessionId } = data;
-      console.log(`Received orchestration:start for ${sessionId}`);
-      try {
-        await orchestrationManager.startOrchestration(sessionId, socket.data.userId);
-      } catch (err) {
-        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
-          sessionId,
-          error: err instanceof Error ? err.message : 'Failed to start orchestration',
-        } as never);
-      }
-    });
-
-    // Stop orchestration
-    socket.on('orchestration:stop' as keyof ClientToServerEvents, async (data: { sessionId: string }) => {
-      const { sessionId } = data;
-      console.log(`Received orchestration:stop for ${sessionId}`);
-      try {
-        await orchestrationManager.stopOrchestration(sessionId);
-      } catch (err) {
-        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
-          sessionId,
-          error: err instanceof Error ? err.message : 'Failed to stop orchestration',
-        } as never);
-      }
-    });
-
-    // Interrupt a specific worker
-    socket.on('orchestration:interrupt_worker' as keyof ClientToServerEvents, (data: { sessionId: string; workerId: string }) => {
-      const { sessionId, workerId } = data;
-      console.log(`Received orchestration:interrupt_worker for ${sessionId}, worker ${workerId}`);
-      try {
-        orchestrationManager.interruptWorker(sessionId, workerId);
-      } catch (err) {
-        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
-          sessionId,
-          error: err instanceof Error ? err.message : 'Failed to interrupt worker',
-          workerId,
-        } as never);
-      }
-    });
-
-    // Cancel a task
-    socket.on('orchestration:cancel_task' as keyof ClientToServerEvents, (data: { sessionId: string; taskId: string }) => {
-      const { sessionId, taskId } = data;
-      console.log(`Received orchestration:cancel_task for ${sessionId}, task ${taskId}`);
-      try {
-        orchestrationManager.cancelTask(sessionId, taskId);
-      } catch (err) {
-        socket.emit('orchestration:error' as keyof ServerToClientEvents, {
-          sessionId,
-          error: err instanceof Error ? err.message : 'Failed to cancel task',
-          taskId,
-        } as never);
-      }
-    });
-
-    // ========== Ralph Autonomous Loop Events ==========
-
-    socket.on('ralph:start', async (data: { sessionId?: string; idea: string; config?: Record<string, unknown> }) => {
-      console.log(`Received ralph:start: "${data.idea.substring(0, 50)}..."`);
-      const ralph = getRalph();
-      if (!ralph) {
-        socket.emit('ralph:error', {
-          sessionId: data.sessionId || '',
-          runId: '',
-          error: 'Ralph service not initialized',
-        });
-        return;
-      }
-
-      // Pre-join room if sessionId is known to avoid missing initial events
-      if (data.sessionId) {
-        socket.data.subscribedSessions.add(data.sessionId);
-        socket.join(`session:${data.sessionId}`);
-      }
-
-      try {
-        const run = await ralph.startRun(socket.data.userId, data.idea, {
-          ...data.config,
-          sessionId: data.sessionId,
-        });
-
-        // Join room for the actual session (may differ if new session was created)
-        if (run.sessionId !== data.sessionId) {
-          socket.data.subscribedSessions.add(run.sessionId);
-          socket.join(`session:${run.sessionId}`);
-        }
-
-        // Emit initial state AFTER joining the room (avoids race condition)
-        ralph.emitRunState(run.id);
-      } catch (err) {
-        socket.emit('ralph:error', {
-          sessionId: data.sessionId || '',
-          runId: '',
-          error: err instanceof Error ? err.message : 'Failed to start Ralph run',
-        });
-      }
-    });
-
-    socket.on('ralph:pause', async (data: { runId: string }) => {
-      console.log(`Received ralph:pause for run ${data.runId}`);
-      const ralph = getRalph();
-      if (!ralph) return;
-      try {
-        await ralph.pauseRun(data.runId);
-      } catch (err) {
-        console.error(`Failed to pause Ralph run ${data.runId}:`, err);
-      }
-    });
-
-    socket.on('ralph:resume', async (data: { runId: string }) => {
-      console.log(`Received ralph:resume for run ${data.runId}`);
-      const ralph = getRalph();
-      if (!ralph) return;
-      try {
-        await ralph.resumeRun(data.runId);
-      } catch (err) {
-        console.error(`Failed to resume Ralph run ${data.runId}:`, err);
-      }
-    });
-
-    socket.on('ralph:stop', async (data: { runId: string }) => {
-      console.log(`Received ralph:stop for run ${data.runId}`);
-      const ralph = getRalph();
-      if (!ralph) return;
-      try {
-        await ralph.stopRun(data.runId);
-      } catch (err) {
-        console.error(`Failed to stop Ralph run ${data.runId}:`, err);
       }
     });
 

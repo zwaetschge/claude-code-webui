@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Plum Code</string>
+
+    <!-- Widget -->
+    <string name="widget_label">Plum Code Sessions</string>
+    <string name="widget_description">Shows active Plum Code sessions and lets you open or create sessions from your home screen.</string>
+
+    <!-- Quick Settings Tile -->
+    <string name="tile_label">Plum Code</string>
+</resources>

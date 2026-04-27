@@ -1,9 +1,10 @@
 import { readdir, readFile, stat } from 'fs/promises';
-import { join, basename } from 'path';
+import { join, basename, resolve, isAbsolute, sep } from 'path';
 import { homedir } from 'os';
 import type { Command, ParsedCommand, CommandExecutionResult, BuiltinCommandName } from '@claude-code-webui/shared';
+import { CLI_FORWARDED_COMMANDS } from '@claude-code-webui/shared';
 
-// Built-in command definitions
+// Built-in command definitions (native WebUI handlers)
 const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 'scope'>> = {
   help: {
     description: 'Show available commands',
@@ -11,6 +12,14 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
   },
   clear: {
     description: 'Clear chat history (UI only)',
+    arguments: [],
+  },
+  reset: {
+    description: 'Alias for /clear — start a new conversation',
+    arguments: [],
+  },
+  new: {
+    description: 'Create a new session',
     arguments: [],
   },
   model: {
@@ -29,6 +38,84 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
     description: 'Toggle compact mode',
     arguments: [],
   },
+  rename: {
+    description: 'Rename the current session',
+    arguments: ['name'],
+  },
+  copy: {
+    description: 'Copy the last assistant response (or Nth-latest) to clipboard',
+    arguments: ['N'],
+  },
+  export: {
+    description: 'Export the current conversation as text',
+    arguments: ['filename'],
+  },
+  resume: {
+    description: 'Open the session picker to resume a conversation',
+    arguments: [],
+  },
+  continue: {
+    description: 'Alias for /resume',
+    arguments: [],
+  },
+  theme: {
+    description: 'Open theme picker',
+    arguments: [],
+  },
+  permissions: {
+    description: 'Open permissions settings',
+    arguments: [],
+  },
+  diff: {
+    description: 'Show uncommitted git diff',
+    arguments: [],
+  },
+  feedback: {
+    description: 'Submit feedback about the WebUI',
+    arguments: ['report'],
+  },
+  bug: {
+    description: 'Alias for /feedback',
+    arguments: ['report'],
+  },
+  doctor: {
+    description: 'Diagnose and verify the WebUI installation',
+    arguments: [],
+  },
+  fast: {
+    description: 'Toggle fast mode on or off',
+    arguments: ['on|off'],
+  },
+};
+
+// CLI-forwarded command descriptions (for /help listing and autocomplete)
+const CLI_FORWARDED_DESCRIPTIONS: Record<string, string> = {
+  btw: 'Ask a quick side question without adding to the conversation',
+  context: 'Visualize current context usage',
+  memory: 'Edit CLAUDE.md memory files',
+  mcp: 'Manage MCP server connections',
+  hooks: 'View hook configurations',
+  skills: 'List available skills',
+  debug: 'Enable debug logging and troubleshoot',
+  effort: 'Set the model effort level (low|medium|high|xhigh|max|auto)',
+  plan: 'Enter plan mode',
+  init: 'Initialize project with a CLAUDE.md guide',
+  review: 'Review a pull request locally',
+  recap: 'Generate a one-line session summary',
+  'security-review': 'Analyze pending changes for security vulnerabilities',
+  'add-dir': 'Add a working directory for file access',
+  'claude-api': 'Load Claude API reference material',
+  simplify: 'Review recently changed files for quality issues',
+  batch: 'Orchestrate large-scale parallel changes',
+  loop: 'Run a prompt repeatedly on an interval',
+  proactive: 'Alias for /loop',
+  'less-permission-prompts': 'Add allowlist to reduce permission prompts',
+  usage: 'Show plan usage limits',
+  insights: 'Generate session analysis report',
+  stats: 'Visualize daily usage and streaks',
+  schedule: 'Create, update, list, or run routines',
+  routines: 'Alias for /schedule',
+  agents: 'Manage agent configurations',
 };
 
 export class CommandService {
@@ -175,12 +262,22 @@ export class CommandService {
       usage?: { inputTokens: number; outputTokens: number; cost: number };
     }
   ): Promise<CommandExecutionResult> {
-    // Check built-in commands first
+    // Check built-in commands first (WebUI-native handlers)
     if (parsed.name in BUILTIN_COMMAND_DEFS) {
       return this.executeBuiltinCommand(parsed.name as BuiltinCommandName, parsed, context);
     }
 
-    // Load available commands
+    // Check CLI-forwarded commands (Claude Code CLI handles these natively)
+    if ((CLI_FORWARDED_COMMANDS as readonly string[]).includes(parsed.name)) {
+      const rawCommand = `/${parsed.name}${parsed.rawArgs ? ' ' + parsed.rawArgs : ''}`;
+      return {
+        success: true,
+        action: 'forward_to_cli',
+        response: rawCommand,
+      };
+    }
+
+    // Load available commands (user/project custom commands)
     const commands = await this.getAvailableCommands(context.projectPath);
     const command = commands.find(c => c.name === parsed.name && c.scope !== 'builtin');
 
@@ -215,12 +312,25 @@ export class CommandService {
     switch (name) {
       case 'help': {
         const commands = await this.getAvailableCommands(context.projectPath);
-        const helpText = commands
-          .map(c => `/${c.name} - ${c.description}${c.scope !== 'builtin' ? ` [${c.scope}]` : ''}`)
+        const builtinList = commands
+          .filter(c => c.scope === 'builtin')
+          .map(c => `/${c.name} — ${c.description}`)
           .join('\n');
+        const cliList = Object.entries(CLI_FORWARDED_DESCRIPTIONS)
+          .map(([name, desc]) => `/${name} — ${desc}`)
+          .join('\n');
+        const customList = commands
+          .filter(c => c.scope !== 'builtin')
+          .map(c => `/${c.name} — ${c.description} [${c.scope}]`)
+          .join('\n');
+        const sections = [
+          `**Built-in commands (WebUI):**\n${builtinList}`,
+          `**Claude Code commands:**\n${cliList}`,
+        ];
+        if (customList) sections.push(`**Custom commands:**\n${customList}`);
         return {
           success: true,
-          response: `Available commands:\n\n${helpText}`,
+          response: `Available commands:\n\n${sections.join('\n\n')}`,
         };
       }
 
@@ -230,6 +340,120 @@ export class CommandService {
           action: 'clear',
           response: 'Chat history cleared.',
         };
+
+      case 'reset':
+        return {
+          success: true,
+          action: 'clear',
+          response: 'Starting a new conversation.',
+        };
+
+      case 'new':
+        return {
+          success: true,
+          action: 'new_session',
+          response: 'Creating new session…',
+        };
+
+      case 'rename': {
+        const newName = parsed.rawArgs.trim();
+        if (!newName) {
+          return {
+            success: false,
+            error: 'Usage: /rename <new name>',
+          };
+        }
+        return {
+          success: true,
+          action: 'rename_session',
+          response: `Renaming session to "${newName}".`,
+          data: { name: newName },
+        };
+      }
+
+      case 'copy': {
+        const n = parsed.args[0] ? Number.parseInt(parsed.args[0], 10) : 1;
+        return {
+          success: true,
+          action: 'copy_response',
+          response: n > 1 ? `Copying ${n}th-latest response to clipboard.` : 'Copying last response to clipboard.',
+          data: { n: Number.isFinite(n) && n > 0 ? n : 1 },
+        };
+      }
+
+      case 'export': {
+        const filename = parsed.args[0]?.trim();
+        return {
+          success: true,
+          action: 'export_conversation',
+          response: filename ? `Exporting conversation to ${filename}.` : 'Exporting conversation…',
+          data: { filename },
+        };
+      }
+
+      case 'resume':
+      case 'continue':
+        return {
+          success: true,
+          action: 'resume_session',
+          response: 'Opening session picker…',
+        };
+
+      case 'theme':
+        return {
+          success: true,
+          action: 'open_settings',
+          response: 'Opening theme picker…',
+          data: { tab: 'theme' },
+        };
+
+      case 'permissions':
+        return {
+          success: true,
+          action: 'open_permissions',
+          response: 'Opening permissions settings…',
+        };
+
+      case 'diff':
+        return {
+          success: true,
+          action: 'open_diff',
+          response: 'Loading uncommitted git diff…',
+        };
+
+      case 'feedback':
+      case 'bug': {
+        const report = parsed.rawArgs.trim();
+        return {
+          success: true,
+          action: 'open_feedback',
+          response: report ? `Submitting feedback: ${report}` : 'Opening feedback form…',
+          data: report ? { report } : undefined,
+        };
+      }
+
+      case 'doctor':
+        return {
+          success: true,
+          action: 'show_doctor',
+          response: 'Running WebUI diagnostics…',
+        };
+
+      case 'fast': {
+        const mode = parsed.args[0]?.toLowerCase();
+        const explicit = mode === 'on' ? true : mode === 'off' ? false : undefined;
+        return {
+          success: true,
+          action: 'toggle_fast',
+          response:
+            explicit === true
+              ? 'Enabling fast mode.'
+              : explicit === false
+                ? 'Disabling fast mode.'
+                : 'Toggling fast mode.',
+          data: explicit === undefined ? {} : { enabled: explicit },
+        };
+      }
 
       case 'model':
         if (parsed.args.length === 0) {
@@ -309,16 +533,27 @@ export class CommandService {
     return result.trim();
   }
 
-  // Process @filename references in text (reads file content)
+  // Process @filename references in text (reads file content).
+  // Sandbox rule: `@…` references must resolve inside the session's working
+  // directory. Absolute paths and `..` traversals are rejected so attacker-
+  // controlled prompt content cannot exfiltrate files like `~/.claude/.credentials.json`
+  // or `/etc/passwd` into the LLM context.
   async processFileReferences(text: string, workingDirectory: string): Promise<string> {
     const fileRefRegex = /@([\w./\-_]+)/g;
     let result = text;
     let match;
 
+    const rootResolved = resolve(workingDirectory);
+    const rootPrefix = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
+
     while ((match = fileRefRegex.exec(text)) !== null) {
       const fileName = match[1];
       if (!fileName) continue;
-      const filePath = join(workingDirectory, fileName);
+      if (isAbsolute(fileName) || fileName.startsWith('~')) continue;
+
+      const filePath = resolve(rootResolved, fileName);
+      if (filePath !== rootResolved && !filePath.startsWith(rootPrefix)) continue;
+
       try {
         const content = await readFile(filePath, 'utf-8');
         result = result.replace(match[0], `\n\`\`\`\n${content}\n\`\`\`\n`);

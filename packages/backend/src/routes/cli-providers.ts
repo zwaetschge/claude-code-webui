@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import type { ApiResponse, CliProviderUpdateResponse } from '@claude-code-webui/shared';
 import {
   CLI_PROVIDERS,
@@ -13,6 +13,7 @@ import {
   type CLIProviderConfig,
 } from '../services/cli-providers.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from '../services/cli-updates.js';
 
 const router = Router();
@@ -124,8 +125,11 @@ router.get('/:id/models', requireAuth, (req, res) => {
   res.json(response);
 });
 
-// Refresh models cache (re-reads from CLI cache files)
-router.post('/refresh-models', requireAuth, asyncHandler(async (_req, res) => {
+// Refresh models cache (re-reads from CLI cache files).
+// Admin-only: spawns `codex exec` (up to 30s, hits OpenAI API). Rate-limited to
+// 10/min per admin, with an in-flight lock in refreshCodexModelsCache so parallel
+// callers share one run.
+router.post('/refresh-models', requireAuth, requireAdmin, rateLimiters.strict, asyncHandler(async (_req, res) => {
   resetDiscovery();
   const codexRefreshed = await refreshCodexModelsCache();
 
@@ -146,7 +150,10 @@ router.post('/refresh-models', requireAuth, asyncHandler(async (_req, res) => {
   res.json(response);
 }));
 
-router.post('/update', requireAuth, asyncHandler(async (req, res) => {
+// Admin-only: `npm install -g` spawns with a 5-minute timeout and a shared
+// in-flight lock, so any authed user could exhaust container resources or
+// stall concurrent updates. Restrict to admins.
+router.post('/update', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const parsed = updateCliProvidersSchema.safeParse(req.body || {});
   if (!parsed.success) {
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');

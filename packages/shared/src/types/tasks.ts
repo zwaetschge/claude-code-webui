@@ -8,7 +8,7 @@ export type DelegatedTaskStatus =
   | "error"
   | "cancelled";
 
-export type DelegatedTaskType = "gemini-oauth" | "run-script" | (string & {});
+export type DelegatedTaskType = "run-script" | (string & {});
 
 export interface DelegatedTaskInfo {
   taskId: string;
@@ -46,13 +46,3 @@ export interface DelegatedTaskInputRequest {
   data: unknown;
 }
 
-export interface GeminiOAuthTaskParams {
-  mode?: "auto" | "manual";
-}
-
-export interface GeminiOAuthTaskResult {
-  authUrl?: string;
-  status: "awaiting_browser" | "completed" | "error";
-  email?: string;
-  message?: string;
-}

@@ -1,0 +1,51 @@
+# docker-compose.override.yml.example — copy to docker-compose.override.yml
+# (gitignored) and edit for your site. Compose merges this on top of
+# docker-compose.yml automatically — no extra `-f` flag needed.
+#
+# Use this when you want:
+#   - Traefik / Caddy / nginx labels
+#   - Absolute host paths (e.g. /mnt/user/appdata/... on Unraid, /opt/... on Linux)
+#   - An external Docker network shared with a reverse proxy
+#   - A docker.sock mount (so the container can rebuild itself via repair-bot)
+#   - A second `repair-bot` service for self-rebuild
+
+services:
+  claude-code-webui:
+    # Example: pin the host docker GID so the in-container `node` user can read /var/run/docker.sock.
+    # Find yours with:  stat -c '%g' /var/run/docker.sock
+    # group_add:
+    #   - "999"
+
+    # Example: Traefik labels for a public hostname behind a reverse proxy.
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.webui.rule=Host(`code.example.com`)"
+    #   - "traefik.http.routers.webui.entrypoints=websecure"
+    #   - "traefik.http.routers.webui.tls.certresolver=cloudflare"
+    #   - "traefik.http.services.webui.loadbalancer.server.port=3001"
+
+    # Example: override the env baked in by the portable compose
+    # environment:
+    #   - FRONTEND_URL=https://code.example.com
+    #   - CORS_ALLOWED_ORIGINS=https://code.example.com
+    #   - ALLOWED_BASE_PATHS=/mnt/host
+
+    # Example: replace the relative ./data, ./config defaults with absolute host paths.
+    # volumes:
+    #   - /opt/claude-webui/data:/app/packages/backend/data
+    #   - /opt/claude-webui/config/claude:/home/node/.claude
+    #   - /opt/claude-webui/config/codex:/home/node/.codex
+    #   - /opt/claude-webui/config/opencode:/home/node/.opencode
+    #   - /opt/projects:/workspace
+    #   # Required for the repair-bot self-rebuild flow:
+    #   - /var/run/docker.sock:/var/run/docker.sock
+
+    # Example: attach to a pre-existing reverse-proxy network alongside the default one.
+    # networks:
+    #   - default
+    #   - traefik-public
+
+# networks:
+#   traefik-public:
+#     external: true
+#     name: traefik-public

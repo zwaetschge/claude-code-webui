@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   BarChart3,
   Coins,
@@ -11,6 +12,10 @@ import {
   Clock,
   Calendar,
   Zap,
+  AlertCircle,
+  Loader2,
+  FileJson,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -19,6 +24,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -98,15 +104,12 @@ interface UsageLimitsResponse {
   error?: { code: string; message: string };
 }
 
-const USAGE_PROVIDERS: CLIProvider[] = ['claude', 'codex', 'glm'];
+const USAGE_PROVIDERS: CLIProvider[] = ['claude', 'codex', 'opencode'];
 
 const USAGE_PROVIDER_COLORS: Record<CLIProvider, string> = {
   claude: '#f97316',
   codex: '#22c55e',
-  gemini: '#3b82f6',
-  glm: '#06b6d4',
-  kimi: '#6b7280',
-  multi: '#a855f7',
+  opencode: '#3b82f6',
 };
 
 const PERIODS = [
@@ -136,8 +139,7 @@ const PROVIDER_FALLBACK_COLOR = '#94a3b8';
 const PROVIDER_COLORS: Record<string, string> = {
   Claude: '#f97316',
   Codex: '#22c55e',
-  Gemini: '#3b82f6',
-  'Z.AI': '#06b6d4',
+  OpenCode: '#3b82f6',
   Other: PROVIDER_FALLBACK_COLOR,
 };
 
@@ -175,8 +177,7 @@ function getProviderLabel(model?: string): string {
   if (!value) return 'Other';
   if (value.includes('gpt') || value.includes('codex')) return 'Codex';
   if (value.includes('claude')) return 'Claude';
-  if (value.includes('gemini')) return 'Gemini';
-  if (value.includes('glm') || value.includes('zai')) return 'Z.AI';
+  if (value.includes('opencode')) return 'OpenCode';
   return 'Other';
 }
 
@@ -191,11 +192,67 @@ function formatChartValue(metric: ChartMetric, value: number): string {
   return formatNumber(value);
 }
 
+// Signed minute offset from UTC — positive east. Berlin (UTC+2) = 120.
+// Counter-signs `Date.getTimezoneOffset()` which returns offset-from-local-to-UTC.
+function getTzOffsetMinutes(): number {
+  return -new Date().getTimezoneOffset();
+}
+
+const TOP_SESSIONS_PAGE_SIZE = 10;
+
+function triggerDownload(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function csvEscape(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function buildTimelineCsv(rows: TimelineData[]): string {
+  const header = ['date', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'total_tokens', 'cost', 'requests'];
+  const lines = [header.join(',')];
+  for (const row of rows) {
+    lines.push([
+      csvEscape(row.date),
+      row.input_tokens,
+      row.output_tokens,
+      row.cache_read_tokens,
+      row.total_tokens,
+      row.cost,
+      row.requests,
+    ].join(','));
+  }
+  return lines.join('\n');
+}
+
 export function AnalyticsPage() {
   const [period, setPeriod] = useState('7d');
   const [chartMetric, setChartMetric] = useState<ChartMetric>('tokens');
+  const [topSessionsLimit, setTopSessionsLimit] = useState(TOP_SESSIONS_PAGE_SIZE);
+  // Capture the offset once per mount so query keys stay stable even if the system clock
+  // nudges (e.g. DST rollover mid-session would otherwise refetch every render).
+  const tzOffsetRef = useRef(getTzOffsetMinutes());
+  const tzOffset = tzOffsetRef.current;
 
-  const { data: summary, isLoading: summaryLoading } = useQuery({
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryError,
+    error: summaryErrorObj,
+  } = useQuery({
     queryKey: ['analytics-summary', period],
     queryFn: async () => {
       const response = await api.get<ApiResponse<AnalyticsSummary>>(`/api/analytics/summary?period=${period}`);
@@ -203,10 +260,16 @@ export function AnalyticsPage() {
     },
   });
 
-  const { data: timeline, isLoading: timelineLoading } = useQuery({
-    queryKey: ['analytics-timeline', period],
+  const {
+    data: timeline,
+    isLoading: timelineLoading,
+    isError: timelineError,
+  } = useQuery({
+    queryKey: ['analytics-timeline', period, tzOffset],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<TimelineData[]>>(`/api/analytics/timeline?period=${period}`);
+      const response = await api.get<ApiResponse<TimelineData[]>>(
+        `/api/analytics/timeline?period=${period}&tz=${tzOffset}`
+      );
       return response.data.data;
     },
   });
@@ -221,6 +284,7 @@ export function AnalyticsPage() {
         return { cliProvider: prov, ...response.data };
       },
       staleTime: 60000, // 1 minute
+      refetchInterval: 300000, // 5 minutes — quotas shift; don't keep stale values on screen
       retry: 1,
     });
   });
@@ -235,6 +299,8 @@ export function AnalyticsPage() {
   const usageLimitsLoading = usageLimitsQueries.some((q) => q.isLoading);
 
   const isLoading = summaryLoading || timelineLoading;
+  const hasError = summaryError || timelineError;
+  const errorMessage = summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
   const totalTokens = summary?.totals.totalTokens || 0;
   const totalCost = summary?.totals.totalCost || 0;
   const totalRequests = summary?.totals.totalRequests || 0;
@@ -243,6 +309,30 @@ export function AnalyticsPage() {
   const cacheHitRate = summary && summary.totals.totalTokens > 0
     ? Math.round((summary.totals.cacheReadTokens / summary.totals.totalTokens) * 100)
     : 0;
+
+  const handlePeriodChange = useCallback((next: string) => {
+    setPeriod(next);
+    setTopSessionsLimit(TOP_SESSIONS_PAGE_SIZE);
+  }, []);
+
+  const exportJson = useCallback(() => {
+    if (!summary && !timeline) return;
+    const payload = {
+      period,
+      exportedAt: new Date().toISOString(),
+      tzOffsetMinutes: tzOffset,
+      summary: summary ?? null,
+      timeline: timeline ?? [],
+    };
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    triggerDownload(JSON.stringify(payload, null, 2), `analytics-${period}-${stamp}.json`, 'application/json');
+  }, [summary, timeline, period, tzOffset]);
+
+  const exportCsv = useCallback(() => {
+    if (!timeline || timeline.length === 0) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    triggerDownload(buildTimelineCsv(timeline), `analytics-${period}-${stamp}.csv`, 'text/csv');
+  }, [timeline, period]);
 
   const tokenBreakdown = useMemo(() => {
     if (!summary) return [];
@@ -395,22 +485,69 @@ export function AnalyticsPage() {
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {PERIODS.map((p) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="radiogroup" aria-label="Time period" className="flex flex-wrap gap-2">
+            {PERIODS.map((p, idx) => (
+              <button
+                key={p.value}
+                type="button"
+                role="radio"
+                aria-checked={period === p.value}
+                tabIndex={period === p.value ? 0 : -1}
+                onClick={() => handlePeriodChange(p.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const next = PERIODS[(idx + 1) % PERIODS.length];
+                    if (next) handlePeriodChange(next.value);
+                  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prev = PERIODS[(idx - 1 + PERIODS.length) % PERIODS.length];
+                    if (prev) handlePeriodChange(prev.value);
+                  }
+                }}
+                className={cn(
+                  'ui-pill ui-pill-subtle transition-colors',
+                  period === p.value && 'bg-foreground text-background border-transparent'
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
             <button
-              key={p.value}
               type="button"
-              onClick={() => setPeriod(p.value)}
-              className={cn(
-                'ui-pill ui-pill-subtle transition-colors',
-                period === p.value && 'bg-foreground text-background border-transparent'
-              )}
+              onClick={exportCsv}
+              disabled={!timeline || timeline.length === 0}
+              className="ui-pill ui-pill-subtle transition-colors hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+              title="Export timeline as CSV"
+              aria-label="Export timeline as CSV"
             >
-              {p.label}
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              <span>CSV</span>
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={exportJson}
+              disabled={!summary && !timeline}
+              className="ui-pill ui-pill-subtle transition-colors hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+              title="Export analytics as JSON"
+              aria-label="Export analytics as JSON"
+            >
+              <FileJson className="h-3.5 w-3.5" />
+              <span>JSON</span>
+            </button>
+          </div>
         </div>
       </div>
+
+      {hasError && (
+        <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
 
       {/* Provider Usage Limits */}
       {usageLimitsData.length > 0 && (
@@ -440,7 +577,7 @@ export function AnalyticsPage() {
                 return (
                   <div key={provider} className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
                     <div className="flex items-center gap-3">
-                      <ProviderLogo provider={provider === 'glm' ? 'zai' : provider} className="h-6 w-6" />
+                      <ProviderLogo provider={provider} className="h-6 w-6" />
                       <div>
                         <h3 className="text-sm font-semibold">{providerName}</h3>
                         <p className="text-xs text-muted-foreground">Rate limits</p>
@@ -600,12 +737,26 @@ export function AnalyticsPage() {
               <CardTitle className="text-lg">Usage Over Time</CardTitle>
               <CardDescription>Unified volume across every provider in the selected window.</CardDescription>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {CHART_METRICS.map((metric) => (
+            <div role="radiogroup" aria-label="Chart metric" className="flex flex-wrap gap-2">
+              {CHART_METRICS.map((metric, idx) => (
                 <button
                   key={metric.value}
                   type="button"
+                  role="radio"
+                  aria-checked={chartMetric === metric.value}
+                  tabIndex={chartMetric === metric.value ? 0 : -1}
                   onClick={() => setChartMetric(metric.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      const next = CHART_METRICS[(idx + 1) % CHART_METRICS.length];
+                      if (next) setChartMetric(next.value);
+                    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      const prev = CHART_METRICS[(idx - 1 + CHART_METRICS.length) % CHART_METRICS.length];
+                      if (prev) setChartMetric(prev.value);
+                    }
+                  }}
                   className={cn(
                     'ui-pill ui-pill-subtle transition-colors',
                     chartMetric === metric.value && 'bg-foreground text-background border-transparent'
@@ -618,7 +769,17 @@ export function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             <div className="h-[320px]">
-              {chartData.length > 0 ? (
+              {timelineLoading ? (
+                <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span className="text-sm">Loading timeline…</span>
+                </div>
+              ) : timelineError ? (
+                <div className="flex flex-col items-center justify-center h-full gap-2 text-destructive">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="text-sm">Failed to load timeline</span>
+                </div>
+              ) : chartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%" minHeight={240} minWidth={0}>
                   <AreaChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -648,6 +809,10 @@ export function AnalyticsPage() {
                           </div>
                         );
                       }}
+                    />
+                    <Legend
+                      wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
+                      iconType="circle"
                     />
                     {chartSeries.map((series) => (
                       <Area
@@ -843,30 +1008,44 @@ export function AnalyticsPage() {
         </CardHeader>
         <CardContent>
           {summary?.bySession && summary.bySession.length > 0 ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {summary.bySession.slice(0, 10).map((session, index) => (
-                <div
-                  key={session.session_id}
-                  className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex items-center justify-center w-7 h-7 rounded-full bg-background text-xs font-medium border border-border/60">
-                      {index + 1}
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                {summary.bySession.slice(0, topSessionsLimit).map((session, index) => (
+                  <Link
+                    key={session.session_id}
+                    to={`/session/${session.session_id}`}
+                    className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2 transition-colors hover:bg-muted/70 hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-center justify-center w-7 h-7 rounded-full bg-background text-xs font-medium border border-border/60">
+                        {index + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{session.session_name || 'Unnamed Session'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatNumber(session.total_tokens)} tokens · {session.requests} req
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{session.session_name || 'Unnamed Session'}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatNumber(session.total_tokens)} tokens · {session.requests} req
-                      </p>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-medium">{formatCurrency(session.cost)}</p>
+                      <p className="text-xs text-muted-foreground">{session.requests} req</p>
                     </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-medium">{formatCurrency(session.cost)}</p>
-                    <p className="text-xs text-muted-foreground">{session.requests} req</p>
-                  </div>
+                  </Link>
+                ))}
+              </div>
+              {summary.bySession.length > topSessionsLimit && (
+                <div className="flex justify-center pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setTopSessionsLimit((n) => n + TOP_SESSIONS_PAGE_SIZE)}
+                    className="ui-pill ui-pill-subtle transition-colors hover:bg-muted"
+                  >
+                    Show more ({summary.bySession.length - topSessionsLimit} left)
+                  </button>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           ) : (
             <div className="flex items-center justify-center h-[200px] text-muted-foreground">
               No session data available

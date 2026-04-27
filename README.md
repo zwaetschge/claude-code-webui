@@ -9,18 +9,25 @@ A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with
 
 # Screenshots
 
-## Desktop:
+## Desktop
 
-<img width="1874" height="856" alt="Bildschirmfoto_20260104_140400" src="https://github.com/user-attachments/assets/f7ebf624-39df-44ad-b0bc-9d685ea43f49" />
-<img width="1874" height="859" alt="Bildschirmfoto_20260104_140428" src="https://github.com/user-attachments/assets/b58f2808-4899-4884-9083-be48a31ef473" />
-<img width="1863" height="860" alt="Bildschirmfoto_20260104_140510" src="https://github.com/user-attachments/assets/bb334cd5-de76-47bd-b0de-0f6c5e9cdbf9" />
+![Sessions dashboard](docs/screenshots/dashboard.png)
+*Sessions dashboard — pick up where you left off across providers and projects.*
 
-## Mobile:
+![Claude Code chat](docs/screenshots/chat-claude.png)
+*Live chat session driving the Claude Code CLI with streaming responses, tool execution, and inline preview.*
 
-<img width="487" height="737" alt="Bildschirmfoto_20260104_141306" src="https://github.com/user-attachments/assets/91829fc9-af83-461b-bd4e-11271e28033e" />
-<img width="476" height="738" alt="Bildschirmfoto_20260104_141321" src="https://github.com/user-attachments/assets/f5897703-c0e9-48ff-9150-d4018c715553" />
-<img width="476" height="738" alt="Bildschirmfoto_20260104_141404" src="https://github.com/user-attachments/assets/ddc26671-8e94-4f96-b307-56969f180801" />
-<img width="476" height="738" alt="Bildschirmfoto_20260104_141424" src="https://github.com/user-attachments/assets/6b3331c8-4ecc-428d-a749-5fff0c9613c4" />
+![OpenCode multi-provider chat](docs/screenshots/chat-opencode.png)
+*OpenCode session running Kimi K2.6 — 75+ LLMs available behind a single CLI.*
+
+![Analytics page](docs/screenshots/analytics.png)
+*Analytics — token volume, cost, request count, cache efficiency, and per-model breakdown.*
+
+## Mobile
+
+<img src="docs/screenshots/mobile-chat.png" alt="Mobile chat view" width="320" />
+
+*Responsive chat with the same provider-aware UI on phone-sized viewports.*
 
 
 ## Features
@@ -136,108 +143,78 @@ A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with
 
 ## Installation
 
-### Quick Start with Docker Hub (Recommended)
-
-The easiest way to run Claude Code WebUI is using the pre-built Docker image:
+### Quick start (Docker)
 
 ```bash
-# Create a directory for docker-compose
-mkdir claude-code-webui && cd claude-code-webui
-
-# Download docker-compose file
-curl -O https://raw.githubusercontent.com/zwaetschge/claude-code-webui/main/docker-compose.hub.yml
-
-# Create .env file with your secrets
-cat > .env << 'EOF'
-SESSION_SECRET=your-session-secret-at-least-32-characters-long
-JWT_SECRET=your-jwt-secret-at-least-32-characters-long
-EOF
-
-# Start the container
-docker-compose -f docker-compose.hub.yml up -d
-```
-
-Access the WebUI at http://localhost:5174
-
-**Requirements:**
-- Docker and Docker Compose
-- Claude Code CLI configured on your host (`~/.claude` directory)
-
-### Prerequisites (for development)
-- Node.js 20+
-- pnpm 9+
-- Claude Code CLI installed and configured
-
-### Development Setup
-
-```bash
-# Clone the repository
 git clone https://github.com/zwaetschge/plum-code-webui.git
-cd claude-code-webui
-
-# Install dependencies
-pnpm install
-
-# Start development servers
-pnpm dev
-
-# Or use the helper script (generates temporary secrets)
-./scripts/start-webui.sh
+cd plum-code-webui
+./scripts/install.sh
 ```
 
-- Backend: http://localhost:3006
-- Frontend: http://localhost:5173
+The installer walks you through:
+1. **Prereq check** — docker, docker compose plugin, openssl, daemon connectivity.
+2. **Interactive `.env`** — public URL, port, allowlisted login emails, host paths for data/config/workspace. Auto-generates `SESSION_SECRET` + `JWT_SECRET`.
+3. **`docker compose build` + `up -d`** — first run takes a few minutes.
+4. **Health wait** — polls `/health` (or the container's healthcheck) for up to 2 min.
+5. **Optional `claude /login`** — drops you into the in-container Claude TUI so you can run `/login` and link an Anthropic account immediately. Can be skipped with `--skip-login`.
 
-### Production Build
+Re-run any time to reconfigure (existing `.env` values are preserved unless you pass `--reset`). Non-interactive mode (`--non-interactive`) takes all defaults — useful for CI bootstraps.
+
+**Requirements:** Docker 24+, Docker Compose plugin, openssl. The container ships its own Node + the `claude`, `codex`, and `opencode` CLIs.
+
+### Site-specific deployment (Traefik, Unraid, etc.)
+
+The repo's `docker-compose.yml` is intentionally portable — no Traefik labels, no absolute paths, no external networks. Site-specific overrides go into `docker-compose.override.yml` (gitignored), which Compose auto-merges. A copy-paste starting point lives at `docker-compose.override.yml.example` and shows how to add Traefik labels, absolute host paths (e.g. `/mnt/user/appdata/...` on Unraid), `group_add` for the docker socket GID, and a repair-bot self-rebuild sidecar.
+
+### Manual Docker (no installer)
 
 ```bash
-# Build all packages
+cp .env.example .env       # then edit: SESSION_SECRET, JWT_SECRET, AUTH_ALLOWED_EMAILS, FRONTEND_URL
+docker compose up -d --build
+```
+
+Access the WebUI at the `FRONTEND_URL` you configured (default `http://localhost:4545`).
+
+### Development setup (no Docker)
+
+```bash
+pnpm install                # workspace deps
+pnpm dev                    # backend (3006) + frontend (5173) in parallel
+# or:
+./scripts/start-webui.sh    # generates ephemeral secrets, kills stale PIDs, tails logs
+```
+
+Prerequisites: Node 20+, pnpm 9+, the `claude` CLI installed locally if you want OAuth-linked sessions.
+
+### Production build (no Docker)
+
+```bash
 pnpm build
-
-# Start production server
 pnpm start
-```
-
-### Docker Deployment
-
-```bash
-# Option 1: Pull from Docker Hub (recommended)
-docker-compose -f docker-compose.hub.yml up -d
-
-# Option 2: Build locally
-docker-compose up -d --build
-```
-
-### Unraid persistence note
-
-On Unraid, avoid mounting configs from `/root` (tmpfs on reboot). Use the appdata share instead, e.g.:
-
-```
-/mnt/user/appdata/claude-code-webui/config/claude  -> /home/node/.claude
-/mnt/user/appdata/claude-code-webui/config/codex   -> /home/node/.codex
-/mnt/user/appdata/claude-code-webui/config/gemini  -> /home/node/.gemini
-/mnt/user/appdata/claude-code-webui/config/glm     -> /home/node/.glm
-/mnt/user/appdata/claude-code-webui/config/npm-global -> /home/node/.npm-global
-/mnt/user/appdata/claude-code-webui/config/npm-glm -> /home/node/.npm-glm
 ```
 
 ## Configuration
 
 ### Environment Variables
 
+Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on startup). Most setups can ignore everything below the divider — `scripts/install.sh` writes the required values into `.env` for you.
+
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `SESSION_SECRET` | Express session secret | Yes |
-| `JWT_SECRET` | JWT signing key | Yes |
-| `FRONTEND_URL` | CORS origin (default: http://localhost:5173) | No |
-| `PORT` | Backend port (default: 3006) | No |
-| `CLI_AUTO_UPDATE` | Auto-update CLI tools on startup (true/false) | No |
-| `CLI_AUTO_UPDATE_INTERVAL_HOURS` | Repeat auto-update every N hours (0 disables) | No |
-| `CLI_AUTO_UPDATE_PROVIDERS` | Comma list of CLI providers to update | No |
-| `WEBUI_GLM_CONFIG_HOME` | Config home for GLM Claude Code (default: ~/.glm) | No |
-| `CLI_PROVIDER_GLM_PREFIX` | npm prefix for GLM Claude Code CLI (default: ~/.npm-glm) | No |
-| `CLI_PROVIDER_GLM_COMMAND` | Path to GLM Claude Code binary | No |
-| `CLI_PROVIDER_GLM_CREDENTIALS_PATH` | Credentials path for GLM availability checks | No |
+| `SESSION_SECRET` | Express session secret (min 32 chars). Installer auto-generates. | Yes |
+| `JWT_SECRET` | JWT signing key (min 32 chars). Installer auto-generates. | Yes |
+| `AUTH_ALLOWED_EMAILS` | Comma-separated email allowlist enforced for both OAuth and basic-auth. **Empty = no allowlist** — only safe behind a private network or SSO proxy. | Recommended |
+| `FRONTEND_URL` | Public URL the WebUI is reached at (default: `http://localhost:4545`). Used for CORS + OAuth redirects. | No |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated additional CORS origins. | No |
+| `SEED_ADMIN_EMAIL` | First user with this email gets `role=admin` on first login. | No |
+| `WEBUI_PORT` | Host port to expose (default: `4545`). Container always listens on `3001` internally. | No |
+| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR` | Host paths bind-mounted to `/app/packages/backend/data`, `/home/node/.<cli>`, and `/workspace` (defaults: `./data`, `./config`, `./workspace`). | No |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL` | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`. | No |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL` | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`. | No |
+| `CLI_PROVIDER_CLAUDE_MODELS` | Override the Claude model menu (default: `opus,sonnet,haiku`). | No |
+| `CLI_PROVIDER_CODEX_MODELS` / `CLI_PROVIDER_OPENCODE_MODELS` | Empty = auto-discover from the installed CLI. | No |
+| `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL` | Default model for OpenCode sessions (default: `z-ai/glm-5.1`). | No |
+| `TRUST_PROXY` | Express `trust proxy` (default: `1`). Setting `true` without a guarding proxy defeats IP-based rate-limiting. | No |
 
 ### Claude CLI Integration
 

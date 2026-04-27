@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Lock, User, AlertCircle, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Lock, User, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import { PlumBackground } from '@/components/effects/PlumBackground';
 
 export function BasicLoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useBasicAuthStore();
   const { setToken, isAuthenticated, isLoading: isAuthLoading } = useAuthStore();
   const [username, setUsername] = useState('');
@@ -19,20 +20,18 @@ export function BasicLoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isRepairBot, setIsRepairBot] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/instance-info')
-      .then((r) => r.json())
-      .then((data) => setIsRepairBot(!!data.repairBotMode))
-      .catch(() => {});
-  }, []);
+  const fromState = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)?.from;
+  const from =
+    fromState?.pathname && fromState.pathname !== '/login'
+      ? `${fromState.pathname}${fromState.search ?? ''}${fromState.hash ?? ''}`
+      : '/';
 
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
-      navigate('/');
+      navigate(from, { replace: true });
     }
-  }, [isAuthLoading, isAuthenticated, navigate]);
+  }, [isAuthLoading, isAuthenticated, navigate, from]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +42,7 @@ export function BasicLoginPage() {
 
     if (result.success && result.token) {
       await setToken(result.token);
-      navigate('/');
+      navigate(from, { replace: true });
     } else {
       setError(result.error || 'Login failed');
     }
@@ -53,15 +52,6 @@ export function BasicLoginPage() {
 
   return (
     <div className="relative min-h-screen bg-background overflow-hidden">
-      {/* Repair Bot Banner */}
-      {isRepairBot && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-600 text-white text-center py-1.5 px-4 text-sm font-semibold flex items-center justify-center gap-2 shadow-md">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          EMERGENCY REPAIR WEBUI
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-        </div>
-      )}
-
       {/* Plum frosted glass background with animated lights */}
       <PlumBackground enableCursorGlow />
 
@@ -93,7 +83,7 @@ export function BasicLoginPage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-start">
-            {(['claude', 'codex', 'zai', 'gemini'] as const).map((provider) => (
+            {(['claude', 'codex', 'opencode'] as const).map((provider) => (
               <span key={provider} className="ui-pill ui-pill-subtle gap-2 backdrop-blur-sm">
                 <ProviderLogo provider={provider} className="h-4 w-4" alt="" />
                 <span className="text-xs font-medium">{UI_PROVIDER_META[provider].label}</span>

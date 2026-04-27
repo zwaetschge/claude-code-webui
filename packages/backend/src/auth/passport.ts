@@ -6,6 +6,12 @@ import { config } from '../config';
 import { getDatabase } from '../db';
 import type { User } from '@claude-code-webui/shared';
 
+// Explicit column list excludes password_hash and api_key_encrypted so auth flows never
+// accidentally serialize sensitive columns into the session or OAuth profile responses.
+const USER_PUBLIC_COLUMNS = `
+  id, email, name, avatar_url, provider, provider_id, created_at, updated_at
+`;
+
 interface OAuthProfile {
   id: string;
   emails?: Array<{ value: string }>;
@@ -13,33 +19,85 @@ interface OAuthProfile {
   photos?: Array<{ value: string }>;
 }
 
+class OAuthEmailCollisionError extends Error {
+  constructor(
+    public readonly email: string,
+    public readonly existingProvider: string,
+    public readonly incomingProvider: string
+  ) {
+    super(
+      `Email ${email} is already linked to ${existingProvider}; sign in with that provider first to link accounts`
+    );
+    this.name = 'OAuthEmailCollisionError';
+  }
+}
+
+class EmailNotAllowedError extends Error {
+  constructor(public readonly email: string) {
+    super(`Email ${email} is not on the AUTH_ALLOWED_EMAILS allowlist`);
+    this.name = 'EmailNotAllowedError';
+  }
+}
+
+function isEmailAllowed(email: string): boolean {
+  if (config.auth.allowedEmails.length === 0) return true;
+  return config.auth.allowedEmails.includes(email.trim().toLowerCase());
+}
+
 function findOrCreateUser(
   provider: 'github' | 'google',
   profile: OAuthProfile
 ): User {
   const db = getDatabase();
-  const email = profile.emails?.[0]?.value || `${profile.id}@${provider}.local`;
+  const profileEmail = profile.emails?.[0]?.value;
+  // Use a provider-namespaced synthetic email when the profile has none, so we never
+  // collide with another user's real email.
+  const email = profileEmail || `${profile.id}@${provider}.local`;
 
-  // Try to find existing user
+  if (!isEmailAllowed(email)) {
+    throw new EmailNotAllowedError(email);
+  }
+
+  // Try to find existing user for this (provider, providerId) tuple
   const existingUser = db
-    .prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?')
+    .prepare(`SELECT ${USER_PUBLIC_COLUMNS} FROM users WHERE provider = ? AND provider_id = ?`)
     .get(provider, profile.id) as User | undefined;
 
   if (existingUser) {
-    // Update user info
-    db.prepare(
-      `UPDATE users SET
-        name = ?,
-        avatar_url = ?,
-        email = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?`
-    ).run(
-      profile.displayName || null,
-      profile.photos?.[0]?.value || null,
-      email,
-      existingUser.id
-    );
+    // Guard: if the profile's current email now matches a DIFFERENT user's email
+    // (e.g. email changed at the provider), skip the email update to avoid
+    // violating UNIQUE(email). Name/avatar are still refreshed.
+    const conflictingEmailOwner = db
+      .prepare(`SELECT id FROM users WHERE email = ? AND id != ?`)
+      .get(email, existingUser.id) as { id: string } | undefined;
+
+    if (conflictingEmailOwner) {
+      db.prepare(
+        `UPDATE users SET
+          name = ?,
+          avatar_url = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`
+      ).run(
+        profile.displayName || null,
+        profile.photos?.[0]?.value || null,
+        existingUser.id
+      );
+    } else {
+      db.prepare(
+        `UPDATE users SET
+          name = ?,
+          avatar_url = ?,
+          email = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`
+      ).run(
+        profile.displayName || null,
+        profile.photos?.[0]?.value || null,
+        email,
+        existingUser.id
+      );
+    }
 
     return {
       ...existingUser,
@@ -48,19 +106,39 @@ function findOrCreateUser(
     };
   }
 
+  // New signup: fail closed if the email already belongs to a different provider.
+  // Silent auto-linking would allow a hostile OAuth provider that returns a victim's
+  // email to take over the account.
+  const emailOwner = db
+    .prepare(`SELECT id, provider FROM users WHERE email = ?`)
+    .get(email) as { id: string; provider: string } | undefined;
+
+  if (emailOwner) {
+    throw new OAuthEmailCollisionError(email, emailOwner.provider, provider);
+  }
+
   // Create new user
   const userId = nanoid();
-  db.prepare(
-    `INSERT INTO users (id, email, name, avatar_url, provider, provider_id)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(
-    userId,
-    email,
-    profile.displayName || null,
-    profile.photos?.[0]?.value || null,
-    provider,
-    profile.id
-  );
+  try {
+    db.prepare(
+      `INSERT INTO users (id, email, name, avatar_url, provider, provider_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      userId,
+      email,
+      profile.displayName || null,
+      profile.photos?.[0]?.value || null,
+      provider,
+      profile.id
+    );
+  } catch (err) {
+    // Defense in depth: race condition between the check above and the insert.
+    const errMessage = err instanceof Error ? err.message : String(err);
+    if (errMessage.includes('UNIQUE') && errMessage.includes('users.email')) {
+      throw new OAuthEmailCollisionError(email, 'unknown', provider);
+    }
+    throw err;
+  }
 
   // Create default settings
   db.prepare(
@@ -80,6 +158,8 @@ function findOrCreateUser(
   };
 }
 
+export { OAuthEmailCollisionError, EmailNotAllowedError, isEmailAllowed };
+
 export function setupPassport(): void {
   // Serialize user to session
   passport.serializeUser((user, done) => {
@@ -90,7 +170,9 @@ export function setupPassport(): void {
   passport.deserializeUser((id: string, done) => {
     try {
       const db = getDatabase();
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+      const user = db
+        .prepare(`SELECT ${USER_PUBLIC_COLUMNS} FROM users WHERE id = ?`)
+        .get(id);
       done(null, user || null);
     } catch (err) {
       done(err, null);

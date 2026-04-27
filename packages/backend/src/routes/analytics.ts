@@ -7,6 +7,16 @@ const router = Router();
 // All routes require authentication
 router.use(requireAuth);
 
+// Parse a signed-minute TZ offset (e.g. "120" for UTC+2, "-300" for UTC-5) into
+// a SQLite strftime modifier. Returns '0 minutes' (no-op) on missing/invalid input,
+// so day grouping falls back to UTC — which matches the pre-D9 behavior.
+function parseTzModifier(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length === 0) return '0 minutes';
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < -840 || n > 840) return '0 minutes';
+  return `${n >= 0 ? '+' : ''}${n} minutes`;
+}
+
 // Get usage summary (totals across all sessions)
 router.get('/summary', async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
@@ -70,7 +80,9 @@ router.get('/summary', async (req: Request, res: Response) => {
       ORDER BY cost DESC
     `).all(authReq.userId);
 
-    // Get per-session breakdown (top 10)
+    // Get per-session breakdown. Capped at 50 so the frontend's paginated
+    // "Top Sessions" list has rows to reveal beyond the default 10 — without
+    // flooding the response with every session that ever ran a request.
     // Use fully qualified column name for created_at to avoid ambiguity with sessions table
     const sessionDateFilter = dateFilter.replace('created_at', 'uh.created_at');
     const bySession = db.prepare(`
@@ -85,7 +97,7 @@ router.get('/summary', async (req: Request, res: Response) => {
       WHERE uh.user_id = ? ${sessionDateFilter}
       GROUP BY uh.session_id
       ORDER BY cost DESC
-      LIMIT 10
+      LIMIT 50
     `).all(authReq.userId);
 
     res.json({
@@ -115,7 +127,8 @@ router.get('/summary', async (req: Request, res: Response) => {
 router.get('/timeline', async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const db = getDatabase();
-  const { period = '7d', granularity = 'day' } = req.query;
+  const { period = '7d', granularity = 'day', tz } = req.query;
+  const tzModifier = parseTzModifier(tz);
 
   // Calculate date range and grouping
   let dateFilter = '';
@@ -146,7 +159,7 @@ router.get('/timeline', async (req: Request, res: Response) => {
   try {
     const timeline = db.prepare(`
       SELECT
-        strftime('${dateFormat}', created_at) as date,
+        strftime('${dateFormat}', created_at, ?) as date,
         COALESCE(SUM(input_tokens), 0) as input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
@@ -155,22 +168,22 @@ router.get('/timeline', async (req: Request, res: Response) => {
         COUNT(*) as requests
       FROM usage_history
       WHERE user_id = ? ${dateFilter}
-      GROUP BY strftime('${dateFormat}', created_at)
+      GROUP BY strftime('${dateFormat}', created_at, ?)
       ORDER BY date ASC
-    `).all(authReq.userId);
+    `).all(tzModifier, authReq.userId, tzModifier);
 
     const providerRows = db.prepare(`
       SELECT
-        strftime('${dateFormat}', created_at) as date,
+        strftime('${dateFormat}', created_at, ?) as date,
         model,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COALESCE(SUM(cost_usd), 0) as cost,
         COUNT(*) as requests
       FROM usage_history
       WHERE user_id = ? ${dateFilter}
-      GROUP BY strftime('${dateFormat}', created_at), model
+      GROUP BY strftime('${dateFormat}', created_at, ?), model
       ORDER BY date ASC
-    `).all(authReq.userId) as Array<{
+    `).all(tzModifier, authReq.userId, tzModifier) as Array<{
       date: string;
       model: string | null;
       total_tokens: number;
@@ -183,8 +196,6 @@ router.get('/timeline', async (req: Request, res: Response) => {
       if (!value) return 'Other';
       if (value.includes('gpt') || value.includes('codex')) return 'Codex';
       if (value.includes('claude')) return 'Claude';
-      if (value.includes('gemini')) return 'Gemini';
-      if (value.includes('glm') || value.includes('zai')) return 'Z.AI';
       return 'Other';
     };
 
@@ -222,28 +233,26 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
   const { sessionId } = req.params;
 
   try {
-    // Verify session belongs to user
-    const session = db.prepare(
-      'SELECT id, name FROM sessions WHERE id = ? AND user_id = ?'
-    ).get(sessionId, authReq.userId) as { id: string; name: string } | undefined;
-
-    if (!session) {
-      return res.status(404).json({ success: false, error: { message: 'Session not found' } });
-    }
-
-    // Get session totals
-    const totals = db.prepare(`
+    // One round-trip: ownership check + totals in a single query. Returns null-row
+    // when the session doesn't exist OR doesn't belong to the user.
+    const sessionTotals = db.prepare(`
       SELECT
-        COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-        COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-        COALESCE(SUM(cache_read_tokens), 0) as total_cache_read_tokens,
-        COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation_tokens,
-        COALESCE(SUM(total_tokens), 0) as total_tokens,
-        COALESCE(SUM(cost_usd), 0) as total_cost,
-        COUNT(*) as total_requests
-      FROM usage_history
-      WHERE session_id = ?
-    `).get(sessionId) as {
+        s.id as session_id,
+        s.name as session_name,
+        COALESCE(SUM(uh.input_tokens), 0) as total_input_tokens,
+        COALESCE(SUM(uh.output_tokens), 0) as total_output_tokens,
+        COALESCE(SUM(uh.cache_read_tokens), 0) as total_cache_read_tokens,
+        COALESCE(SUM(uh.cache_creation_tokens), 0) as total_cache_creation_tokens,
+        COALESCE(SUM(uh.total_tokens), 0) as total_tokens,
+        COALESCE(SUM(uh.cost_usd), 0) as total_cost,
+        COUNT(uh.id) as total_requests
+      FROM sessions s
+      LEFT JOIN usage_history uh ON uh.session_id = s.id AND uh.user_id = s.user_id
+      WHERE s.id = ? AND s.user_id = ?
+      GROUP BY s.id
+    `).get(sessionId, authReq.userId) as {
+      session_id: string;
+      session_name: string;
       total_input_tokens: number;
       total_output_tokens: number;
       total_cache_read_tokens: number;
@@ -251,9 +260,17 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
       total_tokens: number;
       total_cost: number;
       total_requests: number;
-    };
+    } | undefined;
 
-    // Get usage history for this session
+    if (!sessionTotals) {
+      return res.status(404).json({ success: false, error: { message: 'Session not found' } });
+    }
+
+    const session = { id: sessionTotals.session_id, name: sessionTotals.session_name };
+    const totals = sessionTotals;
+
+    // Get usage history for this session — scoped by user_id too so a shared
+    // session row can't leak rows that belong to another user.
     const history = db.prepare(`
       SELECT
         id,
@@ -266,10 +283,10 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
         model,
         created_at
       FROM usage_history
-      WHERE session_id = ?
+      WHERE session_id = ? AND user_id = ?
       ORDER BY created_at DESC
       LIMIT 100
-    `).all(sessionId);
+    `).all(sessionId, authReq.userId);
 
     res.json({
       success: true,

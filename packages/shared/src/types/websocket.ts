@@ -1,24 +1,8 @@
 import type { Message, StreamingMessage } from './message';
-import type { SessionStatus, CLIProvider } from './session';
-import type { SelfRebuildStatus } from './self-rebuild';
-import type {
-  OrchestrationConfig,
-  OrchestrationState,
-  OrchestrationTask,
-  OrchestrationPhase,
-  WorkerState,
-  TaskResult,
-} from './orchestration';
-import type {
-  RalphRunState,
-  RalphProgress,
-  RalphIteration,
-  RalphPlan,
-  RalphConfig,
-} from './ralph';
+import type { SessionStatus } from './session';
 
 // Session permission mode
-export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger' | 'orchestration';
+export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
 
 // File attachment data for sending to Claude (images, text, pdf, etc.)
 export interface FileAttachmentData {
@@ -46,6 +30,11 @@ export interface ClientToServerEvents {
     sessionId: string;
     message: string;
     images?: ImageAttachmentData[];
+    /**
+     * Optional client-generated unique ID (e.g. nanoid/uuid) used to dedupe retries.
+     * If the server has recently seen the same ID on this socket, the resend is dropped.
+     */
+    clientMessageId?: string;
   }) => void;
   'session:input': (data: {
     sessionId: string;
@@ -58,12 +47,6 @@ export interface ClientToServerEvents {
   'session:reconnect': (data: {
     sessionId: string;
     lastTimestamp?: number;
-  }) => void;
-  'session:generate-image': (data: {
-    sessionId: string;
-    prompt: string;
-    model?: 'gemini-2.5-flash-image' | 'gemini-3-pro-image-preview';
-    referenceImages?: string[];
   }) => void;
   'session:set-mode': (data: {
     sessionId: string;
@@ -85,38 +68,6 @@ export interface ClientToServerEvents {
     action: PermissionAction;
     pattern?: string;
   }) => void;
-  // Orchestration events
-  'orchestration:configure': (data: {
-    sessionId: string;
-    config: Partial<OrchestrationConfig>;
-  }) => void;
-  'orchestration:start': (data: {
-    sessionId: string;
-  }) => void;
-  'orchestration:stop': (data: {
-    sessionId: string;
-  }) => void;
-  'orchestration:interrupt_worker': (data: {
-    sessionId: string;
-    workerId: string;
-  }) => void;
-  'orchestration:cancel_task': (data: {
-    sessionId: string;
-    taskId: string;
-  }) => void;
-  'orchestration:retry_task': (data: {
-    sessionId: string;
-    taskId: string;
-  }) => void;
-  // Ralph autonomous loop events
-  'ralph:start': (data: {
-    sessionId?: string;
-    idea: string;
-    config?: Partial<RalphConfig>;
-  }) => void;
-  'ralph:pause': (data: { runId: string }) => void;
-  'ralph:resume': (data: { runId: string }) => void;
-  'ralph:stop': (data: { runId: string }) => void;
 }
 
 // Usage data from Claude CLI
@@ -173,7 +124,7 @@ export interface GeneratedImageData {
   imageBase64?: string;
   mimeType: string;
   prompt: string;
-  generator: 'gemini' | 'other';
+  generator: 'opencode' | 'other';
 }
 
 // Permission denial data (when Claude tries to use a tool without permission)
@@ -219,6 +170,8 @@ export interface ServerToClientEvents {
     sessionId: string;
     bufferedMessages: BufferedMessage[];
     isRunning: boolean;
+    /** True when buffer rolled over since lastTimestamp — client should full-resync from REST. */
+    needsFullResync?: boolean;
   }) => void;
   'session:compact': (data: {
     sessionId: string;
@@ -231,59 +184,6 @@ export interface ServerToClientEvents {
   'session:mode': (data: { sessionId: string; mode: SessionMode }) => void;
   // Legacy permission request (simple denials flow)
   'session:permission_request': (data: PermissionRequestData | PendingPermission) => void;
-  // Self-rebuild status updates
-  'self-rebuild:status': (data: SelfRebuildStatus & { completedAt?: string }) => void;
-  // Orchestration events
-  'orchestration:state': (data: OrchestrationState) => void;
-  'orchestration:task_delegated': (data: {
-    sessionId: string;
-    task: OrchestrationTask;
-    worker: WorkerState;
-  }) => void;
-  'orchestration:task_progress': (data: {
-    sessionId: string;
-    taskId: string;
-    workerId: string;
-    content: string;
-    isPartial: boolean;
-  }) => void;
-  'orchestration:task_completed': (data: {
-    sessionId: string;
-    task: OrchestrationTask;
-    result: TaskResult;
-  }) => void;
-  'orchestration:worker_status': (data: {
-    sessionId: string;
-    worker: WorkerState;
-  }) => void;
-  'orchestration:worker_output': (data: {
-    sessionId: string;
-    workerId: string;
-    provider: CLIProvider;
-    content: string;
-    isPartial: boolean;
-  }) => void;
-  'orchestration:phase': (data: {
-    sessionId: string;
-    phase: OrchestrationPhase;
-    message?: string;
-  }) => void;
-  'orchestration:error': (data: {
-    sessionId: string;
-    error: string;
-    taskId?: string;
-    workerId?: string;
-  }) => void;
-  // Ralph autonomous loop events
-  // Watchdog inter-instance communication
-  'watchdog:inter_message': (data: import('./watchdog').WatchdogInterMessage) => void;
-  // Ralph autonomous loop events
-  'ralph:state': (data: { sessionId: string; run: RalphRunState }) => void;
-  'ralph:progress': (data: { sessionId: string; runId: string; progress: RalphProgress }) => void;
-  'ralph:iteration': (data: { sessionId: string; runId: string; iteration: RalphIteration }) => void;
-  'ralph:plan': (data: { sessionId: string; runId: string; plan: RalphPlan }) => void;
-  'ralph:completed': (data: { sessionId: string; runId: string; exitReason: string }) => void;
-  'ralph:error': (data: { sessionId: string; runId: string; error: string }) => void;
   error: (message: string) => void;
 }
 

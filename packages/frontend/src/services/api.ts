@@ -6,6 +6,15 @@ interface RequestConfig extends RequestInit {
   headers?: Record<string, string>;
 }
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 class ApiClient {
   private getAuthHeader(): Record<string, string> {
     const token = useAuthStore.getState().token;
@@ -33,7 +42,10 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.error?.message || error.message || 'Request failed');
+      throw new ApiError(
+        error.error?.message || error.message || 'Request failed',
+        response.status
+      );
     }
 
     const data = await response.json();

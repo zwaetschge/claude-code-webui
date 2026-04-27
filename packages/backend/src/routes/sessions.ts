@@ -9,6 +9,7 @@ import { AppError } from '../middleware/errorHandler';
 import { config } from '../config';
 import { safeJsonParse } from '../utils/json';
 import { rateLimiters } from '../middleware/rateLimiter';
+import { getProcessManager } from '../websocket';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ const router = Router();
 const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   workingDirectory: z.string().optional(), // Optional - will be auto-generated from name
-  cliProvider: z.enum(['claude', 'codex', 'gemini', 'glm', 'kimi', 'multi']).optional().default('claude'),
+  cliProvider: z.enum(['claude', 'codex', 'opencode']).optional().default('claude'),
 });
 
 const updateSessionSchema = z.object({
@@ -25,7 +26,11 @@ const updateSessionSchema = z.object({
 });
 
 const updateProviderSchema = z.object({
-  cliProvider: z.enum(['claude', 'codex', 'gemini', 'glm', 'kimi', 'multi']),
+  cliProvider: z.enum(['claude', 'codex', 'opencode']),
+});
+
+const updateModeSchema = z.object({
+  mode: z.enum(['planning', 'auto-accept', 'manual', 'danger']),
 });
 
 // Validate working directory
@@ -58,12 +63,21 @@ router.get('/', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
+  // Sort by message activity (latest message wins) with updated_at as fallback for
+  // sessions that have no messages yet. Starred sessions always float to the top.
   const sessions = db
     .prepare(
-      `SELECT id, user_id as userId, name, working_directory as workingDirectory,
-              claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, category, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
-       FROM sessions WHERE user_id = ? ORDER BY starred DESC, updated_at DESC`
+      `SELECT s.id, s.user_id as userId, s.name, s.working_directory as workingDirectory,
+              s.claude_session_id as claudeSessionId, s.status, s.last_message as lastMessage,
+              s.starred, s.category, s.cli_provider as cliProvider, s.mode,
+              s.created_at as createdAt, s.updated_at as updatedAt,
+              COALESCE(
+                (SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id),
+                s.updated_at
+              ) as lastActivity
+       FROM sessions s
+       WHERE s.user_id = ?
+       ORDER BY s.starred DESC, lastActivity DESC`
     )
     .all(userId) as Array<Record<string, unknown>>;
 
@@ -81,7 +95,8 @@ router.get('/:id', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, category, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
+              starred, category, cli_provider as cliProvider, mode,
+              created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ? AND user_id = ?`
     )
     .get(req.params.id, userId) as Record<string, unknown> | undefined;
@@ -167,7 +182,8 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
+              starred, cli_provider as cliProvider, mode,
+              created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(sessionId) as Record<string, unknown>;
@@ -221,7 +237,8 @@ router.put('/:id', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
+              starred, cli_provider as cliProvider, mode,
+              created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(req.params.id) as Record<string, unknown>;
@@ -280,7 +297,8 @@ router.patch('/:id/provider', requireAuth, (req, res) => {
     .prepare(
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
-              starred, cli_provider as cliProvider, created_at as createdAt, updated_at as updatedAt
+              starred, cli_provider as cliProvider, mode,
+              created_at as createdAt, updated_at as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(req.params.id) as Record<string, unknown>;
@@ -288,14 +306,51 @@ router.patch('/:id/provider', requireAuth, (req, res) => {
   res.json({ success: true, data: { ...updatedSession, starred: Boolean(updatedSession.starred) } });
 });
 
+// Persist the session permission mode. Previously lived only in localStorage, so it
+// was lost when switching browser or device.
+router.patch('/:id/mode', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const parsed = updateModeSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    throw new AppError('Invalid mode', 400, 'VALIDATION_ERROR');
+  }
+
+  const db = getDatabase();
+  const existing = db
+    .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
+    .get(req.params.id, userId);
+
+  if (!existing) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  db.prepare('UPDATE sessions SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(parsed.data.mode, req.params.id);
+
+  res.json({ success: true, data: { mode: parsed.data.mode } });
+});
+
 // Delete session
 router.delete('/:id', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
+  const sessionId = req.params.id;
+  if (!sessionId) {
+    throw new AppError('Session id missing', 400, 'VALIDATION_ERROR');
+  }
   const db = getDatabase();
+
+  // Stop any live CLI process before the row disappears, otherwise the
+  // process keeps writing to a dead session_id (zombie).
+  try {
+    getProcessManager().stopSession(sessionId, userId);
+  } catch {
+    // Not running or not owned — safe to ignore; ownership is re-checked by DELETE.
+  }
 
   const result = db
     .prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?')
-    .run(req.params.id, userId);
+    .run(sessionId, userId);
 
   if (result.changes === 0) {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
@@ -304,12 +359,19 @@ router.delete('/:id', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Get session messages
+// Get session messages. Paginated so a 10k-message session doesn't
+// blow up memory on the server or freeze the frontend on render.
+// Default returns the most recent `limit` messages in chronological order.
+// Use `before` (message id) to page backwards for infinite scroll.
+const messagesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(2000).default(500),
+  before: z.string().max(64).optional(),
+});
+
 router.get('/:id/messages', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
-  // Verify session ownership
   const session = db
     .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
     .get(req.params.id, userId);
@@ -318,14 +380,120 @@ router.get('/:id/messages', requireAuth, (req, res) => {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
   }
 
-  const messages = db
+  const parsed = messagesQuerySchema.safeParse(req.query);
+  if (!parsed.success) throw new AppError('Invalid query', 400, 'VALIDATION_ERROR');
+  const { limit, before } = parsed.data;
+
+  let cursorRowId: number | null = null;
+  if (before) {
+    const row = db
+      .prepare('SELECT rowid as rid FROM messages WHERE id = ? AND session_id = ?')
+      .get(before, req.params.id) as { rid: number } | undefined;
+    if (row) cursorRowId = row.rid;
+  }
+
+  // Fetch newest-first (so `limit` keeps the tail window), reverse for the client.
+  const rows = cursorRowId !== null
+    ? db.prepare(
+        `SELECT id, session_id as sessionId, role, content, created_at as createdAt, rowid as rid
+         FROM messages WHERE session_id = ? AND rowid < ?
+         ORDER BY rowid DESC LIMIT ?`
+      ).all(req.params.id, cursorRowId, limit) as Array<{ rid: number; [k: string]: unknown }>
+    : db.prepare(
+        `SELECT id, session_id as sessionId, role, content, created_at as createdAt, rowid as rid
+         FROM messages WHERE session_id = ?
+         ORDER BY rowid DESC LIMIT ?`
+      ).all(req.params.id, limit) as Array<{ rid: number; [k: string]: unknown }>;
+
+  const total = (db
+    .prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?')
+    .get(req.params.id) as { c: number }).c;
+
+  const ordered = rows.slice().reverse();
+  const oldestRid = ordered[0]?.rid ?? null;
+  const hasMore = oldestRid !== null && rows.length === limit &&
+    (db.prepare('SELECT 1 FROM messages WHERE session_id = ? AND rowid < ? LIMIT 1')
+      .get(req.params.id, oldestRid) !== undefined);
+
+  // Strip the synthetic `rid` before returning.
+  const messages = ordered.map(({ rid: _rid, ...rest }) => rest);
+
+  res.json({
+    success: true,
+    data: messages,
+    pagination: {
+      total,
+      limit,
+      hasMore,
+      oldestId: messages.length ? (messages[0] as { id: string }).id : null,
+    },
+  });
+});
+
+// Rewind session to a specific message (deletes that message and all later ones,
+// resets the Claude session so the next user message starts a fresh context)
+const rewindSchema = z.object({
+  messageId: z.string().min(1),
+});
+
+router.post('/:id/rewind', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const sessionId = req.params.id;
+  if (!sessionId) {
+    throw new AppError('Session id required', 400, 'INVALID_PAYLOAD');
+  }
+  const db = getDatabase();
+
+  const parsed = rewindSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError('Invalid rewind payload', 400, 'INVALID_PAYLOAD');
+  }
+  const { messageId } = parsed.data;
+
+  const session = db
+    .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
+    .get(sessionId, userId);
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  const target = db
+    .prepare('SELECT rowid as rid FROM messages WHERE id = ? AND session_id = ?')
+    .get(messageId, sessionId) as { rid: number } | undefined;
+  if (!target) {
+    throw new AppError('Message not found', 404, 'NOT_FOUND');
+  }
+
+  // Order: stop process → clear buffer → DB transaction. Stopping first prevents new
+  // messages from streaming in during the delete; clearing the buffer ensures that on
+  // reconnect the client doesn't replay the now-deleted tail. The DB update is one
+  // transaction so a partial failure can't leave "claude_session_id set but messages gone".
+  const pm = getProcessManager();
+  try {
+    pm.stopSession(sessionId, userId);
+  } catch {
+    // Process not running or not owned by this user — safe to ignore.
+  }
+  pm.clearSessionBuffer(sessionId);
+
+  const result = db.transaction(() => {
+    const del = db
+      .prepare('DELETE FROM messages WHERE session_id = ? AND rowid >= ?')
+      .run(sessionId, target.rid);
+    db.prepare(
+      'UPDATE sessions SET claude_session_id = NULL, status = ?, last_message = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run('stopped', sessionId);
+    return del.changes;
+  })();
+
+  const remaining = db
     .prepare(
       `SELECT id, session_id as sessionId, role, content, created_at as createdAt
        FROM messages WHERE session_id = ? ORDER BY created_at ASC`
     )
-    .all(req.params.id);
+    .all(sessionId);
 
-  res.json({ success: true, data: messages });
+  res.json({ success: true, deletedCount: result, data: remaining });
 });
 
 // Get allowed directories for a session
@@ -570,6 +738,32 @@ router.patch('/:id/category', requireAuth, (req, res) => {
   res.json({ success: true, data: { category: categoryId || null } });
 });
 
+// Build an FTS5 MATCH expression that does prefix search on every whitespace-separated
+// token. Strips control chars + double-quotes (which are FTS5 phrase delimiters) to
+// keep user input from injecting operators. Result example: `hello* world*`.
+function buildFtsMatch(query: string): string | null {
+  const tokens = query
+    .replace(/["'\u0000-\u001f]/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => `${t}*`);
+  return tokens.length > 0 ? tokens.join(' ') : null;
+}
+
+// FTS5 is created by the schema migration but only when the SQLite build supports it.
+// Fall back to LIKE so search still works on stripped-down builds.
+function ftsAvailable(db: ReturnType<typeof getDatabase>): boolean {
+  try {
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`)
+      .get();
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
 // Search messages in a session
 router.get('/:id/messages/search', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
@@ -590,17 +784,29 @@ router.get('/:id/messages/search', requireAuth, (req, res) => {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
   }
 
-  // Search messages with LIKE
-  const searchPattern = `%${query}%`;
-  const messages = db
-    .prepare(
-      `SELECT id, session_id as sessionId, role, content, created_at as createdAt
-       FROM messages
-       WHERE session_id = ? AND content LIKE ?
-       ORDER BY created_at DESC
-       LIMIT ?`
-    )
-    .all(req.params.id, searchPattern, limit);
+  const ftsExpr = buildFtsMatch(query);
+  const useFts = ftsExpr !== null && ftsAvailable(db);
+
+  const messages = useFts
+    ? db
+        .prepare(
+          `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt
+           FROM messages_fts f
+           JOIN messages m ON m.rowid = f.rowid
+           WHERE f.content MATCH ? AND m.session_id = ?
+           ORDER BY m.created_at DESC
+           LIMIT ?`
+        )
+        .all(ftsExpr, req.params.id, limit)
+    : db
+        .prepare(
+          `SELECT id, session_id as sessionId, role, content, created_at as createdAt
+           FROM messages
+           WHERE session_id = ? AND content LIKE ?
+           ORDER BY created_at DESC
+           LIMIT ?`
+        )
+        .all(req.params.id, `%${query}%`, limit);
 
   res.json({ success: true, data: messages });
 });
@@ -616,19 +822,33 @@ router.get('/messages/search', requireAuth, (req, res) => {
     throw new AppError('Query must be at least 2 characters', 400, 'INVALID_QUERY');
   }
 
-  // Search messages with LIKE, joining with sessions to verify ownership
-  const searchPattern = `%${query}%`;
-  const messages = db
-    .prepare(
-      `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt,
-              s.name as sessionName
-       FROM messages m
-       JOIN sessions s ON m.session_id = s.id
-       WHERE s.user_id = ? AND m.content LIKE ?
-       ORDER BY m.created_at DESC
-       LIMIT ?`
-    )
-    .all(userId, searchPattern, limit);
+  const ftsExpr = buildFtsMatch(query);
+  const useFts = ftsExpr !== null && ftsAvailable(db);
+
+  const messages = useFts
+    ? db
+        .prepare(
+          `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt,
+                  s.name as sessionName
+           FROM messages_fts f
+           JOIN messages m ON m.rowid = f.rowid
+           JOIN sessions s ON m.session_id = s.id
+           WHERE f.content MATCH ? AND s.user_id = ?
+           ORDER BY m.created_at DESC
+           LIMIT ?`
+        )
+        .all(ftsExpr, userId, limit)
+    : db
+        .prepare(
+          `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt,
+                  s.name as sessionName
+           FROM messages m
+           JOIN sessions s ON m.session_id = s.id
+           WHERE s.user_id = ? AND m.content LIKE ?
+           ORDER BY m.created_at DESC
+           LIMIT ?`
+        )
+        .all(userId, `%${query}%`, limit);
 
   res.json({ success: true, data: messages });
 });

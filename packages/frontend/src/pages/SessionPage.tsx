@@ -1,31 +1,23 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useRef, useState, useCallback, useMemo, type ReactElement } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, MoreHorizontal, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, GitBranch, MessageSquare, Code2, Star, History, FolderKey, FileCode, File as FileIcon, Check, Bot } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import { ArrowDown, MoreHorizontal, FolderOpen, Image, CheckCircle2, Brain, Wrench, FileText, Terminal, Search, Edit3, Globe, ListTodo, Circle, CheckCircle, Loader2, MessageSquare, Code2, Star, FolderKey, Pin, X, PanelRight } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { StreamingContent } from '@/components/chat/StreamingContent';
-import { SessionControls } from '@/components/session/SessionControls';
+import { ProviderLoader } from '@/components/chat/providerAnimations/ProviderLoader';
+import { ContextPopover } from '@/components/session/SessionControls';
+import { SessionSettingsChip } from '@/components/session/SessionSettingsChip';
 import { FileTree } from '@/components/file-tree';
-import { GitPanel } from '@/components/git-panel';
-import { CheckpointsPanel } from '@/components/session/CheckpointsPanel';
-import { AllowedDirectoriesDialog, DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
+import { AllowedDirectoriesDialog } from '@/components/session/AllowedDirectoriesDialog';
 import { PermissionRequestCard } from '@/components/session/PermissionRequestCard';
 import { EditorPanel } from '@/components/code-editor';
 import { WebPreview } from '@/components/preview';
@@ -33,73 +25,138 @@ import { AgentsEditor } from '@/components/agents-editor';
 import { MemoryViewer } from '@/components/memory-viewer';
 import { ToolLogPanel } from '@/components/session/ToolLogPanel';
 import { CompactBoundaryCard } from '@/components/chat/CompactBoundaryCard';
+import { MessageBubble } from '@/components/chat/MessageBubble';
+import { TurnMap } from '@/components/chat/TurnMap';
+import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { ToolDetailDialog } from '@/components/session/ToolDetailDialog';
-import { useSessionStore } from '@/stores/sessionStore';
-import { useAuthStore } from '@/stores/authStore';
+import { useSessionStore, type ActivityState, type TodoItem, type GeneratedImage, type OpenFile } from '@/stores/sessionStore';
 import { useProviderStore } from '@/stores/providerStore';
+import { usePanelDockStore, type DockablePanel } from '@/stores/panelDockStore';
+import { useShallow } from 'zustand/react/shallow';
 import { api } from '@/services/api';
 import { socketService } from '@/services/socket';
-import type { Session, Message, ApiResponse, MessageImage, MessageAttachment, CliTool, Command, CommandExecutionResult, SessionMode, PermissionAction, CLIProvider, UserSettings } from '@claude-code-webui/shared';
+import type { Session, Message, ApiResponse, CliTool, Command, CommandExecutionResult, SessionMode, PermissionAction, CLIProvider, UserSettings, ToolExecution } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatInput } from '@/components/chat/ChatInput';
-import { InteractiveOptions, detectOptions, isChoicePrompt } from '@/components/chat/InteractiveOptions';
 import { PermissionApprovalDialog } from '@/components/chat/PermissionApprovalDialog';
-import { CLI_PROVIDER_DEFAULT_MODEL, CLI_PROVIDER_ICON, CLI_PROVIDER_LABEL, toUiProvider, toCliProvider } from '@/lib/providers';
+import { CLI_PROVIDER_DEFAULT_MODEL, CLI_PROVIDER_LABEL, toUiProvider, toCliProvider } from '@/lib/providers';
 import { toast } from '@/hooks/use-toast';
-import { useRalphStore } from '@/stores/ralphStore';
-import { RalphActivationDialog } from '@/components/ralph/RalphActivationDialog';
-import { RalphProgressPanel } from '@/components/ralph/RalphProgressPanel';
+
 
 function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
+// Stable empty references prevent selector fallbacks from triggering re-renders
+const EMPTY_MESSAGES: Message[] = [];
+const EMPTY_TODOS: TodoItem[] = [];
+const EMPTY_IMAGES: GeneratedImage[] = [];
+const EMPTY_TOOL_EXECUTIONS: ToolExecution[] = [];
+const EMPTY_OPEN_FILES: OpenFile[] = [];
+const IDLE_ACTIVITY: ActivityState = { type: 'idle' };
+
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [isSending, setIsSending] = useState(false);
   const [sessionMode, setSessionMode] = useState<SessionMode>('auto-accept');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const { messages, streamingContent, activity, activeAgent, todos, generatedImages, toolExecutions, permissionRequests, pendingPermissions, setMessages, clearStreamingContent, selectedFile, setSelectedFile, openFile: openFileInStore, openFiles, setActiveSession } = useSessionStore();
+  // Floating header + input overlay: measure their heights so the scroll area
+  // below gets matching top/bottom padding. Without this, content scrolls
+  // completely behind the bars and the top/bottom rows are permanently hidden.
+  const headerBarRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLDivElement>(null);
+  const rootShellRef = useRef<HTMLDivElement>(null);
+
+  // Per-session slices: shallow-compared so unrelated sessions don't trigger re-renders
+  const {
+    sessionMessages,
+    currentStreamingContent,
+    currentActivity,
+    currentUsage,
+    currentTodos,
+    currentActiveAgent,
+    currentGeneratedImages,
+    currentToolExecutions,
+    currentPendingPermission,
+    currentSelectedFile,
+    currentOpenFiles,
+  } = useSessionStore(
+    useShallow((s) => {
+      const sid = id ?? '';
+      return {
+        sessionMessages: s.messages[sid] ?? EMPTY_MESSAGES,
+        currentStreamingContent: s.streamingContent[sid] ?? '',
+        currentActivity: s.activity[sid] ?? IDLE_ACTIVITY,
+        currentUsage: s.usage[sid],
+        currentTodos: s.todos[sid] ?? EMPTY_TODOS,
+        currentActiveAgent: s.activeAgent[sid] ?? null,
+        currentGeneratedImages: s.generatedImages[sid] ?? EMPTY_IMAGES,
+        currentToolExecutions: s.toolExecutions[sid] ?? EMPTY_TOOL_EXECUTIONS,
+        currentPendingPermission: s.pendingPermissions[sid] ?? null,
+        currentSelectedFile: s.selectedFile[sid] ?? null,
+        currentOpenFiles: s.openFiles[sid] ?? EMPTY_OPEN_FILES,
+      };
+    })
+  );
+
+  // Actions are stable Zustand refs — subscribing doesn't trigger re-renders
+  const setMessages = useSessionStore((s) => s.setMessages);
+  const addMessage = useSessionStore((s) => s.addMessage);
+  const clearStreamingContent = useSessionStore((s) => s.clearStreamingContent);
+  const setSelectedFile = useSessionStore((s) => s.setSelectedFile);
+  const openFileInStore = useSessionStore((s) => s.openFile);
+  const setActiveSession = useSessionStore((s) => s.setActiveSession);
+
   const [showSavedIndicator, setShowSavedIndicator] = useState(false);
   const [selectedCliTool, setSelectedCliTool] = useState<string | null>(null);
   const [isExecutingTool, _setIsExecutingTool] = useState(false);
   const cliToolAbortRef = useRef<AbortController | null>(null);
   const [showAllowedDirsDialog, setShowAllowedDirsDialog] = useState(false);
-  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const handler = () => setShowAllowedDirsDialog(true);
+    window.addEventListener('command:open-allowed-dirs', handler);
+    return () => window.removeEventListener('command:open-allowed-dirs', handler);
+  }, []);
+
   const [selectedToolDetail, setSelectedToolDetail] = useState<typeof currentToolExecutions[0] | null>(null);
   const loadedModeForSessionRef = useRef<string | null>(null);
 
-  const { usage, addMessage } = useSessionStore();
   const { uiProvider, setProvider } = useProviderStore();
-  const ralphRun = useRalphStore((s) => id ? s.getRunBySession(id) : null);
-  const loadRalphRuns = useRalphStore((s) => s.loadRuns);
-
-  useEffect(() => {
-    loadRalphRuns();
-  }, [loadRalphRuns]);
+  const pinnedPanels = usePanelDockStore((s) => s.pinned);
+  const togglePinPanel = usePanelDockStore((s) => s.togglePin);
+  const anyPanelPinned = pinnedPanels.files || pinnedPanels.tasks || pinnedPanels.config || pinnedPanels.tools;
   const sessionModeStorageKey = useMemo(() => (id ? `sessionMode:${id}` : null), [id]);
 
-  const handleChatScroll = useCallback(() => {
-    const el = chatScrollRef.current;
-    if (!el) return;
-    const threshold = 80;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    setIsAtBottom(atBottom);
+  const scrollToBottom = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'smooth' });
+    setIsAtBottom(true);
   }, []);
 
-  const scrollToBottom = useCallback(() => {
-    const el = chatScrollRef.current;
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      setIsAtBottom(true);
-      return;
-    }
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    setIsAtBottom(true);
-  }, [setIsAtBottom]);
+  // Sync floating header/input heights into CSS vars on the shell so the
+  // scroll area can reserve matching top/bottom padding.
+  useEffect(() => {
+    const shell = rootShellRef.current;
+    if (!shell || typeof ResizeObserver === 'undefined') return;
+    const setVar = (name: string, el: HTMLElement | null) => {
+      if (!el) return;
+      shell.style.setProperty(name, `${el.offsetHeight}px`);
+    };
+    const ro = new ResizeObserver(() => {
+      setVar('--chat-header-h', headerBarRef.current);
+      setVar('--chat-input-h', inputBarRef.current);
+    });
+    if (headerBarRef.current) ro.observe(headerBarRef.current);
+    if (inputBarRef.current) ro.observe(inputBarRef.current);
+    // Prime the values on mount
+    setVar('--chat-header-h', headerBarRef.current);
+    setVar('--chat-input-h', inputBarRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   // Fetch available CLI tools
   const { data: cliTools } = useQuery({
@@ -153,35 +210,28 @@ export function SessionPage() {
     return cliTools.find(t => t.id === selectedCliTool)?.name;
   }, [selectedCliTool, cliTools]);
 
-  const sessionMessages = messages[id || ''] || [];
-  const currentStreamingContent = streamingContent[id || ''] || '';
-  const currentActivity = activity[id || ''] || { type: 'idle' as const };
-  const currentUsage = usage[id || ''];
-  const currentTodos = todos[id || ''] || [];
-  const currentActiveAgent = activeAgent[id || ''];
-  const currentGeneratedImages = generatedImages[id || ''] || [];
-  const currentToolExecutions = toolExecutions[id || ''] || [];
-  // Support both legacy and hooks-based permission requests
-  const currentPermissionRequest = permissionRequests[id || ''] || null;
-  const currentPendingPermission = pendingPermissions[id || ''] || null;
   const [mainView, setMainView] = useState<'chat' | 'editor' | 'preview'>('chat');
   const [configTab, setConfigTab] = useState<'memories' | 'agents'>('memories');
-  const currentSelectedFile = selectedFile[id || ''];
-  const currentOpenFiles = openFiles[id || ''] || [];
+  const [turnMapOpen, setTurnMapOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('chat.turnMapOpen') === '1';
+  });
+  const toggleTurnMap = useCallback(() => {
+    setTurnMapOpen((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('chat.turnMapOpen', next ? '1' : '0');
+      }
+      return next;
+    });
+  }, []);
   const hasOpenFiles = currentOpenFiles.length > 0;
-  const isActive = currentActivity.type === 'thinking' || !!currentActiveAgent;
 
-  useEffect(() => {
-    if (!isActive) return;
-    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [isActive]);
-
-  // Combine messages and generated images into a single timeline
-  // Tool executions are NOT added to timeline - they're shown inline with activity indicator
+  // Combine messages, generated images and tool executions into a single timeline
   type TimelineItem =
     | { type: 'message'; data: Message; timestamp: number }
-    | { type: 'image'; data: typeof currentGeneratedImages[0]; timestamp: number };
+    | { type: 'image'; data: typeof currentGeneratedImages[0]; timestamp: number }
+    | { type: 'tool'; data: typeof currentToolExecutions[0]; timestamp: number };
 
   const timeline = useMemo<TimelineItem[]>(() => [
     ...sessionMessages.map(msg => ({
@@ -194,7 +244,12 @@ export function SessionPage() {
       data: img,
       timestamp: img.timestamp,
     })),
-  ].map((item, _sortIdx) => ({ ...item, _sortIdx })).sort((a, b) => a.timestamp - b.timestamp || a._sortIdx - b._sortIdx).map(({ _sortIdx, ...rest }) => rest as TimelineItem), [sessionMessages, currentGeneratedImages]);
+    ...currentToolExecutions.map(tool => ({
+      type: 'tool' as const,
+      data: tool,
+      timestamp: tool.timestamp,
+    })),
+  ].map((item, _sortIdx) => ({ ...item, _sortIdx })).sort((a, b) => a.timestamp - b.timestamp || a._sortIdx - b._sortIdx).map(({ _sortIdx, ...rest }) => rest as TimelineItem), [sessionMessages, currentGeneratedImages, currentToolExecutions]);
 
   // Get recent tool executions for showing during activity (last 5 completed or in-progress)
   const recentTools = useMemo(() =>
@@ -203,6 +258,37 @@ export function SessionPage() {
       .slice(-5),
     [currentToolExecutions]
   );
+
+  // Live ref of the current timeline so the turn-map jump handler always reads
+  // fresh indices without retriggering Virtuoso's internal observers.
+  const timelineRef = useRef<TimelineItem[]>([]);
+  timelineRef.current = timeline;
+
+  // Per-item flag: is this item visually part of an open assistant turn?
+  // Tools and generated images are always assistant-produced, so they always
+  // belong to an assistant turn (true even when they arrive before the
+  // assistant's text reply, i.e. the previous neighbour in the timeline is
+  // still the user's message). For messages themselves we only mark assistant
+  // messages — user messages render as right-aligned tail bubbles outside the
+  // rail. This keeps the continuous left rail from breaking when the model
+  // calls tools first and replies in text afterwards.
+  const inAssistantTurn = useMemo(() => {
+    return timeline.map((item) => {
+      if (item.type === 'message') {
+        return (item.data as Message).role === 'assistant';
+      }
+      return true;
+    });
+  }, [timeline]);
+
+  const jumpToMessage = useCallback((messageId: string) => {
+    const idx = timelineRef.current.findIndex(
+      (item) => item.type === 'message' && (item.data as { id?: string }).id === messageId
+    );
+    if (idx >= 0) {
+      virtuosoRef.current?.scrollToIndex({ index: idx, behavior: 'smooth', align: 'start' });
+    }
+  }, []);
 
   // Helper to get tool icon and name - memoized to prevent re-creation on every render
   const getToolDisplay = useCallback((toolName: string) => {
@@ -217,7 +303,8 @@ export function SessionPage() {
       'WebFetch': { icon: Globe, label: 'Fetching webpage' },
       'WebSearch': { icon: Globe, label: 'Searching web' },
       'Task': { icon: Brain, label: 'Starting agent' },
-      // Kimi / Codex / generic tool names
+      'Agent': { icon: Brain, label: 'Starting agent' },
+      // Codex / generic tool names
       'read_file': { icon: Search, label: 'Reading file' },
       'read_many_files': { icon: Search, label: 'Reading files' },
       'write_file': { icon: FileText, label: 'Writing file' },
@@ -247,7 +334,6 @@ export function SessionPage() {
       'fullstack-dev': 'Fullstack Dev',
       'api-designer': 'API Designer',
       'ui-designer': 'UI Designer',
-      // New agent types
       'devops': 'DevOps',
       'devops-engineer': 'DevOps',
       'database': 'Database',
@@ -258,6 +344,13 @@ export function SessionPage() {
       'debugging-expert': 'Debugger',
       'architect': 'Architect',
       'system-architect': 'Architect',
+      'test-engineer': 'Test Engineer',
+      'security-auditor': 'Security',
+      'performance-optimizer': 'Performance',
+      'release-manager': 'Release',
+      'data-engineer': 'Data Engineer',
+      'documentation-writer': 'Docs',
+      'statusline-setup': 'Status Line',
     };
     return agentMap[agentType] || agentType;
   }, []);
@@ -285,6 +378,13 @@ export function SessionPage() {
       'debugging-expert': 'Debugging',
       'architect': 'Designing architecture',
       'system-architect': 'Designing architecture',
+      'test-engineer': 'Writing tests',
+      'security-auditor': 'Auditing security',
+      'performance-optimizer': 'Optimizing performance',
+      'release-manager': 'Managing release',
+      'data-engineer': 'Working on data pipeline',
+      'documentation-writer': 'Writing documentation',
+      'statusline-setup': 'Configuring status line',
     };
     return descriptions[agentType] || `Running ${agentType} agent`;
   }, []);
@@ -303,8 +403,132 @@ export function SessionPage() {
     return `${seconds}s`;
   }, []);
 
+  // Refs keep a live handle on values the stable Virtuoso Footer/Header
+  // closures need to read. The components object is memoized with empty deps
+  // (see virtuosoComponents below) so Virtuoso keeps the same component
+  // identity across parent renders — otherwise every state change would
+  // remount Footer and restart every CSS/SVG animation inside it.
+  const footerDepsRef = useRef<{
+    id: string | undefined;
+    uiProvider: typeof uiProvider;
+    providerLabel: string;
+    getAgentDisplay: typeof getAgentDisplay;
+    getAgentDescription: typeof getAgentDescription;
+    getToolDisplay: typeof getToolDisplay;
+    formatElapsed: typeof formatElapsed;
+    clearStreamingContent: typeof clearStreamingContent;
+  } | null>(null);
+
+  const virtuosoComponents = useMemo(() => {
+    function ChatFooter() {
+      const sid = footerDepsRef.current?.id ?? '';
+      const footerActivity = useSessionStore((s) => s.activity[sid] ?? IDLE_ACTIVITY);
+      const footerActiveAgent = useSessionStore((s) => s.activeAgent[sid] ?? null);
+      const footerStreamingContent = useSessionStore((s) => s.streamingContent[sid] ?? '');
+      const footerPermissionRequest = useSessionStore((s) => s.permissionRequests[sid] ?? null);
+      const [footerNow, setFooterNow] = useState(() => Date.now());
+      useEffect(() => {
+        const intervalId = window.setInterval(() => setFooterNow(Date.now()), 1000);
+        return () => window.clearInterval(intervalId);
+      }, []);
+      const deps = footerDepsRef.current;
+      if (!deps) {
+        return <div aria-hidden style={{ height: '8px' }} />;
+      }
+      return (
+        <div className="chat-stream pb-2">
+          {/* Tool activity is rendered as a compact ToolExecutionCard inside the
+              timeline (see itemContent → 'tool' branch) — it appears at the
+              correct chronological position with a live spinner + duration and
+              persists after completion. The footer only handles state with no
+              timeline equivalent: thinking and active subagents. */}
+          {(footerActivity.type === 'thinking' || footerActiveAgent) && !footerStreamingContent && (
+            <div className="flex justify-start animate-fade-in">
+              <Card className="border p-3 sm:p-4 bg-muted/40 border-border/60">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    {footerActiveAgent ? (
+                      <>
+                        <div className="relative">
+                          <Brain className="h-5 w-5 text-primary" />
+                          <span className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-ping" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-foreground">
+                            Agent: {deps.getAgentDisplay(footerActiveAgent.agentType)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {footerActiveAgent.description || deps.getAgentDescription(footerActiveAgent.agentType)}
+                            {footerActiveAgent.startedAt ? ` (${deps.formatElapsed(footerNow - footerActiveAgent.startedAt)})` : ''}
+                          </span>
+                        </div>
+                      </>
+                    ) : footerActivity.type === 'thinking' ? (
+                      <>
+                        <div className="flex items-center justify-center w-12 h-12 shrink-0 text-primary">
+                          <ProviderLoader provider={deps.uiProvider} size={48} />
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-medium">{deps.providerLabel} is thinking...</span>
+                          {footerActivity.message && (
+                            <span className="text-xs text-muted-foreground truncate">
+                              {footerActivity.message}
+                              {footerActivity.messageStartedAt ? ` (${deps.formatElapsed(footerNow - footerActivity.messageStartedAt)})` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {footerStreamingContent && (
+            <div className="turn-asst animate-fade-in">
+              <div className="ai-rail">
+                <div className="ai-mark" title={deps.providerLabel}>
+                  <ProviderLoader provider={deps.uiProvider} size={20} />
+                </div>
+                <div className="ai-thread" />
+              </div>
+              <div className="ai-body">
+                <StreamingContent
+                  content={footerStreamingContent}
+                  onResponse={(response) => {
+                    if (deps.id) {
+                      socketService.sendInput(deps.id, response);
+                      deps.clearStreamingContent(deps.id);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {footerPermissionRequest && deps.id && (
+            <div className="flex justify-start">
+              <PermissionRequestCard
+                sessionId={deps.id}
+                denials={footerPermissionRequest.denials}
+                originalMessage={footerPermissionRequest.originalMessage}
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function ChatHeader() {
+      return <div aria-hidden style={{ height: '8px' }} />;
+    }
+
+    return { Footer: ChatFooter, Header: ChatHeader };
+  }, []);
+
   const allowedSessionModes: SessionMode[] = useMemo(
-    () => ['planning', 'auto-accept', 'manual', 'danger', 'orchestration'],
+    () => ['planning', 'auto-accept', 'manual', 'danger'],
     []
   );
 
@@ -333,42 +557,61 @@ export function SessionPage() {
     enabled: !!id,
   });
 
+  const isActive =
+    session?.status === 'running' ||
+    currentActivity.type === 'thinking' ||
+    currentActivity.type === 'tool' ||
+    !!currentActiveAgent;
+
   useEffect(() => {
     if (!id || !session) {
       return;
     }
-    if (sessionModeStorageKey && loadedModeForSessionRef.current !== id) {
-      const storedMode = getStoredSessionMode(sessionModeStorageKey);
-      if (storedMode) {
-        setSessionMode(storedMode);
-        socketService.setSessionMode(id, storedMode);
+    if (loadedModeForSessionRef.current !== id) {
+      // Prefer the DB-persisted mode so the choice follows the user across browsers;
+      // fall back to legacy per-browser localStorage for sessions created before the
+      // backend started persisting `mode`.
+      const persistedMode = session.mode && allowedSessionModes.includes(session.mode as SessionMode)
+        ? (session.mode as SessionMode)
+        : null;
+      const initialMode = persistedMode ?? (sessionModeStorageKey ? getStoredSessionMode(sessionModeStorageKey) : null);
+      if (initialMode) {
+        setSessionMode(initialMode);
+        socketService.setSessionMode(id, initialMode);
       }
       loadedModeForSessionRef.current = id;
     }
-    if (session.cliProvider === 'glm' && sessionModeStorageKey) {
-      const storedMode = getStoredSessionMode(sessionModeStorageKey);
-      if (!storedMode && sessionMode === 'auto-accept') {
-        setSessionMode('planning');
-        socketService.setSessionMode(id, 'planning');
-        try {
-          window.localStorage.setItem(sessionModeStorageKey, 'planning');
-        } catch {
-          // Ignore storage errors
-        }
-      }
-    }
-  }, [id, session, sessionMode, sessionModeStorageKey, getStoredSessionMode]);
+  }, [id, session, sessionModeStorageKey, getStoredSessionMode, allowedSessionModes]);
 
   const sessionProvider = session?.cliProvider ?? toCliProvider(uiProvider);
   const providerLabel = CLI_PROVIDER_LABEL[sessionProvider];
+
+  // Keep the footer's live dependencies fresh. The stable memoized Footer
+  // component reads from this ref every render, so updates here propagate
+  // without changing component identity.
+  footerDepsRef.current = {
+    id,
+    uiProvider,
+    providerLabel,
+    getAgentDisplay,
+    getAgentDescription,
+    getToolDisplay,
+    formatElapsed,
+    clearStreamingContent,
+  };
   const resolvedDefaultModel = settings?.cliProviderModels?.[sessionProvider] || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider];
-  const defaultModelLabel = resolvedDefaultModel;
   const selectedModel = settings?.cliProviderModels?.[sessionProvider] || '';
   const modelSelectValue = selectedModel || '__default__';
   const currentProviderInfo = cliProviders?.find((provider) => provider.id === sessionProvider);
   const modelLabels = useMemo(() => {
     return currentProviderInfo?.modelLabels || {};
   }, [currentProviderInfo]);
+  // Compact label shown next to the assistant name in each turn (template's `asst-model`).
+  const asstModelLabel = (() => {
+    const raw = selectedModel || resolvedDefaultModel || '';
+    const labelled = modelLabels[raw];
+    return (labelled || raw).toString();
+  })();
   const modelOptions = useMemo(() => {
     const options = new Set<string>();
     const providerModels = currentProviderInfo?.models || [];
@@ -386,18 +629,80 @@ export function SessionPage() {
   }, [currentProviderInfo, sessionProvider, selectedModel]);
   const selectedReasoning = settings?.cliProviderReasoning?.[sessionProvider] || '';
   const reasoningSelectValue = selectedReasoning || '__default__';
-  const reasoningOptions = useMemo(() => ([
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' },
-    { value: 'extra_high', label: 'Extra High' },
-  ]), []);
+  const reasoningOptions = useMemo(() => {
+    if (sessionProvider === 'claude') {
+      return [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+        { value: 'max', label: 'Max' },
+      ];
+    }
+    return [
+      { value: 'low', label: 'Low' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High' },
+      { value: 'extra_high', label: 'Extra High' },
+    ];
+  }, [sessionProvider]);
   const quickPrompts = useMemo(() => ([
+    { heading: 'Prompts' },
     { label: 'Plan', value: 'Plan the approach and outline the steps.' },
     { label: 'Debug', value: 'Find the root cause and propose a fix.' },
     { label: 'Refactor', value: 'Refactor for clarity and safer defaults.' },
     { label: 'Tests', value: 'Add or update tests for this change.' },
     { label: 'Explain', value: 'Explain the code and key decisions.' },
+
+    { heading: 'Session' },
+    { label: 'New session', value: '/new', hint: '/new' },
+    { label: 'Rename session', value: '/rename ', hint: '/rename' },
+    { label: 'Reset context', value: '/reset', hint: '/reset' },
+    { label: 'Resume', value: '/resume', hint: '/resume' },
+    { label: 'Continue', value: '/continue', hint: '/continue' },
+    { label: 'Clear screen', value: '/clear', hint: '/clear' },
+    { label: 'Compact history', value: '/compact', hint: '/compact' },
+    { label: 'Copy last response', value: '/copy', hint: '/copy' },
+    { label: 'Export conversation', value: '/export', hint: '/export' },
+
+    { heading: 'WebUI' },
+    { label: 'Help', value: '/help', hint: '/help' },
+    { label: 'Theme & settings', value: '/theme', hint: '/theme' },
+    { label: 'Permissions', value: '/permissions', hint: '/permissions' },
+    { label: 'Diff / Git', value: '/diff', hint: '/diff' },
+    { label: 'Doctor', value: '/doctor', hint: '/doctor' },
+    { label: 'Send feedback', value: '/feedback', hint: '/feedback' },
+
+    { heading: 'Claude Code' },
+    { label: 'Context window', value: '/context', hint: '/context' },
+    { label: 'Memory', value: '/memory', hint: '/memory' },
+    { label: 'Model', value: '/model', hint: '/model' },
+    { label: 'Status', value: '/status', hint: '/status' },
+    { label: 'Cost', value: '/cost', hint: '/cost' },
+    { label: 'Plan mode', value: '/plan', hint: '/plan' },
+    { label: 'Init project', value: '/init', hint: '/init' },
+    { label: 'Review PR', value: '/review', hint: '/review' },
+    { label: 'Security review', value: '/security-review', hint: '/security-review' },
+    { label: 'Agents', value: '/agents', hint: '/agents' },
+    { label: 'MCP', value: '/mcp', hint: '/mcp' },
+    { label: 'Hooks', value: '/hooks', hint: '/hooks' },
+    { label: 'Skills', value: '/skills', hint: '/skills' },
+    { label: 'Debug info', value: '/debug', hint: '/debug' },
+    { label: 'Effort', value: '/effort', hint: '/effort' },
+    { label: 'Recap', value: '/recap', hint: '/recap' },
+    { label: 'BTW notes', value: '/btw ', hint: '/btw' },
+    { label: 'Add directory', value: '/add-dir ', hint: '/add-dir' },
+    { label: 'Claude API', value: '/claude-api', hint: '/claude-api' },
+    { label: 'Simplify code', value: '/simplify', hint: '/simplify' },
+    { label: 'Batch', value: '/batch', hint: '/batch' },
+    { label: 'Loop', value: '/loop ', hint: '/loop' },
+    { label: 'Proactive mode', value: '/proactive', hint: '/proactive' },
+    { label: 'Fewer permission prompts', value: '/less-permission-prompts', hint: '/less-permission-prompts' },
+    { label: 'Usage', value: '/usage', hint: '/usage' },
+    { label: 'Insights', value: '/insights', hint: '/insights' },
+    { label: 'Stats', value: '/stats', hint: '/stats' },
+    { label: 'Schedule', value: '/schedule', hint: '/schedule' },
+    { label: 'Routines', value: '/routines', hint: '/routines' },
+    { label: 'Fast mode', value: '/fast', hint: '/fast' },
   ]), []);
   // Fetch messages
   const { isLoading: messagesLoading } = useQuery({
@@ -468,8 +773,12 @@ export function SessionPage() {
     if (!id) return;
 
     socketService.connect();
-    // Use reconnect instead of subscribe to get buffered messages if session is running
-    socketService.reconnectToSession(id);
+    // Use reconnect instead of subscribe to get buffered messages if session is running.
+    // Pass the stored lastTimestamp so returning to a previously-visited session only
+    // replays messages newer than what we've already rendered — otherwise the server
+    // resends its whole buffer and Virtuoso re-mounts the entire thread.
+    const lastTimestamp = useSessionStore.getState().lastMessageTimestamp[id];
+    socketService.reconnectToSession(id, lastTimestamp);
 
     return () => {
       socketService.unsubscribeFromSession(id);
@@ -543,12 +852,6 @@ export function SessionPage() {
     return unsubscribe;
   }, [id, sessionModeStorageKey]);
 
-  // Scroll to bottom when new messages arrive if the user hasn't scrolled up
-  useEffect(() => {
-    if (!isAtBottom) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [sessionMessages, currentStreamingContent, isAtBottom]);
-
   useEffect(() => {
     if (!session?.cliProvider) {
       return;
@@ -605,6 +908,17 @@ export function SessionPage() {
 
   const handleCommandExecute = useCallback(async (input: string) => {
     if (!id) return;
+
+    const appendAssistant = (content: string) => {
+      addMessage(id, {
+        id: generateId(),
+        sessionId: id,
+        role: 'assistant',
+        content,
+        createdAt: new Date().toISOString(),
+      });
+    };
+
     try {
       const response = await api.post<ApiResponse<CommandExecutionResult>>('/api/commands/execute', {
         input,
@@ -619,34 +933,140 @@ export function SessionPage() {
       });
 
       const result = response.data.data;
-      if (result) {
-        if (result.action === 'clear') {
+      if (!result) return;
+
+      if (!result.success && result.error) {
+        appendAssistant(`⚠️ ${result.error}`);
+        return;
+      }
+
+      const data = (result.data ?? {}) as Record<string, unknown>;
+
+      switch (result.action) {
+        case 'clear':
           setMessages(id, []);
-        } else if (result.action === 'send_message' && result.response) {
-          socketService.sendMessage(id, result.response);
-        } else if (result.response) {
-          addMessage(id, {
-            id: generateId(),
-            sessionId: id,
-            role: 'assistant',
-            content: result.response,
-            createdAt: new Date().toISOString(),
-          });
+          break;
+
+        case 'send_message':
+        case 'forward_to_cli':
+          if (result.response) socketService.sendMessage(id, result.response);
+          break;
+
+        case 'rename_session': {
+          const name = typeof data.name === 'string' ? data.name : '';
+          if (!name) break;
+          try {
+            await api.put(`/api/sessions/${id}`, { name });
+            await queryClient.invalidateQueries({ queryKey: ['session', id] });
+            await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            toast({ title: 'Session renamed', description: `Now called "${name}".` });
+          } catch (err) {
+            toast({ title: 'Rename failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+          }
+          break;
         }
-        if (!result.success && result.error) {
-          addMessage(id, {
-            id: generateId(),
-            sessionId: id,
-            role: 'assistant',
-            content: `⚠️ ${result.error}`,
-            createdAt: new Date().toISOString(),
-          });
+
+        case 'copy_response': {
+          const n = typeof data.n === 'number' && data.n > 0 ? data.n : 1;
+          const assistantMessages = sessionMessages.filter((m) => m.role === 'assistant');
+          const target = assistantMessages[assistantMessages.length - n];
+          if (!target?.content) {
+            toast({ title: 'Nothing to copy', description: 'No matching response found.' });
+            break;
+          }
+          try {
+            await navigator.clipboard.writeText(target.content);
+            toast({ title: 'Copied', description: n > 1 ? `Response #${n} copied to clipboard.` : 'Last response copied to clipboard.' });
+          } catch {
+            toast({ title: 'Copy failed', description: 'Clipboard access denied by browser.', variant: 'destructive' });
+          }
+          break;
         }
+
+        case 'export_conversation': {
+          const filename = typeof data.filename === 'string' && data.filename
+            ? data.filename
+            : `session-${id}-${new Date().toISOString().slice(0, 10)}.txt`;
+          const body = sessionMessages
+            .map((m) => `### ${m.role.toUpperCase()} · ${new Date(m.createdAt).toISOString()}\n\n${m.content}\n`)
+            .join('\n---\n\n');
+          const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          toast({ title: 'Exported', description: `Saved ${filename} (${sessionMessages.length} messages).` });
+          break;
+        }
+
+        case 'new_session':
+          navigate('/?new=true');
+          break;
+
+        case 'resume_session':
+          navigate('/');
+          toast({ title: 'Session picker', description: 'Pick a session from the dashboard.' });
+          break;
+
+        case 'open_settings': {
+          const tab = typeof data.tab === 'string' ? data.tab : undefined;
+          navigate(tab ? `/settings?tab=${encodeURIComponent(tab)}` : '/settings');
+          break;
+        }
+
+        case 'open_permissions':
+          navigate('/settings?tab=security');
+          break;
+
+        case 'open_diff':
+          toast({ title: 'Git diff', description: 'Open the Git panel from the side dock to view uncommitted changes.' });
+          break;
+
+        case 'open_feedback': {
+          const report = typeof data.report === 'string' ? data.report : '';
+          const url = report
+            ? `https://github.com/anthropics/claude-code/issues/new?title=${encodeURIComponent(report.slice(0, 80))}&body=${encodeURIComponent(report)}`
+            : 'https://github.com/anthropics/claude-code/issues/new';
+          window.open(url, '_blank', 'noopener,noreferrer');
+          toast({ title: 'Feedback', description: 'Opening GitHub issues in a new tab.' });
+          break;
+        }
+
+        case 'show_doctor': {
+          const lines = [
+            '**WebUI Diagnostics**',
+            '',
+            `- Session ID: \`${id}\``,
+            `- Provider: ${sessionProvider}`,
+            `- Model: ${resolvedDefaultModel || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider]}`,
+            `- Working directory: ${session?.workingDirectory ?? 'none'}`,
+            `- Status: ${session?.status ?? 'unknown'}`,
+            `- Messages: ${sessionMessages.length}`,
+            currentUsage
+              ? `- Usage: ${currentUsage.inputTokens.toLocaleString()} in / ${currentUsage.outputTokens.toLocaleString()} out, $${currentUsage.totalCostUsd.toFixed(4)}`
+              : '- Usage: no data',
+          ];
+          appendAssistant(lines.join('\n'));
+          break;
+        }
+
+        case 'toggle_fast':
+          socketService.sendMessage(id, input);
+          break;
+
+        default:
+          if (result.response) appendAssistant(result.response);
+          break;
       }
     } catch (error) {
       console.error('Command execution failed:', error);
+      appendAssistant(`⚠️ Command failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
-  }, [id, session?.workingDirectory, currentUsage, setMessages, addMessage]);
+  }, [id, session?.workingDirectory, session?.status, currentUsage, sessionMessages, sessionProvider, resolvedDefaultModel, setMessages, addMessage, navigate, queryClient]);
 
   const handleInterrupt = () => {
     if (!id) return;
@@ -692,7 +1112,7 @@ export function SessionPage() {
   };
 
   const applyReasoningSelection = (value: string) => {
-    if (sessionProvider !== 'codex') return;
+    if (sessionProvider !== 'codex' && sessionProvider !== 'claude') return;
     const current = settings?.cliProviderReasoning?.[sessionProvider] || '';
     const nextValue = value === '__default__'
       ? ''
@@ -730,6 +1150,12 @@ export function SessionPage() {
     setSessionMode(newMode);
     if (id) {
       socketService.setSessionMode(id, newMode);
+      // Persist to the DB so the mode survives browser/device switches. Fire-and-forget:
+      // the socket call is the authoritative runtime signal; this PATCH just updates the
+      // row that subsequent loads read from. Errors are logged but don't block the UI.
+      api.patch(`/api/sessions/${id}/mode`, { mode: newMode }).catch((err) => {
+        console.warn('Failed to persist session mode', err);
+      });
     }
     if (sessionModeStorageKey) {
       try {
@@ -738,7 +1164,7 @@ export function SessionPage() {
         // Ignore storage errors
       }
     }
-  }, [id]);
+  }, [id, sessionModeStorageKey]);
 
   // Handler for hooks-based permission response
   const handlePermissionResponse = useCallback(async (action: PermissionAction, pattern?: string) => {
@@ -777,18 +1203,201 @@ export function SessionPage() {
     );
   }
 
-  return (
-    <div className="flex flex-col h-full min-h-0 relative overflow-hidden">
+  const renderFilesBody = (heightClass: string) => (
+    <FileTree
+      workingDirectory={session.workingDirectory}
+      selectedFile={currentSelectedFile || null}
+      onFileSelect={(path) => id && setSelectedFile(id, path)}
+      onFileOpen={(path, content) => id && openFileInStore(id, path, content)}
+      className={heightClass}
+    />
+  );
 
-      {/* Session Header */}
-      <div className="shrink-0 sticky top-0 z-20 pb-1 pt-1 mb-2 border-b bg-background/95 backdrop-blur space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold flex items-center gap-1.5">
+  const tasksBody = currentTodos.length === 0 ? (
+    <div className="text-center py-8 px-4 text-sm text-muted-foreground flex flex-col items-center gap-2">
+      <div className="w-10 h-10 rounded-full bg-foreground/5 flex items-center justify-center">
+        <ListTodo className="h-5 w-5 text-muted-foreground/50" />
+      </div>
+      <span>No active tasks</span>
+    </div>
+  ) : (
+    <div className="p-2 space-y-1.5">
+      {currentTodos.map((todo, index) => (
+        <div
+          key={index}
+          className={cn(
+            "flex items-start gap-2.5 p-2.5 rounded-lg text-xs transition-all",
+            todo.status === 'completed' && "bg-foreground/[0.02] text-muted-foreground",
+            todo.status === 'in_progress' && "bg-primary/10 border border-primary/30 shadow-sm",
+            todo.status === 'pending' && "bg-foreground/[0.03]"
+          )}
+        >
+          <div className="shrink-0 mt-0.5">
+            {todo.status === 'completed' && <CheckCircle className="h-4 w-4 text-emerald-500/80" />}
+            {todo.status === 'in_progress' && <Loader2 className="h-4 w-4 text-primary animate-spin" />}
+            {todo.status === 'pending' && <Circle className="h-4 w-4 text-muted-foreground/60" />}
+          </div>
+          <p className={cn(
+            "flex-1 leading-relaxed",
+            todo.status === 'completed' && "line-through opacity-70",
+            todo.status === 'in_progress' && "font-medium text-foreground"
+          )}>
+            {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderConfigBody = (heightClass: string) => (
+    <div className={cn("flex flex-col", heightClass)}>
+      <div className="flex gap-1 p-1.5 bg-muted/30 border-b border-border/60 shrink-0">
+        <button
+          onClick={() => setConfigTab('memories')}
+          className={cn(
+            "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+            configTab === 'memories'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+          )}
+        >
+          Memories
+        </button>
+        <button
+          onClick={() => setConfigTab('agents')}
+          className={cn(
+            "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+            configTab === 'agents'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+          )}
+        >
+          Agents
+        </button>
+      </div>
+      {configTab === 'memories' ? (
+        <MemoryViewer
+          workingDirectory={session.workingDirectory}
+          className="flex-1 overflow-auto"
+        />
+      ) : (
+        <AgentsEditor
+          workingDirectory={session.workingDirectory}
+          className="flex-1 overflow-auto"
+        />
+      )}
+    </div>
+  );
+
+  const renderToolsBody = (heightClass: string) => (
+    <ToolLogPanel
+      executions={currentToolExecutions}
+      className={heightClass}
+    />
+  );
+
+  const pendingTasksCount = currentTodos.filter(t => t.status !== 'completed').length;
+  const runningToolsCount = recentTools.filter(t => t.status === 'started').length;
+
+  const panelMeta: Record<DockablePanel, { title: string; icon: ReactElement; badge?: ReactElement | null }> = {
+    files: {
+      title: 'Files',
+      icon: <FolderOpen className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    tasks: {
+      title: 'Tasks',
+      icon: <ListTodo className="h-3.5 w-3.5" />,
+      badge: pendingTasksCount > 0 ? <span className="panel-badge">{pendingTasksCount}</span> : null,
+    },
+    config: {
+      title: 'Config',
+      icon: <Brain className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    tools: {
+      title: 'Tools',
+      icon: <Wrench className="h-3.5 w-3.5" />,
+      badge: runningToolsCount > 0 ? <span className="panel-badge panel-badge-pulse">{runningToolsCount}</span> : null,
+    },
+  };
+
+  const renderPanelTrigger = (panel: DockablePanel) => {
+    const meta = panelMeta[panel];
+    const isPinned = pinnedPanels[panel];
+    if (isPinned) {
+      return (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="panel-trigger bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30"
+          onClick={() => togglePinPanel(panel)}
+          title="Unpin panel (currently docked in sidebar)"
+        >
+          {meta.icon}
+          <span className="hidden sm:inline">{meta.title}</span>
+          {meta.badge}
+          <Pin className="h-3 w-3 fill-current" />
+        </Button>
+      );
+    }
+    return null;
+  };
+
+  const renderDockedPanel = (panel: DockablePanel) => {
+    const meta = panelMeta[panel];
+    let body: ReactElement;
+    if (panel === 'files') body = renderFilesBody('h-full');
+    else if (panel === 'tasks') body = <div className="h-full overflow-auto">{tasksBody}</div>;
+    else if (panel === 'config') body = renderConfigBody('h-full');
+    else body = renderToolsBody('h-full');
+
+    const extraHeaderAction = panel === 'files' ? (
+      <button
+        onClick={() => setShowAllowedDirsDialog(true)}
+        className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
+        title="Manage allowed directories"
+      >
+        <FolderKey className="h-3.5 w-3.5 text-primary" />
+      </button>
+    ) : null;
+
+    return (
+      <div key={panel} className="flex-1 min-h-0 flex flex-col border-b border-border/40 last:border-b-0 bg-background/40">
+        <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-foreground/5 bg-muted/30">
+          <span className="text-muted-foreground shrink-0">{meta.icon}</span>
+          <span className="text-xs font-medium flex-1 truncate">{meta.title}</span>
+          {meta.badge}
+          {extraHeaderAction}
+          <button
+            onClick={() => togglePinPanel(panel)}
+            className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0 text-muted-foreground hover:text-foreground"
+            title="Unpin panel"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-hidden">{body}</div>
+      </div>
+    );
+  };
+
+  return (
+    <div ref={rootShellRef} className="flex h-full min-h-0 relative overflow-hidden">
+
+      {/* Main column: sticky topbar + scrollable stream + sticky composer */}
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+
+      {/* Session Header — sticky topbar inside the main column */}
+      <div ref={headerBarRef} className="chat-topbar shrink-0">
+        <div className="flex-1 flex items-center gap-2 md:gap-3 min-w-0 flex-wrap">
+          {/* Title cluster */}
+          <div className="min-w-0 flex-1 md:flex-none md:max-w-[240px] lg:max-w-[320px] xl:max-w-[380px]">
+            <h2 className="text-[13px] font-semibold tracking-display flex items-center gap-1.5">
               <button
                 onClick={() => starMutation.mutate()}
                 disabled={starMutation.isPending}
-                className="hover:scale-110 transition-transform"
+                className="hover:scale-110 active:scale-95 transition-transform shrink-0"
                 title={session.starred ? 'Unstar session' : 'Star session'}
               >
                 <Star
@@ -800,247 +1409,262 @@ export function SessionPage() {
                   )}
                 />
               </button>
-              <span className="truncate max-w-[120px] sm:max-w-none">{session.name}</span>
-              <span
-                className="ui-pill text-[10px] hidden sm:inline-flex"
-                title={`Using ${CLI_PROVIDER_LABEL[sessionProvider]}`}
-              >
-                <span className="font-semibold">
-                  {CLI_PROVIDER_ICON[sessionProvider] || ''}
-                </span>
-                <span>{CLI_PROVIDER_LABEL[sessionProvider]}</span>
-              </span>
+              <span className="truncate min-w-0">{session.name}</span>
               <span
                 className={cn(
-                  'inline-block h-2 w-2 rounded-full',
+                  'inline-block h-2 w-2 rounded-full shrink-0',
                   session.status === 'running' && 'bg-primary animate-pulse',
                   session.status === 'stopped' && 'bg-gray-400',
                   session.status === 'error' && 'bg-red-500'
                 )}
               />
             </h2>
-          </div>
-          <div className="flex gap-1.5 items-center shrink-0">
-            {/* CLI Tool selector - visible in header */}
-            {cliTools && cliTools.length > 0 && (
-              <div className="relative shrink-0">
-                <select
-                  value={selectedCliTool || ''}
-                  onChange={(e) => setSelectedCliTool(e.target.value || null)}
-                  className={cn(
-                    "h-7 px-2 rounded-md border text-xs font-medium transition-all cursor-pointer",
-                    "focus:outline-none focus:ring-2 focus:ring-ring",
-                    selectedCliTool
-                      ? "bg-muted border-border text-foreground"
-                      : "bg-background border-input text-muted-foreground hover:bg-muted"
-                  )}
+            <button
+              onClick={() => setShowAllowedDirsDialog(true)}
+              className="mt-0.5 flex items-center gap-1 text-[10px] font-mono text-muted-foreground/70 hover:text-foreground/90 transition-colors max-w-full truncate"
+              title={`Working directory: ${session.workingDirectory} — click to manage allowed directories`}
+            >
+              <FolderOpen className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">{session.workingDirectory}</span>
+              {currentUsage && currentUsage.totalTokens > 0 && (
+                <span
+                  className="ml-1 shrink-0 text-emerald-500/80 tabular-nums"
+                  title={`Input: ${currentUsage.inputTokens.toLocaleString()} · Output: ${currentUsage.outputTokens.toLocaleString()} · Cache read: ${currentUsage.cacheReadTokens.toLocaleString()}`}
                 >
-                  <option value="">{CLI_PROVIDER_LABEL[sessionProvider]}</option>
-                  {cliTools.map((tool) => (
-                    <option key={tool.id} value={tool.id}>
-                      {tool.name}
-                    </option>
-                  ))}
-                </select>
-                {selectedCliTool && (
-                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-pulse" />
-                )}
-              </div>
+                  · {currentUsage.totalCostUsd < 0.01
+                    ? `$${currentUsage.totalCostUsd.toFixed(4)}`
+                    : `$${currentUsage.totalCostUsd.toFixed(2)}`}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Divider — subtle vertical separator */}
+          <div className="hidden md:block w-px h-8 bg-border/40 shrink-0" />
+
+          {/* Panels Bar — Files, Tasks, Config, Tools */}
+          <div className="flex items-center gap-1 shrink-0 order-3 md:order-none w-full md:w-auto overflow-x-auto md:overflow-visible scrollbar-none -mx-1 px-1 md:mx-0 md:px-0">
+            {pinnedPanels.files ? renderPanelTrigger('files') : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="panel-trigger">
+                    <FolderOpen className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Files</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="panel-dropdown w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
+                    <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs text-muted-foreground truncate flex-1 font-mono" title={session.workingDirectory}>
+                      {session.workingDirectory}
+                    </span>
+                    <button
+                      onClick={() => setShowAllowedDirsDialog(true)}
+                      className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
+                      title="Manage allowed directories"
+                    >
+                      <FolderKey className="h-3.5 w-3.5 text-primary" />
+                    </button>
+                    <button
+                      onClick={() => togglePinPanel('files')}
+                      className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
+                      title="Pin panel to sidebar"
+                    >
+                      <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                  <FileTree
+                    workingDirectory={session.workingDirectory}
+                    selectedFile={currentSelectedFile || null}
+                    onFileSelect={(path) => id && setSelectedFile(id, path)}
+                    onFileOpen={(path, content) => id && openFileInStore(id, path, content)}
+                    className="h-[40vh] sm:h-[50vh]"
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
 
-            {/* Mode selector - moved to header */}
-            <SessionControls
+            {pinnedPanels.tasks ? renderPanelTrigger('tasks') : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="panel-trigger">
+                    <ListTodo className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Tasks</span>
+                    {pendingTasksCount > 0 && (
+                      <span className="panel-badge">{pendingTasksCount}</span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="panel-dropdown w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
+                    <ListTodo className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs text-muted-foreground flex-1 truncate">Tasks</span>
+                    {pendingTasksCount > 0 && (
+                      <span className="panel-badge">{pendingTasksCount}</span>
+                    )}
+                    <button
+                      onClick={() => togglePinPanel('tasks')}
+                      className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
+                      title="Pin panel to sidebar"
+                    >
+                      <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                  {tasksBody}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {pinnedPanels.config ? renderPanelTrigger('config') : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="panel-trigger">
+                    <Brain className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Config</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="panel-dropdown w-[calc(100vw-2rem)] sm:w-[480px] max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
+                    <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs text-muted-foreground flex-1 truncate">Config</span>
+                    <button
+                      onClick={() => togglePinPanel('config')}
+                      className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
+                      title="Pin panel to sidebar"
+                    >
+                      <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                  {renderConfigBody('h-[40vh] sm:h-[50vh]')}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {pinnedPanels.tools ? renderPanelTrigger('tools') : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="panel-trigger">
+                    <Wrench className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Tools</span>
+                    {runningToolsCount > 0 && (
+                      <span className="panel-badge panel-badge-pulse">{runningToolsCount}</span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="panel-dropdown w-[calc(100vw-2rem)] sm:w-96 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
+                    <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs text-muted-foreground flex-1 truncate">Tools</span>
+                    {runningToolsCount > 0 && (
+                      <span className="panel-badge panel-badge-pulse">{runningToolsCount}</span>
+                    )}
+                    <button
+                      onClick={() => togglePinPanel('tools')}
+                      className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
+                      title="Pin panel to sidebar"
+                    >
+                      <Pin className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                  <ToolLogPanel
+                    executions={currentToolExecutions}
+                    className="h-[40vh] sm:h-[50vh]"
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          {/* Flex spacer — pushes right cluster to the edge */}
+          <div className="hidden md:block flex-1" />
+
+          {/* Right controls — View Toggle + Session Settings + Context + More */}
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto md:ml-0">
+            {/* View Toggle */}
+            <div className="flex gap-0.5 bg-background/40 backdrop-blur-md border border-border/40 rounded-lg p-0.5 shrink-0">
+              <button
+                onClick={() => setMainView('chat')}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all",
+                  mainView === 'chat'
+                    ? 'bg-foreground/10 text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+                )}
+                title="Chat"
+              >
+                <MessageSquare className="h-3 w-3" />
+                <span className="hidden lg:inline">Chat</span>
+              </button>
+              {hasOpenFiles && (
+                <button
+                  onClick={() => setMainView('editor')}
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all",
+                    mainView === 'editor'
+                      ? 'bg-foreground/10 text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+                  )}
+                  title="Editor"
+                >
+                  <Code2 className="h-3 w-3" />
+                  <span className="hidden lg:inline">Editor</span>
+                </button>
+              )}
+              <button
+                onClick={() => setMainView('preview')}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all",
+                  mainView === 'preview'
+                    ? 'bg-foreground/10 text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+                )}
+                title="Preview"
+              >
+                <Globe className="h-3 w-3" />
+                <span className="hidden lg:inline">Preview</span>
+              </button>
+            </div>
+
+            {/* Turn Map toggle (chat view only) */}
+            {mainView === 'chat' && (
+              <button
+                onClick={toggleTurnMap}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg border transition-all shrink-0",
+                  turnMapOpen
+                    ? 'bg-foreground/10 border-border/60 text-foreground'
+                    : 'bg-background/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+                )}
+                title={turnMapOpen ? 'Hide turn map' : 'Show turn map'}
+              >
+                <PanelRight className="h-3 w-3" />
+              </button>
+            )}
+
+            {/* Consolidated Session Settings */}
+            <SessionSettingsChip
               mode={sessionMode}
               onModeChange={handleModeChange}
-              usage={currentUsage}
-              defaultModel={defaultModelLabel}
+              provider={sessionProvider}
+              providers={cliProviders?.map(p => ({ id: p.id, name: p.name, available: p.available }))}
+              onProviderChange={(p) => providerMutation.mutate(p)}
+              modelValue={modelSelectValue}
+              modelOptions={modelOptions}
+              modelLabels={modelLabels}
+              resolvedDefaultModel={resolvedDefaultModel}
+              onModelChange={applyModelSelection}
+              reasoningValue={reasoningSelectValue}
+              reasoningOptions={(sessionProvider === 'claude' || sessionProvider === 'codex') ? reasoningOptions : undefined}
+              onReasoningChange={(sessionProvider === 'claude' || sessionProvider === 'codex') ? applyReasoningSelection : undefined}
+              reasoningLabel={sessionProvider === 'claude' ? 'Effort' : 'Reasoning'}
+              cliTools={cliTools}
+              selectedCliTool={selectedCliTool}
+              onCliToolChange={setSelectedCliTool}
             />
 
-            {/* Provider selector */}
-            {cliProviders && cliProviders.length > 0 && session && (
-              <>
-                <div className="hidden sm:block">
-                  <Select value={modelSelectValue} onValueChange={applyModelSelection}>
-                    <SelectTrigger className="h-7 w-[140px] text-xs">
-                      <SelectValue placeholder={modelLabels[resolvedDefaultModel] || resolvedDefaultModel || 'Model'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__default__">
-                        <span className="flex items-center gap-2">
-                          <span>Default</span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {modelLabels[resolvedDefaultModel] || resolvedDefaultModel}
-                          </span>
-                        </span>
-                      </SelectItem>
-                      {modelOptions.map((model) => (
-                        <SelectItem key={model} value={model}>
-                          <span className="flex items-center gap-2">
-                            <span>{modelLabels[model] || model}</span>
-                            {modelLabels[model] && (
-                              <span className="text-[10px] text-muted-foreground font-mono">
-                                {model}
-                              </span>
-                            )}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {sessionProvider === 'codex' && (
-                  <div className="hidden sm:block">
-                    <Select value={reasoningSelectValue} onValueChange={applyReasoningSelection}>
-                      <SelectTrigger className="h-7 w-[120px] text-xs">
-                        <SelectValue placeholder="Reasoning" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__default__">Default</SelectItem>
-                        {reasoningOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7 sm:hidden"
-                      title={`Provider: ${CLI_PROVIDER_LABEL[sessionProvider]}`}
-                    >
-                      <span className="text-xs font-semibold">
-                        {CLI_PROVIDER_ICON[sessionProvider] || ''}
-                      </span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Session
-                    </DropdownMenuLabel>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger className="text-xs">
-                        Model
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="w-56 max-h-64 overflow-auto">
-                        <DropdownMenuItem
-                          className="flex items-center gap-2 cursor-pointer"
-                          onClick={() => applyModelSelection('__default__')}
-                        >
-                          <span className="flex-1">Default</span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {modelLabels[resolvedDefaultModel] || resolvedDefaultModel}
-                          </span>
-                          {modelSelectValue === '__default__' && (
-                            <Check className="h-4 w-4 text-primary" />
-                          )}
-                        </DropdownMenuItem>
-                        {modelOptions.map((model) => (
-                          <DropdownMenuItem
-                            key={model}
-                            className="flex items-center gap-2 cursor-pointer"
-                            onClick={() => applyModelSelection(model)}
-                          >
-                            <span className="flex-1 text-xs">{modelLabels[model] || model}</span>
-                            {modelLabels[model] && (
-                              <span className="text-[10px] text-muted-foreground font-mono">{model}</span>
-                            )}
-                            {modelSelectValue === model && (
-                              <Check className="h-4 w-4 text-primary" />
-                            )}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                    {sessionProvider === 'codex' && (
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger className="text-xs">
-                          Reasoning
-                        </DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent className="w-48">
-                          <DropdownMenuItem
-                            className="flex items-center gap-2 cursor-pointer"
-                            onClick={() => applyReasoningSelection('__default__')}
-                          >
-                            <span className="flex-1">Default</span>
-                            {reasoningSelectValue === '__default__' && (
-                              <Check className="h-4 w-4 text-primary" />
-                            )}
-                          </DropdownMenuItem>
-                          {reasoningOptions.map((option) => (
-                            <DropdownMenuItem
-                              key={option.value}
-                              className="flex items-center gap-2 cursor-pointer"
-                              onClick={() => applyReasoningSelection(option.value)}
-                            >
-                              <span className="flex-1">{option.label}</span>
-                              {reasoningSelectValue === option.value && (
-                                <Check className="h-4 w-4 text-primary" />
-                              )}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Provider
-                    </DropdownMenuLabel>
-                    {cliProviders.map((provider) => (
-                      <DropdownMenuItem
-                        key={provider.id}
-                        className="flex items-center gap-2 cursor-pointer"
-                        disabled={!provider.available}
-                        onClick={() => providerMutation.mutate(provider.id)}
-                      >
-                        <span className="text-xs font-semibold">
-                          {CLI_PROVIDER_ICON[provider.id] || provider.name.slice(0, 1).toUpperCase()}
-                        </span>
-                        <span className="flex-1">{provider.name}</span>
-                        {!provider.available && (
-                          <span className="text-[10px] text-muted-foreground">(not installed)</span>
-                        )}
-                        {session.cliProvider === provider.id && (
-                          <Check className="h-4 w-4 text-primary" />
-                        )}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <div className="hidden sm:block">
-                  <Select
-                    value={session.cliProvider}
-                    onValueChange={(value) => providerMutation.mutate(value as CLIProvider)}
-                  >
-                    <SelectTrigger className="h-7 w-[120px] text-xs">
-                      <SelectValue placeholder="Provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cliProviders.map((provider) => (
-                        <SelectItem
-                          key={provider.id}
-                          value={provider.id}
-                          disabled={!provider.available}
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="text-xs font-semibold">
-                              {CLI_PROVIDER_ICON[provider.id] || provider.name.slice(0, 1).toUpperCase()}
-                            </span>
-                            <span>{provider.name}</span>
-                            {!provider.available && (
-                              <span className="text-[10px] text-muted-foreground">(not installed)</span>
-                            )}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
+            {/* Context bar (status indicator) */}
+            {currentUsage && currentUsage.contextWindow > 0 && (
+              <ContextPopover usage={currentUsage} />
             )}
 
             <DropdownMenu>
@@ -1049,7 +1673,7 @@ export function SessionPage() {
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent align="end" className="panel-dropdown w-48">
                 <DropdownMenuItem onClick={() => setShowAllowedDirsDialog(true)}>
                   Manage directories
                 </DropdownMenuItem>
@@ -1069,302 +1693,12 @@ export function SessionPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-
           </div>
         </div>
-
-        {/* Panels Bar - Files, Tasks, Git, etc. as dropdowns */}
-        <div className="flex items-center gap-1 overflow-x-auto sm:overflow-visible sm:flex-wrap pb-1 sm:pb-0 -mx-1 px-1 scrollbar-none">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs"
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Files</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
-                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs text-muted-foreground truncate flex-1" title={session.workingDirectory}>
-                  {session.workingDirectory}
-                </span>
-                <button
-                  onClick={() => setShowAllowedDirsDialog(true)}
-                  className="p-1 rounded hover:bg-muted transition-colors shrink-0"
-                  title="Manage allowed directories"
-                >
-                  <FolderKey className="h-3.5 w-3.5 text-primary" />
-                </button>
-              </div>
-              <FileTree
-                workingDirectory={session.workingDirectory}
-                selectedFile={currentSelectedFile || null}
-                onFileSelect={(path) => id && setSelectedFile(id, path)}
-                onFileOpen={(path, content) => id && openFileInStore(id, path, content)}
-                className="h-[40vh] sm:h-[50vh]"
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs relative"
-              >
-                <ListTodo className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Tasks</span>
-                {currentTodos.filter(t => t.status !== 'completed').length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] rounded-full bg-primary text-primary-foreground flex items-center justify-center">
-                    {currentTodos.filter(t => t.status !== 'completed').length}
-                  </span>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto">
-              {currentTodos.length === 0 ? (
-                <div className="text-center py-4 text-sm text-muted-foreground">
-                  No tasks
-                </div>
-              ) : (
-                <div className="p-2 space-y-2">
-                  {currentTodos.map((todo, index) => (
-                    <div
-                      key={index}
-                      className={cn(
-                        "flex items-start gap-2 p-2 rounded-lg text-xs transition-colors border border-border/60 bg-muted/40",
-                        todo.status === 'completed' && "text-muted-foreground",
-                        todo.status === 'in_progress' && "border-primary/40"
-                      )}
-                    >
-                      <div className="shrink-0 mt-0.5">
-                        {todo.status === 'completed' && <CheckCircle className="h-4 w-4 text-muted-foreground" />}
-                        {todo.status === 'in_progress' && <Loader2 className="h-4 w-4 text-primary animate-spin" />}
-                        {todo.status === 'pending' && <Circle className="h-4 w-4 text-muted-foreground" />}
-                      </div>
-                      <p className={cn(
-                        "flex-1 leading-snug",
-                        todo.status === 'completed' && "line-through",
-                        todo.status === 'in_progress' && "font-medium text-foreground"
-                      )}>
-                        {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs"
-              >
-                <GitBranch className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Git</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
-              <GitPanel workingDirectory={session.workingDirectory} className="h-[40vh] sm:h-[50vh]" />
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs"
-              >
-                <History className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Saves</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
-              <CheckpointsPanel
-                sessionId={id!}
-                className="h-[40vh] sm:h-[50vh]"
-                onRestore={() => {
-                  queryClient.invalidateQueries({ queryKey: ['messages', id] });
-                }}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs"
-              >
-                <Brain className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Config</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[calc(100vw-2rem)] sm:w-[480px] max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
-              <div className="flex flex-col h-[40vh] sm:h-[50vh]">
-                <div className="flex border-b bg-muted/30">
-                  <button
-                    onClick={() => setConfigTab('memories')}
-                    className={configTab === 'memories'
-                      ? 'flex-1 px-3 py-1.5 text-xs font-medium border-b-2 border-primary text-foreground'
-                      : 'flex-1 px-3 py-1.5 text-xs font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground'
-                    }
-                  >
-                    Memories
-                  </button>
-                  <button
-                    onClick={() => setConfigTab('agents')}
-                    className={configTab === 'agents'
-                      ? 'flex-1 px-3 py-1.5 text-xs font-medium border-b-2 border-primary text-foreground'
-                      : 'flex-1 px-3 py-1.5 text-xs font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground'
-                    }
-                  >
-                    Agents
-                  </button>
-                </div>
-                {configTab === 'memories' ? (
-                  <MemoryViewer
-                    workingDirectory={session.workingDirectory}
-                    className="flex-1 overflow-auto"
-                  />
-                ) : (
-                  <AgentsEditor
-                    workingDirectory={session.workingDirectory}
-                    className="flex-1 overflow-auto"
-                  />
-                )}
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs relative"
-              >
-                <Wrench className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Tools</span>
-                {recentTools.filter(t => t.status === 'started').length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] rounded-full bg-primary text-primary-foreground flex items-center justify-center">
-                    {recentTools.filter(t => t.status === 'started').length}
-                  </span>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[calc(100vw-2rem)] sm:w-96 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
-              <ToolLogPanel
-                executions={currentToolExecutions}
-                className="h-[40vh] sm:h-[50vh]"
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Ralph Tab */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 gap-1.5 text-xs relative"
-              >
-                <Bot className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Ralph</span>
-                {ralphRun && ['planning', 'executing'].includes(ralphRun.status) && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                )}
-                {ralphRun?.status === 'paused' && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500" />
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[calc(100vw-2rem)] sm:w-96 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0">
-              <div className="p-3">
-                {id && ralphRun ? (
-                  <RalphProgressPanel sessionId={id} />
-                ) : id ? (
-                  <RalphActivationDialog sessionId={id} trigger={
-                    <Button variant="outline" size="sm" className="w-full gap-2">
-                      <Bot className="h-4 w-4" />
-                      Start Ralph
-                    </Button>
-                  } />
-                ) : (
-                  <div className="text-center py-4 text-sm text-muted-foreground">
-                    No session
-                  </div>
-                )}
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Spacer pushes view toggle to right */}
-          <div className="flex-1" />
-
-          {/* View Toggle */}
-          <div className="flex gap-0.5 bg-muted rounded-md p-0.5 shrink-0">
-            <button
-              onClick={() => setMainView('chat')}
-              className={mainView === 'chat'
-                ? 'flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-background text-foreground shadow-sm'
-                : 'flex items-center gap-1 px-2 py-0.5 text-xs rounded text-muted-foreground hover:text-foreground'
-              }
-              title="Chat"
-            >
-              <MessageSquare className="h-3 w-3" />
-              <span className="hidden sm:inline">Chat</span>
-            </button>
-            {hasOpenFiles && (
-              <button
-                onClick={() => setMainView('editor')}
-                className={mainView === 'editor'
-                  ? 'flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-background text-foreground shadow-sm'
-                  : 'flex items-center gap-1 px-2 py-0.5 text-xs rounded text-muted-foreground hover:text-foreground'
-                }
-                title="Editor"
-              >
-                <Code2 className="h-3 w-3" />
-                <span className="hidden sm:inline">Editor</span>
-              </button>
-            )}
-            <button
-              onClick={() => setMainView('preview')}
-              className={mainView === 'preview'
-                ? 'flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-background text-foreground shadow-sm'
-                : 'flex items-center gap-1 px-2 py-0.5 text-xs rounded text-muted-foreground hover:text-foreground'
-              }
-              title="Preview"
-            >
-              <Globe className="h-3 w-3" />
-              <span className="hidden sm:inline">Preview</span>
-            </button>
-          </div>
-        </div>
-
       </div>
 
-      {/* Main content area */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* Main Content - Chat or Editor */}
-        <div
-          ref={chatScrollRef}
-          onScroll={handleChatScroll}
-          className={cn(
-            "flex-1 min-h-0 overflow-y-auto",
-            mainView === 'chat' && "space-y-4 pb-4"
-          )}
-        >
+      {/* Main Content - Chat or Editor */}
+      <div className={cn("flex-1 min-h-0 overflow-y-auto", mainView === 'chat' && "chat-scroll-fade")}>
         {mainView === 'editor' ? (
           <EditorPanel sessionId={id || ''} />
         ) : mainView === 'preview' ? (
@@ -1385,280 +1719,92 @@ export function SessionPage() {
           </div>
         )}
 
-        {/* Unified timeline: messages and generated images sorted by timestamp */}
-        {timeline.map((item, index) => {
-          if (item.type === 'message') {
-            const message = item.data;
-            // Render compact boundary cards specially
-            if (message.id?.startsWith("compact-")) {
-              return <CompactBoundaryCard key={message.id} content={message.content} />;
+        {/* Virtualized timeline: messages and generated images sorted by timestamp */}
+        {timeline.length > 0 && (
+          <Virtuoso
+            ref={virtuosoRef}
+            data={timeline}
+            overscan={200}
+            increaseViewportBy={200}
+            followOutput="smooth"
+            atBottomStateChange={setIsAtBottom}
+            className="flex-1"
+            computeItemKey={(_index, item) =>
+              item.type === 'message'
+                ? `msg-${item.data.id ?? item.timestamp}`
+                : item.type === 'tool'
+                  ? `tool-${item.data.toolId}`
+                  : `img-${item.data.timestamp}`
             }
-            return (
-              <div
-                key={message.id}
-                className={cn('flex animate-fade-in', message.role === 'user' ? 'justify-end' : 'justify-start')}
-              >
-                <Card
+            itemContent={(index, item) => {
+              const isInTurn = inAssistantTurn[index] ?? false;
+              const isMessage = item.type === 'message';
+              let content: ReactElement;
+              if (item.type === 'message') {
+                const message = item.data;
+                if (message.id?.startsWith("compact-")) {
+                  content = <CompactBoundaryCard content={message.content} />;
+                } else {
+                  content = (
+                    <MessageBubble
+                      message={message}
+                      sessionId={id!}
+                      sessionStatus={session.status}
+                      provider={uiProvider}
+                      modelLabel={asstModelLabel}
+                      assistantName={providerLabel}
+                    />
+                  );
+                }
+              } else if (item.type === 'tool') {
+                content = <ToolExecutionCard execution={item.data} />;
+              } else {
+                const img = item.data;
+                content = (
+                  <Card className="p-3 sm:p-4 bg-muted/40 border-border/60">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="p-1.5 rounded-full bg-muted/60">
+                        <Image className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="text-sm font-medium text-foreground">
+                        Generated Image
+                      </span>
+                    </div>
+                    {img.imageBase64 && (
+                      <img
+                        src={`data:${img.mimeType};base64,${img.imageBase64}`}
+                        alt={img.prompt}
+                        className="max-w-full rounded-lg border border-border/60 cursor-pointer hover:opacity-90 transition-opacity mb-3"
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = `data:${img.mimeType};base64,${img.imageBase64}`;
+                          link.download = `generated-image-${img.timestamp}.png`;
+                          link.click();
+                        }}
+                      />
+                    )}
+                    <p className="text-xs text-muted-foreground italic">"{img.prompt}"</p>
+                  </Card>
+                );
+              }
+              return (
+                <div
                   className={cn(
-                    'max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-3 sm:p-4',
-                    message.role === 'user'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-card border'
+                    "mx-auto max-w-[760px] w-full px-4 sm:px-7 animate-fade-in",
+                    isInTurn ? "asst-turn-item" : "pb-9",
+                    isInTurn && !isMessage && "asst-turn-cont"
                   )}
                 >
-                  {/* File attachments for user messages */}
-                  {((message.images && message.images.length > 0) || (message.attachments && message.attachments.length > 0)) && (
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      {/* Legacy images support - skip if attachments exist */}
-                      {(!message.attachments || message.attachments.length === 0) && message.images?.map((img: MessageImage, imgIndex: number) => {
-                        const token = useAuthStore.getState().token || '';
-                        const imageUrl = `/api/sessions/${id}/images/${img.filename}?token=${encodeURIComponent(token)}`;
-                        return (
-                          <img
-                            key={`img-${imgIndex}`}
-                            src={imageUrl}
-                            alt={`Attachment ${imgIndex + 1}`}
-                            className="max-h-32 max-w-48 rounded-lg border border-primary-foreground/20 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                            onClick={() => window.open(imageUrl, '_blank')}
-                          />
-                        );
-                      })}
-                      {/* New attachments support */}
-                      {message.attachments?.map((att: MessageAttachment, attIndex: number) => {
-                        const token = useAuthStore.getState().token || '';
-                        const attachmentUrl = att.filename && att.path
-                          ? `/api/sessions/${id}/attachments/${att.filename}?token=${encodeURIComponent(token)}`
-                          : null;
-
-                        if (att.type === 'image' && attachmentUrl) {
-                          return (
-                            <img
-                              key={`att-${attIndex}`}
-                              src={attachmentUrl}
-                              alt={att.filename}
-                              className="max-h-32 max-w-48 rounded-lg border border-primary-foreground/20 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                              onClick={() => window.open(attachmentUrl, '_blank')}
-                            />
-                          );
-                        }
-
-                        // Non-image attachments (text, pdf, document)
-                        const AttachmentIcon = att.type === 'text' ? FileCode : att.type === 'pdf' ? FileText : FileIcon;
-                        return (
-                          <div
-                            key={`att-${attIndex}`}
-                            className={cn(
-                              "flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer hover:opacity-90 transition-opacity",
-                              message.role === 'user'
-                                ? "border-primary-foreground/20 bg-primary-foreground/10"
-                                : "border-border bg-muted"
-                            )}
-                            onClick={() => attachmentUrl && window.open(attachmentUrl, '_blank')}
-                            title={att.filename}
-                          >
-                            <AttachmentIcon className={cn("h-5 w-5", att.type === 'pdf' && "text-red-500")} />
-                            <span className="text-xs truncate max-w-32">{att.filename}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <div className={cn(
-                    'prose prose-sm max-w-none',
-                    message.role === 'user' ? 'prose-invert' : 'dark:prose-invert'
-                  )}>
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{message.content}</ReactMarkdown>
-                  </div>
-                  {/* Interactive options for assistant messages with choices */}
-                  {message.role === 'assistant' && isChoicePrompt(message.content) && (() => {
-                    const options = detectOptions(message.content);
-                    return options ? (
-                      <InteractiveOptions
-                        options={options}
-                        onSelect={(selected) => {
-                          if (id) {
-                            socketService.sendMessage(id, selected);
-                          }
-                        }}
-                        disabled={session.status === 'error'}
-                      />
-                    ) : null;
-                  })()}
-                  {/* Directory access request detection */}
-                  {message.role === 'assistant' && id && (
-                    <DirectoryAccessPrompt
-                      message={message.content}
-                      sessionId={id}
-                      onAccessGranted={() => {
-                        queryClient.invalidateQueries({ queryKey: ['session', id] });
-                      }}
-                    />
-                  )}
-                </Card>
-              </div>
-            );
-          } else {
-            // Generated Image
-            const img = item.data;
-            return (
-              <div key={`gen-img-${img.timestamp}-${index}`} className="flex justify-start animate-fade-in">
-                <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-3 sm:p-4 bg-muted/40 border-border/60">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="p-1.5 rounded-full bg-muted/60">
-                      <Image className="h-4 w-4 text-primary" />
-                    </div>
-                    <span className="text-sm font-medium text-foreground">
-                      Generated Image (Gemini)
-                    </span>
-                  </div>
-                  {img.imageBase64 && (
-                    <img
-                      src={`data:${img.mimeType};base64,${img.imageBase64}`}
-                      alt={img.prompt}
-                      className="max-w-full rounded-lg border border-border/60 cursor-pointer hover:opacity-90 transition-opacity mb-3"
-                      onClick={() => {
-                        const link = document.createElement('a');
-                        link.href = `data:${img.mimeType};base64,${img.imageBase64}`;
-                        link.download = `gemini-image-${img.timestamp}.png`;
-                        link.click();
-                      }}
-                    />
-                  )}
-                  <p className="text-xs text-muted-foreground italic">"{img.prompt}"</p>
-                </Card>
-              </div>
-            );
-          }
-        })}
-
-        {/* Activity indicator with recent tool history */}
-        {(currentActivity.type === 'thinking' || currentActivity.type === 'tool' || currentActiveAgent) && !currentStreamingContent && (
-          <div className="flex justify-start animate-fade-in">
-            <Card className="border p-3 sm:p-4 max-w-[95%] sm:max-w-[85%] md:max-w-[80%] bg-muted/40 border-border/60">
-              <div className="space-y-3">
-                {/* Current activity */}
-                <div className="flex items-center gap-3">
-                  {/* Active Agent indicator - highest priority */}
-                  {currentActiveAgent ? (
-                    <>
-                      <div className="relative">
-                        <Brain className="h-5 w-5 text-primary" />
-                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-ping" />
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-foreground">
-                          Agent: {getAgentDisplay(currentActiveAgent.agentType)}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {currentActiveAgent.description || getAgentDescription(currentActiveAgent.agentType)}
-                          {currentActiveAgent.startedAt ? ` (${formatElapsed(now - currentActiveAgent.startedAt)})` : ''}
-                        </span>
-                      </div>
-                    </>
-                  ) : currentActivity.type === 'thinking' ? (
-                    <>
-                      <Brain className="h-5 w-5 text-primary animate-pulse" />
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium">{providerLabel} is thinking...</span>
-                        <span className="text-xs text-muted-foreground">
-                          {currentActivity.message
-                            ? `• ${currentActivity.message}${currentActivity.messageStartedAt ? ` (${formatElapsed(now - currentActivity.messageStartedAt)})` : ''}`
-                            : 'Analyzing request'}
-                        </span>
-                      </div>
-                    </>
-                  ) : currentActivity.type === 'tool' && currentActivity.toolName ? (
-                    <>
-                      {(() => {
-                        const { icon: ToolIcon, label } = getToolDisplay(currentActivity.toolName);
-                        return (
-                          <>
-                            <div className="relative">
-                              <ToolIcon className="h-5 w-5 text-primary" />
-                              <span className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-ping" />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-sm font-medium text-foreground">{label}</span>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex gap-1">
-                        <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <span className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                      </div>
-                      <span className="text-sm text-muted-foreground">Working...</span>
-                    </>
-                  )}
+                  {content}
                 </div>
-
-                {/* Recent completed tools (compact list) */}
-                {recentTools.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-2 border-t border-border/50">
-                    {recentTools.map((tool, idx) => {
-                      const { icon: ToolIcon, label } = getToolDisplay(tool.toolName);
-                      const isRunning = tool.status === 'started';
-                      return (
-                        <button
-                          key={`${tool.toolId}-${idx}`}
-                          onClick={() => setSelectedToolDetail(tool)}
-                          className="ui-pill ui-pill-subtle text-xs hover:bg-muted/70 transition-colors cursor-pointer"
-                        >
-                          <span className={cn('h-1.5 w-1.5 rounded-full', isRunning ? 'bg-primary' : 'bg-foreground/40')} />
-                          <ToolIcon className="h-3 w-3" />
-                          <span className="truncate max-w-24">{label}</span>
-                          {isRunning && <Loader2 className="h-3 w-3 animate-spin" />}
-                          {tool.status === 'completed' && <CheckCircle className="h-3 w-3 text-muted-foreground" />}
-                        </button>
-                      );
-                    })}
-                    {currentToolExecutions.length > 5 && (
-                      <span className="text-xs text-muted-foreground px-2 py-0.5">
-                        +{currentToolExecutions.length - 5} more
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Streaming content */}
-        {currentStreamingContent && (
-          <div className="flex justify-start animate-fade-in">
-            <StreamingContent
-              content={currentStreamingContent}
-              onResponse={(response) => {
-                if (id) {
-                  // Use sendInput for interactive prompts (raw input without saving to DB)
-                  socketService.sendInput(id, response);
-                  // Clear streaming content after responding to prompt
-                  clearStreamingContent(id);
-                }
-              }}
-            />
-          </div>
-        )}
-
-        {/* Legacy permission request card (denials-based flow) */}
-        {currentPermissionRequest && id && (
-          <div className="flex justify-start animate-fade-in">
-            <PermissionRequestCard
-              sessionId={id}
-              denials={currentPermissionRequest.denials}
-              originalMessage={currentPermissionRequest.originalMessage}
-              className="max-w-[80%]"
-            />
-          </div>
+              );
+            }}
+            components={virtuosoComponents}
+          />
         )}
 
         {!isAtBottom && mainView === 'chat' && (
-          <div className="sticky bottom-4 flex justify-center pointer-events-none">
+          <div className="sticky bottom-2 flex justify-center pointer-events-none z-30">
             <button
               type="button"
               onClick={scrollToBottom}
@@ -1670,36 +1816,58 @@ export function SessionPage() {
           </div>
         )}
 
-        <div ref={messagesEndRef} />
           </>
         )}
         </div>
-      </div>
 
-      {/* Input - Sticky at bottom */}
-      <div className="shrink-0 sticky bottom-0 z-40 bg-background pt-2 pb-2">
-        {showSavedIndicator && (
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground animate-fade-in pb-2">
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-            <span>Response saved</span>
+      {/* Centered composer (sticky, in flow) */}
+      {mainView === 'chat' && (
+        <div ref={inputBarRef} className="composer-wrap shrink-0">
+          <div className="composer-inner">
+            {showSavedIndicator && (
+              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground animate-fade-in pb-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                <span>Response saved</span>
+              </div>
+            )}
+            <ChatInput
+              sessionId={id || ''}
+              onSendMessage={handleSendMessage}
+              onSendMessageWithFiles={handleSendMessageWithFiles}
+              onCommandExecute={handleCommandExecute}
+              onInterrupt={handleInterrupt}
+              commands={commands}
+              selectedToolName={selectedToolName}
+              selectedCliTool={selectedCliTool}
+              quickPrompts={quickPrompts}
+              disabled={session.status === 'error'}
+              isSending={isSending}
+              isExecutingTool={isExecutingTool}
+              isActive={isActive}
+            />
           </div>
-        )}
-        <ChatInput
-          sessionId={id || ''}
-          onSendMessage={handleSendMessage}
-          onSendMessageWithFiles={handleSendMessageWithFiles}
-          onCommandExecute={handleCommandExecute}
-          onInterrupt={handleInterrupt}
-          commands={commands}
-          selectedToolName={selectedToolName}
-          selectedCliTool={selectedCliTool}
-          quickPrompts={quickPrompts}
-          disabled={session.status === 'error'}
-          isSending={isSending}
-          isExecutingTool={isExecutingTool}
-          isActive={isActive}
+        </div>
+      )}
+
+      </div>{/* /main column */}
+
+      {/* Right rail: turn map (chat view only, toggleable, hidden < 1180px via CSS) */}
+      {mainView === 'chat' && turnMapOpen && (
+        <TurnMap
+          messages={sessionMessages}
+          onJump={jumpToMessage}
+          onClose={toggleTurnMap}
         />
-      </div>
+      )}
+
+      {/* Docked panels column (when panels are pinned) */}
+      {anyPanelPinned && (
+        <div className="hidden md:flex flex-col w-80 shrink-0 border-l border-border/40 overflow-hidden bg-background/40">
+          {(['files', 'tasks', 'config', 'tools'] as DockablePanel[]).map((p) =>
+            pinnedPanels[p] ? renderDockedPanel(p) : null
+          )}
+        </div>
+      )}
 
       {/* Permission Approval Dialog (hooks-based flow) */}
       {currentPendingPermission && (

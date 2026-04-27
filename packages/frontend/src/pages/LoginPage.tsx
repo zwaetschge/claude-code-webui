@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Github, AlertCircle, ExternalLink, CheckCircle2, ArrowRight, Sparkles, Loader2 } from 'lucide-react';
+import { Github, AlertCircle, ExternalLink, CheckCircle2, ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,8 +18,6 @@ import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
-import { useTaskDelegation } from '@/hooks/useTaskDelegation';
-import type { GeminiOAuthTaskResult } from '@claude-code-webui/shared';
 
 const errorMessages: Record<string, string> = {
   github: 'GitHub authentication failed. Please try again.',
@@ -28,10 +26,6 @@ const errorMessages: Record<string, string> = {
   claude_not_logged_in: 'Claude CLI not logged in. Use the WebUI login below or run "claude /login".',
   codex: 'Codex authentication failed. Please try again.',
   codex_not_logged_in: 'Codex CLI not logged in. Run "codex login" first.',
-  zai: 'Z.AI authentication failed. Please try again.',
-  zai_not_logged_in: 'Z.AI CLI not logged in. Run "glm auth login" first.',
-  gemini: 'Gemini authentication failed. Please try again.',
-  gemini_not_logged_in: 'Gemini CLI not logged in. Run "gemini auth login" first.',
   unauthorized: 'You are not authorized. Please sign in.',
   expired: 'Your session has expired. Please sign in again.',
 };
@@ -41,8 +35,7 @@ interface AuthProviders {
   google: boolean;
   claude: boolean;
   codex?: boolean;
-  zai?: boolean;
-  gemini?: boolean;
+  opencode?: boolean;
 }
 
 type CliLoginStatus = 'starting' | 'awaiting_code' | 'completed' | 'error';
@@ -59,7 +52,7 @@ interface CliLoginResponse {
 }
 
 // Provider brand configurations
-type ProviderStyleKey = 'claude' | 'codex' | 'zai' | 'gemini';
+type ProviderStyleKey = 'claude' | 'codex' | 'opencode';
 const providerStyles: Record<ProviderStyleKey, {
   bg: string;
   hover: string;
@@ -81,19 +74,12 @@ const providerStyles: Record<ProviderStyleKey, {
     gradient: 'from-white to-[#74aa9c]',
     glow: 'shadow-white/20',
   },
-  zai: {
-    bg: 'bg-[#0EA5E9]',
-    hover: 'hover:bg-[#0284C7]',
+  opencode: {
+    bg: 'bg-[#3b82f6]',
+    hover: 'hover:bg-[#2563eb]',
     text: 'text-white',
-    gradient: 'from-[#0EA5E9] to-[#06B6D4]',
-    glow: 'shadow-[#0EA5E9]/30',
-  },
-  gemini: {
-    bg: 'bg-[#078EFA]',
-    hover: 'hover:bg-[#0670C7]',
-    text: 'text-white',
-    gradient: 'from-[#078EFA] to-[#AD89EB]',
-    glow: 'shadow-[#078EFA]/30',
+    gradient: 'from-[#3b82f6] to-[#6366f1]',
+    glow: 'shadow-[#3b82f6]/30',
   },
 };
 
@@ -111,38 +97,7 @@ export function LoginPage() {
   const [claudeLoginCode, setClaudeLoginCode] = useState('');
   const [claudeLoginWorking, setClaudeLoginWorking] = useState(false);
   const [claudeLoginOpened, setClaudeLoginOpened] = useState(false);
-  const [cliLoginProvider, setCliLoginProvider] = useState<"claude" | "gemini">("claude");
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
-
-  // Gemini OAuth via task delegation
-  const [geminiOAuthOpen, setGeminiOAuthOpen] = useState(false);
-  const [geminiOAuthCode, setGeminiOAuthCode] = useState('');
-  const geminiTask = useTaskDelegation({ pollInterval: 1500 });
-
-  const geminiOAuthResult = geminiTask.taskInfo?.result as GeminiOAuthTaskResult | undefined;
-  const geminiAuthUrl = geminiOAuthResult?.authUrl;
-  const geminiIsAwaiting = geminiTask.taskInfo?.status === 'awaiting_input';
-  const geminiIsComplete = geminiTask.taskInfo?.status === 'completed';
-  const geminiIsError = geminiTask.taskInfo?.status === 'error';
-
-  const startGeminiOAuth = useCallback(async () => {
-    geminiTask.reset();
-    setGeminiOAuthCode('');
-    // Delegate to repair-bot (or self if repair-bot unavailable)
-    await geminiTask.submit('repair-bot', 'gemini-oauth', { mode: 'manual' });
-  }, [geminiTask]);
-
-  const submitGeminiOAuthCode = useCallback(async () => {
-    if (!geminiOAuthCode.trim()) return;
-    await geminiTask.sendInput({ code: geminiOAuthCode.trim() });
-  }, [geminiTask, geminiOAuthCode]);
-
-  useEffect(() => {
-    if (!geminiOAuthOpen) {
-      geminiTask.reset();
-      setGeminiOAuthCode('');
-    }
-  }, [geminiOAuthOpen]);
 
   // Fetch available auth providers
   const { data: providers } = useQuery({
@@ -212,8 +167,6 @@ export function LoginPage() {
   const handleProviderLogin = (provider: UiProvider) => {
     const routes: Record<string, string> = {
       codex: '/auth/codex',
-      zai: '/auth/zai',
-      gemini: '/auth/gemini',
       claude: '/auth/claude',
     };
     window.location.href = routes[provider] || '/auth/claude';
@@ -227,7 +180,7 @@ export function LoginPage() {
     setClaudeLoginStatus('starting');
 
     try {
-      const response = await api.post<CliLoginResponse>(`/api/cli-login/${cliLoginProvider}/start`);
+      const response = await api.post<CliLoginResponse>(`/api/cli-login/claude/start`);
       const data = response.data.data;
       setClaudeLoginId(data.id);
       setClaudeLoginStatus(data.status);
@@ -268,8 +221,7 @@ export function LoginPage() {
   const availableProviders = [
     providers?.claude && 'claude',
     providers?.codex && 'codex',
-    providers?.zai && 'zai',
-    providers?.gemini && 'gemini',
+    providers?.opencode && 'opencode',
   ].filter(Boolean);
 
   return (
@@ -282,8 +234,7 @@ export function LoginPage() {
             "absolute w-[800px] h-[800px] rounded-full blur-[120px] transition-all duration-1000 ease-out",
             hoveredProvider === 'claude' && "bg-[#CC785C]/20",
             hoveredProvider === 'codex' && "bg-white/10",
-            hoveredProvider === 'zai' && "bg-[#0EA5E9]/20",
-            hoveredProvider === 'gemini' && "bg-[#078EFA]/20",
+            hoveredProvider === 'opencode' && "bg-[#3b82f6]/20",
             !hoveredProvider && "bg-primary/10"
           )}
           style={{
@@ -297,8 +248,7 @@ export function LoginPage() {
             "absolute w-[600px] h-[600px] rounded-full blur-[100px] transition-all duration-1000 ease-out",
             hoveredProvider === 'claude' && "bg-[#C377FF]/15",
             hoveredProvider === 'codex' && "bg-[#74aa9c]/15",
-            hoveredProvider === 'zai' && "bg-[#06B6D4]/15",
-            hoveredProvider === 'gemini' && "bg-[#AD89EB]/20",
+            hoveredProvider === 'opencode' && "bg-[#6366f1]/15",
             !hoveredProvider && "bg-accent/10"
           )}
           style={{
@@ -361,7 +311,7 @@ export function LoginPage() {
               Supported Providers
             </p>
             <div className="flex items-center gap-6">
-              {['claude', 'codex', 'gemini', 'zai'].map((p, i) => (
+              {['claude', 'codex', 'opencode'].map((p, i) => (
                 <div
                   key={p}
                   className="opacity-40 hover:opacity-100 transition-opacity duration-300"
@@ -433,7 +383,7 @@ export function LoginPage() {
                   </button>
 
                   <Dialog open={claudeLoginOpen} onOpenChange={setClaudeLoginOpen}>
-                    <DialogTrigger asChild onClick={() => setCliLoginProvider("claude")}>
+                    <DialogTrigger asChild>
                       <button className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 flex items-center justify-center gap-2">
                         <ExternalLink className="h-3.5 w-3.5" />
                         Login via WebUI instead
@@ -441,9 +391,9 @@ export function LoginPage() {
                     </DialogTrigger>
                     <DialogContent className="max-w-xl">
                       <DialogHeader>
-                        <DialogTitle>{cliLoginProvider === "gemini" ? "Gemini CLI Login" : "Claude CLI Login"}</DialogTitle>
+                        <DialogTitle>Claude CLI Login</DialogTitle>
                         <DialogDescription>
-                          {cliLoginProvider === "gemini" ? "Sign in with your Google account to use Gemini CLI." : "Start a login session, open the authorization link, then paste the code."}
+                          Start a login session, open the authorization link, then paste the code.
                         </DialogDescription>
                       </DialogHeader>
 
@@ -458,7 +408,7 @@ export function LoginPage() {
                         {claudeLoginStatus === 'completed' && (
                           <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-600">
                             <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                            <p>{cliLoginProvider === "gemini" ? "Gemini CLI connected! You can now use Gemini sessions." : "Claude CLI connected. Refresh usage meters to confirm."}</p>
+                            <p>Claude CLI connected. Refresh usage meters to confirm.</p>
                           </div>
                         )}
 
@@ -561,156 +511,30 @@ export function LoginPage() {
                 </button>
               )}
 
-              {providers?.gemini && (
+              {providers?.opencode && (
                 <div className="space-y-2">
                   <button
-                    onClick={() => handleProviderLogin('gemini')}
-                    onMouseEnter={() => setHoveredProvider('gemini')}
+                    onClick={() => handleProviderLogin('opencode')}
+                    onMouseEnter={() => setHoveredProvider('opencode')}
                     onMouseLeave={() => setHoveredProvider(null)}
                     className={cn(
                       "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
                       "flex items-center justify-between px-5",
-                      providerStyles.gemini.bg,
-                      providerStyles.gemini.hover,
-                      providerStyles.gemini.text,
-                      "hover:shadow-lg hover:shadow-[#078EFA]/25 hover:scale-[1.02] active:scale-[0.98]"
+                      providerStyles.opencode.bg,
+                      providerStyles.opencode.hover,
+                      providerStyles.opencode.text,
+                      "hover:shadow-lg hover:shadow-[#3b82f6]/25 hover:scale-[1.02] active:scale-[0.98]"
                     )}
                   >
                     <span className="flex items-center gap-3">
-                      <ProviderLogo provider="gemini" className="h-6 w-6" alt="" />
-                      <span>{UI_PROVIDER_META.gemini.loginCta}</span>
+                      <ProviderLogo provider="opencode" className="h-6 w-6" alt="" />
+                      <span>Sign in with OpenCode</span>
                     </span>
                     <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
                   </button>
-                  <Dialog open={geminiOAuthOpen} onOpenChange={setGeminiOAuthOpen}>
-                    <DialogTrigger asChild>
-                      <button className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors py-2 flex items-center justify-center gap-2">
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Login via WebUI (Google OAuth)
-                      </button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-xl">
-                      <DialogHeader>
-                        <DialogTitle>Gemini OAuth Login</DialogTitle>
-                        <DialogDescription>
-                          Sign in with your Google account to use Gemini CLI.
-                        </DialogDescription>
-                      </DialogHeader>
-
-                      <div className="space-y-4">
-                        {geminiIsError && (
-                          <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                            <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                            <p>{geminiTask.error || geminiTask.taskInfo?.error || 'OAuth failed'}</p>
-                          </div>
-                        )}
-
-                        {geminiIsComplete && (
-                          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-600">
-                            <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                            <p>{geminiOAuthResult?.message || 'Gemini CLI connected!'}</p>
-                          </div>
-                        )}
-
-                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 1</p>
-                              <p className="text-sm font-medium">Start OAuth flow</p>
-                            </div>
-                            <Button
-                              type="button"
-                              onClick={startGeminiOAuth}
-                              disabled={geminiTask.isLoading && !geminiIsError}
-                            >
-                              {geminiTask.isLoading && !geminiIsAwaiting && !geminiIsComplete && !geminiIsError ? (
-                                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Starting...</>
-                              ) : 'Start login'}
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
-                          <div>
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 2</p>
-                            <p className="text-sm font-medium">Open the authorization link</p>
-                          </div>
-                          <div className="flex gap-2">
-                            <Input
-                              value={geminiAuthUrl || ''}
-                              readOnly
-                              placeholder="Waiting for OAuth link..."
-                              className="text-xs"
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => geminiAuthUrl && window.open(geminiAuthUrl, '_blank', 'noopener,noreferrer')}
-                              disabled={!geminiAuthUrl}
-                            >
-                              Open
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
-                          <div>
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 3</p>
-                            <p className="text-sm font-medium">Paste the authorization code</p>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="gemini-oauth-code">Authorization code</Label>
-                            <div className="flex gap-2">
-                              <Input
-                                id="gemini-oauth-code"
-                                value={geminiOAuthCode}
-                                onChange={(e) => setGeminiOAuthCode(e.target.value)}
-                                placeholder="Paste code from browser"
-                                disabled={!geminiIsAwaiting || geminiIsComplete}
-                              />
-                              <Button
-                                type="button"
-                                onClick={submitGeminiOAuthCode}
-                                disabled={!geminiIsAwaiting || !geminiOAuthCode.trim() || geminiIsComplete}
-                              >
-                                Submit
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {geminiTask.taskInfo?.progress && !geminiIsComplete && (
-                          <p className="text-xs text-muted-foreground text-center">
-                            {geminiTask.taskInfo.progress}
-                          </p>
-                        )}
-                      </div>
-                    </DialogContent>
-                  </Dialog>
                 </div>
               )}
 
-              {providers?.zai && (
-                <button
-                  onClick={() => handleProviderLogin('zai')}
-                  onMouseEnter={() => setHoveredProvider('zai')}
-                  onMouseLeave={() => setHoveredProvider(null)}
-                  className={cn(
-                    "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
-                    "flex items-center justify-between px-5",
-                    providerStyles.zai.bg,
-                    providerStyles.zai.hover,
-                    providerStyles.zai.text,
-                    "hover:shadow-lg hover:shadow-[#0EA5E9]/25 hover:scale-[1.02] active:scale-[0.98]"
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <ProviderLogo provider="zai" className="h-6 w-6" alt="" />
-                    <span>{UI_PROVIDER_META.zai.loginCta}</span>
-                  </span>
-                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
-                </button>
-              )}
 
             </div>
 
@@ -767,7 +591,7 @@ export function LoginPage() {
             </div>
 
             {/* No providers message */}
-            {!providers?.claude && !providers?.codex && !providers?.zai && !providers?.gemini && !providers?.github && !providers?.google && (
+            {!providers?.claude && !providers?.codex && !providers?.github && !providers?.google && (
               <div className="text-center py-8">
                 <Sparkles className="h-10 w-10 mx-auto text-muted-foreground/40 mb-4" />
                 <p className="text-sm text-muted-foreground">

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@claude-code-webui/shared';
-import { api } from '@/services/api';
+import { api, ApiError } from '@/services/api';
 
 interface AuthState {
   user: User | null;
@@ -11,6 +11,11 @@ interface AuthState {
   setToken: (token: string) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
+  initializeAuth: () => Promise<void>;
+}
+
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -32,8 +37,14 @@ export const useAuthStore = create<AuthState>()(
           } else {
             set({ token: null, isAuthenticated: false, isLoading: false });
           }
-        } catch {
-          set({ token: null, isAuthenticated: false, isLoading: false });
+        } catch (err) {
+          if (isAuthFailure(err)) {
+            set({ token: null, user: null, isAuthenticated: false, isLoading: false });
+          } else {
+            // Network / transient error: keep token, just stop loading.
+            // Next request will retry; don't force the user to re-login.
+            set({ isLoading: false });
+          }
         }
       },
 
@@ -58,17 +69,42 @@ export const useAuthStore = create<AuthState>()(
           } else {
             set({ token: null, user: null, isAuthenticated: false, isLoading: false });
           }
-        } catch {
-          set({ token: null, user: null, isAuthenticated: false, isLoading: false });
+        } catch (err) {
+          if (isAuthFailure(err)) {
+            set({ token: null, user: null, isAuthenticated: false, isLoading: false });
+          } else {
+            // Keep the token on network/transient errors so new tabs can recover
+            // once the backend is reachable again.
+            set({ isLoading: false });
+          }
+        }
+      },
+
+      initializeAuth: async () => {
+        set({ isLoading: true });
+        try {
+          // Wait for persist rehydration before reading the token. Otherwise a
+          // fresh tab can read token=null and incorrectly flip isAuthenticated
+          // to false before the persisted token arrives.
+          if (!useAuthStore.persist.hasHydrated()) {
+            await new Promise<void>((resolve) => {
+              const unsub = useAuthStore.persist.onFinishHydration(() => {
+                unsub();
+                resolve();
+              });
+            });
+          }
+          await get().checkAuth();
+        } finally {
+          // checkAuth already manages isLoading, but guarantee it is cleared
+          // even on unexpected early returns.
+          if (get().isLoading) set({ isLoading: false });
         }
       },
     }),
     {
       name: 'claude-webui-auth',
       partialize: (state) => ({ token: state.token }),
-      onRehydrateStorage: () => (state) => {
-        state?.checkAuth();
-      },
     }
   )
 );
