@@ -45,17 +45,26 @@ LABEL org.opencontainers.image.source="https://github.com/zwaetschge/claude-code
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.vendor="Claude Code WebUI"
 
-# Runtime OS tooling only — git for repo ops, docker-cli/compose for self-rebuild,
-# curl+openssh for CLI installers and remote auth flows. No python/g++ here.
-RUN apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick
+# Runtime OS tooling. gcompat + libstdc++ + libgcc let glibc-linked binaries
+# (codex's Rust binary, opencode's Go binary) run on Alpine's musl libc —
+# without these, the npm postinstall hits SIGILL when verifying the binary.
+RUN apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick gcompat libstdc++ libgcc
 
 # User-writable npm prefix: the `node` user must be able to upgrade the AI CLIs
 # at runtime (see services/cli-updates.ts). Mounted volume overlays this path.
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
 ENV PATH=/home/node/.local/bin:/home/node/.npm-global/bin:$PATH
+# claude-code is the primary CLI and pure JS — must succeed at build time.
+# codex + opencode ship native binaries; under some buildkit/QEMU configurations
+# their postinstall verification hits SIGILL. Install them best-effort so the
+# image builds even when the emulator can't exec them — they can be installed
+# at runtime via the /api/cli-updates endpoint or by re-running the npm install
+# inside the running container.
 RUN mkdir -p /home/node/.npm-global && \
-    npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai && \
-    rm -f /home/node/.npm-global/lib/node_modules/opencode-ai/bin/.opencode
+    npm install -g @anthropic-ai/claude-code && \
+    (npm install -g @openai/codex || echo "WARN: codex install failed at build time — install via /api/cli-updates at runtime") && \
+    (npm install -g opencode-ai && rm -f /home/node/.npm-global/lib/node_modules/opencode-ai/bin/.opencode \
+        || echo "WARN: opencode-ai install failed at build time — install via /api/cli-updates at runtime")
 
 WORKDIR /app
 
