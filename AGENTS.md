@@ -1,302 +1,119 @@
 # AGENTS.md
 
-Notes from the multi-provider integration work for Plum Code WebUI.
+Notes on the multi-provider integration in Plum Code WebUI.
 
 ## Goals implemented
-- Multi-provider CLI support (Claude, Codex, Z.AI/GLM, Gemini) with per-session provider.
-- Provider switching inside a session with a detailed handoff summary (no context-loss surprise).
-- Shared settings across providers (default directory, tools list, settings UI).
-- Shared skills/agents/plugins across Claude + Codex; GLM and Gemini use their own config homes.
-- Branding: Plum Code WebUI login, provider-specific visuals + logos.
+
+- Multi-provider CLI support (Claude Code, Codex, OpenCode) with per-session provider selection
+- Provider switching inside a session restarts the underlying CLI cleanly
+- Shared settings across providers (default working directory, tools list, settings UI)
+- Per-CLI auth + state directories that survive container rebuilds
+- Branding: Plum Code WebUI login, provider-specific visuals + logos
+- ComfyUI MCP server for inline image generation (replaces the earlier Gemini image path)
+- Android-builder MCP server for native app workflows on real devices
+
+## Provider summary
+
+| Provider | CLI | Process model | Config home |
+|----------|-----|---------------|-------------|
+| Claude Code | `claude` | persistent stream-json | `~/.claude` |
+| Codex (OpenAI) | `codex` | per-turn — manager respawns on `turn.completed` | `~/.codex` |
+| OpenCode | `opencode` | persistent, model routing for GLM (`z-ai/glm-*`), Kimi, and 75+ LLMs | `~/.opencode` |
+
+All three CLIs ship inside the container; their config dirs are bind-mounted from `${CONFIG_DIR}` (default `./config`) so OAuth tokens and provider state persist across `docker compose up --build`.
 
 ## Provider switching behavior
-- Switching provider restarts the CLI process and emits a "provider switch handoff" summary.
-- Handoff summary is injected as a system reminder on the next prompt.
-- Handoff context size increased: 80 messages / 60k chars.
-- UI shows provider badges per session in dashboard/sidebar.
+
+- Switching provider inside a session restarts the CLI process cleanly
+- UI shows provider badges per session in the dashboard and sidebar
+- The previous "handover summary" / handoff-protocol injection has been removed — provider switches start a fresh CLI context
 
 ## Permission approval behavior
-- Permission approvals no longer resend the full user prompt.
-- Instead: send a short "resume" hint to avoid duplicate responses.
 
-## Z.AI context-limit handling
-- Detects context window limit errors and triggers auto-compact with a detailed handoff summary.
-- Clears UI history and injects the handoff on the next prompt so GLM can continue.
+- Permission approvals do not resend the full user prompt
+- A short "resume" hint is sent instead, to avoid duplicate responses
+
+## OpenCode notes
+
+- OpenCode handles GLM, Kimi, and other LLMs through its own model routing — there is no separate GLM provider in the WebUI
+- Default model: `z-ai/glm-5.1` (override with `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL`)
+- Available model menu: empty = auto-discover from the installed CLI (override with `CLI_PROVIDER_OPENCODE_MODELS=…`)
+- Debug stream events with `OPENCODE_DEBUG_EVENTS=1`
 
 ## Shared agents / skills / plugins
-- Shared config home for Claude + Codex: `~/.claude`.
-- GLM uses `~/.glm` (override supported via env).
-- Gemini uses `~/.gemini` (override supported via env).
-- WebUI auto-syncs external skill packs from:
+
+- Skills live in `~/.claude/skills/<name>/SKILL.md`
+- Agents live in `~/.claude/agents/<name>.md`
+- The WebUI auto-syncs external skill packs from these directories (in order):
   - `/mnt/user/AI/Skills` (primary)
   - `/mnt/unraid/AI/Skills` (fallback)
   - `WEBUI_SKILLS_DIRS` (comma-separated overrides)
-- `.skill.zip` files are unpacked into `~/.claude/skills`.
-- Agents/skills/plugins are exported into `AGENTS.md` and `CLAUDE.md` in each session folder.
-- Managed block is appended/updated (does not overwrite custom text).
+- `.skill.zip` files are unpacked into `~/.claude/skills`
+- The managed block in `AGENTS.md` and `CLAUDE.md` is appended/updated on each session — custom text outside the managed block is preserved
 
-## Usage meters
-- Session usage meters supported for Claude, Z.AI/GLM, Codex.
-- Codex usage may require `CODEX_USAGE_COOKIE` / `CODEX_USAGE_URL` env vars.
+## Built-in MCP servers
 
-## Settings
-- Default directory is shared across providers.
-- Settings tab is provider-agnostic; not tied to UI provider.
-- Z.AI settings write to GLM env in `~/.glm/settings.json`:
-  - `ANTHROPIC_AUTH_TOKEN`
-  - `ANTHROPIC_BASE_URL` (default `https://api.z.ai/api/anthropic`)
+Both registered in `config/claude/settings.json` → `mcpServers`. Loaded at CLI spawn — only available in **new** sessions.
 
-## Branding
-- Plum branding on login:
-  - Logo: `/logos/plum.png`
-  - Title: "Plum Code WebUI"
-  - Slogan: "A Vibecoded wrapper for Cli-Coding"
-- Provider logos:
-  - Claude: `/claude-logo.png`
-  - Codex: `/logos/codex.webp`
-  - Z.AI: `/logos/zai.png`
-  - Gemini: `/logos/Gemini_CLI_logo.webp`
-- Claude login button stays orange.
+### `comfyui-images`
+
+- Script: `scripts/mcp-servers/comfyui.mjs`
+- Tool: `generate_image` — submits to a LoRA Tester ComfyUI Flux server, polls for completion, downloads the PNG, saves to `data/generated/<uuid>.png`, returns `display_markdown` so Claude can render the image inline
+- Targets (override via env vars `COMFYUI_API_URL`, `COMFYUI_BACKEND_URL`, `COMFYUI_OUTPUT_DIR`, `COMFYUI_PUBLIC_PREFIX`):
+  - LoRA Tester backend: `http://192.168.1.126:8850`
+  - ComfyUI direct: `http://192.168.1.23:8188`
+- Defaults: `cfg=1.0`, `sampler=euler`, `megapixels=0.5`, `steps=6`, `aspect_ratio=1:1`
+
+### `android-builder`
+
+- Script: `scripts/mcp-servers/android-builder.mjs`
+- ~25 tools across project lifecycle, build, install/launch, ADB device management, emulator, on-device testing
+- Backend: `http://host.docker.internal:4000` (the `android-app-creator-backend` running on the host)
+- Persistent device registry: pair a phone once via `adb_pair_wifi` + `adb_connect_wifi`, the backend stores it in `/app/data/known-devices.json` and auto-reconnects on startup
+- See `~/.claude/skills/android-build/SKILL.md` for the full workflow — never call `adb` or `gradle` from `Bash`
+
+## Auth allowlist
+
+`AUTH_ALLOWED_EMAILS` (comma-separated) is the single source of truth for who can log in:
+
+- Enforced for OAuth (GitHub, Google) via `findOrCreateUser` in `src/auth/passport.ts` — throws `EmailNotAllowedError`, callback redirects to `/connect?error=email_not_allowed`
+- Enforced for basic-auth in `src/routes/basic-auth.ts` — returns `403 EMAIL_NOT_ALLOWED`
+- Empty = no allowlist (only safe behind a private network or SSO proxy)
+- First user matching `SEED_ADMIN_EMAIL` (or the first allowlist entry if unset) gets `role=admin` on first login
 
 ## Paths and mounts (container)
-- Logos: `LOGOS_DIR=/app/logos` with mount `/mnt/user/appdata/claude-code-webui/logos:/app/logos`
-- Config homes:
-  - Claude/Codex: `/home/node/.claude` (mounted from `/root/.claude`)
-  - GLM: `/home/node/.glm` (mounted from `/root/.glm`)
-  - Codex: `/home/node/.codex` (mounted from `/root/.codex`)
-  - Gemini: `/home/node/.gemini` (mounted from `/root/.gemini`)
-- Allowed base paths: `/mnt/user`
+
+- Logos: `LOGOS_DIR=/app/logos` (override file mounts `/mnt/user/appdata/claude-code-webui/logos`)
+- CLI homes (mounted from `${CONFIG_DIR}/<cli>`):
+  - Claude Code → `/home/node/.claude`
+  - Codex → `/home/node/.codex`
+  - OpenCode → `/home/node/.opencode`
+  - npm-global → `/home/node/.npm-global`
+- Workspace: `${WORKSPACE_DIR}` → `/workspace` (configurable via `ALLOWED_BASE_PATHS`)
 
 ## Environment overrides
-- `WEBUI_CONFIG_HOME` or `CLAUDE_CONFIG_HOME`: override shared config home for Claude/Codex.
-- `WEBUI_GLM_CONFIG_HOME` or `GLM_CONFIG_HOME`: override GLM config home.
-- `WEBUI_GEMINI_CONFIG_HOME` or `GEMINI_CONFIG_HOME`: override Gemini config home.
-- `WEBUI_SKILLS_DIRS` or `CLAUDE_SKILLS_DIRS`: extra skill pack folders.
-- Codex usage:
-  - `CODEX_USAGE_COOKIE`
-  - `CODEX_USAGE_URL`
-  - `CODEX_USER_AGENT`
+
+- `WEBUI_CONFIG_HOME` or `CLAUDE_CONFIG_HOME`: override the shared Claude config home
+- `WEBUI_SKILLS_DIRS` or `CLAUDE_SKILLS_DIRS`: extra skill pack folders
+- `CLI_PROVIDER_CLAUDE_MODELS`, `CLI_PROVIDER_CODEX_MODELS`, `CLI_PROVIDER_OPENCODE_MODELS`: override the model menu per provider (empty = auto-discover)
+- `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL`: default OpenCode model (default `z-ai/glm-5.1`)
+- `OPENCODE_DEBUG_EVENTS=1`: log raw OpenCode events to backend logs
+
+## Removed paths (do not reintroduce)
+
+The following used to exist in earlier versions of this repo and have been deleted:
+
+- Gemini provider + `~/.gemini` config home + Gemini image generation service
+- GLM as a top-level provider (now folded into OpenCode's model routing)
+- Orchestration manager + task router + worker pool
+- Ralph autonomous loop engine
+- Watchdog health monitoring + Telegram alerts
+- Self-rebuild HTTP API + handover protocol
+- "Repair-bot" sidekick container
+
+The Rebuild Robot sidecar (`scripts/rebuild-robot-sidecar.sh`, opt-in via `docker-compose.override.yml`) is the only remaining self-rebuild path.
 
 ## Known gaps / follow-ups
-- Codex usage endpoint requires a valid cookie; otherwise returns unsupported.
-- Ensure container rebuilt after changes (Dockerfile now installs `unzip` for skill packs).
 
----
-
-# Multi-CLI Agent Orchestration
-
-This section defines the roles and strengths of each CLI tool in Multi-CLI mode.
-When working in a multi-agent session, each tool should be leveraged for its core competencies.
-
-## Agent Roles & Strengths
-
-### Claude Code (Recommended Master)
-
-**Role:** Orchestrator, Planner, Architect
-
-**Icon:** 🟠 | **Provider ID:** `claude`
-
-**Core Strengths:**
-- **Planning & Architecture**: Exceptional at breaking down complex tasks into structured plans
-- **Orchestration**: Native support for spawning and managing sub-agents via `Task` tool
-- **Context Management**: Superior long-context handling with automatic summarization
-- **Code Analysis**: Deep understanding of large codebases and cross-file relationships
-- **Documentation**: Excellent at generating comprehensive docs, READMEs, and specs
-
-**Best Used For:**
-- Project planning and task decomposition
-- Architectural decisions and system design
-- Coordinating work between slave agents
-- Complex refactoring across multiple files
-- Writing specifications and documentation
-- Code review and quality assessment
-
-**CLI Features:**
-- `--resume`: Session persistence and continuation
-- `--permission-mode plan`: Dedicated planning mode
-- Stream JSON output with partial messages
-- Sub-agent spawning with `Task` tool
-
----
-
-### Codex (OpenAI)
-
-**Role:** Quality Assurance, Hard Implementation
-
-**Icon:** 🟢 | **Provider ID:** `codex`
-
-**Core Strengths:**
-- **Precise Coding**: Focused, deterministic code generation
-- **Test Writing**: Excellent at comprehensive test coverage
-- **Bug Fixing**: Strong at identifying and fixing specific issues
-- **Code Quality**: Rigorous adherence to best practices and patterns
-- **Reasoning**: Deep reasoning with `o3` and `o4-mini` models
-
-**Best Used For:**
-- Implementing well-defined functions and modules
-- Writing unit tests and integration tests
-- Fixing specific bugs with clear reproduction steps
-- Code optimization and performance improvements
-- Strict typing and interface definitions
-- Security-critical implementations
-
-**CLI Features:**
-- `--model o3`: Maximum reasoning capability
-- `--reasoning_level`: Configurable thinking depth
-- JSON output for structured results
-- Sandbox-aware execution
-
----
-
-### Gemini CLI (Google)
-
-**Role:** Frontend Specialist, UI/UX
-
-**Icon:** 🔵 | **Provider ID:** `gemini`
-
-**Core Strengths:**
-- **Frontend Development**: Native understanding of modern web frameworks
-- **UI Components**: Excellent at React, Vue, and component architecture
-- **Styling**: Strong CSS, Tailwind, and design system knowledge
-- **Multi-Modal**: Can process images and visual designs
-- **Speed**: Fast responses with `gemini-2.5-flash`
-
-**Best Used For:**
-- React/Vue/Svelte component development
-- CSS and Tailwind styling
-- Responsive design implementation
-- UI animations and interactions
-- Converting designs to code
-- Frontend state management
-
-**CLI Features:**
-- `--model gemini-2.5-pro`: Maximum capability
-- `--approval-mode auto_edit`: Fast iteration
-- Stream JSON for real-time feedback
-- Multi-modal input support
-
----
-
-### Z.AI (GLM)
-
-**Role:** Utility Agent, Quick Tasks
-
-**Icon:** 🔷 | **Provider ID:** `glm`
-
-**Core Strengths:**
-- **Fast Execution**: Quick responses for simple tasks
-- **Lightweight Tasks**: Efficient for small, focused operations
-- **Cost Effective**: Lower resource usage for routine work
-- **Claude-Compatible**: Same CLI interface as Claude Code
-- **Skill Support**: Access to Claude-style skills and prompts
-
-**Best Used For:**
-- Quick file operations and edits
-- Simple refactoring tasks
-- Generating boilerplate code
-- Quick documentation updates
-- Routine maintenance tasks
-- Rapid prototyping
-
-**CLI Features:**
-- `--resume`: Session persistence
-- `--allowedTools`: Granular tool control
-- Stream JSON output
-- Claude-compatible command structure
-
----
-
-## Multi-CLI Orchestration Patterns
-
-### Pattern 1: Master-Slave Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    MASTER (Claude Code)                      │
-│  - Receives user requests                                    │
-│  - Plans task decomposition                                  │
-│  - Delegates to appropriate slave agents                     │
-│  - Aggregates and validates results                          │
-└─────────────────────────────────────────────────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  SLAVE (Codex)  │  │ SLAVE (Gemini)  │  │  SLAVE (Z.AI)   │
-│  Backend/Tests  │  │    Frontend     │  │   Quick Tasks   │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-```
-
-### Pattern 2: Parallel Execution
-
-When tasks are independent, slaves can work in parallel:
-
-1. **Master** analyzes request and identifies independent subtasks
-2. **Master** dispatches to multiple slaves simultaneously
-3. **Slaves** execute and return results
-4. **Master** aggregates, validates, and presents unified response
-
-### Pattern 3: Sequential Pipeline
-
-For dependent tasks:
-
-1. **Gemini** → Creates UI components
-2. **Codex** → Writes tests for components
-3. **Claude** → Reviews and integrates
-4. **Z.AI** → Cleanup and documentation
-
----
-
-## Recommended Configurations
-
-### Full-Stack Development
-- **Master:** Claude Code (planning + orchestration)
-- **Slaves:** Gemini (frontend), Codex (backend + tests)
-
-### Quality-First Development
-- **Master:** Codex (strict quality gates)
-- **Slaves:** Claude (implementation), Z.AI (boilerplate)
-
-### Rapid Prototyping
-- **Master:** Claude Code (architecture)
-- **Slaves:** Gemini (UI), Z.AI (quick iterations)
-
-### Test-Driven Development
-- **Master:** Codex (tests first)
-- **Slaves:** Claude (implementation), Gemini (UI tests)
-
----
-
-## Multi-CLI Session Configuration
-
-```json
-{
-  "mode": "multi",
-  "master": "claude",
-  "slaves": ["codex", "gemini", "glm"],
-  "routing": {
-    "frontend": "gemini",
-    "backend": "codex",
-    "tests": "codex",
-    "docs": "claude",
-    "quick": "glm"
-  }
-}
-```
-
----
-
-## Best Practices
-
-1. **Let the Master Plan**: Always route initial requests through the master agent for proper task decomposition.
-
-2. **Match Task to Agent**: Use each agent for its core strengths. Don't send frontend work to Codex or complex architecture to Z.AI.
-
-3. **Validate with Codex**: When quality is critical, have Codex review or test the output from other agents.
-
-4. **Document with Claude**: For comprehensive documentation, Claude Code produces the most thorough results.
-
-5. **Iterate with Z.AI**: For quick iterations and small fixes, Z.AI provides fast turnaround.
-
-6. **Multi-Modal with Gemini**: When working with images, designs, or visual content, leverage Gemini's multi-modal capabilities.
-
----
+- Codex usage endpoint requires a valid cookie (`CODEX_USAGE_COOKIE` / `CODEX_USAGE_URL`); otherwise reports unsupported
+- MCP tools are bound at CLI spawn — existing sessions won't see new tools until a fresh chat is started

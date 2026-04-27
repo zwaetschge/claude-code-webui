@@ -1,11 +1,10 @@
 # Plum Code WebUI
 
-A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with multi-provider support, real-time streaming, tool execution tracking, orchestration, and self-rebuild capabilities.
+Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-time streaming, tool execution tracking, multi-session management, integrated git/GitHub, file browsing, and ComfyUI image generation — all behind a single Docker container.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.3-blue.svg)](https://react.dev/)
-[![Docker Hub](https://img.shields.io/docker/v/valentin2177/claude-code-webui?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/valentin2177/claude-code-webui)
 
 # Screenshots
 
@@ -35,11 +34,12 @@ A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with
 ### Chat Interface
 - Real-time streaming responses via WebSocket
 - Multi-session management with history
-- Image attachments and Gemini image generation
+- Image attachments + inline image generation via ComfyUI MCP
 - LaTeX/Math rendering with KaTeX
 - Interactive choice prompts
 - Context & token popover with live progress bar
 - Todo tracking from Claude's TodoWrite tool
+- Subagent (Task tool) lifecycle rendering with distinct cards
 
 ### DevTools Integration
 - **Context Popover**: Inline progress bar showing context window usage (green→yellow→red), click to see full token breakdown (input/output/cache read/cache write), cost, and model
@@ -47,22 +47,11 @@ A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with
 - **Compaction Boundary Cards**: Visual separators in chat when context is compacted, with expandable summary text
 
 ### Multi-Provider Support
-- **Claude** (Anthropic) — primary provider
-- **Codex** (OpenAI) — alternative provider
-- **GLM** (Z.AI) — Chinese market provider
+- **Claude Code** (Anthropic) — primary provider, full stream-json
+- **Codex** (OpenAI) — per-turn process model with auto-respawn
+- **OpenCode** — routes to GLM (`z-ai/glm-*`), Kimi, and 75+ other LLMs through a single CLI
 - Per-session provider selection
-- Independent CLI instances per provider
-
-### Orchestration
-- Multi-provider task delegation
-- Parallel worker execution
-- Task routing and progress tracking
-- Worker output streaming
-
-### Ralph (Autonomous Loop)
-- Iterative autonomous task execution
-- Plan generation and progress tracking
-- Multi-iteration workflows with checkpoints
+- Independent CLI instances + persisted auth per provider (`~/.claude`, `~/.codex`, `~/.opencode`)
 
 ### File Management
 - File Tree Browser with lazy loading and git status
@@ -95,26 +84,26 @@ A powerful web-based interface for Claude Code, Codex, Gemini, and GLM CLIs with
 - Session starring and filtering
 - PTY Reconnect with 30-minute buffer
 
-### Self-Rebuild
-- Container can rebuild and redeploy itself
-- Rebuild Robot for external container management
-- Status tracking and reporting
+### MCP Servers (built-in)
+- **comfyui-images** — `generate_image` tool backed by a ComfyUI Flux server, renders inline in chat
+- **android-builder** — ~25 tools for building, installing, launching, and testing Android apps via the `android-app-creator` backend (project lifecycle, build, ADB, emulator, on-device testing)
 
-### Watchdog & Monitoring
-- Session health monitoring
-- Telegram bot notifications
-- Configurable alert thresholds
+### Admin
+- Admin pages: user list, role management, audit log
+- `AUTH_ALLOWED_EMAILS` env-var allowlist (gates both OAuth and basic-auth)
+- First-login admin bootstrap via `SEED_ADMIN_EMAIL`
 
 ### Mobile Support
 - Progressive Web App (PWA)
 - Bottom tab navigation
 - Swipe gestures for panel navigation
 - Responsive design
+- Native Android client (`packages/android`)
 
 ### Settings
 - Tabbed settings interface
 - Theme configuration
-- API key management (Gemini, GitHub)
+- Per-provider API key / OAuth management (Anthropic, GitHub, Google)
 - MCP Server management with connection testing
 - Memory viewer for session context
 
@@ -216,16 +205,23 @@ Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on st
 | `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL` | Default model for OpenCode sessions (default: `z-ai/glm-5.1`). | No |
 | `TRUST_PROXY` | Express `trust proxy` (default: `1`). Setting `true` without a guarding proxy defeats IP-based rate-limiting. | No |
 
-### Claude CLI Integration
+### CLI Integration
 
-The backend communicates with Claude CLI in `stream-json` mode:
+The backend spawns each provider as a child process and bridges its stream over Socket.IO:
 
 ```bash
+# Claude Code — primary, persistent stream-json
 claude --print --verbose --output-format stream-json --input-format stream-json \
        --include-partial-messages --dangerously-skip-permissions
+
+# Codex — per-turn process model; manager respawns on `turn.completed`
+codex …
+
+# OpenCode — model routing for GLM (z-ai/glm-*), Kimi, etc.
+opencode …
 ```
 
-GLM (Z.AI) sessions run a separate Claude Code CLI instance with its own config home (`~/.glm` by default). See the `CLI_PROVIDER_GLM_*` and `WEBUI_GLM_CONFIG_HOME` environment variables above.
+All three CLIs ship inside the container; their auth/state directories (`~/.claude`, `~/.codex`, `~/.opencode`) survive rebuilds via the `${CONFIG_DIR}` bind mount.
 
 ## Project Structure
 
@@ -233,29 +229,27 @@ GLM (Z.AI) sessions run a separate Claude Code CLI instance with its own config 
 packages/
 ├── backend/              # Express + Socket.IO server
 │   ├── src/
-│   │   ├── routes/       # REST API endpoints
-│   │   ├── services/     # Business logic
-│   │   │   ├── claude/   # Claude CLI process management
-│   │   │   ├── orchestration/  # Multi-provider orchestration
-│   │   │   ├── ralph/    # Autonomous loop engine
-│   │   │   ├── watchdog/ # Health monitoring & alerts
-│   │   │   └── gemini/   # Gemini image generation
-│   │   ├── websocket/    # Socket.IO handlers
-│   │   └── db/           # SQLite database
-├── frontend/             # React + Vite application
+│   │   ├── routes/       # REST API endpoints (~30 modules)
+│   │   ├── services/
+│   │   │   └── claude/   # ClaudeProcessManager — owns Claude / Codex / OpenCode lifecycle
+│   │   ├── auth/         # Passport (GitHub, Google) + basic-auth + allowlist
+│   │   ├── middleware/   # CSP, rate limiting, error handling
+│   │   └── db/           # SQLite (better-sqlite3) + migrations
+├── frontend/             # React 18 + Vite SPA
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── chat/     # Chat messages, tools, compaction cards
-│   │   │   ├── session/  # Controls, tool log, watchdog
-│   │   │   ├── orchestration/  # Multi-provider UI
-│   │   │   ├── ralph/    # Autonomous loop UI
-│   │   │   └── ui/       # Shared UI primitives
-│   │   ├── pages/
+│   │   │   ├── chat/     # Messages, tools, compaction cards, subagents
+│   │   │   ├── session/  # Controls, tool log
+│   │   │   └── ui/       # Radix-based primitives
+│   │   ├── pages/        # Sessions, admin, settings
 │   │   ├── stores/       # Zustand stores
-│   │   ├── services/     # API & Socket clients
-│   │   └── hooks/        # Custom React hooks
+│   │   ├── services/     # API + Socket.IO client
+│   │   └── hooks/
 ├── shared/               # Shared TypeScript types
-└── scripts/              # Rebuild robot & helper scripts
+├── desktop/              # Desktop shell wrapper
+├── android/              # Native Android client
+└── scripts/
+    └── mcp-servers/      # comfyui.mjs, android-builder.mjs (stdio MCP)
 ```
 
 ## API Endpoints
@@ -301,17 +295,16 @@ packages/
 - `session:reconnect` - Reconnect with buffer replay
 
 ### Server → Client
-- `session:output` - Streaming text
-- `session:message` - Complete message
-- `session:thinking` - Thinking indicator
-- `session:tool_use` - Tool usage events (with duration tracking)
+- `session:output` - Streaming text deltas
+- `session:message` - Complete persisted message
+- `session:thinking` - Thinking indicator (boolean)
+- `session:tool_use` - Tool lifecycle (started / completed / error) with duration tracking
 - `session:todos` - Todo list updates
 - `session:usage` - Token usage data
 - `session:compact` - Context compaction events
-- `session:agent` - Subagent lifecycle events
+- `session:agent` - Subagent (Task tool) lifecycle events
 - `session:mode` - Permission mode changes
-- `orchestration:*` - Orchestration state, tasks, workers
-- `ralph:*` - Ralph autonomous loop events
+- `session:status` - Session state changes
 
 ## Contributing
 
