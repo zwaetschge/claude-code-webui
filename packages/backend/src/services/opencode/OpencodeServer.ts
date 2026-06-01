@@ -45,6 +45,8 @@ interface PromptOptions {
   variant?: string | null;
   /** Session working directory, used to sandbox tools. */
   directory?: string;
+  /** Plum WebUI session id for MCP bridge attribution. */
+  webuiSessionId?: string;
 }
 
 interface CreateSessionOptions {
@@ -52,9 +54,11 @@ interface CreateSessionOptions {
   agent?: string | null;
   mode?: SessionMode;
   variant?: string | null;
+  allowedDirectories?: string[];
 }
 
 const READY_LINE_RE = /opencode server listening on (http:\/\/[^\s]+)/i;
+const WEBUI_SESSION_CONTEXT_FILE = path.join(os.tmpdir(), 'plum-opencode-webui-session.json');
 
 class OpencodeServer {
   private proc: ChildProcess | null = null;
@@ -134,6 +138,7 @@ class OpencodeServer {
         OPENCODE_DATA_DIR: path.join(os.homedir(), '.local', 'share', 'opencode'),
         WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
         WEBUI_HOOK_SECRET: config.hookSecret,
+        WEBUI_SESSION_CONTEXT_FILE,
       };
 
       const proc = cpSpawn('opencode', ['serve', '--port', '0', '--hostname', '127.0.0.1'], {
@@ -408,7 +413,10 @@ class OpencodeServer {
       };
     }
     if (opts.agent) body.agent = opts.agent;
-    body.permission = buildOpenCodePermissionRules(opts.mode);
+    body.permission = buildOpenCodePermissionRules(opts.mode, {
+      workingDirectory: cwd,
+      allowedDirectories: opts.allowedDirectories,
+    });
 
     const res = await fetch(url, {
       method: 'POST',
@@ -433,6 +441,7 @@ class OpencodeServer {
     // or replayed by opencode — they're just dropped. Block here until the
     // stream is open so the model's output doesn't land in a dead window.
     await this.waitForSseReady();
+    this.writeWebuiSessionContext(opencodeSessionId, opts);
     const body: Record<string, unknown> = {
       parts: [{ type: 'text', text: opts.text }],
     };
@@ -463,6 +472,23 @@ class OpencodeServer {
       throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
     }
     this.startPolling(opencodeSessionId);
+  }
+
+  private writeWebuiSessionContext(opencodeSessionId: string, opts: PromptOptions): void {
+    if (!opts.webuiSessionId) return;
+    try {
+      fs.writeFileSync(
+        WEBUI_SESSION_CONTEXT_FILE,
+        JSON.stringify({
+          webuiSessionId: opts.webuiSessionId,
+          opencodeSessionId,
+          directory: opts.directory || null,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch (err) {
+      console.warn('[OPENCODE-SERVER] failed to write WebUI session context:', err);
+    }
   }
 
   /**

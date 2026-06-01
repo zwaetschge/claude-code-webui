@@ -11,10 +11,12 @@
 // Speaks JSON-RPC 2.0 over stdin/stdout, no external deps.
 
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 
 const BACKEND = process.env.WEBUI_BACKEND_URL || 'http://localhost:3001';
 const HOOK_SECRET = process.env.WEBUI_HOOK_SECRET || '';
 const SESSION_ID = process.env.WEBUI_SESSION_ID || '';
+const SESSION_CONTEXT_FILE = process.env.WEBUI_SESSION_CONTEXT_FILE || '';
 const TIMEOUT_S = Number(process.env.COMFYUI_TIMEOUT_SECONDS || 300);
 
 const log = (...args) => console.error('[mcp-comfyui]', ...args);
@@ -141,12 +143,26 @@ const WORKFLOW_BY_TOOL = {
   edit_image: 'flux2-klein-edit',
 };
 
+function getSessionId() {
+  if (SESSION_ID) return SESSION_ID;
+  if (!SESSION_CONTEXT_FILE) return '';
+  try {
+    const parsed = JSON.parse(readFileSync(SESSION_CONTEXT_FILE, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return '';
+    if (Date.now() - Number(parsed.updatedAt || 0) > 6 * 60 * 60 * 1000) return '';
+    return typeof parsed.webuiSessionId === 'string' ? parsed.webuiSessionId : '';
+  } catch {
+    return '';
+  }
+}
+
 async function callBackend(workflow, params) {
   const headers = {
     'content-type': 'application/json',
   };
+  const sessionId = getSessionId();
   if (HOOK_SECRET) headers['x-webui-hook-secret'] = HOOK_SECRET;
-  if (SESSION_ID) headers['x-webui-session-id'] = SESSION_ID;
+  if (sessionId) headers['x-webui-session-id'] = sessionId;
 
   const resp = await fetch(`${BACKEND}/api/comfyui/internal/generate`, {
     method: 'POST',
@@ -277,4 +293,4 @@ rl.on('line', (line) => {
   void handleRequest(msg);
 });
 
-log(`ready (backend=${BACKEND}, session=${SESSION_ID || '<unset>'})`);
+log(`ready (backend=${BACKEND}, session=${getSessionId() || '<unset>'})`);

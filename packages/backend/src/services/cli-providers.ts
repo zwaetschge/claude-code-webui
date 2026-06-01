@@ -953,9 +953,7 @@ function getVibeAgentForMode(mode?: SessionMode): string {
       return 'auto-approve';
     case 'auto-accept':
     default:
-      // Vibe's non-interactive default is already auto-approve. Be explicit so
-      // the WebUI mode survives future Vibe default changes.
-      return 'auto-approve';
+      return 'accept-edits';
   }
 }
 
@@ -1023,7 +1021,38 @@ export type OpenCodePermissionRule = {
   action: 'allow' | 'deny' | 'ask';
 };
 
-export function buildOpenCodePermissionRules(mode?: SessionMode): OpenCodePermissionRule[] {
+function openCodeDirectoryPatterns(
+  workingDirectory?: string,
+  allowedDirectories?: string[]
+): string[] {
+  const values = [workingDirectory, ...(allowedDirectories || [])]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => path.resolve(value));
+  const unique = Array.from(new Set(values));
+  return unique.flatMap((dir) => [dir, `${dir}/**`]);
+}
+
+function openCodeDirectoryAllowRules(
+  workingDirectory?: string,
+  allowedDirectories?: string[]
+): OpenCodePermissionRule[] {
+  return openCodeDirectoryPatterns(workingDirectory, allowedDirectories).map((pattern) => ({
+    permission: 'external_directory',
+    pattern,
+    action: 'allow',
+  }));
+}
+
+export function buildOpenCodePermissionRules(
+  mode?: SessionMode,
+  opts: { workingDirectory?: string; allowedDirectories?: string[] } = {}
+): OpenCodePermissionRule[] {
+  const directoryAllows = openCodeDirectoryAllowRules(
+    opts.workingDirectory,
+    opts.allowedDirectories
+  );
+  // OpenCode permission patterns are last-match-wins, so broad external_directory
+  // catch-alls must come before the specific WebUI workspace/add-dir allows.
   const allowRead: OpenCodePermissionRule[] = [
     { permission: 'read', pattern: '*', action: 'allow' },
     { permission: 'list', pattern: '*', action: 'allow' },
@@ -1042,6 +1071,7 @@ export function buildOpenCodePermissionRules(mode?: SessionMode): OpenCodePermis
         { permission: 'task', pattern: '*', action: 'deny' },
         { permission: 'todowrite', pattern: '*', action: 'deny' },
         { permission: 'external_directory', pattern: '*', action: 'deny' },
+        ...directoryAllows,
         { permission: 'repo_clone', pattern: '*', action: 'deny' },
         { permission: 'plan_enter', pattern: '*', action: 'deny' },
         { permission: 'plan_exit', pattern: '*', action: 'deny' },
@@ -1054,6 +1084,7 @@ export function buildOpenCodePermissionRules(mode?: SessionMode): OpenCodePermis
         { permission: 'task', pattern: '*', action: 'ask' },
         { permission: 'todowrite', pattern: '*', action: 'ask' },
         { permission: 'external_directory', pattern: '*', action: 'ask' },
+        ...directoryAllows,
         { permission: 'repo_clone', pattern: '*', action: 'ask' },
       ];
     case 'danger':
@@ -1069,7 +1100,8 @@ export function buildOpenCodePermissionRules(mode?: SessionMode): OpenCodePermis
         { permission: 'bash', pattern: '*', action: 'allow' },
         { permission: 'task', pattern: '*', action: 'allow' },
         { permission: 'todowrite', pattern: '*', action: 'allow' },
-        { permission: 'external_directory', pattern: '*', action: 'allow' },
+        { permission: 'external_directory', pattern: '*', action: 'ask' },
+        ...directoryAllows,
         { permission: 'repo_clone', pattern: '*', action: 'allow' },
         { permission: 'question', pattern: '*', action: 'deny' },
       ];

@@ -1000,6 +1000,184 @@ type VibeSessionStats = {
   session_cost?: number;
 };
 
+function resolveWebuiScript(scriptName: string): string | null {
+  const candidates = [
+    path.resolve(__dirname, '../../../../../scripts', scriptName),
+    path.resolve(process.cwd(), 'scripts', scriptName),
+    path.join('/app/scripts', scriptName),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fsSync.existsSync(candidate)) return candidate;
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+function resolveVibeRunnerInvocation(): { command: string; argsPrefix: string[] } | null {
+  const runner = resolveWebuiScript('vibe-webui-runner.py');
+  if (!runner) return null;
+  const pythonCandidates = [
+    '/home/node/.local/pipx/venvs/mistral-vibe/bin/python',
+    process.env.PYTHON || '',
+    'python3',
+  ].filter(Boolean);
+  for (const command of pythonCandidates) {
+    if (command.includes('/') && !fsSync.existsSync(command)) continue;
+    return { command, argsPrefix: [runner] };
+  }
+  return null;
+}
+
+function extractCodexText(output: string): string {
+  const deltas: string[] = [];
+  const completed: string[] = [];
+  const fallback: string[] = [];
+
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event = JSON.parse(trimmed) as {
+        type?: string;
+        delta?: string;
+        text?: string;
+        item?: { type?: string; text?: string; content?: string; delta?: string };
+      };
+      const eventType = (event.type || '').replace(/\//g, '.').replace(/_/g, '').toLowerCase();
+      const delta =
+        (typeof event.delta === 'string' && event.delta) ||
+        (typeof event.text === 'string' && event.text) ||
+        (typeof event.item?.delta === 'string' && event.item.delta) ||
+        '';
+      if (
+        delta &&
+        (eventType.includes('delta') || eventType === 'agentmessage' || eventType === 'text')
+      ) {
+        deltas.push(delta);
+      }
+      const itemType = (event.item?.type || '').replace(/_/g, '').toLowerCase();
+      if (eventType === 'item.completed' && itemType === 'agentmessage') {
+        const text = event.item?.text || event.item?.content || '';
+        if (text) completed.push(text);
+      }
+    } catch {
+      if (!trimmed.startsWith('WARNING:')) fallback.push(trimmed);
+    }
+  }
+
+  const deltaText = deltas.join('').trim();
+  const completedText = completed.join('\n').trim();
+  if (completedText.length >= deltaText.length * 0.5) return completedText;
+  if (deltaText) return deltaText;
+  return fallback.join('\n').trim();
+}
+
+async function maybeCodexChatGptAuthArg(codexHome: string): Promise<string[]> {
+  try {
+    const authPath = path.join(codexHome, 'auth.json');
+    const auth = safeJsonParse<Record<string, unknown>>(await fs.readFile(authPath, 'utf-8'), {});
+    const hasTokens =
+      typeof auth.tokens === 'object' &&
+      !!(auth.tokens as { access_token?: string }).access_token;
+    const hasApiKey = typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.length > 0;
+    if (hasTokens && !hasApiKey) return ['--config', 'auth_mode="chatgpt"'];
+  } catch {
+    // No auth hint needed.
+  }
+  return [];
+}
+
+async function describeImagesWithCodex(opts: {
+  imagePaths: string[];
+  userPrompt: string;
+  cwd: string;
+  sessionId: string;
+}): Promise<string | null> {
+  if (opts.imagePaths.length === 0) return null;
+  const providerConfig = CLI_PROVIDERS.codex;
+  const codexHome = providerConfig.credentialsPath.replace('~', os.homedir());
+  const prompt = [
+    'Describe the attached image(s) for a downstream coding agent that cannot see images.',
+    'Focus on concrete visual facts: UI text, errors, diagrams, layout, code snippets, filenames, charts, and relevant details.',
+    'Do not solve the user task. Return concise structured notes that can be prepended to the downstream prompt.',
+    '',
+    `Original user prompt:\n${opts.userPrompt || '(no text prompt)'}`,
+  ].join('\n');
+  const args = [
+    'exec',
+    '--json',
+    '--skip-git-repo-check',
+    '--ephemeral',
+    '--sandbox',
+    'read-only',
+    '-c',
+    'approval_policy="never"',
+    ...(await maybeCodexChatGptAuthArg(codexHome)),
+    '--image',
+    opts.imagePaths.join(','),
+    prompt,
+  ];
+
+  return await new Promise<string | null>((resolve) => {
+    const child = cpSpawn(providerConfig.command, args, {
+      cwd: opts.cwd,
+      env: {
+        ...process.env,
+        ...buildIntegrationEnv(),
+        CODEX_HOME: codexHome,
+        WEBUI_SESSION_ID: opts.sessionId,
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        WEBUI_PROJECT_PATH: opts.cwd,
+        WEBUI_HOOK_SECRET: config.hookSecret,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      resolve(null);
+    }, 120_000);
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.length > 2_000_000) stdout = stdout.slice(-2_000_000);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+      if (stderr.length > 200_000) stderr = stderr.slice(-200_000);
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      console.error(`[VIBE] Codex image bridge failed to spawn [${opts.sessionId}]:`, err);
+      resolve(null);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const text = extractCodexText(stdout).trim();
+      if (code !== 0 && !text) {
+        console.warn(
+          `[VIBE] Codex image bridge failed [${opts.sessionId}] code=${code}: ${stderr.slice(
+            0,
+            500
+          )}`
+        );
+        resolve(null);
+        return;
+      }
+      resolve(text || null);
+    });
+  });
+}
+
 // Copy the user's global ~/.vibe/config.toml into a per-session VIBE_HOME and
 // rewrite session_logging.save_dir to point at the per-session logs dir. Vibe
 // will otherwise write a fresh default config inside the empty VIBE_HOME on
@@ -1725,6 +1903,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           model: selectedModel,
           mode: effectiveMode,
           variant: selectedReasoning,
+          allowedDirectories: allowedDirs,
         });
         db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(
           remoteId,
@@ -3564,8 +3743,19 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       return;
     }
     Object.assign(extraEnv, buildIntegrationEnv());
+    extraEnv.WEBUI_SESSION_MODE = proc.mode;
+    extraEnv.WEBUI_CONFIG_HOME = resolveConfigHome(proc.cliProvider);
 
-    const newChildProc = cpSpawn(providerConfig.command, args, {
+    const vibeRunner = resolveVibeRunnerInvocation();
+    const spawnCommand = vibeRunner?.command || providerConfig.command;
+    const spawnArgs = vibeRunner ? [...vibeRunner.argsPrefix, ...args] : args;
+    if (!vibeRunner) {
+      console.warn(
+        `[VIBE] WebUI runner not found; falling back to raw vibe CLI without approval callback [${sessionId}]`
+      );
+    }
+
+    const newChildProc = cpSpawn(spawnCommand, spawnArgs, {
       cwd: session.working_directory,
       env: {
         ...process.env,
@@ -3685,7 +3875,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     });
 
     console.log(
-      `[VIBE] Spawned process [${sessionId}], args: ${args.slice(0, -2).join(' ')} -p <prompt:${prompt.length} chars>`
+      `[VIBE] Spawned process [${sessionId}], command=${spawnCommand}, args: ${spawnArgs
+        .slice(0, -2)
+        .join(' ')} -p <prompt:${prompt.length} chars>`
     );
   }
 
@@ -4793,19 +4985,30 @@ ${proc.contextReminder.summary}
 
       if (imageFiles.length > 0) {
         const refs = imageFiles.map((f) => `- ${f.path}`).join('\n');
-        if (proc.cliProvider === 'vibe') {
-          // Mistral Vibe CLI explicitly disables image input (acp_agent_loop has
-          // image=False) and the default model (mistral-medium-3.5) has no vision.
-          // Tell the model bluntly so it doesn't bluff a "analysis" off the bytes.
+        if (proc.cliProvider === 'vibe' || proc.cliProvider === 'opencode') {
           const names = imageFiles.map((f) => f.filename).join(', ');
-          instructions.push(
-            `The user attached ${imageFiles.length} image file(s) (${names}), saved at:\n${refs}\n` +
-              `IMPORTANT: Mistral Vibe and the active model (mistral-medium-3.5) do NOT support vision. ` +
-              `You cannot view or analyze the image content. Do not attempt to "read" the PNG bytes — that ` +
-              `will only produce metadata/garbage. Tell the user clearly that vibe lacks vision support and ` +
-              `suggest they either describe the image in text or switch to a vision-capable provider ` +
-              `(Claude or Codex) for image tasks.`
-          );
+          const bridgeDescription = await describeImagesWithCodex({
+            imagePaths: imageFiles.map((f) => f.path),
+            userPrompt: message,
+            cwd: proc.workingDirectory,
+            sessionId,
+          });
+          if (bridgeDescription) {
+            const providerLabel = proc.cliProvider === 'vibe' ? 'Vibe' : 'OpenCode';
+            instructions.push(
+              `The user attached ${imageFiles.length} image file(s) (${names}), saved at:\n${refs}\n\n` +
+                `${providerLabel} is receiving these image attachments through Plum Code WebUI's Codex vision bridge, so Codex pre-read the image(s) and produced these visual notes:\n` +
+                `<image-vision-notes provider="codex">\n${bridgeDescription}\n</image-vision-notes>\n\n` +
+                `Use these notes as the image content. If you need exact pixels or OCR beyond these notes, say what is missing.`
+            );
+          } else {
+            const providerLabel = proc.cliProvider === 'vibe' ? 'Vibe' : 'OpenCode';
+            instructions.push(
+              `The user attached ${imageFiles.length} image file(s) (${names}), saved at:\n${refs}\n` +
+                `${providerLabel} did not receive native vision content and the Codex vision bridge failed. Do not pretend to see the image; ` +
+                `ask the user for a text description or switch to Codex/Claude for this image-specific turn.`
+            );
+          }
         } else if (proc.cliProvider === 'codex') {
           // Codex supports native multimodal input via --image. Stage the paths for
           // this turn's respawn instead of asking the model to Read them — that wastes
@@ -4954,6 +5157,7 @@ ${proc.contextReminder.summary}
         mode: proc.mode,
         variant: selectedReasoning,
         directory: proc.workingDirectory,
+        webuiSessionId: sessionId,
       });
       console.log(
         `Sent message [${sessionId}] via opencode HTTP: ${messageForClaude.substring(0, 100)}...`
