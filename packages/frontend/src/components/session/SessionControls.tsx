@@ -213,7 +213,8 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
   const { activeSessionId, sessions } = useSessionStore();
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const provider = activeSession?.cliProvider || 'claude';
-  const limitsSupported = provider === 'claude' || provider === 'codex' || provider === 'opencode';
+  const limitsSupported =
+    provider === 'claude' || provider === 'codex' || provider === 'opencode' || provider === 'vibe';
 
   const { data: usageLimits } = useQuery({
     queryKey: ['usage-limits', provider],
@@ -229,6 +230,7 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
   });
 
   const percent = usage.contextUsedPercent ?? 0;
+  const rawPercent = usage.contextUsedPercentRaw ?? percent;
   const color = getGradientColor(percent);
   const isCritical = percent >= 95;
 
@@ -341,7 +343,7 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
                 <div className="flex justify-between text-xs mb-1">
                   <span className="text-muted-foreground">Context Window</span>
                   <span className="font-mono font-medium" style={{ color }}>
-                    {percent.toFixed(0)}%
+                    {rawPercent.toFixed(0)}%
                   </span>
                 </div>
                 <div className="h-2 rounded-full bg-muted overflow-hidden">
@@ -352,6 +354,7 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5">
                   {formatTokens(usage.totalTokens)} / {formatTokens(usage.contextWindow)}
+                  {usage.contextExceeded && ' (over reported window)'}
                 </div>
               </div>
 
@@ -405,7 +408,7 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
         ref={triggerRef}
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-1.5 hover:opacity-80 transition-opacity cursor-pointer"
-        title={`Context: ${percent.toFixed(0)}%`}
+        title={`Context: ${rawPercent.toFixed(0)}%`}
       >
         <Activity className="h-3 w-3 text-muted-foreground" />
         <div className="w-10 h-1.5 rounded-full bg-muted overflow-hidden">
@@ -418,7 +421,7 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
           />
         </div>
         <span className="text-[10px] font-mono tabular-nums" style={{ color }}>
-          {percent.toFixed(0)}%
+          {rawPercent.toFixed(0)}%
         </span>
       </button>
       {popover}

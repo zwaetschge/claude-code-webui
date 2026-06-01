@@ -32,6 +32,7 @@ import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { CLI_PROVIDER_LABEL, CLI_PROVIDER_LIMIT_LABELS, type CLIProvider } from '@/lib/providers';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
+import { getProviderLabelForModel } from '@claude-code-webui/shared';
 
 interface ApiResponse<T> {
   success: boolean;
@@ -47,15 +48,51 @@ interface AnalyticsSummary {
     cacheCreationTokens: number;
     totalTokens: number;
     totalCost: number;
+    theoreticalCost: number;
+    costDelta: number;
+    pricedTokens: number;
+    unpricedTokens: number;
+    pricingCoveragePercent: number;
     totalRequests: number;
   };
   byModel: Array<{
-    model: string;
+    model: string | null;
+    provider: string;
     input_tokens: number;
     output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
     total_tokens: number;
     cost: number;
+    theoretical_cost: number;
+    cost_delta: number;
+    pricing_known: boolean;
+    pricing_source: string | null;
+    pricing_label: string | null;
+    pricing: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+    } | null;
     requests: number;
+    first_seen: string | null;
+    last_seen: string | null;
+  }>;
+  byProvider: Array<{
+    provider: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    total_tokens: number;
+    cost: number;
+    theoretical_cost: number;
+    cost_delta: number;
+    requests: number;
+    priced_tokens: number;
+    unpriced_tokens: number;
+    models: number;
   }>;
   bySession: Array<{
     session_id: string;
@@ -64,6 +101,20 @@ interface AnalyticsSummary {
     cost: number;
     requests: number;
   }>;
+  pricingAudit: {
+    recordedCost: number;
+    theoreticalCost: number;
+    delta: number;
+    pricedTokens: number;
+    unpricedTokens: number;
+    coveragePercent: number;
+    missingPricingModels: Array<{
+      model: string;
+      provider: string;
+      tokens: number;
+      requests: number;
+    }>;
+  };
 }
 
 interface TimelineData {
@@ -71,6 +122,7 @@ interface TimelineData {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
   cost: number;
   requests: number;
@@ -80,20 +132,37 @@ interface TimelineData {
 interface ProviderStats {
   provider: string;
   cost: number;
+  theoreticalCost: number;
   tokens: number;
   requests: number;
+  unpricedTokens: number;
   models: Array<{
     model: string;
     cost: number;
+    theoreticalCost: number;
     tokens: number;
     requests: number;
+    pricingKnown?: boolean;
   }>;
 }
 
 interface UsageLimitData {
+  subscriptionType?: string;
+  rateLimitTier?: string;
   fiveHour: { utilization: number; resetsAt: string | null } | null;
   sevenDay: { utilization: number; resetsAt: string | null } | null;
   sevenDaySonnet: { utilization: number; resetsAt: string | null } | null;
+  additional?: Array<{ name: string; utilization: number; resetsAt: string | null }>;
+  localBudget?: {
+    dailyUsd: number | null;
+    weeklyUsd: number | null;
+    dailySpendUsd: number;
+    weeklySpendUsd: number;
+    dailyTokens: number;
+    weeklyTokens: number;
+    dailyRequests: number;
+    weeklyRequests: number;
+  };
 }
 
 interface UsageLimitsResponse {
@@ -174,22 +243,15 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-function getProviderLabel(model?: string): string {
-  const value = (model || '').toLowerCase();
-  if (!value) return 'Other';
-  // Codex CLI models: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.2
-  if (value.startsWith('gpt-') || value.includes('codex')) return 'Codex';
-  // Claude CLI: claude-opus-*, claude-sonnet-*, claude-haiku-*, raw aliases (opus/sonnet/haiku)
-  if (value.startsWith('claude') || value === 'opus' || value === 'sonnet' || value === 'haiku') {
-    return 'Claude';
-  }
-  // Mistral Vibe: mistral-vibe-cli-*, devstral-*
-  if (value.startsWith('mistral-') || value.startsWith('devstral-')) return 'Vibe';
-  // OpenCode passes provider/model identifiers (e.g. z-ai/glm-*, openai/gpt-4o,
-  // anthropic/claude-sonnet-*, deepseek/*, google/gemini-*). Detect by the slash.
-  if (value.includes('/')) return 'OpenCode';
-  if (value.includes('opencode')) return 'OpenCode';
-  return 'Other';
+function formatSignedCurrency(amount: number): string {
+  const formatted = formatCurrency(Math.abs(amount));
+  if (Math.abs(amount) < 0.00005) return formatCurrency(0);
+  return `${amount > 0 ? '+' : '-'}${formatted}`;
+}
+
+function formatRate(value?: number): string {
+  if (value === undefined || value === null) return '-';
+  return `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}/M`;
 }
 
 function getProviderKey(provider: string): string {
@@ -241,6 +303,7 @@ function buildTimelineCsv(rows: TimelineData[]): string {
     'input_tokens',
     'output_tokens',
     'cache_read_tokens',
+    'cache_creation_tokens',
     'total_tokens',
     'cost',
     'requests',
@@ -253,6 +316,7 @@ function buildTimelineCsv(rows: TimelineData[]): string {
         row.input_tokens,
         row.output_tokens,
         row.cache_read_tokens,
+        row.cache_creation_tokens,
         row.total_tokens,
         row.cost,
         row.requests,
@@ -330,12 +394,20 @@ export function AnalyticsPage() {
     summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
   const totalTokens = summary?.totals.totalTokens || 0;
   const totalCost = summary?.totals.totalCost || 0;
+  const theoreticalCost = summary?.totals.theoreticalCost ?? totalCost;
+  const costDelta = summary?.totals.costDelta ?? 0;
+  const pricingCoveragePercent = summary?.totals.pricingCoveragePercent ?? 100;
+  const unpricedTokens = summary?.totals.unpricedTokens ?? 0;
   const totalRequests = summary?.totals.totalRequests || 0;
   const avgCost = totalRequests > 0 ? totalCost / totalRequests : 0;
   const avgTokens = totalRequests > 0 ? totalTokens / totalRequests : 0;
+  const promptTokens =
+    (summary?.totals.inputTokens || 0) +
+    (summary?.totals.cacheReadTokens || 0) +
+    (summary?.totals.cacheCreationTokens || 0);
   const cacheHitRate =
-    summary && summary.totals.totalTokens > 0
-      ? Math.round((summary.totals.cacheReadTokens / summary.totals.totalTokens) * 100)
+    summary && promptTokens > 0
+      ? Math.round((summary.totals.cacheReadTokens / promptTokens) * 100)
       : 0;
 
   const handlePeriodChange = useCallback((next: string) => {
@@ -400,22 +472,28 @@ export function AnalyticsPage() {
     if (!summary?.byModel?.length) return [];
     const map = new Map<string, ProviderStats>();
     summary.byModel.forEach((model) => {
-      const provider = getProviderLabel(model.model);
+      const provider = model.provider || getProviderLabelForModel(model.model);
       const current = map.get(provider) || {
         provider,
         cost: 0,
+        theoreticalCost: 0,
         tokens: 0,
         requests: 0,
+        unpricedTokens: 0,
         models: [],
       };
       current.cost += model.cost;
+      current.theoreticalCost += model.theoretical_cost;
       current.tokens += model.total_tokens;
       current.requests += model.requests;
+      if (!model.pricing_known) current.unpricedTokens += model.total_tokens;
       current.models.push({
         model: model.model || 'Unknown',
         cost: model.cost,
+        theoreticalCost: model.theoretical_cost,
         tokens: model.total_tokens,
         requests: model.requests,
+        pricingKnown: model.pricing_known,
       });
       map.set(provider, current);
     });
@@ -636,7 +714,9 @@ export function AnalyticsPage() {
                       <ProviderLogo provider={provider} className="h-6 w-6" />
                       <div>
                         <h3 className="text-sm font-semibold">{providerName}</h3>
-                        <p className="text-xs text-muted-foreground">Rate limits</p>
+                        <p className="text-xs text-muted-foreground">
+                          {data.subscriptionType || data.rateLimitTier || 'Rate limits'}
+                        </p>
                       </div>
                     </div>
 
@@ -727,7 +807,51 @@ export function AnalyticsPage() {
                           </div>
                         </div>
                       )}
+
+                      {data.additional?.map((limit) => (
+                        <div key={limit.name} className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-1.5 text-muted-foreground">
+                              <Gauge className="h-3 w-3" />
+                              {limit.name.replace(/_/g, ' ')}
+                            </span>
+                            <span className="font-medium">{limit.utilization}%</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{
+                                width: `${Math.min(100, limit.utilization)}%`,
+                                backgroundColor: limit.utilization > 80 ? '#ef4444' : color,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
                     </div>
+
+                    {data.localBudget && (
+                      <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-xs">
+                        <div>
+                          <p className="text-muted-foreground">24h spend</p>
+                          <p className="font-medium">
+                            {formatCurrency(data.localBudget.dailySpendUsd)}
+                            {data.localBudget.dailyUsd
+                              ? ` / ${formatCurrency(data.localBudget.dailyUsd)}`
+                              : ''}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Weekly spend</p>
+                          <p className="font-medium">
+                            {formatCurrency(data.localBudget.weeklySpendUsd)}
+                            {data.localBudget.weeklyUsd
+                              ? ` / ${formatCurrency(data.localBudget.weeklyUsd)}`
+                              : ''}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -736,7 +860,7 @@ export function AnalyticsPage() {
         </Card>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -758,7 +882,7 @@ export function AnalyticsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Total Cost
+              Recorded Cost
             </CardTitle>
             <Coins className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -768,6 +892,30 @@ export function AnalyticsPage() {
             </div>
             <p className="text-xs text-muted-foreground">
               Avg {formatCurrency(avgCost)} per request
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Rate Card
+            </CardTitle>
+            <Coins className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">
+              {isLoading ? '...' : formatCurrency(theoreticalCost)}
+            </div>
+            <p
+              className={cn(
+                'text-xs',
+                Math.abs(costDelta) > 0.01
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-muted-foreground'
+              )}
+            >
+              {formatSignedCurrency(costDelta)} recorded delta
             </p>
           </CardContent>
         </Card>
@@ -800,6 +948,23 @@ export function AnalyticsPage() {
             <div className="text-2xl font-semibold">{isLoading ? '...' : `${cacheHitRate}%`}</div>
             <p className="text-xs text-muted-foreground">
               {formatNumber(summary?.totals.cacheReadTokens || 0)} cache hits
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Pricing Coverage
+            </CardTitle>
+            <Database className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">
+              {isLoading ? '...' : `${pricingCoveragePercent}%`}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {formatNumber(unpricedTokens)} tokens unpriced
             </p>
           </CardContent>
         </Card>
@@ -966,6 +1131,84 @@ export function AnalyticsPage() {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle className="text-lg">Rate Card Audit</CardTitle>
+            <CardDescription>
+              Recorded spend compared with the current theoretical API price table.
+            </CardDescription>
+          </div>
+          <div
+            className={cn(
+              'ui-pill ui-pill-subtle',
+              summary?.pricingAudit?.missingPricingModels.length
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+            )}
+          >
+            {pricingCoveragePercent}% priced
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Recorded</p>
+              <p className="mt-1 text-xl font-semibold">{formatCurrency(totalCost)}</p>
+              <p className="text-xs text-muted-foreground">stored in usage_history</p>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Current API</p>
+              <p className="mt-1 text-xl font-semibold">{formatCurrency(theoreticalCost)}</p>
+              <p className="text-xs text-muted-foreground">recalculated from tokens</p>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta</p>
+              <p
+                className={cn(
+                  'mt-1 text-xl font-semibold',
+                  Math.abs(costDelta) > 0.01
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-muted-foreground'
+                )}
+              >
+                {formatSignedCurrency(costDelta)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                positive means recorded is higher than current rate card
+              </p>
+            </div>
+          </div>
+
+          {summary?.pricingAudit?.missingPricingModels.length ? (
+            <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                    Missing model prices
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {summary.pricingAudit.missingPricingModels.slice(0, 8).map((model) => (
+                      <span key={model.model} className="ui-pill ui-pill-subtle bg-background/70">
+                        <span className="max-w-[180px] truncate">{model.model}</span>
+                        <span className="text-muted-foreground">
+                          {formatNumber(model.tokens)} tokens
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              Every model in this period matched a known API price.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-6 lg:grid-cols-[1.2fr,1fr]">
         <Card>
           <CardHeader>
@@ -1011,6 +1254,16 @@ export function AnalyticsPage() {
                         <span>{formatNumber(provider.tokens)} tokens</span>
                         <span>·</span>
                         <span>{provider.requests} requests</span>
+                        <span>·</span>
+                        <span>API {formatCurrency(provider.theoreticalCost)}</span>
+                        {provider.unpricedTokens > 0 && (
+                          <>
+                            <span>·</span>
+                            <span className="text-amber-600 dark:text-amber-400">
+                              {formatNumber(provider.unpricedTokens)} unpriced
+                            </span>
+                          </>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {provider.models.map((model) => (
@@ -1023,6 +1276,9 @@ export function AnalyticsPage() {
                             }}
                           >
                             <span className="truncate max-w-[140px]">{model.model}</span>
+                            {model.pricingKnown === false && (
+                              <span className="text-amber-600 dark:text-amber-400">no price</span>
+                            )}
                           </span>
                         ))}
                       </div>
@@ -1047,7 +1303,7 @@ export function AnalyticsPage() {
             {summary?.byModel && summary.byModel.length > 0 ? (
               <div className="space-y-3">
                 {summary.byModel.slice(0, 8).map((model, index) => {
-                  const provider = getProviderLabel(model.model);
+                  const provider = getProviderLabelForModel(model.model);
                   const color = getProviderColor(provider);
                   return (
                     <div
@@ -1071,11 +1327,23 @@ export function AnalyticsPage() {
                             {provider}
                           </span>
                           <span>{formatNumber(model.total_tokens)} tokens</span>
+                          {model.pricing ? (
+                            <span>
+                              {formatRate(model.pricing.input)} in /{' '}
+                              {formatRate(model.pricing.output)} out
+                            </span>
+                          ) : (
+                            <span className="text-amber-600 dark:text-amber-400">
+                              missing price
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-medium">{formatCurrency(model.cost)}</p>
-                        <p className="text-xs text-muted-foreground">{model.requests} req</p>
+                        <p className="text-xs text-muted-foreground">
+                          API {formatCurrency(model.theoretical_cost)} · {model.requests} req
+                        </p>
                       </div>
                     </div>
                   );

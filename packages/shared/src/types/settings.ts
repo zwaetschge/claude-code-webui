@@ -1,9 +1,14 @@
-import type { CLIProvider } from './session';
+import type { CLIProvider } from './session.js';
 
 export type Theme = 'dark' | 'light' | 'system';
 export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
 export type CodexWebSearchMode = 'auto' | 'cached' | 'live' | 'disabled';
 export type CodexServiceTier = 'fast';
+
+export interface LocalUsageBudget {
+  dailyUsd?: number;
+  weeklyUsd?: number;
+}
 
 export interface UserSettings {
   userId: string;
@@ -18,6 +23,7 @@ export interface UserSettings {
   cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
   cliProviderServiceTiers?: Partial<Record<CLIProvider, CodexServiceTier>>;
   codexWebSearch?: CodexWebSearchMode;
+  localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
 }
 
 export interface UpdateSettingsInput {
@@ -32,6 +38,7 @@ export interface UpdateSettingsInput {
   cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
   cliProviderServiceTiers?: Partial<Record<CLIProvider, CodexServiceTier>>;
   codexWebSearch?: CodexWebSearchMode;
+  localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
 }
 
 export interface ClaudeSettings {

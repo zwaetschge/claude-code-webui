@@ -80,11 +80,18 @@ const COMMON_PROPS = {
   },
   cfg: {
     type: 'number',
-    description: 'CFG scale. Defaults to 1 — these workflows are CFG-1 distilled, change with care.',
+    description:
+      'CFG scale. Defaults to 1 — these workflows are CFG-1 distilled, change with care.',
   },
   sampler_name: {
     type: 'string',
-    description: 'Override the sampler (euler, dpmpp_2m_sde, etc). Leave unset for workflow default.',
+    description:
+      'Override the sampler (euler, dpmpp_2m_sde, etc). Leave unset for workflow default.',
+  },
+  webui_session_id: {
+    type: 'string',
+    description:
+      'Optional Plum WebUI session id for attribution. OpenCode sessions should pass the id from the system reminder.',
   },
 };
 
@@ -143,7 +150,8 @@ const WORKFLOW_BY_TOOL = {
   edit_image: 'flux2-klein-edit',
 };
 
-function getSessionId() {
+function getSessionId(explicitSessionId = '') {
+  if (explicitSessionId) return explicitSessionId;
   if (SESSION_ID) return SESSION_ID;
   if (!SESSION_CONTEXT_FILE) return '';
   try {
@@ -156,11 +164,11 @@ function getSessionId() {
   }
 }
 
-async function callBackend(workflow, params) {
+async function callBackend(workflow, params, explicitSessionId = '') {
   const headers = {
     'content-type': 'application/json',
   };
-  const sessionId = getSessionId();
+  const sessionId = getSessionId(explicitSessionId);
   if (HOOK_SECRET) headers['x-webui-hook-secret'] = HOOK_SECRET;
   if (sessionId) headers['x-webui-session-id'] = sessionId;
 
@@ -199,10 +207,12 @@ async function runTool(name, args) {
   if (typeof args?.cfg === 'number') params.cfg = args.cfg;
   if (args?.sampler_name) params.sampler_name = args.sampler_name;
   if (args?.input_image) params.input_image = args.input_image;
+  const explicitSessionId =
+    typeof args?.webui_session_id === 'string' ? args.webui_session_id.trim() : '';
 
   log('submit', { tool: name, workflow, prompt: prompt.slice(0, 80) });
 
-  const data = await callBackend(workflow, params);
+  const data = await callBackend(workflow, params, explicitSessionId);
 
   if (data.status !== 'completed' || !data.outputUrl) {
     throw new Error(`generation did not complete: ${data.error || data.status}`);

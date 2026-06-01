@@ -12,7 +12,12 @@ import path from 'path';
 import fs from 'fs';
 import { execFile, execFileSync, execSync } from 'child_process';
 import { promisify } from 'util';
-import type { CodexServiceTier, CodexWebSearchMode, SessionMode } from '@claude-code-webui/shared';
+import type {
+  CodexServiceTier,
+  CodexWebSearchMode,
+  ProviderCapabilities,
+  SessionMode,
+} from '@claude-code-webui/shared';
 import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from '../utils/codexDefaults';
 
 const execFileAsync = promisify(execFile);
@@ -28,6 +33,7 @@ export interface CLIProviderConfig {
   supportsStreamJson: boolean;
   supportsResume: boolean;
   supportsModes: boolean;
+  capabilities: ProviderCapabilities;
   defaultModel?: string;
   models?: string[];
 }
@@ -689,6 +695,21 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     supportsStreamJson: true,
     supportsResume: true,
     supportsModes: true,
+    capabilities: {
+      streaming: true,
+      resume: true,
+      modes: true,
+      approvals: true,
+      nativeVision: true,
+      imageBridge: false,
+      mcp: true,
+      mcpSessionAttribution: 'native',
+      usageLimits: 'upstream',
+      reasoning: true,
+      serviceTier: true,
+      webSearch: true,
+      allowedDirectories: true,
+    },
     defaultModel: getProviderEnv('codex', 'DEFAULT_MODEL') || 'gpt-5.5',
     models: parseEnvModels('codex') ?? CLI_PROVIDER_MODELS.codex,
   },
@@ -704,6 +725,21 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     supportsStreamJson: true,
     supportsResume: true,
     supportsModes: true,
+    capabilities: {
+      streaming: true,
+      resume: true,
+      modes: true,
+      approvals: true,
+      nativeVision: false,
+      imageBridge: true,
+      mcp: true,
+      mcpSessionAttribution: 'prompt-scoped',
+      usageLimits: 'local-budget',
+      reasoning: true,
+      serviceTier: false,
+      webSearch: true,
+      allowedDirectories: true,
+    },
     defaultModel: getProviderEnv('opencode', 'DEFAULT_MODEL') || 'z-ai/glm-5.1',
     models: parseEnvModels('opencode') ?? CLI_PROVIDER_MODELS.opencode,
   },
@@ -721,6 +757,21 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     // flag picks up the last session in that home dir.
     supportsResume: true,
     supportsModes: true,
+    capabilities: {
+      streaming: true,
+      resume: true,
+      modes: true,
+      approvals: true,
+      nativeVision: false,
+      imageBridge: true,
+      mcp: true,
+      mcpSessionAttribution: 'native',
+      usageLimits: 'local-budget',
+      reasoning: true,
+      serviceTier: false,
+      webSearch: false,
+      allowedDirectories: true,
+    },
     defaultModel: getProviderEnv('vibe', 'DEFAULT_MODEL') || 'mistral-vibe-cli-latest',
     models: parseEnvModels('vibe') ?? CLI_PROVIDER_MODELS.vibe,
   },
@@ -733,10 +784,29 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     supportsStreamJson: true,
     supportsResume: true,
     supportsModes: true,
+    capabilities: {
+      streaming: true,
+      resume: true,
+      modes: true,
+      approvals: true,
+      nativeVision: false,
+      imageBridge: false,
+      mcp: true,
+      mcpSessionAttribution: 'native',
+      usageLimits: 'upstream',
+      reasoning: true,
+      serviceTier: false,
+      webSearch: true,
+      allowedDirectories: true,
+    },
     defaultModel: getProviderEnv('claude', 'DEFAULT_MODEL') || 'sonnet',
     models: parseEnvModels('claude') ?? CLI_PROVIDER_MODELS.claude,
   },
 };
+
+export function getProviderCapabilities(provider: CLIProvider): ProviderCapabilities {
+  return CLI_PROVIDERS[provider].capabilities;
+}
 
 /**
  * Get CLI arguments for a provider

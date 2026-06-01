@@ -1,9 +1,11 @@
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { getDatabase } from '../db';
 import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
+import { safeJsonParse } from '../utils/json';
 
 const router = Router();
 const claudeCredentialsRoot = CLI_PROVIDERS.claude.credentialsPath;
@@ -81,6 +83,11 @@ interface UsageLimitResponse {
   } | null;
   seven_day_oauth_apps?: unknown;
   iguana_necktie?: unknown;
+}
+
+interface LocalUsageBudget {
+  dailyUsd?: number;
+  weeklyUsd?: number;
 }
 
 // Get Claude credentials from ~/.claude/.credentials.json
@@ -221,6 +228,111 @@ function mapCodexUsage(data: CodexUsageApiResponse | null): {
     fiveHour: mapCodexWindow(rl?.primary_window),
     sevenDay: mapCodexWindow(rl?.secondary_window),
     additional,
+  };
+}
+
+function normalizeBudgetValue(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  return value;
+}
+
+function getEnvBudget(provider: CLIProvider, window: 'daily' | 'weekly'): number | undefined {
+  const specific =
+    process.env[`LOCAL_USAGE_BUDGET_${provider.toUpperCase()}_${window.toUpperCase()}_USD`];
+  const shared = process.env[`LOCAL_USAGE_BUDGET_${window.toUpperCase()}_USD`];
+  const raw = specific || shared;
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getLocalUsageBudget(userId: string, provider: CLIProvider): LocalUsageBudget {
+  const db = getDatabase();
+  const row = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
+
+  const settings = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
+  const budgets =
+    settings.localUsageBudgets && typeof settings.localUsageBudgets === 'object'
+      ? (settings.localUsageBudgets as Record<string, unknown>)
+      : {};
+  const providerBudget =
+    budgets[provider] && typeof budgets[provider] === 'object'
+      ? (budgets[provider] as Record<string, unknown>)
+      : {};
+
+  return {
+    dailyUsd: normalizeBudgetValue(providerBudget.dailyUsd) ?? getEnvBudget(provider, 'daily'),
+    weeklyUsd: normalizeBudgetValue(providerBudget.weeklyUsd) ?? getEnvBudget(provider, 'weekly'),
+  };
+}
+
+function providerSqlPredicate(provider: CLIProvider): string {
+  switch (provider) {
+    case 'codex':
+      return "(lower(model) LIKE 'gpt-%' OR lower(model) LIKE '%codex%')";
+    case 'claude':
+      return "(lower(model) LIKE 'claude%' OR lower(model) IN ('opus', 'sonnet', 'haiku'))";
+    case 'vibe':
+      return "(lower(model) LIKE 'mistral-%' OR lower(model) LIKE 'devstral-%')";
+    case 'opencode':
+      return "(instr(model, '/') > 0 OR lower(model) LIKE '%opencode%')";
+  }
+}
+
+function nextLocalReset(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function pct(spend: number, budget?: number): number {
+  if (!budget || budget <= 0) return 0;
+  return Math.min(999, Math.round((spend / budget) * 100));
+}
+
+function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
+  const budget = getLocalUsageBudget(userId, provider);
+  if (!budget.dailyUsd && !budget.weeklyUsd) {
+    return null;
+  }
+
+  const db = getDatabase();
+  const predicate = providerSqlPredicate(provider);
+  const daily = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) as cost, COALESCE(SUM(total_tokens), 0) as tokens, COUNT(*) as requests
+       FROM usage_history
+       WHERE user_id = ? AND created_at >= datetime('now', '-1 day') AND ${predicate}`
+    )
+    .get(userId) as { cost: number; tokens: number; requests: number };
+  const weekly = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) as cost, COALESCE(SUM(total_tokens), 0) as tokens, COUNT(*) as requests
+       FROM usage_history
+       WHERE user_id = ? AND created_at >= datetime('now', '-7 days') AND ${predicate}`
+    )
+    .get(userId) as { cost: number; tokens: number; requests: number };
+
+  return {
+    subscriptionType: 'local-budget',
+    rateLimitTier: 'local-budget',
+    fiveHour: budget.dailyUsd
+      ? { utilization: pct(daily.cost, budget.dailyUsd), resetsAt: nextLocalReset(1) }
+      : null,
+    sevenDay: budget.weeklyUsd
+      ? { utilization: pct(weekly.cost, budget.weeklyUsd), resetsAt: nextLocalReset(7) }
+      : null,
+    sevenDaySonnet: null,
+    localBudget: {
+      dailyUsd: budget.dailyUsd ?? null,
+      weeklyUsd: budget.weeklyUsd ?? null,
+      dailySpendUsd: daily.cost,
+      weeklySpendUsd: weekly.cost,
+      dailyTokens: daily.tokens,
+      weeklyTokens: weekly.tokens,
+      dailyRequests: daily.requests,
+      weeklyRequests: weekly.requests,
+    },
   };
 }
 
@@ -424,12 +536,28 @@ router.get('/limits', requireAuth, async (req, res) => {
       }
     }
 
-    if (provider !== 'claude') {
+    if (provider === 'opencode' || provider === 'vibe') {
+      const userId = (req as AuthenticatedRequest).userId;
+      const localUsage = fetchLocalBudgetUsage(userId, provider);
+      if (localUsage) {
+        return res.json({
+          success: true,
+          supported: true,
+          provider,
+          data: localUsage,
+        });
+      }
+
       return res.json({
         success: true,
         supported: false,
         provider,
         data: null,
+        error: {
+          code: 'LOCAL_BUDGET_NOT_CONFIGURED',
+          message:
+            'No local usage budget is configured. Set localUsageBudgets in user settings or LOCAL_USAGE_BUDGET_*_USD env vars.',
+        },
       });
     }
 

@@ -401,6 +401,30 @@ class SocketService {
           this.modeListeners.forEach((listener) => listener(data));
           break;
         }
+        case 'compact': {
+          const data = msg.data as {
+            sessionId: string;
+            message: string;
+            summary?: string;
+            clear?: boolean;
+            reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+            error?: string;
+          };
+          if (data.clear) {
+            store.setMessages(sessionId, []);
+            store.clearStreamingContent(sessionId);
+            store.clearToolExecutions(sessionId);
+          }
+          const compactMessage = {
+            id: `compact-${msg.timestamp}`,
+            sessionId,
+            role: 'system' as const,
+            content: `${data.message}${data.summary ? `\n\n${data.summary}` : ''}`,
+            createdAt: new Date(msg.timestamp).toISOString(),
+          };
+          store.addMessageIfNotExists(sessionId, compactMessage);
+          break;
+        }
       }
     }
 

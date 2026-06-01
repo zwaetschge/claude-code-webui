@@ -8,6 +8,7 @@ import { addPatternToSettings } from './claude-settings';
 import { getDatabase } from '../db';
 import { config } from '../config';
 import { opencodeServer } from '../services/opencode/OpencodeServer';
+import { auditFromRequest, recordAudit } from '../utils/auditLog';
 
 const router = Router();
 
@@ -109,6 +110,24 @@ router.post('/request', requireHookSecret, async (req: Request, res: Response) =
 
   pendingRequests.set(requestId, pendingRequest);
 
+  const db = getDatabase();
+  const session = db
+    .prepare('SELECT user_id, cli_provider FROM sessions WHERE id = ?')
+    .get(sessionId) as { user_id: string; cli_provider: string | null } | undefined;
+  recordAudit({
+    actorUserId: session?.user_id ?? null,
+    action: 'permission.request',
+    resourceType: 'session',
+    resourceId: sessionId,
+    metadata: {
+      provider: session?.cli_provider || 'unknown',
+      requestId,
+      toolName,
+      suggestedPattern: pendingRequest.suggestedPattern,
+      description: pendingRequest.description,
+    },
+  });
+
   // Get Socket.IO instance and emit to frontend
   const io: Server = req.app.get('io');
   io.to(`session:${sessionId}`).emit('session:permission_request', {
@@ -204,6 +223,15 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
       const reply = action === 'deny' ? 'reject' : action === 'allow_global' ? 'always' : 'once';
       const handled = await opencodeServer.replyPermission(requestId, reply, pattern);
       if (handled) {
+        auditFromRequest(req, 'permission.respond', {
+          resourceType: 'permission_request',
+          resourceId: requestId,
+          metadata: {
+            provider: 'opencode',
+            action,
+            pattern: pattern ?? null,
+          },
+        });
         return res.json({
           success: true,
           action,
@@ -251,6 +279,17 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
   }
 
   console.log(`[PERMISSIONS] User responded to ${requestId}: ${action}`);
+  auditFromRequest(req, 'permission.respond', {
+    resourceType: 'session',
+    resourceId: request.sessionId,
+    metadata: {
+      provider: 'hook',
+      requestId,
+      toolName: request.toolName,
+      action,
+      pattern: request.pattern ?? pattern ?? null,
+    },
+  });
 
   // Note: The long-polling endpoint will pick up this status change
   // and return the response to the permission-prompt script

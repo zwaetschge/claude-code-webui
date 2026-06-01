@@ -106,19 +106,26 @@ sum is zero. Each provider feeds those fields differently:
 - **OpenCode** — `usage_summary` event from the HTTP/SSE stream.
 - **Vibe** — final `metadata` line of the JSON output.
 
-### Per-model pricing (`MODEL_PRICING`)
+### Per-model pricing (`llm-pricing`)
 
-USD per 1M tokens, per direction, in `ClaudeProcessManager.MODEL_PRICING`.
-Default fallback is `gpt-5.5` rates (the new primary provider) — previously it
-defaulted to Claude Opus which inflated Codex cost ~12x on cache misses.
+USD per 1M tokens, per direction, in
+`packages/shared/src/types/llm-pricing.ts`. `ClaudeProcessManager` uses the
+same shared rate-card as the analytics tab, so recorded cost and the
+"current API rate-card" audit stay comparable. Default fallback is current
+`gpt-5.5` pricing for unknown models.
 
-| Model family                    | Input | Output | Cache read | Cache write |
-| ------------------------------- | ----- | ------ | ---------- | ----------- |
-| Claude Opus 4.5                 | 15    | 75     | 1.5        | 18.75       |
-| Claude Sonnet 4                 | 3     | 15     | 0.3        | 3.75        |
-| Claude Haiku 3.5                | 0.8   | 4      | 0.08       | 1           |
-| gpt-5.5 / 5.4 / 5.3-codex / 5.2 | 1.25  | 10     | 0.125      | 0           |
-| gpt-5.4-mini                    | 0.25  | 2      | 0.025      | 0           |
+| Model family              | Input | Output | Cache read | Cache write |
+| ------------------------- | ----- | ------ | ---------- | ----------- |
+| Claude Opus 4.5+          | 5     | 25     | 0.5        | 6.25        |
+| Claude Sonnet 4           | 3     | 15     | 0.3        | 3.75        |
+| Claude Haiku 4.5          | 1     | 5      | 0.1        | 1.25        |
+| gpt-5.5                   | 5     | 30     | 0.5        | 0           |
+| gpt-5.4                   | 2.5   | 15     | 0.25       | 0           |
+| gpt-5.4-mini              | 0.75  | 4.5    | 0.075      | 0           |
+| gpt-5.3-codex / 5.2-codex | 1.75  | 14     | 0.175      | 0           |
+| z-ai/glm-5.1              | 1.4   | 4.4    | 0.26       | 0           |
+| Mistral Medium 3.5        | 1.5   | 7.5    | 1.5        | 1.5         |
+| Devstral Small 2          | 0.1   | 0.3    | 0.1        | 0.1         |
 
 Codex models are charged at OpenAI rate-card even when the user is on a
 ChatGPT subscription — the dollar number is "equivalent API spend" so the
@@ -326,5 +333,4 @@ The Rebuild Robot sidecar (`scripts/rebuild-robot-sidecar.sh`, opt-in via `docke
 
 - Codex usage endpoint requires a valid cookie (`CODEX_USAGE_COOKIE` / `CODEX_USAGE_URL`); otherwise reports unsupported
 - MCP tools are bound at CLI spawn — existing sessions won't see new tools until a fresh chat is started
-- Pricing table in `ClaudeProcessManager` (`MODEL_PRICING`) only covers Anthropic models — Codex/OpenAI usage cost is not computed locally; rely on the upstream Codex usage API instead
 - Custom agents created before the Codex switch may still have `model='claude-sonnet-4-20250514'` (the old default). New agents default to `gpt-5.5`. Users running Claude-flavored agents under Codex sessions will need to edit the model field.

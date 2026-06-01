@@ -7,6 +7,7 @@ import type {
   BufferedMessage,
   SessionMode,
 } from '@claude-code-webui/shared';
+import { DEFAULT_MODEL_PRICING, estimateModelCost } from '@claude-code-webui/shared';
 import { getDatabase } from '../../db';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
@@ -33,6 +34,8 @@ import { safeJsonParse } from '../../utils/json.js';
 import { getMistralApiKeyForUser } from '../../routes/settings.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
 import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerLinks.js';
+import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
+import { recordAudit } from '../../utils/auditLog.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -186,6 +189,9 @@ function contextWindowFor(model: string | null | undefined): number {
   }
   if (id.startsWith('gpt-5.4')) {
     return 196_000;
+  }
+  if (id.startsWith('gpt-5.3-codex')) {
+    return 400_000;
   }
   if (id.startsWith('gpt-5.5')) {
     return 256_000;
@@ -883,12 +889,6 @@ async function ensureProjectInstructions(
   await removeOldSharedConfigBlock(agentsMdPath);
 }
 
-interface FileAttachmentData {
-  data: string; // base64
-  mimeType: string;
-  filename?: string;
-}
-
 // Walk every vibe session log under VIBE_HOME and collect the message_ids vibe
 // already persisted. Used at WebUI session start to prime the dedupe set so
 // `--continue`'s history replay doesn't re-emit prior turns to the frontend.
@@ -1080,8 +1080,7 @@ async function maybeCodexChatGptAuthArg(codexHome: string): Promise<string[]> {
     const authPath = path.join(codexHome, 'auth.json');
     const auth = safeJsonParse<Record<string, unknown>>(await fs.readFile(authPath, 'utf-8'), {});
     const hasTokens =
-      typeof auth.tokens === 'object' &&
-      !!(auth.tokens as { access_token?: string }).access_token;
+      typeof auth.tokens === 'object' && !!(auth.tokens as { access_token?: string }).access_token;
     const hasApiKey = typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.length > 0;
     if (hasTokens && !hasApiKey) return ['--config', 'auth_mode="chatgpt"'];
   } catch {
@@ -1252,55 +1251,6 @@ async function readLatestVibeSessionMeta(vibeSessionHome: string): Promise<{
   } catch {
     return null;
   }
-}
-
-// Helper to determine attachment type
-function getAttachmentType(
-  mimeType: string,
-  filename?: string
-): 'image' | 'text' | 'pdf' | 'document' {
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType === 'application/pdf') return 'pdf';
-  if (
-    mimeType.startsWith('text/') ||
-    mimeType === 'application/json' ||
-    mimeType === 'application/xml' ||
-    mimeType === 'application/javascript' ||
-    (filename &&
-      /\.(md|txt|json|yaml|yml|js|ts|tsx|jsx|py|rb|go|rs|java|sql|sh|html|css|xml|csv|toml|ini|cfg|conf|env|gitignore)$/i.test(
-        filename
-      ))
-  ) {
-    return 'text';
-  }
-  return 'document';
-}
-
-// Helper to get file extension from mimeType and filename
-function getFileExtension(mimeType: string, filename?: string): string {
-  // Try to get extension from filename first
-  if (filename) {
-    const ext = filename.split('.').pop()?.toLowerCase();
-    if (ext) return ext;
-  }
-  // Fallback to mimeType
-  const mimeMap: Record<string, string> = {
-    'text/plain': 'txt',
-    'text/markdown': 'md',
-    'text/html': 'html',
-    'text/css': 'css',
-    'text/csv': 'csv',
-    'application/json': 'json',
-    'application/xml': 'xml',
-    'application/pdf': 'pdf',
-    'application/javascript': 'js',
-    'image/png': 'png',
-    'image/jpeg': 'jpg',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-    'image/svg+xml': 'svg',
-  };
-  return mimeMap[mimeType] || mimeType.split('/')[1] || 'bin';
 }
 
 interface CodexReviewCommand {
@@ -1546,6 +1496,9 @@ interface ClaudeProcess {
   // session). Without deltas, analytics gets multi-million-token rows for what
   // should be ~50k-per-turn API calls.
   codexLastReportedTokens?: { input: number; cached: number; output: number };
+  codexLastPromptEstimateTokens?: number;
+  codexSawTokenCountThisTurn?: boolean;
+  codexLastContextSummary?: string | null;
   // Mistral Vibe is per-turn like Codex, but prompt is delivered via argv (-p TEXT)
   // not stdin. We always start `idle` and spawn a fresh child for each message.
   vibeIdle?: boolean;
@@ -1759,6 +1712,21 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     const data = { sessionId, mode };
     this.bufferMessage(sessionId, 'mode', data);
     this.io.to(`session:${sessionId}`).emit('session:mode', data);
+  }
+
+  private emitCompact(
+    sessionId: string,
+    data: {
+      sessionId: string;
+      message: string;
+      summary?: string;
+      clear?: boolean;
+      reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+      error?: string;
+    }
+  ): void {
+    this.bufferMessage(sessionId, 'compact', data);
+    this.io.to(`session:${sessionId}`).emit('session:compact', data);
   }
 
   // Get buffered messages since a timestamp for reconnection
@@ -2433,7 +2401,19 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   private translateCodexMessage(sessionId: string, raw: unknown): StreamJsonMessage | null {
     if (!raw || typeof raw !== 'object') return null;
 
-    const data = raw as {
+    const envelope = raw as Record<string, unknown>;
+    let normalizedRaw: Record<string, unknown> = envelope;
+    if (envelope.payload && typeof envelope.payload === 'object') {
+      const payload = envelope.payload as Record<string, unknown>;
+      const envelopeType = typeof envelope.type === 'string' ? envelope.type : '';
+      if (envelopeType === 'event_msg' || envelopeType === 'response_item') {
+        normalizedRaw = payload;
+      } else {
+        normalizedRaw = { ...payload, type: envelopeType || payload.type };
+      }
+    }
+
+    const data = normalizedRaw as {
       type?: string;
       // delta payloads
       delta?: string;
@@ -2482,6 +2462,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       fromModel?: string;
       toModel?: string;
       reason?: string;
+      model?: string;
+      summary?: string;
+      collaboration_mode?: { settings?: { model?: string } };
       // turn usage — Codex `turn.completed.usage` shape is:
       //   { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens }
       usage?: {
@@ -2556,6 +2539,33 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         });
         return null;
 
+      case 'turn_context': {
+        const codexProc = this.processes.get(sessionId);
+        if (codexProc && codexProc.cliProvider === 'codex') {
+          const model = data.model || data.collaboration_mode?.settings?.model;
+          if (model) {
+            codexProc.model = model;
+            codexProc.contextWindow = contextWindowFor(model);
+          }
+
+          const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
+          if (summary && summary !== 'none' && summary !== codexProc.codexLastContextSummary) {
+            codexProc.codexLastContextSummary = summary;
+            this.resetCurrentContextUsage(codexProc);
+            this.emitUsage(sessionId, codexProc);
+            this.emitCompact(sessionId, {
+              sessionId,
+              message: 'Codex compacted prior context and resumed from a summary.',
+              summary,
+              reason: 'auto-compact',
+            });
+          } else if (summary) {
+            codexProc.codexLastContextSummary = summary;
+          }
+        }
+        return null;
+      }
+
       case 'token_count': {
         const codexProc = this.processes.get(sessionId);
         if (!codexProc || codexProc.cliProvider !== 'codex') {
@@ -2578,6 +2588,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           codexProc.contextInputTokens = Math.max(contextInputTotal - contextCached, 0);
           codexProc.contextCacheReadTokens = contextCached;
           codexProc.contextCacheCreationTokens = 0;
+          codexProc.codexSawTokenCountThisTurn = true;
           this.emitUsage(sessionId, codexProc);
         }
         return null;
@@ -2663,11 +2674,14 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           // If this Codex version did not emit token_count.last_token_usage, keep
           // the live context meter bounded. The turn totals are billing totals
           // across all model calls and may exceed the model context window.
-          if (
-            codexProc.contextInputTokens === undefined &&
-            codexProc.contextCacheReadTokens === undefined
-          ) {
-            const boundedContextInput = Math.min(deltaInput, codexProc.contextWindow);
+          if (!codexProc.codexSawTokenCountThisTurn) {
+            const estimatedInput =
+              typeof codexProc.codexLastPromptEstimateTokens === 'number'
+                ? codexProc.codexLastPromptEstimateTokens
+                : deltaInput <= codexProc.contextWindow
+                  ? deltaInput
+                  : Math.round(codexProc.contextWindow * 0.9);
+            const boundedContextInput = Math.min(estimatedInput, codexProc.contextWindow);
             const boundedContextCached = Math.min(deltaCached, boundedContextInput);
             codexProc.contextInputTokens = Math.max(boundedContextInput - boundedContextCached, 0);
             codexProc.contextCacheReadTokens = boundedContextCached;
@@ -2789,15 +2803,28 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       case 'context.compacted':
       case 'context.compaction':
       case 'contextcompaction':
+      case 'contextcompact':
+      case 'context.summary':
+      case 'conversation.compacted':
+      case 'conversation.compaction':
+      case 'history.compacted':
+      case 'history.compaction':
+      case 'auto_compact':
+      case 'auto.compact':
+      case 'compact':
+      case 'precompact':
+      case 'pre_compact':
+      case 'pre.compact':
       case 'compacted': {
         const codexProc = this.processes.get(sessionId);
         if (codexProc && codexProc.cliProvider === 'codex') {
           this.resetCurrentContextUsage(codexProc);
           this.emitUsage(sessionId, codexProc);
         }
-        this.io.to(`session:${sessionId}`).emit('session:compact', {
+        this.emitCompact(sessionId, {
           sessionId,
           message: 'Context was compacted to reduce token usage',
+          summary: typeof data.summary === 'string' ? data.summary : undefined,
           reason: 'auto-compact',
         });
         return null;
@@ -3313,6 +3340,18 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           : [];
         const metadata = props.metadata ?? {};
         if (!requestId) return;
+        recordAudit({
+          actorUserId: proc.userId,
+          action: 'permission.request',
+          resourceType: 'session',
+          resourceId: sessionId,
+          metadata: {
+            provider: 'opencode',
+            requestId,
+            toolName: permission,
+            pattern: patterns[0] || null,
+          },
+        });
         this.io.to(`session:${sessionId}`).emit('session:permission_request', {
           sessionId,
           requestId,
@@ -3576,6 +3615,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.contextInputTokens = undefined;
     proc.contextCacheReadTokens = undefined;
     proc.contextCacheCreationTokens = undefined;
+    proc.codexSawTokenCountThisTurn = false;
 
     // Re-attach output handlers
     newChildProc.stdout?.on('data', (data: Buffer) => {
@@ -3891,10 +3931,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     // Prefer current model-call context usage over summed turn billing usage when
     // a provider reports both.
     const contextTokens = contextInputTokens + contextCacheReadTokens + contextCacheCreationTokens;
-    const contextUsedPercent =
+    const contextUsedPercentRaw =
       proc.contextWindow > 0 ? Math.round((contextTokens / proc.contextWindow) * 100) : 0;
+    const contextUsedPercent = Math.max(0, Math.min(100, contextUsedPercentRaw));
 
-    this.io.to(`session:${sessionId}`).emit('session:usage', {
+    const usageData = {
       sessionId,
       // Current context values for display
       inputTokens: contextInputTokens,
@@ -3904,10 +3945,14 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       totalTokens: contextTokens, // Context tokens only (no output) for display
       contextWindow: proc.contextWindow,
       contextUsedPercent,
+      contextUsedPercentRaw,
+      contextExceeded: contextUsedPercentRaw > 100,
       // Cumulative session cost
       totalCostUsd: proc.totalCostUsd,
       model: proc.model,
-    });
+    };
+    this.bufferMessage(sessionId, 'usage', usageData);
+    this.io.to(`session:${sessionId}`).emit('session:usage', usageData);
     // Note: DB saving moved to saveUsageToDatabase() called only on turn completion
   }
 
@@ -3922,44 +3967,18 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.turnCostUsd = undefined;
   }
 
-  // Calculate cost for tokens based on model pricing
-  // Prices per 1M tokens (as of 2025)
-  // Prices per 1M tokens (USD). Codex models map to OpenAI's published API rates,
-  // even though most users come via ChatGPT plans (where billing is flat). We
-  // record the rate-card cost so analytics charts compare apples-to-apples
-  // across providers. Users on ChatGPT plans can treat the figure as
-  // "equivalent API spend".
-  private static readonly MODEL_PRICING: Record<
-    string,
-    { input: number; output: number; cacheRead: number; cacheWrite: number }
-  > = {
-    // Anthropic Claude
-    'claude-opus-4-5-20251101': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
-    'claude-sonnet-4-20250514': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-    'claude-3-5-sonnet-20241022': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-    'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
-    // OpenAI Codex (rate-card equivalents; subscription users pay flat)
-    'gpt-5.5': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-    'gpt-5.4': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-    'gpt-5.4-mini': { input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: 0 },
-    'gpt-5.3-codex': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-    'gpt-5.2': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-  };
-
   private calculateTurnCost(proc: ClaudeProcess): number {
-    // Pricing lookup; default to Codex gpt-5.5 rates for unknown models (the new
-    // primary provider). Previous default was Claude Opus pricing which over-
-    // attributed cost to Codex sessions on cache misses.
-    const defaultPricing = { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 };
-    const pricing = ClaudeProcessManager.MODEL_PRICING[proc.model] ?? defaultPricing;
-
-    // Calculate cost (prices are per 1M tokens)
-    const inputCost = (proc.turnInputTokens / 1_000_000) * pricing.input;
-    const outputCost = (proc.turnOutputTokens / 1_000_000) * pricing.output;
-    const cacheReadCost = (proc.turnCacheReadTokens / 1_000_000) * pricing.cacheRead;
-    const cacheWriteCost = (proc.turnCacheCreationTokens / 1_000_000) * pricing.cacheWrite;
-
-    return inputCost + outputCost + cacheReadCost + cacheWriteCost;
+    const estimate = estimateModelCost(
+      proc.model,
+      {
+        inputTokens: proc.turnInputTokens,
+        outputTokens: proc.turnOutputTokens,
+        cacheReadTokens: proc.turnCacheReadTokens,
+        cacheCreationTokens: proc.turnCacheCreationTokens,
+      },
+      DEFAULT_MODEL_PRICING
+    );
+    return estimate.cost;
   }
 
   // Save usage to database - called ONCE per turn when result is received
@@ -4056,7 +4075,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       isThinking: false,
     });
 
-    this.io.to(`session:${sessionId}`).emit('session:compact', {
+    this.emitCompact(sessionId, {
       sessionId,
       message: `Context limit reached. Auto-compacting context to continue.`,
       summary: summary || undefined,
@@ -4372,6 +4391,17 @@ The planning phase is complete. You are now in Auto-Accept mode.
           msg.permission_denials.map((d) => d.tool_name).join(', ')
         );
         proc.pendingPermissionDenials = msg.permission_denials;
+        recordAudit({
+          actorUserId: proc.userId,
+          action: 'permission.request',
+          resourceType: 'session',
+          resourceId: sessionId,
+          metadata: {
+            provider: proc.cliProvider,
+            flow: 'legacy-denial',
+            tools: msg.permission_denials.map((d) => d.tool_name),
+          },
+        });
 
         // Emit permission request event to frontend
         this.io.to(`session:${sessionId}`).emit('session:permission_request', {
@@ -4576,7 +4606,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.cacheCreationTokens = 0;
       this.resetCurrentContextUsage(proc);
       // Notify frontend about compaction
-      this.io.to(`session:${sessionId}`).emit('session:compact', {
+      this.emitCompact(sessionId, {
         sessionId,
         message: 'Context was auto-compacted to reduce token usage',
         reason: 'auto-compact',
@@ -4777,6 +4807,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
     if (turn.codexExecCommand) {
       proc.process.stdin?.end();
     } else {
+      proc.codexLastPromptEstimateTokens = Math.ceil(payloadForProvider.length / 4);
       proc.process.stdin?.end(formatInputMessage(proc.cliProvider, payloadForProvider));
     }
 
@@ -4841,49 +4872,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
       throw new Error('Unauthorized');
     }
 
-    // Process attachments by type
-    const filePaths: {
-      path: string;
-      filename: string;
-      type: 'image' | 'text' | 'pdf' | 'document';
-      mimeType: string;
-    }[] = [];
-    const inlineTextContents: { filename: string; content: string }[] = [];
-
-    if (attachments && attachments.length > 0) {
-      const attachmentDir = path.join(proc.workingDirectory, '.claude-webui-attachments');
-      await fs.mkdir(attachmentDir, { recursive: true });
-
-      for (const [index, attachment] of attachments.entries()) {
-        const type = getAttachmentType(attachment.mimeType, attachment.filename);
-        const ext = getFileExtension(attachment.mimeType, attachment.filename);
-        const buffer = Buffer.from(attachment.data, 'base64');
-
-        // For text files, we can optionally inline the content
-        if (type === 'text' && buffer.length < 50000) {
-          // Inline small text files (< 50KB)
-          const textContent = buffer.toString('utf-8');
-          inlineTextContents.push({
-            filename: attachment.filename || `file_${Date.now()}_${index}.${ext}`,
-            content: textContent,
-          });
-        } else {
-          // Save larger text files, images, PDFs, and other documents to disk
-          const timestamp = Date.now();
-          const baseFilename = attachment.filename
-            ? attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
-            : `file_${timestamp}_${index}.${ext}`;
-          const filepath = path.join(attachmentDir, `${timestamp}_${baseFilename}`);
-          await fs.writeFile(filepath, buffer);
-          filePaths.push({
-            path: filepath,
-            filename: path.basename(filepath),
-            type,
-            mimeType: attachment.mimeType,
-          });
-        }
-      }
-    }
+    const materializedAttachments = await materializeAttachments(
+      attachments,
+      proc.workingDirectory
+    );
+    const filePaths = materializedAttachments.files;
+    const inlineTextContents = materializedAttachments.inlineText;
 
     // Build message for Claude (with attachment instructions and/or working dir reminder if needed)
     let messageForClaude = message;
@@ -4973,6 +4967,13 @@ ${proc.contextReminder.summary}
         (tc) => `<attached-file name="${tc.filename}">\n${tc.content}\n</attached-file>`
       );
       messageForClaude = `${textParts.join('\n\n')}\n\n${messageForClaude}`;
+    }
+
+    if (materializedAttachments.rejected.length > 0) {
+      const rejected = materializedAttachments.rejected
+        .map((item) => `- ${item.filename}: ${item.reason}`)
+        .join('\n');
+      messageForClaude = `<attachment-warnings>\n${rejected}\n</attachment-warnings>\n\n${messageForClaude}`;
     }
 
     // Add file references for files that need to be read from disk
@@ -5247,7 +5248,7 @@ ${proc.contextReminder.summary}
 
     if (providerChanged) {
       this.pendingContextReminders.delete(sessionId);
-      this.io.to(`session:${sessionId}`).emit('session:compact', {
+      this.emitCompact(sessionId, {
         sessionId,
         message: 'Provider switched. Fresh CLI context started.',
         clear: true,

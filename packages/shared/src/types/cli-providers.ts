@@ -1,4 +1,22 @@
-import type { CLIProvider } from './session';
+import type { CLIProvider } from './session.js';
+
+export interface ProviderCapabilities {
+  streaming: boolean;
+  resume: boolean;
+  modes: boolean;
+  approvals: boolean;
+  nativeVision: boolean;
+  imageBridge: boolean;
+  mcp: boolean;
+  mcpSessionAttribution: 'native' | 'prompt-scoped' | 'none';
+  usageLimits: 'upstream' | 'local-budget' | 'none';
+  reasoning: boolean;
+  serviceTier: boolean;
+  webSearch: boolean;
+  allowedDirectories: boolean;
+}
+
+export type ProviderFamilyLabel = 'Codex' | 'Claude' | 'OpenCode' | 'Vibe' | 'Other';
 
 export interface CliProviderUpdateResult {
   provider: CLIProvider;
@@ -10,4 +28,16 @@ export interface CliProviderUpdateResult {
 
 export interface CliProviderUpdateResponse {
   results: CliProviderUpdateResult[];
+}
+
+export function getProviderLabelForModel(model?: string | null): ProviderFamilyLabel {
+  const value = (model || '').toLowerCase();
+  if (!value) return 'Other';
+  if (value.startsWith('gpt-') || value.includes('codex')) return 'Codex';
+  if (value.startsWith('claude') || value === 'opus' || value === 'sonnet' || value === 'haiku') {
+    return 'Claude';
+  }
+  if (value.startsWith('mistral-') || value.startsWith('devstral-')) return 'Vibe';
+  if (value.includes('/') || value.includes('opencode')) return 'OpenCode';
+  return 'Other';
 }

@@ -1,4 +1,8 @@
 import { Router } from 'express';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import type { ApiResponse, CliProviderUpdateResponse } from '@claude-code-webui/shared';
@@ -7,6 +11,8 @@ import {
   getAvailableProviders,
   getCliModels,
   getModelDisplayLabels,
+  getProviderCapabilities,
+  isProviderAvailable,
   refreshCodexModelsCache,
   resetDiscovery,
   type CLIProvider,
@@ -21,6 +27,80 @@ const router = Router();
 const updateCliProvidersSchema = z.object({
   providers: z.array(z.enum(CLI_UPDATE_PROVIDERS)).optional(),
 });
+
+function expandHome(value: string): string {
+  return value.replace(/^~/, os.homedir());
+}
+
+function getCommandPath(command: string): string | null {
+  try {
+    return execFileSync('which', [command], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function getCommandVersion(command: string): string | null {
+  try {
+    return (
+      execFileSync(command, ['--version'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000,
+      })
+        .trim()
+        .split('\n')[0] || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function countMcpServers(provider: CLIProvider): number {
+  try {
+    if (provider === 'opencode') {
+      const configPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as { mcp?: unknown };
+      return parsed.mcp && typeof parsed.mcp === 'object' ? Object.keys(parsed.mcp).length : 0;
+    }
+    if (provider === 'vibe') {
+      const configPath = path.join(os.homedir(), '.vibe', 'config.toml');
+      const raw = fs.readFileSync(configPath, 'utf-8');
+      return (raw.match(/^\s*\[\[mcp_servers\]\]/gm) || []).length;
+    }
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { mcpServers?: unknown };
+    return parsed.mcpServers && typeof parsed.mcpServers === 'object'
+      ? Object.keys(parsed.mcpServers).length
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function getCodexModelsCacheInfo() {
+  const cachePath = path.join(expandHome(CLI_PROVIDERS.codex.credentialsPath), 'models_cache.json');
+  try {
+    const stat = fs.statSync(cachePath);
+    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf-8')) as {
+      fetched_at?: string;
+      models?: unknown[];
+    };
+    return {
+      path: cachePath,
+      exists: true,
+      fetchedAt: parsed.fetched_at ?? null,
+      mtime: stat.mtime.toISOString(),
+      modelCount: Array.isArray(parsed.models) ? parsed.models.length : 0,
+    };
+  } catch {
+    return { path: cachePath, exists: false, fetchedAt: null, mtime: null, modelCount: 0 };
+  }
+}
 
 // Get all CLI providers (with availability status)
 router.get('/', requireAuth, async (_req, res) => {
@@ -79,6 +159,35 @@ router.get('/available', requireAuth, async (_req, res) => {
     };
     res.status(500).json(response);
   }
+});
+
+router.get('/diagnostics', requireAuth, async (_req, res) => {
+  const diagnostics = await Promise.all(
+    Object.values(CLI_PROVIDERS).map(async (provider) => {
+      const models = getCliModels(provider.id);
+      const binaryPath = getCommandPath(provider.command);
+      const credentialsPath = expandHome(provider.credentialsPath);
+      const available = await isProviderAvailable(provider.id);
+      return {
+        id: provider.id,
+        name: provider.name,
+        command: provider.command,
+        binaryPath,
+        installed: !!binaryPath,
+        version: binaryPath ? getCommandVersion(provider.command) : null,
+        credentialsPath,
+        authenticated: available,
+        defaultModel: provider.defaultModel ?? null,
+        modelCount: models.length,
+        models,
+        capabilities: getProviderCapabilities(provider.id),
+        mcpServerCount: countMcpServers(provider.id),
+        codexModelsCache: provider.id === 'codex' ? getCodexModelsCacheInfo() : null,
+      };
+    })
+  );
+
+  res.json({ success: true, data: diagnostics });
 });
 
 // Get specific CLI provider info

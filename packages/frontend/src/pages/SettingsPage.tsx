@@ -67,6 +67,8 @@ import type {
   Theme,
   CliProviderUpdateResponse,
   CliProviderUpdateResult,
+  ProviderCapabilities,
+  CLIProvider,
 } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { CLI_PROVIDER_LABEL } from '@/lib/providers';
@@ -145,6 +147,29 @@ interface CodexPluginInfo {
   authPolicy?: string;
   capabilities?: string[];
   connectors?: string[];
+}
+
+interface ProviderDiagnostic {
+  id: CLIProvider;
+  name: string;
+  command: string;
+  binaryPath: string | null;
+  installed: boolean;
+  version: string | null;
+  credentialsPath: string;
+  authenticated: boolean;
+  defaultModel: string | null;
+  modelCount: number;
+  models: string[];
+  capabilities: ProviderCapabilities;
+  mcpServerCount: number;
+  codexModelsCache: {
+    path: string;
+    exists: boolean;
+    fetchedAt: string | null;
+    mtime: string | null;
+    modelCount: number;
+  } | null;
 }
 
 export function SettingsPage() {
@@ -308,6 +333,20 @@ export function SettingsPage() {
     queryKey: ['codex-plugins'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<CodexPluginInfo[]>>('/api/codex/plugins');
+      return response.data.data || [];
+    },
+  });
+
+  const {
+    data: providerDiagnostics,
+    isLoading: providerDiagnosticsLoading,
+    refetch: refetchProviderDiagnostics,
+  } = useQuery({
+    queryKey: ['provider-diagnostics'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<ProviderDiagnostic[]>>(
+        '/api/cli-providers/diagnostics'
+      );
       return response.data.data || [];
     },
   });
@@ -955,6 +994,35 @@ export function SettingsPage() {
     updateSettingsMutation.mutate({ theme });
   };
 
+  const updateLocalUsageBudget = (
+    provider: 'opencode' | 'vibe',
+    key: 'dailyUsd' | 'weeklyUsd',
+    rawValue: string
+  ) => {
+    const normalized = rawValue.trim();
+    const parsed = normalized ? Number(normalized) : 0;
+    const next = {
+      ...(settings?.localUsageBudgets || {}),
+      [provider]: {
+        ...(settings?.localUsageBudgets?.[provider] || {}),
+      },
+    };
+
+    if (Number.isFinite(parsed) && parsed > 0) {
+      next[provider] = { ...next[provider], [key]: Math.round(parsed * 100) / 100 };
+    } else {
+      const providerBudget = { ...(next[provider] || {}) };
+      delete providerBudget[key];
+      if (providerBudget.dailyUsd || providerBudget.weeklyUsd) {
+        next[provider] = providerBudget;
+      } else {
+        delete next[provider];
+      }
+    }
+
+    updateSettingsMutation.mutate({ localUsageBudgets: next });
+  };
+
   const openAgentEditor = (mode: 'create' | 'edit', agent?: AgentInfo) => {
     setEditorType('agent');
     setEditorMode(mode);
@@ -1166,7 +1234,7 @@ export function SettingsPage() {
 
         {/* Tabs Navigation */}
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-5 h-12">
+          <TabsList className="grid w-full grid-cols-6 h-12">
             <TabsTrigger value="general" className="gap-2">
               <Settings2 className="h-4 w-4" />
               <span className="hidden sm:inline">General</span>
@@ -1182,6 +1250,10 @@ export function SettingsPage() {
             <TabsTrigger value="integrations" className="gap-2">
               <Wand2 className="h-4 w-4" />
               <span className="hidden sm:inline">Integrations</span>
+            </TabsTrigger>
+            <TabsTrigger value="diagnostics" className="gap-2">
+              <Terminal className="h-4 w-4" />
+              <span className="hidden sm:inline">Diagnostics</span>
             </TabsTrigger>
             <TabsTrigger value="extensions" className="gap-2">
               <Puzzle className="h-4 w-4" />
@@ -1476,6 +1548,56 @@ export function SettingsPage() {
                     </pre>
                   </CardContent>
                 )}
+              </Card>
+            </section>
+
+            {/* Local Usage Budgets */}
+            <section>
+              <Card className="border border-border/70">
+                <CardHeader>
+                  <CardTitle className="text-base">Local Usage Budgets</CardTitle>
+                  <CardDescription>
+                    Optional spend guardrails for providers without upstream quota APIs.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-2">
+                  {(['opencode', 'vibe'] as const).map((provider) => (
+                    <div key={provider} className="rounded-lg border border-border/70 p-3">
+                      <div className="mb-3 flex items-center justify-between">
+                        <span className="text-sm font-medium">{CLI_PROVIDER_LABEL[provider]}</span>
+                        <span className="text-[11px] text-muted-foreground">USD</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1 text-xs">
+                          <span className="text-muted-foreground">24h budget</span>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={settings?.localUsageBudgets?.[provider]?.dailyUsd ?? ''}
+                            onBlur={(event) =>
+                              updateLocalUsageBudget(provider, 'dailyUsd', event.target.value)
+                            }
+                            placeholder="0.00"
+                          />
+                        </label>
+                        <label className="space-y-1 text-xs">
+                          <span className="text-muted-foreground">Weekly budget</span>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={settings?.localUsageBudgets?.[provider]?.weeklyUsd ?? ''}
+                            onBlur={(event) =>
+                              updateLocalUsageBudget(provider, 'weeklyUsd', event.target.value)
+                            }
+                            placeholder="0.00"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
               </Card>
             </section>
 
@@ -2431,6 +2553,131 @@ export function SettingsPage() {
                 </CardContent>
               </Card>
             </section>
+          </TabsContent>
+
+          {/* Diagnostics Tab */}
+          <TabsContent value="diagnostics" className="space-y-6">
+            <Card className="border border-border/70">
+              <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <CardTitle className="text-base">Provider Diagnostics</CardTitle>
+                  <CardDescription>
+                    CLI availability, auth state, model discovery, MCP wiring, and capability flags.
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetchProviderDiagnostics()}
+                  disabled={providerDiagnosticsLoading}
+                  className="gap-2"
+                >
+                  <RefreshCw
+                    className={cn('h-3.5 w-3.5', providerDiagnosticsLoading && 'animate-spin')}
+                  />
+                  Refresh
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {providerDiagnosticsLoading ? (
+                  <div className="text-sm text-muted-foreground">Checking providers...</div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(providerDiagnostics || []).map((provider) => {
+                      const healthy = provider.installed && provider.authenticated;
+                      const caps = provider.capabilities;
+                      const activeCaps = [
+                        caps.nativeVision
+                          ? 'native vision'
+                          : caps.imageBridge
+                            ? 'vision bridge'
+                            : null,
+                        caps.approvals ? 'approvals' : null,
+                        caps.mcp ? `${provider.mcpServerCount} MCP` : null,
+                        caps.usageLimits !== 'none' ? caps.usageLimits : null,
+                        caps.allowedDirectories ? 'allowed dirs' : null,
+                      ].filter((item): item is string => Boolean(item));
+
+                      return (
+                        <div
+                          key={provider.id}
+                          className={cn(
+                            'rounded-lg border p-4',
+                            healthy
+                              ? 'border-green-500/25 bg-green-500/5'
+                              : 'border-amber-500/25 bg-amber-500/5'
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold">{provider.name}</span>
+                                <span
+                                  className={cn(
+                                    'rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide',
+                                    healthy
+                                      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                  )}
+                                >
+                                  {healthy ? 'ready' : 'attention'}
+                                </span>
+                              </div>
+                              <p className="mt-1 truncate text-xs text-muted-foreground">
+                                {provider.version || provider.command}
+                              </p>
+                            </div>
+                            {healthy ? (
+                              <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
+                            ) : (
+                              <AlertCircle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                            )}
+                          </div>
+
+                          <div className="mt-4 grid gap-2 text-xs">
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">Binary</span>
+                              <span className="truncate font-mono">
+                                {provider.binaryPath || 'not found'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">Credentials</span>
+                              <span className="truncate font-mono">{provider.credentialsPath}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">Models</span>
+                              <span>
+                                {provider.modelCount} discovered · default{' '}
+                                {provider.defaultModel || 'auto'}
+                              </span>
+                            </div>
+                            {provider.codexModelsCache && (
+                              <div className="flex justify-between gap-3">
+                                <span className="text-muted-foreground">Codex cache</span>
+                                <span>
+                                  {provider.codexModelsCache.exists
+                                    ? `${provider.codexModelsCache.modelCount} models`
+                                    : 'missing'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-1.5">
+                            {activeCaps.map((cap) => (
+                              <span key={cap} className="ui-pill ui-pill-subtle text-[11px]">
+                                {cap}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Extensions Tab */}

@@ -66,7 +66,7 @@ Entry: `packages/backend/src/index.ts`. Routes live in `src/routes/` (~30 module
 
 **Admin / helper LLM** (`packages/backend/src/utils/adminLLM.ts`): one-shot text completion for internal features (commit message generation, etc.). Prefers Codex → OpenCode → Vibe → Claude; override via `ADMIN_LLM_PROVIDER`. Used by `routes/git.ts` `/generate-commit-message` — no longer hardcoded to `claude --print -p`.
 
-**Usage / analytics** (cross-provider): every turn's tokens land in `usage_history` via `saveUsageToDatabase` in `ClaudeProcessManager`. For Codex, `translateCodexMessage` captures `turn.completed.usage` (`input_tokens` + `cached_input_tokens` + `output_tokens` + `reasoning_output_tokens`) and writes them directly to `proc.turnInputTokens` etc — without this hook Codex turns silently skipped the DB write because the cumulative `result`-handler only touches `totalInputTokens`. Per-provider cost uses `MODEL_PRICING` (Claude Anthropic rates, Codex OpenAI rate-card; fallback is `gpt-5.5`). Live usage limits surfaced via `/api/usage/limits?provider=codex` from ChatGPT's `backend-api/codex/usage` endpoint (needs `Authorization: Bearer` + `chatgpt-account-id` header — see `routes/usage.ts`).
+**Usage / analytics** (cross-provider): every turn's tokens land in `usage_history` via `saveUsageToDatabase` in `ClaudeProcessManager`. For Codex, `translateCodexMessage` captures `turn.completed.usage` (`input_tokens` + `cached_input_tokens` + `output_tokens` + `reasoning_output_tokens`) and writes them directly to `proc.turnInputTokens` etc — without this hook Codex turns silently skipped the DB write because the cumulative `result`-handler only touches `totalInputTokens`. Per-provider cost uses the shared rate-card in `packages/shared/src/types/llm-pricing.ts` (Claude, Codex/OpenAI, Z.AI, and Mistral defaults; fallback is current `gpt-5.5`). The analytics tab also recomputes current theoretical API cost from this same table and shows any recorded-vs-rate-card delta. Live usage limits surfaced via `/api/usage/limits?provider=codex` from ChatGPT's `backend-api/codex/usage` endpoint (needs `Authorization: Bearer` + `chatgpt-account-id` header — see `routes/usage.ts`).
 
 **Security middleware** (`src/index.ts`): strict Helmet CSP (no `unsafe-inline` scripts), `trust proxy` configurable via `TRUST_PROXY`, per-bucket rate limiters in `src/middleware/rateLimiter.ts` (key = `userId` or `req.ip`, never raw `X-Forwarded-For`). CORS origins from `FRONTEND_URL` + `CORS_ALLOWED_ORIGINS`.
 
@@ -223,16 +223,19 @@ Provider config homes (persisted via compose volumes): `~/.codex`, `~/.local/sha
 - **Never run `docker compose down`, `docker compose up -d --force-recreate`, or any container-recreate command from inside the WebUI container** — it will kill the running CLI session and leave the container in `Created` state on the new image. For redeploys, see `AGENTS.md` § "Rebuild / redeploy protocol".
 
 <!-- webui-managed: project-context:start -->
+
 # Project: claude-code-webui
 
 Web UI for Codex, OpenCode, Mistral Vibe, and Claude Code CLIs
 
 ## Tech Stack
+
 Docker, Docker Compose
 
 **Monorepo** (pnpm)
 
 ## Commands
+
 - `pnpm dev` — dev
 - `pnpm run build` — build
 - `pnpm run lint` — lint
@@ -240,8 +243,10 @@ Docker, Docker Compose
 - `pnpm run format` — format
 
 ## Key Directories
+
 packages/, scripts/
 
 Available Skills: 20min-satirist, absurdist-lens, agent-team-orchestration, android-build, api-design, auto-researcher, bender, book-promo-website, campaign-architect, caveman, claptrap, codebot-prompt-rewriter, codex-prompt-rewriter, comfyui-asset-gen, data-visualization, debugging-playbook, decensor-engine, deep-thought, design-agentic, design-ant, design-application, design-artistic, design-bento, design-bold, design-brutalism, design-cafe, design-claude, design-claymorphism, design-clean, design-codex, design-colorful, design-contemporary, design-corporate, design-cosmic, design-creative, design-dashboard, design-dithered, design-doodle, design-dramatic, design-editorial, design-elegant, design-energetic, design-enterprise, design-expressive, design-fantasy, design-fiction, design-flat, design-friendly, design-futuristic, design-glassmorphism, design-gradient, design-immersive, design-impeccable, design-levels, design-lingo, design-luxury, design-material, design-matrix, design-minimal, design-modern, design-mono, design-neobrutalism, design-neon, design-neumorphism, design-pacman, design-paper, design-perspective, design-premium, design-professional, design-publication, design-refined, design-retro, design-riso, design-sega, design-shadcn, design-simple, design-sketch, design-skeumorphism, design-sleek, design-spacious, design-storytelling, design-terracotta, design-tetris, design-vibrant, design-vintage, developmental-editor, devops-deploy, documentation-writer, dr-perry-cox, dr-zoidberg, dragonball-z-design, drunk-texter, dschungel-george, eliza, epub-forge, fallacy-finder, frontend-design, funnybot, graf-zitronenbaum, heisenberg, human-voice, idea-forge, idea-to-code-plan, karen, kevingpt, literary-critique, material-3-design, mental-reflection, michael-scott-boss-mode, michael-scott-roleplay, musical-architect, musical-composer, nano-banana-prompt-engineer, nikola-tesla, openai-image-gen, panel-transcription, pentest-analyst, performance-tuning, premium-frontend-design, prison-mike, prompt-architect, prompt-expander, refactor-guide, research-prompt-architect, reverse-prompt-engineer, ricks-ship, roman-prosa-engine, schlaubi-schlumpf, schreiner-planer-kontext, screenplay-to-novel, security-review, session-handover, severus-snape, shadowheart, skill-designer, sleep-mystery, social-navigator, spock, storysmith-60, strudel-livecode, succubus-persona, suno-v5-songwriter, svg-expert, swiss-business-email, swiss-writing-conventions, testing-playbook, thaddaeus-gewerkschaftsfuehrer, thinker-frameworks, towelie, truman-burbank, tutorial-architect, vale-persona, vale-proxy, visual-prompt-architect, vocarium-audio-api, web-game-polish, windows95-design
 Available Agents: agent-team-strategist, api-designer, backend-dev, comfyui-asset-gen, data-engineer, database-specialist, debugging-expert, devops-engineer, documentation-writer, Explore, frontend-developer, fullstack-dev, game-art-asset-director, game-feel-motion-engineer, game-systems-designer, git-operations, mobile-developer, performance-optimizer, Plan, playtest-qa-engineer, release-manager, research-bot, security-auditor, system-architect, test-engineer, ui-designer, web-game-engineer
+
 <!-- webui-managed: project-context:end -->

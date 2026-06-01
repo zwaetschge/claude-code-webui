@@ -104,11 +104,12 @@ export const CLI_PROVIDER_LIMIT_LABELS: Record<
     weeklyAll: { title: 'Weekly', subtitle: 'Total' },
   },
   opencode: {
-    session: { title: 'Session' },
-    weeklyAll: { title: 'Weekly', subtitle: 'All' },
+    session: { title: '24h', subtitle: 'Local' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Local' },
   },
   vibe: {
-    session: { title: 'Session' },
+    session: { title: '24h', subtitle: 'Local' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Local' },
   },
 };
 

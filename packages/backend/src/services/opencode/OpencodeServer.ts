@@ -9,6 +9,7 @@ import type { SessionMode } from '@claude-code-webui/shared';
 import { buildOpenCodePermissionRules } from '../cli-providers.js';
 import { config } from '../../config.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
+import { buildOpenCodePromptText } from './sessionContext.js';
 
 const DEBUG_LOG = '/app/packages/backend/data/oc-debug.log';
 function ocDbg(line: string): void {
@@ -443,7 +444,7 @@ class OpencodeServer {
     await this.waitForSseReady();
     this.writeWebuiSessionContext(opencodeSessionId, opts);
     const body: Record<string, unknown> = {
-      parts: [{ type: 'text', text: opts.text }],
+      parts: [{ type: 'text', text: buildOpenCodePromptText(opts.text, opts.webuiSessionId) }],
     };
     if (opts.model) {
       const model = splitModel(opts.model);

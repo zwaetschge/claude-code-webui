@@ -12,6 +12,7 @@ import type {
   CLIProvider,
   CodexWebSearchMode,
   CodexServiceTier,
+  LocalUsageBudget,
 } from '@claude-code-webui/shared';
 
 const router = Router();
@@ -57,6 +58,27 @@ const updateSettingsSchema = z.object({
     .partial()
     .optional(),
   codexWebSearch: z.enum(['auto', 'cached', 'live', 'disabled']).optional(),
+  localUsageBudgets: z
+    .object({
+      claude: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
+      codex: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
+      opencode: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
+      vibe: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
+    })
+    .partial()
+    .optional(),
 });
 
 function parseUiProvider(value: unknown): UiProvider {
@@ -194,6 +216,38 @@ function parseCliProviderServiceTiers(
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
+function normalizeBudgetNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.round(value * 100) / 100;
+}
+
+function parseLocalUsageBudgets(
+  value: unknown
+): Partial<Record<CLIProvider, LocalUsageBudget>> | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const parsed: Partial<Record<CLIProvider, LocalUsageBudget>> = {};
+  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
+
+  for (const provider of providers) {
+    const entry = raw[provider];
+    if (!entry || typeof entry !== 'object') continue;
+    const budget = entry as Record<string, unknown>;
+    const dailyUsd = normalizeBudgetNumber(budget.dailyUsd);
+    const weeklyUsd = normalizeBudgetNumber(budget.weeklyUsd);
+    if (dailyUsd || weeklyUsd) {
+      parsed[provider] = { ...(dailyUsd ? { dailyUsd } : {}), ...(weeklyUsd ? { weeklyUsd } : {}) };
+    }
+  }
+
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
 // Get user settings
 router.get('/', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
@@ -244,6 +298,7 @@ router.get('/', requireAuth, (req, res) => {
     settingsJson.cliProviderServiceTiers
   );
   const codexWebSearch = parseCodexWebSearch(settingsJson.codexWebSearch);
+  const localUsageBudgets = parseLocalUsageBudgets(settingsJson.localUsageBudgets);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -258,6 +313,7 @@ router.get('/', requireAuth, (req, res) => {
     cliProviderReasoning,
     cliProviderServiceTiers,
     codexWebSearch,
+    localUsageBudgets,
   };
 
   res.json({ success: true, data: userSettings });
@@ -285,6 +341,7 @@ router.put('/', requireAuth, (req, res) => {
     cliProviderReasoning,
     cliProviderServiceTiers,
     codexWebSearch,
+    localUsageBudgets,
   } = parsed.data;
 
   const updates: string[] = [];
@@ -313,7 +370,8 @@ router.put('/', requireAuth, (req, res) => {
     cliProviderModelLists !== undefined ||
     cliProviderReasoning !== undefined ||
     cliProviderServiceTiers !== undefined ||
-    codexWebSearch !== undefined
+    codexWebSearch !== undefined ||
+    localUsageBudgets !== undefined
   ) {
     const existing = db
       .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
@@ -361,6 +419,14 @@ router.put('/', requireAuth, (req, res) => {
     if (codexWebSearch !== undefined) {
       settingsJson.codexWebSearch = parseCodexWebSearch(codexWebSearch);
     }
+    if (localUsageBudgets !== undefined) {
+      const normalized = parseLocalUsageBudgets(localUsageBudgets) || {};
+      if (Object.keys(normalized).length > 0) {
+        settingsJson.localUsageBudgets = normalized;
+      } else {
+        delete settingsJson.localUsageBudgets;
+      }
+    }
     updates.push('settings_json = ?');
     values.push(JSON.stringify(settingsJson));
   }
@@ -399,6 +465,7 @@ router.put('/', requireAuth, (req, res) => {
     updatedJson.cliProviderServiceTiers
   );
   const updatedCodexWebSearch = parseCodexWebSearch(updatedJson.codexWebSearch);
+  const updatedLocalUsageBudgets = parseLocalUsageBudgets(updatedJson.localUsageBudgets);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -413,6 +480,7 @@ router.put('/', requireAuth, (req, res) => {
     cliProviderReasoning: updatedCliProviderReasoning,
     cliProviderServiceTiers: updatedCliProviderServiceTiers,
     codexWebSearch: updatedCodexWebSearch,
+    localUsageBudgets: updatedLocalUsageBudgets,
   };
 
   res.json({ success: true, data: userSettings });

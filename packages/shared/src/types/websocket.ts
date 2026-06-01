@@ -1,5 +1,5 @@
-import type { Message, StreamingMessage } from './message';
-import type { SessionStatus } from './session';
+import type { Message, StreamingMessage } from './message.js';
+import type { SessionStatus } from './session.js';
 
 // Session permission mode
 export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
@@ -25,6 +25,7 @@ export interface BufferedMessage {
     | 'todos'
     | 'agent'
     | 'image'
+    | 'compact'
     | 'status'
     | 'mode';
   data: unknown;
@@ -96,6 +97,8 @@ export interface UsageData {
   // Context window
   contextWindow: number;
   contextUsedPercent: number;
+  contextUsedPercentRaw?: number;
+  contextExceeded?: boolean;
   // Cost
   totalCostUsd: number;
   // Model info

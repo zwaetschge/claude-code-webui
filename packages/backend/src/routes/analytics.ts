@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { estimateModelCost, getProviderLabelForModel } from '@claude-code-webui/shared';
 import { getDatabase } from '../db';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 
@@ -15,6 +16,50 @@ function parseTzModifier(raw: unknown): string {
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n < -840 || n > 840) return '0 minutes';
   return `${n >= 0 ? '+' : ''}${n} minutes`;
+}
+
+type ModelSummaryRow = {
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  cost: number;
+  requests: number;
+  first_seen: string | null;
+  last_seen: string | null;
+};
+
+function enrichModelRow(row: ModelSummaryRow) {
+  const estimate = estimateModelCost(
+    row.model,
+    {
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheCreationTokens: row.cache_creation_tokens,
+    },
+    null
+  );
+  const theoreticalCost = estimate.cost;
+  return {
+    ...row,
+    provider: getProviderLabelForModel(row.model),
+    theoretical_cost: theoreticalCost,
+    cost_delta: row.cost - theoreticalCost,
+    pricing_known: estimate.known,
+    pricing_source: estimate.pricing?.source ?? null,
+    pricing_label: estimate.pricing?.label ?? null,
+    pricing: estimate.pricing
+      ? {
+          input: estimate.pricing.input,
+          output: estimate.pricing.output,
+          cacheRead: estimate.pricing.cacheRead,
+          cacheWrite: estimate.pricing.cacheWrite,
+        }
+      : null,
+  };
 }
 
 // Get usage summary (totals across all sessions)
@@ -70,23 +115,93 @@ router.get('/summary', async (req: Request, res: Response) => {
     };
 
     // Get per-model breakdown
-    const byModel = db
+    const modelRows = db
       .prepare(
         `
       SELECT
         model,
         COALESCE(SUM(input_tokens), 0) as input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COALESCE(SUM(cost_usd), 0) as cost,
-        COUNT(*) as requests
+        COUNT(*) as requests,
+        MIN(created_at) as first_seen,
+        MAX(created_at) as last_seen
       FROM usage_history
       WHERE user_id = ? ${dateFilter}
       GROUP BY model
       ORDER BY cost DESC
     `
       )
-      .all(authReq.userId);
+      .all(authReq.userId) as ModelSummaryRow[];
+
+    const byModel = modelRows.map(enrichModelRow);
+    const byProviderMap = new Map<
+      string,
+      {
+        provider: string;
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+        total_tokens: number;
+        cost: number;
+        theoretical_cost: number;
+        cost_delta: number;
+        requests: number;
+        priced_tokens: number;
+        unpriced_tokens: number;
+        models: number;
+      }
+    >();
+    for (const row of byModel) {
+      const current = byProviderMap.get(row.provider) || {
+        provider: row.provider,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_tokens: 0,
+        cost: 0,
+        theoretical_cost: 0,
+        cost_delta: 0,
+        requests: 0,
+        priced_tokens: 0,
+        unpriced_tokens: 0,
+        models: 0,
+      };
+      current.input_tokens += row.input_tokens;
+      current.output_tokens += row.output_tokens;
+      current.cache_read_tokens += row.cache_read_tokens;
+      current.cache_creation_tokens += row.cache_creation_tokens;
+      current.total_tokens += row.total_tokens;
+      current.cost += row.cost;
+      current.theoretical_cost += row.theoretical_cost;
+      current.cost_delta += row.cost_delta;
+      current.requests += row.requests;
+      current.models += 1;
+      if (row.pricing_known) current.priced_tokens += row.total_tokens;
+      else current.unpriced_tokens += row.total_tokens;
+      byProviderMap.set(row.provider, current);
+    }
+    const byProvider = [...byProviderMap.values()].sort((a, b) => b.cost - a.cost);
+    const theoreticalTotalCost = byModel.reduce((sum, row) => sum + row.theoretical_cost, 0);
+    const pricedTokens = byModel
+      .filter((row) => row.pricing_known)
+      .reduce((sum, row) => sum + row.total_tokens, 0);
+    const unpricedTokens = byModel
+      .filter((row) => !row.pricing_known)
+      .reduce((sum, row) => sum + row.total_tokens, 0);
+    const missingPricingModels = byModel
+      .filter((row) => !row.pricing_known)
+      .map((row) => ({
+        model: row.model || 'unknown',
+        provider: row.provider,
+        tokens: row.total_tokens,
+        requests: row.requests,
+      }));
 
     // Get per-session breakdown. Capped at 50 so the frontend's paginated
     // "Top Sessions" list has rows to reveal beyond the default 10 — without
@@ -123,10 +238,27 @@ router.get('/summary', async (req: Request, res: Response) => {
           cacheCreationTokens: totals.total_cache_creation_tokens,
           totalTokens: totals.total_tokens,
           totalCost: totals.total_cost,
+          theoreticalCost: theoreticalTotalCost,
+          costDelta: totals.total_cost - theoreticalTotalCost,
+          pricedTokens,
+          unpricedTokens,
+          pricingCoveragePercent:
+            totals.total_tokens > 0 ? Math.round((pricedTokens / totals.total_tokens) * 100) : 100,
           totalRequests: totals.total_requests,
         },
         byModel,
+        byProvider,
         bySession,
+        pricingAudit: {
+          recordedCost: totals.total_cost,
+          theoreticalCost: theoreticalTotalCost,
+          delta: totals.total_cost - theoreticalTotalCost,
+          pricedTokens,
+          unpricedTokens,
+          coveragePercent:
+            totals.total_tokens > 0 ? Math.round((pricedTokens / totals.total_tokens) * 100) : 100,
+          missingPricingModels,
+        },
       },
     });
   } catch (error) {
@@ -177,6 +309,7 @@ router.get('/timeline', async (req: Request, res: Response) => {
         COALESCE(SUM(input_tokens), 0) as input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COALESCE(SUM(cost_usd), 0) as cost,
         COUNT(*) as requests
@@ -211,29 +344,12 @@ router.get('/timeline', async (req: Request, res: Response) => {
       requests: number;
     }>;
 
-    const getProviderLabel = (model?: string | null): string => {
-      const value = (model || '').toLowerCase();
-      if (!value) return 'Other';
-      if (value.startsWith('gpt-') || value.includes('codex')) return 'Codex';
-      if (
-        value.startsWith('claude') ||
-        value === 'opus' ||
-        value === 'sonnet' ||
-        value === 'haiku'
-      ) {
-        return 'Claude';
-      }
-      if (value.startsWith('mistral-') || value.startsWith('devstral-')) return 'Vibe';
-      if (value.includes('/')) return 'OpenCode';
-      return 'Other';
-    };
-
     const providersByDate = new Map<
       string,
       Record<string, { tokens: number; cost: number; requests: number }>
     >();
     for (const row of providerRows) {
-      const provider = getProviderLabel(row.model);
+      const provider = getProviderLabelForModel(row.model);
       const current = providersByDate.get(row.date) || {};
       const entry = current[provider] || { tokens: 0, cost: 0, requests: 0 };
       entry.tokens += row.total_tokens;
