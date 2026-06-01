@@ -48,6 +48,8 @@ interface AnalyticsSummary {
     cacheCreationTokens: number;
     totalTokens: number;
     totalCost: number;
+    recordedCost: number;
+    apiEquivalentCost: number;
     theoreticalCost: number;
     costDelta: number;
     pricedTokens: number;
@@ -64,6 +66,8 @@ interface AnalyticsSummary {
     cache_creation_tokens: number;
     total_tokens: number;
     cost: number;
+    recorded_cost: number;
+    api_equivalent_cost: number;
     theoretical_cost: number;
     cost_delta: number;
     pricing_known: boolean;
@@ -87,6 +91,8 @@ interface AnalyticsSummary {
     cache_creation_tokens: number;
     total_tokens: number;
     cost: number;
+    recorded_cost: number;
+    api_equivalent_cost: number;
     theoretical_cost: number;
     cost_delta: number;
     requests: number;
@@ -99,10 +105,15 @@ interface AnalyticsSummary {
     session_name: string;
     total_tokens: number;
     cost: number;
+    api_equivalent_cost?: number;
+    theoretical_cost?: number;
+    recorded_cost?: number;
+    cost_delta?: number;
     requests: number;
   }>;
   pricingAudit: {
     recordedCost: number;
+    apiEquivalentCost: number;
     theoreticalCost: number;
     delta: number;
     pricedTokens: number;
@@ -394,13 +405,14 @@ export function AnalyticsPage() {
     summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
   const totalTokens = summary?.totals.totalTokens || 0;
   const totalCost = summary?.totals.totalCost || 0;
-  const theoreticalCost = summary?.totals.theoreticalCost ?? totalCost;
+  const apiEquivalentCost = summary?.totals.apiEquivalentCost ?? totalCost;
   const costDelta = summary?.totals.costDelta ?? 0;
   const pricingCoveragePercent = summary?.totals.pricingCoveragePercent ?? 100;
   const unpricedTokens = summary?.totals.unpricedTokens ?? 0;
   const totalRequests = summary?.totals.totalRequests || 0;
   const avgCost = totalRequests > 0 ? totalCost / totalRequests : 0;
   const avgTokens = totalRequests > 0 ? totalTokens / totalRequests : 0;
+  const effectiveCostPerMillion = totalTokens > 0 ? (totalCost / totalTokens) * 1_000_000 : 0;
   const promptTokens =
     (summary?.totals.inputTokens || 0) +
     (summary?.totals.cacheReadTokens || 0) +
@@ -483,14 +495,14 @@ export function AnalyticsPage() {
         models: [],
       };
       current.cost += model.cost;
-      current.theoreticalCost += model.theoretical_cost;
+      current.theoreticalCost += model.api_equivalent_cost ?? model.theoretical_cost;
       current.tokens += model.total_tokens;
       current.requests += model.requests;
       if (!model.pricing_known) current.unpricedTokens += model.total_tokens;
       current.models.push({
         model: model.model || 'Unknown',
         cost: model.cost,
-        theoreticalCost: model.theoretical_cost,
+        theoreticalCost: model.api_equivalent_cost ?? model.theoretical_cost,
         tokens: model.total_tokens,
         requests: model.requests,
         pricingKnown: model.pricing_known,
@@ -590,8 +602,7 @@ export function AnalyticsPage() {
             All providers. One ledger.
           </h1>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Aggregated usage across every connected service, rolled into a single spend and volume
-            view.
+            Token volume and API-equivalent spend across every connected coding provider.
           </p>
           <div className="flex flex-wrap gap-2">
             {providerSummary.length === 0 ? (
@@ -882,7 +893,7 @@ export function AnalyticsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Recorded Cost
+              API Spend
             </CardTitle>
             <Coins className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -891,7 +902,7 @@ export function AnalyticsPage() {
               {isLoading ? '...' : formatCurrency(totalCost)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Avg {formatCurrency(avgCost)} per request
+              API-equivalent · avg {formatCurrency(avgCost)} per request
             </p>
           </CardContent>
         </Card>
@@ -899,24 +910,15 @@ export function AnalyticsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Rate Card
+              Effective Rate
             </CardTitle>
             <Coins className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">
-              {isLoading ? '...' : formatCurrency(theoreticalCost)}
+              {isLoading ? '...' : formatCurrency(effectiveCostPerMillion)}
             </div>
-            <p
-              className={cn(
-                'text-xs',
-                Math.abs(costDelta) > 0.01
-                  ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-muted-foreground'
-              )}
-            >
-              {formatSignedCurrency(costDelta)} recorded delta
-            </p>
+            <p className="text-xs text-muted-foreground">Per 1M total tokens</p>
           </CardContent>
         </Card>
 
@@ -1134,9 +1136,9 @@ export function AnalyticsPage() {
       <Card>
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <CardTitle className="text-lg">Rate Card Audit</CardTitle>
+            <CardTitle className="text-lg">Pricing Health</CardTitle>
             <CardDescription>
-              Recorded spend compared with the current theoretical API price table.
+              Stored usage rows are repriced from tokens using the current API price table.
             </CardDescription>
           </div>
           <div
@@ -1153,14 +1155,14 @@ export function AnalyticsPage() {
         <CardContent>
           <div className="grid gap-4 md:grid-cols-3">
             <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Recorded</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Stored API</p>
               <p className="mt-1 text-xl font-semibold">{formatCurrency(totalCost)}</p>
-              <p className="text-xs text-muted-foreground">stored in usage_history</p>
+              <p className="text-xs text-muted-foreground">usage_history after reprice</p>
             </div>
             <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Current API</p>
-              <p className="mt-1 text-xl font-semibold">{formatCurrency(theoreticalCost)}</p>
-              <p className="text-xs text-muted-foreground">recalculated from tokens</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Recalculated</p>
+              <p className="mt-1 text-xl font-semibold">{formatCurrency(apiEquivalentCost)}</p>
+              <p className="text-xs text-muted-foreground">current rate-card check</p>
             </div>
             <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Delta</p>
@@ -1175,7 +1177,7 @@ export function AnalyticsPage() {
                 {formatSignedCurrency(costDelta)}
               </p>
               <p className="text-xs text-muted-foreground">
-                positive means recorded is higher than current rate card
+                should stay near zero after the DB migration runs
               </p>
             </div>
           </div>
@@ -1213,7 +1215,7 @@ export function AnalyticsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Provider Mix</CardTitle>
-            <CardDescription>Spend and volume shared across connected services.</CardDescription>
+            <CardDescription>API-equivalent spend and volume by provider.</CardDescription>
           </CardHeader>
           <CardContent>
             {providerSummary.length > 0 ? (
@@ -1297,7 +1299,7 @@ export function AnalyticsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Top Models</CardTitle>
-            <CardDescription>Most active models regardless of provider.</CardDescription>
+            <CardDescription>Highest API-equivalent spend by model.</CardDescription>
           </CardHeader>
           <CardContent>
             {summary?.byModel && summary.byModel.length > 0 ? (

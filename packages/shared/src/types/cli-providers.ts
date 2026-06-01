@@ -38,6 +38,9 @@ export function getProviderLabelForModel(model?: string | null): ProviderFamilyL
     return 'Claude';
   }
   if (value.startsWith('mistral-') || value.startsWith('devstral-')) return 'Vibe';
+  if (value.startsWith('glm-') || value.startsWith('z-ai/') || value.startsWith('zai/')) {
+    return 'OpenCode';
+  }
   if (value.includes('/') || value.includes('opencode')) return 'OpenCode';
   return 'Other';
 }

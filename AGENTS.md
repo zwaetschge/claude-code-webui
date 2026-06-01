@@ -110,9 +110,10 @@ sum is zero. Each provider feeds those fields differently:
 
 USD per 1M tokens, per direction, in
 `packages/shared/src/types/llm-pricing.ts`. `ClaudeProcessManager` uses the
-same shared rate-card as the analytics tab, so recorded cost and the
-"current API rate-card" audit stay comparable. Default fallback is current
-`gpt-5.5` pricing for unknown models.
+same shared rate-card as the analytics tab. `usage_history.cost_usd` is a
+derived API-equivalent value: startup migrations reprice existing rows when
+`LLM_PRICING_RATE_CARD_VERSION` changes. Unknown models must stay unpriced
+instead of silently inheriting a fallback.
 
 | Model family              | Input | Output | Cache read | Cache write |
 | ------------------------- | ----- | ------ | ---------- | ----------- |
@@ -124,6 +125,9 @@ same shared rate-card as the analytics tab, so recorded cost and the
 | gpt-5.4-mini              | 0.75  | 4.5    | 0.075      | 0           |
 | gpt-5.3-codex / 5.2-codex | 1.75  | 14     | 0.175      | 0           |
 | z-ai/glm-5.1              | 1.4   | 4.4    | 0.26       | 0           |
+| z-ai/glm-5                | 1     | 3.2    | 0.2        | 0           |
+| z-ai/glm-4.7/4.6/4.5      | 0.6   | 2.2    | 0.11       | 0           |
+| Gemini 3.1 Pro Preview    | 2     | 12     | 0.2        | 0           |
 | Mistral Medium 3.5        | 1.5   | 7.5    | 1.5        | 1.5         |
 | Devstral Small 2          | 0.1   | 0.3    | 0.1        | 0.1         |
 
@@ -133,18 +137,18 @@ chart compares apples-to-apples with Claude API metering.
 
 ### Provider grouping in the chart
 
-Both `routes/analytics.ts` and `pages/AnalyticsPage.tsx` carry a
-`getProviderLabel()` that maps raw model strings → `Codex / Claude / OpenCode /
-Vibe / Other`. Detection rules:
+`packages/shared/src/types/cli-providers.ts` exports `getProviderLabelForModel()`
+and both backend analytics + frontend charts must use it. Detection rules:
 
 - `startsWith('gpt-')` OR contains `codex` → Codex
 - `startsWith('claude')` OR exact `opus / sonnet / haiku` → Claude
 - `startsWith('mistral-')` OR `startsWith('devstral-')` → Vibe
+- `startsWith('glm-')` OR `startsWith('z-ai/')` / `startsWith('zai/')` → OpenCode
 - Contains `/` (e.g. `z-ai/glm-5.1`, `anthropic/claude-sonnet-4-5`) → OpenCode
 - Else → Other
 
-Keep these two functions in sync — divergence makes the breakdown chart
-disagree with the timeline.
+Do not duplicate this logic in route/page code — divergence makes the breakdown
+chart disagree with the timeline.
 
 ## Codex usage limits (`/api/usage/limits?provider=codex`)
 

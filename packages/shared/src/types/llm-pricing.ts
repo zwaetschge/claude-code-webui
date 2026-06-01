@@ -20,6 +20,8 @@ export interface ModelCostEstimate {
   known: boolean;
 }
 
+export const LLM_PRICING_RATE_CARD_VERSION = '2026-06-01-standard-api-equivalent-v2';
+
 export const DEFAULT_MODEL_PRICING: ModelPricing = {
   input: 5,
   output: 30,
@@ -107,6 +109,21 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   if (raw === 'z-ai/glm-5' || raw === 'zai/glm-5' || id === 'glm-5') {
     return price(1, 3.2, 0.2, 0, 'Z.AI pricing, 2026-06-01', 'GLM-5');
   }
+  if (raw === 'z-ai/glm-4.7' || raw === 'zai/glm-4.7' || id === 'glm-4.7') {
+    return price(0.6, 2.2, 0.11, 0, 'Z.AI pricing, 2026-06-01', 'GLM-4.7');
+  }
+  if (raw === 'z-ai/glm-4.6' || raw === 'zai/glm-4.6' || id === 'glm-4.6') {
+    return price(0.6, 2.2, 0.11, 0, 'Z.AI pricing, 2026-06-01', 'GLM-4.6');
+  }
+  if (raw === 'z-ai/glm-4.5' || raw === 'zai/glm-4.5' || id === 'glm-4.5') {
+    return price(0.6, 2.2, 0.11, 0, 'Z.AI pricing, 2026-06-01', 'GLM-4.5');
+  }
+
+  // Google Gemini API, USD per 1M tokens. Use the standard <=200k prompt tier
+  // because usage_history stores aggregate rows, not per-request context length.
+  if (id === 'gemini-3.1-pro-preview' || id === 'google/gemini-3.1-pro-preview') {
+    return price(2, 12, 0.2, 0, 'Google Gemini API pricing, 2026-06-01', 'Gemini 3.1 Pro Preview');
+  }
 
   // Mistral, USD per 1M tokens. The public table does not expose prompt-cache
   // discounts for these text models, so cached tokens are priced as normal input.
@@ -148,7 +165,7 @@ export function calculateModelCost(tokens: UsageTokenCounts, pricing: ModelPrici
 export function estimateModelCost(
   model: string | null | undefined,
   tokens: UsageTokenCounts,
-  fallbackPricing: ModelPricing | null = DEFAULT_MODEL_PRICING
+  fallbackPricing: ModelPricing | null = null
 ): ModelCostEstimate {
   const pricing = resolveModelPricing(model);
   const effectivePricing = pricing ?? fallbackPricing;

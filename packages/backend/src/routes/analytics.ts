@@ -31,7 +31,12 @@ type ModelSummaryRow = {
   last_seen: string | null;
 };
 
-function enrichModelRow(row: ModelSummaryRow) {
+type TokenCostRow = Pick<
+  ModelSummaryRow,
+  'model' | 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_creation_tokens'
+>;
+
+function estimateApiEquivalentCost(row: TokenCostRow) {
   const estimate = estimateModelCost(
     row.model,
     {
@@ -42,12 +47,20 @@ function enrichModelRow(row: ModelSummaryRow) {
     },
     null
   );
-  const theoreticalCost = estimate.cost;
+  return estimate;
+}
+
+function enrichModelRow(row: ModelSummaryRow) {
+  const estimate = estimateApiEquivalentCost(row);
+  const apiEquivalentCost = estimate.cost;
   return {
     ...row,
+    cost: apiEquivalentCost,
     provider: getProviderLabelForModel(row.model),
-    theoretical_cost: theoreticalCost,
-    cost_delta: row.cost - theoreticalCost,
+    api_equivalent_cost: apiEquivalentCost,
+    theoretical_cost: apiEquivalentCost,
+    recorded_cost: row.cost,
+    cost_delta: row.cost - apiEquivalentCost,
     pricing_known: estimate.known,
     pricing_source: estimate.pricing?.source ?? null,
     pricing_label: estimate.pricing?.label ?? null,
@@ -137,7 +150,11 @@ router.get('/summary', async (req: Request, res: Response) => {
       )
       .all(authReq.userId) as ModelSummaryRow[];
 
-    const byModel = modelRows.map(enrichModelRow);
+    const byModel = modelRows
+      .map(enrichModelRow)
+      .sort(
+        (a, b) => b.api_equivalent_cost - a.api_equivalent_cost || b.total_tokens - a.total_tokens
+      );
     const byProviderMap = new Map<
       string,
       {
@@ -148,7 +165,9 @@ router.get('/summary', async (req: Request, res: Response) => {
         cache_creation_tokens: number;
         total_tokens: number;
         cost: number;
+        api_equivalent_cost: number;
         theoretical_cost: number;
+        recorded_cost: number;
         cost_delta: number;
         requests: number;
         priced_tokens: number;
@@ -165,7 +184,9 @@ router.get('/summary', async (req: Request, res: Response) => {
         cache_creation_tokens: 0,
         total_tokens: 0,
         cost: 0,
+        api_equivalent_cost: 0,
         theoretical_cost: 0,
+        recorded_cost: 0,
         cost_delta: 0,
         requests: 0,
         priced_tokens: 0,
@@ -177,8 +198,10 @@ router.get('/summary', async (req: Request, res: Response) => {
       current.cache_read_tokens += row.cache_read_tokens;
       current.cache_creation_tokens += row.cache_creation_tokens;
       current.total_tokens += row.total_tokens;
-      current.cost += row.cost;
+      current.cost += row.api_equivalent_cost;
+      current.api_equivalent_cost += row.api_equivalent_cost;
       current.theoretical_cost += row.theoretical_cost;
+      current.recorded_cost += row.recorded_cost;
       current.cost_delta += row.cost_delta;
       current.requests += row.requests;
       current.models += 1;
@@ -186,8 +209,10 @@ router.get('/summary', async (req: Request, res: Response) => {
       else current.unpriced_tokens += row.total_tokens;
       byProviderMap.set(row.provider, current);
     }
-    const byProvider = [...byProviderMap.values()].sort((a, b) => b.cost - a.cost);
-    const theoreticalTotalCost = byModel.reduce((sum, row) => sum + row.theoretical_cost, 0);
+    const byProvider = [...byProviderMap.values()].sort(
+      (a, b) => b.api_equivalent_cost - a.api_equivalent_cost || b.total_tokens - a.total_tokens
+    );
+    const apiEquivalentTotalCost = byModel.reduce((sum, row) => sum + row.api_equivalent_cost, 0);
     const pricedTokens = byModel
       .filter((row) => row.pricing_known)
       .reduce((sum, row) => sum + row.total_tokens, 0);
@@ -208,24 +233,77 @@ router.get('/summary', async (req: Request, res: Response) => {
     // flooding the response with every session that ever ran a request.
     // Use fully qualified column name for created_at to avoid ambiguity with sessions table
     const sessionDateFilter = dateFilter.replace('created_at', 'uh.created_at');
-    const bySession = db
+    const sessionRows = db
       .prepare(
         `
       SELECT
         uh.session_id,
         s.name as session_name,
+        uh.model,
+        COALESCE(SUM(uh.input_tokens), 0) as input_tokens,
+        COALESCE(SUM(uh.output_tokens), 0) as output_tokens,
+        COALESCE(SUM(uh.cache_read_tokens), 0) as cache_read_tokens,
+        COALESCE(SUM(uh.cache_creation_tokens), 0) as cache_creation_tokens,
         COALESCE(SUM(uh.total_tokens), 0) as total_tokens,
         COALESCE(SUM(uh.cost_usd), 0) as cost,
         COUNT(*) as requests
       FROM usage_history uh
       LEFT JOIN sessions s ON s.id = uh.session_id
       WHERE uh.user_id = ? ${sessionDateFilter}
-      GROUP BY uh.session_id
-      ORDER BY cost DESC
-      LIMIT 50
+      GROUP BY uh.session_id, uh.model
     `
       )
-      .all(authReq.userId);
+      .all(authReq.userId) as Array<
+      TokenCostRow & {
+        session_id: string;
+        session_name: string | null;
+        total_tokens: number;
+        cost: number;
+        requests: number;
+      }
+    >;
+
+    const bySessionMap = new Map<
+      string,
+      {
+        session_id: string;
+        session_name: string | null;
+        total_tokens: number;
+        cost: number;
+        api_equivalent_cost: number;
+        theoretical_cost: number;
+        recorded_cost: number;
+        cost_delta: number;
+        requests: number;
+      }
+    >();
+    for (const row of sessionRows) {
+      const apiEquivalentCost = estimateApiEquivalentCost(row).cost;
+      const current = bySessionMap.get(row.session_id) || {
+        session_id: row.session_id,
+        session_name: row.session_name,
+        total_tokens: 0,
+        cost: 0,
+        api_equivalent_cost: 0,
+        theoretical_cost: 0,
+        recorded_cost: 0,
+        cost_delta: 0,
+        requests: 0,
+      };
+      current.total_tokens += row.total_tokens;
+      current.cost += apiEquivalentCost;
+      current.api_equivalent_cost += apiEquivalentCost;
+      current.theoretical_cost += apiEquivalentCost;
+      current.recorded_cost += row.cost;
+      current.cost_delta += row.cost - apiEquivalentCost;
+      current.requests += row.requests;
+      bySessionMap.set(row.session_id, current);
+    }
+    const bySession = [...bySessionMap.values()]
+      .sort(
+        (a, b) => b.api_equivalent_cost - a.api_equivalent_cost || b.total_tokens - a.total_tokens
+      )
+      .slice(0, 50);
 
     res.json({
       success: true,
@@ -237,9 +315,11 @@ router.get('/summary', async (req: Request, res: Response) => {
           cacheReadTokens: totals.total_cache_read_tokens,
           cacheCreationTokens: totals.total_cache_creation_tokens,
           totalTokens: totals.total_tokens,
-          totalCost: totals.total_cost,
-          theoreticalCost: theoreticalTotalCost,
-          costDelta: totals.total_cost - theoreticalTotalCost,
+          totalCost: apiEquivalentTotalCost,
+          recordedCost: totals.total_cost,
+          apiEquivalentCost: apiEquivalentTotalCost,
+          theoreticalCost: apiEquivalentTotalCost,
+          costDelta: totals.total_cost - apiEquivalentTotalCost,
           pricedTokens,
           unpricedTokens,
           pricingCoveragePercent:
@@ -251,8 +331,9 @@ router.get('/summary', async (req: Request, res: Response) => {
         bySession,
         pricingAudit: {
           recordedCost: totals.total_cost,
-          theoreticalCost: theoreticalTotalCost,
-          delta: totals.total_cost - theoreticalTotalCost,
+          apiEquivalentCost: apiEquivalentTotalCost,
+          theoreticalCost: apiEquivalentTotalCost,
+          delta: totals.total_cost - apiEquivalentTotalCost,
           pricedTokens,
           unpricedTokens,
           coveragePercent:
@@ -311,7 +392,6 @@ router.get('/timeline', async (req: Request, res: Response) => {
         COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
         COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
-        COALESCE(SUM(cost_usd), 0) as cost,
         COUNT(*) as requests
       FROM usage_history
       WHERE user_id = ? ${dateFilter}
@@ -327,8 +407,11 @@ router.get('/timeline', async (req: Request, res: Response) => {
       SELECT
         strftime('${dateFormat}', created_at, ?) as date,
         model,
+        COALESCE(SUM(input_tokens), 0) as input_tokens,
+        COALESCE(SUM(output_tokens), 0) as output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
-        COALESCE(SUM(cost_usd), 0) as cost,
         COUNT(*) as requests
       FROM usage_history
       WHERE user_id = ? ${dateFilter}
@@ -339,8 +422,11 @@ router.get('/timeline', async (req: Request, res: Response) => {
       .all(tzModifier, authReq.userId, tzModifier) as Array<{
       date: string;
       model: string | null;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
       total_tokens: number;
-      cost: number;
       requests: number;
     }>;
 
@@ -348,19 +434,23 @@ router.get('/timeline', async (req: Request, res: Response) => {
       string,
       Record<string, { tokens: number; cost: number; requests: number }>
     >();
+    const costByDate = new Map<string, number>();
     for (const row of providerRows) {
       const provider = getProviderLabelForModel(row.model);
+      const apiEquivalentCost = estimateApiEquivalentCost(row).cost;
       const current = providersByDate.get(row.date) || {};
       const entry = current[provider] || { tokens: 0, cost: 0, requests: 0 };
       entry.tokens += row.total_tokens;
-      entry.cost += row.cost;
+      entry.cost += apiEquivalentCost;
       entry.requests += row.requests;
       current[provider] = entry;
       providersByDate.set(row.date, current);
+      costByDate.set(row.date, (costByDate.get(row.date) || 0) + apiEquivalentCost);
     }
 
     const timelineWithProviders = (timeline as Array<{ date: string }>).map((entry) => ({
       ...entry,
+      cost: costByDate.get(entry.date) || 0,
       providers: providersByDate.get(entry.date) || {},
     }));
 
@@ -423,9 +513,29 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
     const session = { id: sessionTotals.session_id, name: sessionTotals.session_name };
     const totals = sessionTotals;
 
+    const sessionModelRows = db
+      .prepare(
+        `
+      SELECT
+        model,
+        COALESCE(SUM(input_tokens), 0) as input_tokens,
+        COALESCE(SUM(output_tokens), 0) as output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens
+      FROM usage_history
+      WHERE session_id = ? AND user_id = ?
+      GROUP BY model
+    `
+      )
+      .all(sessionId, authReq.userId) as TokenCostRow[];
+    const apiEquivalentTotalCost = sessionModelRows.reduce(
+      (sum, row) => sum + estimateApiEquivalentCost(row).cost,
+      0
+    );
+
     // Get usage history for this session — scoped by user_id too so a shared
     // session row can't leak rows that belong to another user.
-    const history = db
+    const historyRows = db
       .prepare(
         `
       SELECT
@@ -444,7 +554,25 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
       LIMIT 100
     `
       )
-      .all(sessionId, authReq.userId);
+      .all(sessionId, authReq.userId) as Array<
+      TokenCostRow & {
+        id: number;
+        total_tokens: number;
+        cost: number;
+        created_at: string;
+      }
+    >;
+    const history = historyRows.map((row) => {
+      const apiEquivalentCost = estimateApiEquivalentCost(row).cost;
+      return {
+        ...row,
+        cost: apiEquivalentCost,
+        recorded_cost: row.cost,
+        api_equivalent_cost: apiEquivalentCost,
+        theoretical_cost: apiEquivalentCost,
+        cost_delta: row.cost - apiEquivalentCost,
+      };
+    });
 
     res.json({
       success: true,
@@ -459,7 +587,11 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
           cacheReadTokens: totals.total_cache_read_tokens,
           cacheCreationTokens: totals.total_cache_creation_tokens,
           totalTokens: totals.total_tokens,
-          totalCost: totals.total_cost,
+          totalCost: apiEquivalentTotalCost,
+          recordedCost: totals.total_cost,
+          apiEquivalentCost: apiEquivalentTotalCost,
+          theoreticalCost: apiEquivalentTotalCost,
+          costDelta: totals.total_cost - apiEquivalentTotalCost,
           totalRequests: totals.total_requests,
         },
         history,
@@ -484,9 +616,21 @@ router.post('/record', async (req: Request, res: Response) => {
     cacheReadTokens,
     cacheCreationTokens,
     totalTokens,
-    costUsd,
     model,
   } = req.body;
+  const normalizedTokens = {
+    inputTokens: inputTokens || 0,
+    outputTokens: outputTokens || 0,
+    cacheReadTokens: cacheReadTokens || 0,
+    cacheCreationTokens: cacheCreationTokens || 0,
+  };
+  const normalizedTotalTokens =
+    totalTokens ||
+    normalizedTokens.inputTokens +
+      normalizedTokens.outputTokens +
+      normalizedTokens.cacheReadTokens +
+      normalizedTokens.cacheCreationTokens;
+  const costUsd = estimateModelCost(model, normalizedTokens, null).cost;
 
   try {
     const id = db
@@ -499,11 +643,11 @@ router.post('/record', async (req: Request, res: Response) => {
       .run(
         authReq.userId,
         sessionId,
-        inputTokens || 0,
-        outputTokens || 0,
-        cacheReadTokens || 0,
-        cacheCreationTokens || 0,
-        totalTokens || 0,
+        normalizedTokens.inputTokens,
+        normalizedTokens.outputTokens,
+        normalizedTokens.cacheReadTokens,
+        normalizedTokens.cacheCreationTokens,
+        normalizedTotalTokens,
         costUsd || 0,
         model || 'unknown'
       );

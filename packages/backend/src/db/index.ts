@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
+import { estimateModelCost, LLM_PRICING_RATE_CARD_VERSION } from '@claude-code-webui/shared';
 import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -500,6 +501,97 @@ function runMigrations(db: Database.Database): void {
     } catch (err) {
       console.error('[DB] Failed to seed user from env:', err);
     }
+  }
+
+  repriceUsageHistoryCosts(db);
+}
+
+function repriceUsageHistoryCosts(database: Database.Database): void {
+  const markerKey = 'usage_history_cost_rate_card_version';
+  const marker = database.prepare('SELECT value FROM app_config WHERE key = ?').get(markerKey) as
+    | { value: string }
+    | undefined;
+  if (marker?.value === LLM_PRICING_RATE_CARD_VERSION) return;
+
+  const rows = database
+    .prepare(
+      `
+      SELECT
+        id,
+        model,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        cost_usd
+      FROM usage_history
+    `
+    )
+    .all() as Array<{
+    id: number;
+    model: string | null;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    cost_usd: number;
+  }>;
+
+  const updateCost = database.prepare('UPDATE usage_history SET cost_usd = ? WHERE id = ?');
+  const upsertMarker = database.prepare(
+    `
+    INSERT INTO app_config (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `
+  );
+
+  let updated = 0;
+  let skipped = 0;
+  let oldTotal = 0;
+  let newTotal = 0;
+
+  const tx = database.transaction(() => {
+    for (const row of rows) {
+      const estimate = estimateModelCost(
+        row.model,
+        {
+          inputTokens: row.input_tokens,
+          outputTokens: row.output_tokens,
+          cacheReadTokens: row.cache_read_tokens,
+          cacheCreationTokens: row.cache_creation_tokens,
+        },
+        null
+      );
+
+      oldTotal += row.cost_usd || 0;
+      if (!estimate.known) {
+        skipped += 1;
+        newTotal += row.cost_usd || 0;
+        continue;
+      }
+
+      newTotal += estimate.cost;
+      if (Math.abs((row.cost_usd || 0) - estimate.cost) >= 0.0000005) {
+        updateCost.run(estimate.cost, row.id);
+        updated += 1;
+      }
+    }
+
+    upsertMarker.run(markerKey, LLM_PRICING_RATE_CARD_VERSION);
+  });
+
+  try {
+    tx();
+    if (rows.length > 0) {
+      console.log(
+        `[DB] Repriced usage_history costs with ${LLM_PRICING_RATE_CARD_VERSION}: ` +
+          `${updated}/${rows.length} rows updated, ${skipped} rows skipped, ` +
+          `$${oldTotal.toFixed(4)} -> $${newTotal.toFixed(4)}.`
+      );
+    }
+  } catch (err) {
+    console.error('[DB] Failed to reprice usage_history costs:', err);
   }
 }
 

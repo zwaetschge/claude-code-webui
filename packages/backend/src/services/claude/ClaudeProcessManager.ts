@@ -7,7 +7,7 @@ import type {
   BufferedMessage,
   SessionMode,
 } from '@claude-code-webui/shared';
-import { DEFAULT_MODEL_PRICING, estimateModelCost } from '@claude-code-webui/shared';
+import { estimateModelCost } from '@claude-code-webui/shared';
 import { getDatabase } from '../../db';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
@@ -3976,7 +3976,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         cacheReadTokens: proc.turnCacheReadTokens,
         cacheCreationTokens: proc.turnCacheCreationTokens,
       },
-      DEFAULT_MODEL_PRICING
+      null
     );
     return estimate.cost;
   }

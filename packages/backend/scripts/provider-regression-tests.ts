@@ -20,6 +20,7 @@ function testProviderLabels() {
   assert.equal(getProviderLabelForModel('gpt-5.5'), 'Codex');
   assert.equal(getProviderLabelForModel('claude-sonnet-4-20250514'), 'Claude');
   assert.equal(getProviderLabelForModel('z-ai/glm-5.1'), 'OpenCode');
+  assert.equal(getProviderLabelForModel('glm-4.7'), 'OpenCode');
   assert.equal(getProviderLabelForModel('mistral-vibe-cli-latest'), 'Vibe');
   assert.equal(getProviderLabelForModel('unknown-model'), 'Other');
 }
@@ -71,6 +72,8 @@ function testPricingTable() {
   assert.deepEqual(resolveModelPricing('gpt-5.5')?.input, 5);
   assert.deepEqual(resolveModelPricing('gpt-5.4-mini')?.output, 4.5);
   assert.deepEqual(resolveModelPricing('z-ai/glm-5.1')?.cacheRead, 0.26);
+  assert.deepEqual(resolveModelPricing('glm-4.7')?.output, 2.2);
+  assert.deepEqual(resolveModelPricing('gemini-3.1-pro-preview')?.cacheRead, 0.2);
   assert.deepEqual(resolveModelPricing('mistral-vibe-cli-latest')?.output, 7.5);
   assert.deepEqual(resolveModelPricing('devstral-small-latest')?.input, 0.1);
 
@@ -86,6 +89,15 @@ function testPricingTable() {
   );
   assert.equal(estimate.known, true);
   assert.equal(estimate.cost, 35.5);
+
+  const unknownEstimate = estimateModelCost('unknown-model', {
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+  });
+  assert.equal(unknownEstimate.known, false);
+  assert.equal(unknownEstimate.cost, 0);
 }
 
 testProviderLabels();
