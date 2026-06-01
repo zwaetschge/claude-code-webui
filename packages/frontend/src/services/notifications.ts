@@ -1,6 +1,7 @@
 // Browser notification service for the WebUI
 import { useProviderStore } from '@/stores/providerStore';
-import { UI_PROVIDER_META } from '@/lib/providers';
+import { useSessionStore } from '@/stores/sessionStore';
+import { CLI_PROVIDER_LABEL, UI_PROVIDER_META } from '@/lib/providers';
 
 export type NotificationType = 'permission_request' | 'task_complete' | 'needs_input' | 'error';
 
@@ -21,6 +22,16 @@ class NotificationService {
     if ('Notification' in window) {
       this.permission = Notification.permission;
     }
+  }
+
+  private getProviderLabel(sessionId?: string): string {
+    if (sessionId) {
+      const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+      if (session?.cliProvider) {
+        return CLI_PROVIDER_LABEL[session.cliProvider] || session.cliProvider;
+      }
+    }
+    return UI_PROVIDER_META[useProviderStore.getState().uiProvider].label;
   }
 
   // Request permission from user
@@ -74,8 +85,8 @@ class NotificationService {
       return;
     }
 
-    const icon = this.getIcon(options.type);
-    const tag = options.sessionId ? `claude-${options.sessionId}` : 'claude-notification';
+    const icon = this.getIcon(options.type, options.sessionId);
+    const tag = options.sessionId ? `session-${options.sessionId}` : 'webui-notification';
 
     const notification = new Notification(options.title, {
       body: options.body,
@@ -97,8 +108,8 @@ class NotificationService {
   }
 
   // Get icon based on notification type
-  private getIcon(type: NotificationType): string {
-    const providerLabel = UI_PROVIDER_META[useProviderStore.getState().uiProvider].label;
+  private getIcon(type: NotificationType, sessionId?: string): string {
+    const providerLabel = this.getProviderLabel(sessionId);
     const providerInitial = providerLabel.slice(0, 1).toUpperCase();
     // Return a data URI for a simple icon based on type
     const colors: Record<NotificationType, string> = {
@@ -121,7 +132,7 @@ class NotificationService {
 
   // Convenience methods for different notification types
   notifyPermissionRequest(sessionId: string, toolNames: string[]): void {
-    const providerLabel = UI_PROVIDER_META[useProviderStore.getState().uiProvider].label;
+    const providerLabel = this.getProviderLabel(sessionId);
     this.show({
       title: 'Permission Required',
       body: `${providerLabel} wants to use: ${toolNames.join(', ')}`,
@@ -135,7 +146,7 @@ class NotificationService {
   }
 
   notifyTaskComplete(sessionId: string, summary?: string): void {
-    const providerLabel = UI_PROVIDER_META[useProviderStore.getState().uiProvider].label;
+    const providerLabel = this.getProviderLabel(sessionId);
     this.show({
       title: 'Task Complete',
       body: summary || `${providerLabel} has finished the task`,
@@ -145,7 +156,7 @@ class NotificationService {
   }
 
   notifyNeedsInput(sessionId: string, message?: string): void {
-    const providerLabel = UI_PROVIDER_META[useProviderStore.getState().uiProvider].label;
+    const providerLabel = this.getProviderLabel(sessionId);
     this.show({
       title: 'Input Needed',
       body: message || `${providerLabel} is waiting for your input`,

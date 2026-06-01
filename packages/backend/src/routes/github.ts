@@ -8,7 +8,11 @@ const router = Router();
 
 // Validation schemas
 const createRepoSchema = z.object({
-  name: z.string().min(1).max(100).regex(/^[a-zA-Z0-9._-]+$/),
+  name: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-zA-Z0-9._-]+$/),
   description: z.string().max(500).optional(),
   private: z.boolean().optional(),
   auto_init: z.boolean().optional(),

@@ -48,12 +48,23 @@ LABEL org.opencontainers.image.vendor="Claude Code WebUI"
 # Runtime OS tooling. gcompat + libstdc++ + libgcc let glibc-linked binaries
 # (codex's Rust binary, opencode's Go binary) run on Alpine's musl libc —
 # without these, the npm postinstall hits SIGILL when verifying the binary.
-RUN apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick gcompat libstdc++ libgcc
+# python3 + pipx are added for mistral-vibe (Python CLI installed via pipx).
+RUN apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick gcompat libstdc++ libgcc python3 py3-pip pipx ripgrep py3-httpx jq coreutils tzdata chromium chromium-chromedriver nss freetype harfbuzz font-noto font-noto-cjk ttf-freefont xvfb
 
 # User-writable npm prefix: the `node` user must be able to upgrade the AI CLIs
 # at runtime (see services/cli-updates.ts). Mounted volume overlays this path.
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
 ENV PATH=/home/node/.local/bin:/home/node/.npm-global/bin:$PATH
+ENV CHROME_BIN=/usr/local/bin/plum-chromium
+ENV CHROMIUM_BIN=/usr/local/bin/plum-chromium
+ENV CHROMIUM_PATH=/usr/local/bin/plum-chromium
+ENV BROWSER=/usr/local/bin/plum-chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/local/bin/plum-chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/plum-chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PUPPETEER_SKIP_DOWNLOAD=1
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+ENV XDG_RUNTIME_DIR=/tmp/runtime-node
 # claude-code is the primary CLI and pure JS — must succeed at build time.
 # codex + opencode ship native binaries; under some buildkit/QEMU configurations
 # their postinstall verification hits SIGILL. Install them best-effort so the
@@ -65,6 +76,16 @@ RUN mkdir -p /home/node/.npm-global && \
     (npm install -g @openai/codex || echo "WARN: codex install failed at build time — install via /api/cli-updates at runtime") && \
     (npm install -g opencode-ai && rm -f /home/node/.npm-global/lib/node_modules/opencode-ai/bin/.opencode \
         || echo "WARN: opencode-ai install failed at build time — install via /api/cli-updates at runtime")
+
+# Mistral Vibe: Python-based CLI, installed via pipx into the node user's home.
+# Pre-create pipx dirs and install as `node` so the venv is owned by the runtime user.
+# Best-effort: if PyPI is unreachable during build, ops can install via /api/cli-updates.
+ENV PIPX_HOME=/home/node/.local/pipx
+ENV PIPX_BIN_DIR=/home/node/.local/bin
+RUN mkdir -p /home/node/.local/pipx /home/node/.local/bin /home/node/.vibe && \
+    chown -R node:node /home/node/.local /home/node/.vibe && \
+    su node -s /bin/sh -c "pipx install mistral-vibe" \
+        || echo "WARN: mistral-vibe install failed at build time — install via /api/cli-updates at runtime"
 
 WORKDIR /app
 
@@ -88,20 +109,33 @@ COPY --from=builder /app/packages/frontend/dist ./packages/frontend/dist
 # Helper scripts (mcp-comfyui, etc.) — no build step, copied as-is.
 COPY scripts ./scripts
 
+RUN install -m 0755 ./scripts/chromium-webui.sh /usr/local/bin/plum-chromium && \
+    ln -sfn /usr/local/bin/plum-chromium /usr/local/bin/chromium && \
+    ln -sfn /usr/local/bin/plum-chromium /usr/local/bin/chromium-browser && \
+    ln -sfn /usr/local/bin/plum-chromium /usr/local/bin/google-chrome && \
+    ln -sfn /usr/local/bin/plum-chromium /usr/local/bin/google-chrome-stable
+
 # Volume-friendly runtime dirs, owned by node:node (uid 1000).
 # OpenCode uses XDG paths (~/.config/opencode for config, ~/.local/share/opencode
 # for auth). Symlink both into the single /home/node/.opencode mount so one
 # volume persists config + credentials across rebuilds.
-RUN mkdir -p /home/node/.claude /home/node/.codex \
+#
+# Codex CLI's skills system looks under ~/.agents/skills/<name>/SKILL.md (not
+# ~/.claude/skills/). Symlink so the same skill packs work for both providers
+# without duplication. Same idea for AGENTS.md / CLAUDE.md (Codex reads AGENTS.md).
+RUN mkdir -p /home/node/.claude /home/node/.codex /home/node/.vibe \
              /home/node/.opencode/config /home/node/.opencode/share \
-             /home/node/.config /home/node/.local/share && \
+             /home/node/.config /home/node/.local/share /home/node/.agents \
+             /tmp/runtime-node && \
     ln -sfn /home/node/.opencode/config /home/node/.config/opencode && \
     ln -sfn /home/node/.opencode/share /home/node/.local/share/opencode && \
-    chown -R node:node /app /home/node
+    ln -sfn /home/node/.claude/skills /home/node/.agents/skills && \
+    chown -R node:node /app /home/node /tmp/runtime-node
 
 EXPOSE 3001
 ENV NODE_ENV=production
 ENV HOME=/home/node
+ENV TZ=Etc/UTC
 
 USER node
 

@@ -23,34 +23,31 @@ function oauthCallbackHandler(
   strategy: 'github' | 'google'
 ): (req: Request, res: Response, next: NextFunction) => void {
   return (req, res, next) => {
-    passport.authenticate(
-      strategy,
-      (err: unknown, user: User | false) => {
-        if (err) {
-          if (err instanceof OAuthEmailCollisionError) {
-            const params = new URLSearchParams({
-              error: 'email_in_use',
-              existing_provider: err.existingProvider,
-            });
-            return res.redirect(`${config.frontendUrl}/connect?${params.toString()}`);
-          }
-          if (err instanceof EmailNotAllowedError) {
-            return res.redirect(`${config.frontendUrl}/connect?error=email_not_allowed`);
-          }
-          return res.redirect(`${config.frontendUrl}/connect?error=${strategy}`);
+    passport.authenticate(strategy, (err: unknown, user: User | false) => {
+      if (err) {
+        if (err instanceof OAuthEmailCollisionError) {
+          const params = new URLSearchParams({
+            error: 'email_in_use',
+            existing_provider: err.existingProvider,
+          });
+          return res.redirect(`${config.frontendUrl}/connect?${params.toString()}`);
         }
-        if (!user) {
-          return res.redirect(`${config.frontendUrl}/connect?error=${strategy}`);
+        if (err instanceof EmailNotAllowedError) {
+          return res.redirect(`${config.frontendUrl}/connect?error=email_not_allowed`);
         }
-
-        req.logIn(user, (loginErr) => {
-          if (loginErr) return next(loginErr);
-          stampLogin(user.id, strategy, req);
-          const token = generateUserToken(user.id);
-          res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
-        });
+        return res.redirect(`${config.frontendUrl}/connect?error=${strategy}`);
       }
-    )(req, res, next);
+      if (!user) {
+        return res.redirect(`${config.frontendUrl}/connect?error=${strategy}`);
+      }
+
+      req.logIn(user, (loginErr) => {
+        if (loginErr) return next(loginErr);
+        stampLogin(user.id, strategy, req);
+        const token = generateUserToken(user.id);
+        res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+      });
+    })(req, res, next);
   };
 }
 
@@ -120,7 +117,7 @@ async function refreshClaudeToken(refreshToken: string): Promise<ClaudeCredentia
         continue;
       }
 
-      const tokens = await response.json() as {
+      const tokens = (await response.json()) as {
         access_token: string;
         refresh_token: string;
         expires_in: number;
@@ -165,7 +162,8 @@ if (config.claude.oauthEnabled) {
 
       // Check if token is expired and refresh if needed
       const { expiresAt, refreshToken } = credentials.claudeAiOauth;
-      if (expiresAt && Date.now() > expiresAt - 60000) { // Refresh 1 min before expiry
+      if (expiresAt && Date.now() > expiresAt - 60000) {
+        // Refresh 1 min before expiry
         console.log('Token expired, refreshing...');
         const refreshed = await refreshClaudeToken(refreshToken);
         if (refreshed) {
@@ -182,13 +180,13 @@ if (config.claude.oauthEnabled) {
       try {
         const userResponse = await fetch('https://api.anthropic.com/api/oauth/profile', {
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             'anthropic-beta': 'oauth-2025-04-20',
           },
         });
 
         if (userResponse.ok) {
-          const userData = await userResponse.json() as { email?: string; name?: string };
+          const userData = (await userResponse.json()) as { email?: string; name?: string };
           email = userData.email || email;
           name = userData.name || name;
         } else {
@@ -249,6 +247,24 @@ router.get('/opencode', async (req, res) => {
   }
 });
 
+// Mistral Vibe CLI credentials login (uses ~/.vibe presence)
+router.get('/vibe', async (req, res) => {
+  try {
+    const available = await isProviderAvailable('vibe');
+    if (!available) {
+      return res.redirect(`${config.frontendUrl}/connect?error=vibe_not_logged_in`);
+    }
+
+    const user = upsertSharedCliUser('vibe-user@local', 'Mistral Vibe User');
+    stampLogin(user.id, 'vibe', req);
+    const token = generateUserToken(user.id);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Vibe CLI auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=vibe`);
+  }
+});
+
 // Dev login (only in development mode)
 if (config.isDevelopment) {
   router.post('/dev-login', rateLimiters.strict, (req, res) => {
@@ -259,7 +275,8 @@ if (config.isDevelopment) {
     let user = db
       .prepare(
         `SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
-                created_at as createdAt, updated_at as updatedAt
+                strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+                strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
          FROM users WHERE provider = ? AND provider_id = ?`
       )
       .get('dev', 'dev-user') as User | undefined;
@@ -329,15 +346,23 @@ router.get('/me', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
-  const user = db.prepare(`
+  const user = db
+    .prepare(
+      `
     SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
-           role, status, last_login_at as lastLoginAt,
-           created_at as createdAt, updated_at as updatedAt
+           role, status,
+           strftime('%Y-%m-%dT%H:%M:%fZ', last_login_at) as lastLoginAt,
+           strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+           strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
     FROM users WHERE id = ?
-  `).get(userId) as (User & { status?: string }) | undefined;
+  `
+    )
+    .get(userId) as (User & { status?: string }) | undefined;
 
   if (!user) {
-    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
+    return res
+      .status(404)
+      .json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
   }
 
   // Suspended users can authenticate but can't use the app — surface the status
@@ -362,9 +387,10 @@ router.post('/logout', requireAuth, (req, res) => {
 
 // Auth providers info
 router.get('/providers', async (_req, res) => {
-  const [codexAvailable, opencodeAvailable] = await Promise.all([
+  const [codexAvailable, opencodeAvailable, vibeAvailable] = await Promise.all([
     isProviderAvailable('codex'),
     isProviderAvailable('opencode'),
+    isProviderAvailable('vibe'),
   ]);
   res.json({
     success: true,
@@ -374,6 +400,7 @@ router.get('/providers', async (_req, res) => {
       claude: config.claude.oauthEnabled,
       codex: codexAvailable,
       opencode: opencodeAvailable,
+      vibe: vibeAvailable,
     },
   });
 });

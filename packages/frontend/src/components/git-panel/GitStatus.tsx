@@ -140,9 +140,7 @@ export function GitStatus({ workingDirectory, onFileSelect }: GitStatusProps) {
   };
 
   const handleUnstageSelected = () => {
-    const filesToUnstage = Array.from(selectedFiles).filter((f) =>
-      status?.staged.includes(f)
-    );
+    const filesToUnstage = Array.from(selectedFiles).filter((f) => status?.staged.includes(f));
     if (filesToUnstage.length > 0) {
       unstageMutation.mutate(filesToUnstage);
     }
@@ -158,23 +156,15 @@ export function GitStatus({ workingDirectory, onFileSelect }: GitStatusProps) {
 
   if (!status) {
     return (
-      <div className="text-center py-4 text-sm text-muted-foreground">
-        Not a git repository
-      </div>
+      <div className="text-center py-4 text-sm text-muted-foreground">Not a git repository</div>
     );
   }
 
   const hasChanges =
-    status.staged.length > 0 ||
-    status.unstaged.length > 0 ||
-    status.untracked.length > 0;
+    status.staged.length > 0 || status.unstaged.length > 0 || status.untracked.length > 0;
 
   if (!hasChanges) {
-    return (
-      <div className="text-center py-4 text-sm text-muted-foreground">
-        Working tree clean
-      </div>
-    );
+    return <div className="text-center py-4 text-sm text-muted-foreground">Working tree clean</div>;
   }
 
   const renderFileList = (

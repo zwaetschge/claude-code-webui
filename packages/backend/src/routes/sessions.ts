@@ -17,7 +17,7 @@ const router = Router();
 const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   workingDirectory: z.string().optional(), // Optional - will be auto-generated from name
-  cliProvider: z.enum(['claude', 'codex', 'opencode']).optional().default('claude'),
+  cliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']).optional().default('codex'),
 });
 
 const updateSessionSchema = z.object({
@@ -26,7 +26,7 @@ const updateSessionSchema = z.object({
 });
 
 const updateProviderSchema = z.object({
-  cliProvider: z.enum(['claude', 'codex', 'opencode']),
+  cliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']),
 });
 
 const updateModeSchema = z.object({
@@ -44,13 +44,13 @@ function sanitizeFolderName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[äöüß]/g, (char) => {
-      const map: Record<string, string> = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' };
+      const map: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' };
       return map[char] || char;
     })
-    .replace(/[^a-z0-9-_]/g, '-')  // Replace non-alphanumeric chars with hyphens
-    .replace(/-+/g, '-')            // Collapse multiple hyphens
-    .replace(/^-|-$/g, '')          // Remove leading/trailing hyphens
-    .substring(0, 100);             // Limit length
+    .replace(/[^a-z0-9-_]/g, '-') // Replace non-alphanumeric chars with hyphens
+    .replace(/-+/g, '-') // Collapse multiple hyphens
+    .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
+    .substring(0, 100); // Limit length
 }
 
 // Ensure directory exists
@@ -70,11 +70,12 @@ router.get('/', requireAuth, (req, res) => {
       `SELECT s.id, s.user_id as userId, s.name, s.working_directory as workingDirectory,
               s.claude_session_id as claudeSessionId, s.status, s.last_message as lastMessage,
               s.starred, s.category, s.cli_provider as cliProvider, s.mode,
-              s.created_at as createdAt, s.updated_at as updatedAt,
-              COALESCE(
+              strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(
                 (SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id),
                 s.updated_at
-              ) as lastActivity
+              )) as lastActivity
        FROM sessions s
        WHERE s.user_id = ?
        ORDER BY s.starred DESC, lastActivity DESC`
@@ -96,7 +97,8 @@ router.get('/:id', requireAuth, (req, res) => {
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, category, cli_provider as cliProvider, mode,
-              created_at as createdAt, updated_at as updatedAt
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
        FROM sessions WHERE id = ? AND user_id = ?`
     )
     .get(req.params.id, userId) as Record<string, unknown> | undefined;
@@ -147,13 +149,19 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
   } else {
     // No folder specified - create subfolder based on session name (original behavior)
     const settings = db
-      .prepare('SELECT default_working_dir as defaultWorkingDir FROM user_settings WHERE user_id = ?')
+      .prepare(
+        'SELECT default_working_dir as defaultWorkingDir FROM user_settings WHERE user_id = ?'
+      )
       .get(userId) as { defaultWorkingDir: string | null } | undefined;
 
     const defaultWorkingDir = settings?.defaultWorkingDir;
 
     if (!defaultWorkingDir) {
-      throw new AppError('Please set a default working directory in Settings first', 400, 'NO_DEFAULT_DIR');
+      throw new AppError(
+        'Please set a default working directory in Settings first',
+        400,
+        'NO_DEFAULT_DIR'
+      );
     }
 
     const folderName = sanitizeFolderName(name);
@@ -183,12 +191,15 @@ router.post('/', requireAuth, rateLimiters.sessionCreation, async (req, res) => 
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, cli_provider as cliProvider, mode,
-              created_at as createdAt, updated_at as updatedAt
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(sessionId) as Record<string, unknown>;
 
-  res.status(201).json({ success: true, data: { ...newSession, starred: Boolean(newSession.starred) } });
+  res
+    .status(201)
+    .json({ success: true, data: { ...newSession, starred: Boolean(newSession.starred) } });
 });
 
 // Update session
@@ -238,12 +249,16 @@ router.put('/:id', requireAuth, (req, res) => {
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, cli_provider as cliProvider, mode,
-              created_at as createdAt, updated_at as updatedAt
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(req.params.id) as Record<string, unknown>;
 
-  res.json({ success: true, data: { ...updatedSession, starred: Boolean(updatedSession.starred) } });
+  res.json({
+    success: true,
+    data: { ...updatedSession, starred: Boolean(updatedSession.starred) },
+  });
 });
 
 // Toggle session starred status
@@ -262,7 +277,10 @@ router.patch('/:id/star', requireAuth, (req, res) => {
 
   // Toggle starred status
   const newStarred = session.starred ? 0 : 1;
-  db.prepare('UPDATE sessions SET starred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStarred, req.params.id);
+  db.prepare('UPDATE sessions SET starred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+    newStarred,
+    req.params.id
+  );
 
   res.json({ success: true, data: { starred: Boolean(newStarred) } });
 });
@@ -298,12 +316,16 @@ router.patch('/:id/provider', requireAuth, (req, res) => {
       `SELECT id, user_id as userId, name, working_directory as workingDirectory,
               claude_session_id as claudeSessionId, status, last_message as lastMessage,
               starred, cli_provider as cliProvider, mode,
-              created_at as createdAt, updated_at as updatedAt
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
        FROM sessions WHERE id = ?`
     )
     .get(req.params.id) as Record<string, unknown>;
 
-  res.json({ success: true, data: { ...updatedSession, starred: Boolean(updatedSession.starred) } });
+  res.json({
+    success: true,
+    data: { ...updatedSession, starred: Boolean(updatedSession.starred) },
+  });
 });
 
 // Persist the session permission mode. Previously lived only in localStorage, so it
@@ -325,8 +347,10 @@ router.patch('/:id/mode', requireAuth, (req, res) => {
     throw new AppError('Session not found', 404, 'NOT_FOUND');
   }
 
-  db.prepare('UPDATE sessions SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(parsed.data.mode, req.params.id);
+  db.prepare('UPDATE sessions SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+    parsed.data.mode,
+    req.params.id
+  );
 
   res.json({ success: true, data: { mode: parsed.data.mode } });
 });
@@ -393,27 +417,44 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   }
 
   // Fetch newest-first (so `limit` keeps the tail window), reverse for the client.
-  const rows = cursorRowId !== null
-    ? db.prepare(
-        `SELECT id, session_id as sessionId, role, content, created_at as createdAt, rowid as rid
+  // `created_at` is formatted as ISO 8601 UTC so the browser parses it as a real
+  // moment in time. SQLite's `CURRENT_TIMESTAMP` default writes `YYYY-MM-DD HH:MM:SS`
+  // without a TZ marker — which `new Date(...)` interprets as LOCAL time, shifting
+  // messages by the user's UTC offset and breaking timeline ordering against
+  // backend-clock-stamped tool events. See websocket.ts: emitToolUse().
+  const rows =
+    cursorRowId !== null
+      ? (db
+          .prepare(
+            `SELECT id, session_id as sessionId, role, content,
+                strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt, rowid as rid
          FROM messages WHERE session_id = ? AND rowid < ?
          ORDER BY rowid DESC LIMIT ?`
-      ).all(req.params.id, cursorRowId, limit) as Array<{ rid: number; [k: string]: unknown }>
-    : db.prepare(
-        `SELECT id, session_id as sessionId, role, content, created_at as createdAt, rowid as rid
+          )
+          .all(req.params.id, cursorRowId, limit) as Array<{ rid: number; [k: string]: unknown }>)
+      : (db
+          .prepare(
+            `SELECT id, session_id as sessionId, role, content,
+                strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt, rowid as rid
          FROM messages WHERE session_id = ?
          ORDER BY rowid DESC LIMIT ?`
-      ).all(req.params.id, limit) as Array<{ rid: number; [k: string]: unknown }>;
+          )
+          .all(req.params.id, limit) as Array<{ rid: number; [k: string]: unknown }>);
 
-  const total = (db
-    .prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?')
-    .get(req.params.id) as { c: number }).c;
+  const total = (
+    db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(req.params.id) as {
+      c: number;
+    }
+  ).c;
 
   const ordered = rows.slice().reverse();
   const oldestRid = ordered[0]?.rid ?? null;
-  const hasMore = oldestRid !== null && rows.length === limit &&
-    (db.prepare('SELECT 1 FROM messages WHERE session_id = ? AND rowid < ? LIMIT 1')
-      .get(req.params.id, oldestRid) !== undefined);
+  const hasMore =
+    oldestRid !== null &&
+    rows.length === limit &&
+    db
+      .prepare('SELECT 1 FROM messages WHERE session_id = ? AND rowid < ? LIMIT 1')
+      .get(req.params.id, oldestRid) !== undefined;
 
   // Strip the synthetic `rid` before returning.
   const messages = ordered.map(({ rid: _rid, ...rest }) => rest);
@@ -488,7 +529,8 @@ router.post('/:id/rewind', requireAuth, (req, res) => {
 
   const remaining = db
     .prepare(
-      `SELECT id, session_id as sessionId, role, content, created_at as createdAt
+      `SELECT id, session_id as sessionId, role, content,
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt
        FROM messages WHERE session_id = ? ORDER BY created_at ASC`
     )
     .all(sessionId);
@@ -553,14 +595,19 @@ router.post('/:id/allowed-directories', requireAuth, async (req, res) => {
 
   // Check if already exists
   if (allowedDirectories.includes(normalizedDir)) {
-    return res.json({ success: true, data: allowedDirectories, message: 'Directory already allowed' });
+    return res.json({
+      success: true,
+      data: allowedDirectories,
+      message: 'Directory already allowed',
+    });
   }
 
   // Add the new directory
   allowedDirectories.push(normalizedDir);
 
-  db.prepare('UPDATE sessions SET allowed_directories = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(JSON.stringify(allowedDirectories), req.params.id);
+  db.prepare(
+    'UPDATE sessions SET allowed_directories = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(JSON.stringify(allowedDirectories), req.params.id);
 
   res.json({ success: true, data: allowedDirectories });
 });
@@ -590,14 +637,18 @@ router.delete('/:id/allowed-directories', requireAuth, (req, res) => {
   // Remove the directory
   const newDirectories = allowedDirectories.filter((d) => d !== normalizedDir);
 
-  db.prepare('UPDATE sessions SET allowed_directories = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(JSON.stringify(newDirectories), req.params.id);
+  db.prepare(
+    'UPDATE sessions SET allowed_directories = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(JSON.stringify(newDirectories), req.params.id);
 
   res.json({ success: true, data: newDirectories });
 });
 
 // Helper function to validate token from query param or Authorization header
-async function validateToken(req: import('express').Request, res: import('express').Response): Promise<string | null> {
+async function validateToken(
+  req: import('express').Request,
+  res: import('express').Response
+): Promise<string | null> {
   const queryToken = req.query.token as string | undefined;
   const authHeader = req.headers.authorization;
 
@@ -607,7 +658,9 @@ async function validateToken(req: import('express').Request, res: import('expres
       const decoded = jwt.default.verify(queryToken, config.jwtSecret) as { userId: string };
       return decoded.userId;
     } catch {
-      res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
+      res
+        .status(401)
+        .json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
       return null;
     }
   } else if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -617,11 +670,16 @@ async function validateToken(req: import('express').Request, res: import('expres
       const decoded = jwt.default.verify(token, config.jwtSecret) as { userId: string };
       return decoded.userId;
     } catch {
-      res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
+      res
+        .status(401)
+        .json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid token' } });
       return null;
     }
   } else {
-    res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED', message: 'Authentication required' } });
+    res.status(401).json({
+      success: false,
+      error: { code: 'AUTH_REQUIRED', message: 'Authentication required' },
+    });
     return null;
   }
 }
@@ -640,13 +698,17 @@ router.get('/:id/images/:filename', async (req, res, next) => {
       .get(req.params.id, userId) as { working_directory: string } | undefined;
 
     if (!session) {
-      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Session not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { code: 'NOT_FOUND', message: 'Session not found' } });
     }
 
     const filename = req.params.filename;
     // Sanitize filename to prevent directory traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_FILENAME', message: 'Invalid filename' } });
+      return res
+        .status(400)
+        .json({ success: false, error: { code: 'INVALID_FILENAME', message: 'Invalid filename' } });
     }
 
     const imagePath = path.join(session.working_directory, '.claude-webui-images', filename);
@@ -655,7 +717,9 @@ router.get('/:id/images/:filename', async (req, res, next) => {
       await fs.access(imagePath);
       res.sendFile(imagePath);
     } catch {
-      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Image not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { code: 'NOT_FOUND', message: 'Image not found' } });
     }
   } catch (err) {
     next(err);
@@ -676,17 +740,25 @@ router.get('/:id/attachments/:filename', async (req, res, next) => {
       .get(req.params.id, userId) as { working_directory: string } | undefined;
 
     if (!session) {
-      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Session not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { code: 'NOT_FOUND', message: 'Session not found' } });
     }
 
     const filename = req.params.filename;
     // Sanitize filename to prevent directory traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      return res.status(400).json({ success: false, error: { code: 'INVALID_FILENAME', message: 'Invalid filename' } });
+      return res
+        .status(400)
+        .json({ success: false, error: { code: 'INVALID_FILENAME', message: 'Invalid filename' } });
     }
 
     // Try both attachment directories (new and legacy)
-    const attachmentPath = path.join(session.working_directory, '.claude-webui-attachments', filename);
+    const attachmentPath = path.join(
+      session.working_directory,
+      '.claude-webui-attachments',
+      filename
+    );
     const legacyImagePath = path.join(session.working_directory, '.claude-webui-images', filename);
 
     try {
@@ -698,7 +770,9 @@ router.get('/:id/attachments/:filename', async (req, res, next) => {
         await fs.access(legacyImagePath);
         res.sendFile(legacyImagePath);
       } catch {
-        return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Attachment not found' } });
+        return res
+          .status(404)
+          .json({ success: false, error: { code: 'NOT_FOUND', message: 'Attachment not found' } });
       }
     }
   } catch (err) {
@@ -732,8 +806,10 @@ router.patch('/:id/category', requireAuth, (req, res) => {
     }
   }
 
-  db.prepare('UPDATE sessions SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(categoryId || null, req.params.id);
+  db.prepare('UPDATE sessions SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+    categoryId || null,
+    req.params.id
+  );
 
   res.json({ success: true, data: { category: categoryId || null } });
 });
@@ -790,7 +866,8 @@ router.get('/:id/messages/search', requireAuth, (req, res) => {
   const messages = useFts
     ? db
         .prepare(
-          `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt
+          `SELECT m.id, m.session_id as sessionId, m.role, m.content,
+                  strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at) as createdAt
            FROM messages_fts f
            JOIN messages m ON m.rowid = f.rowid
            WHERE f.content MATCH ? AND m.session_id = ?
@@ -800,7 +877,8 @@ router.get('/:id/messages/search', requireAuth, (req, res) => {
         .all(ftsExpr, req.params.id, limit)
     : db
         .prepare(
-          `SELECT id, session_id as sessionId, role, content, created_at as createdAt
+          `SELECT id, session_id as sessionId, role, content,
+                  strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt
            FROM messages
            WHERE session_id = ? AND content LIKE ?
            ORDER BY created_at DESC
@@ -828,7 +906,8 @@ router.get('/messages/search', requireAuth, (req, res) => {
   const messages = useFts
     ? db
         .prepare(
-          `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt,
+          `SELECT m.id, m.session_id as sessionId, m.role, m.content,
+                  strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at) as createdAt,
                   s.name as sessionName
            FROM messages_fts f
            JOIN messages m ON m.rowid = f.rowid
@@ -840,7 +919,8 @@ router.get('/messages/search', requireAuth, (req, res) => {
         .all(ftsExpr, userId, limit)
     : db
         .prepare(
-          `SELECT m.id, m.session_id as sessionId, m.role, m.content, m.created_at as createdAt,
+          `SELECT m.id, m.session_id as sessionId, m.role, m.content,
+                  strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at) as createdAt,
                   s.name as sessionName
            FROM messages m
            JOIN sessions s ON m.session_id = s.id

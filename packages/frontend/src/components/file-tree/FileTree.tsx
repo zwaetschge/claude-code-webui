@@ -26,8 +26,19 @@ import type { FileInfo, ApiResponse, DirectoryContents } from '@claude-code-webu
 
 // File extensions that support preview
 const PREVIEWABLE_EXTENSIONS = new Set([
-  '.csv', '.xlsx', '.xls', '.json', '.txt', '.md', '.log',
-  '.xml', '.yaml', '.yml', '.toml', '.ini', '.conf',
+  '.csv',
+  '.xlsx',
+  '.xls',
+  '.json',
+  '.txt',
+  '.md',
+  '.log',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.conf',
 ]);
 
 interface FileTreeProps {
@@ -147,7 +158,7 @@ export function FileTree({
 
   // Cycle through view modes
   const cycleViewMode = useCallback(() => {
-    setViewMode(prev => {
+    setViewMode((prev) => {
       if (prev === 'simple') return 'compact';
       if (prev === 'compact') return 'detailed';
       return 'simple';
@@ -155,14 +166,18 @@ export function FileTree({
   }, []);
 
   // Fetch root directory contents
-  const { data: rootFiles, isLoading: rootLoading, refetch } = useQuery({
+  const {
+    data: rootFiles,
+    isLoading: rootLoading,
+    refetch,
+  } = useQuery({
     queryKey: ['files', workingDirectory],
     queryFn: async () => {
       const response = await api.get<ApiResponse<DirectoryContents>>(
         `/api/files?path=${encodeURIComponent(workingDirectory)}`
       );
       if (response.data.success && response.data.data) {
-        return response.data.data.files.filter(f => !EXCLUDED_DIRS.has(f.name));
+        return response.data.data.files.filter((f) => !EXCLUDED_DIRS.has(f.name));
       }
       return [];
     },
@@ -172,7 +187,7 @@ export function FileTree({
   // Update children when root files change
   useEffect(() => {
     if (rootFiles) {
-      setTreeState(prev => ({
+      setTreeState((prev) => ({
         ...prev,
         children: { ...prev.children, [workingDirectory]: rootFiles },
       }));
@@ -180,316 +195,354 @@ export function FileTree({
   }, [rootFiles, workingDirectory]);
 
   // Load directory contents
-  const loadDirectory = useCallback(async (path: string) => {
-    if (treeState.loading[path] || treeState.children[path]) {
-      return;
-    }
+  const loadDirectory = useCallback(
+    async (path: string) => {
+      if (treeState.loading[path] || treeState.children[path]) {
+        return;
+      }
 
-    setTreeState(prev => ({
-      ...prev,
-      loading: { ...prev.loading, [path]: true },
-    }));
+      setTreeState((prev) => ({
+        ...prev,
+        loading: { ...prev.loading, [path]: true },
+      }));
 
-    try {
-      const response = await api.get<ApiResponse<DirectoryContents>>(
-        `/api/files?path=${encodeURIComponent(path)}`
-      );
-      if (response.data.success && response.data.data) {
-        const files = response.data.data.files.filter(f => !EXCLUDED_DIRS.has(f.name));
-        setTreeState(prev => ({
+      try {
+        const response = await api.get<ApiResponse<DirectoryContents>>(
+          `/api/files?path=${encodeURIComponent(path)}`
+        );
+        if (response.data.success && response.data.data) {
+          const files = response.data.data.files.filter((f) => !EXCLUDED_DIRS.has(f.name));
+          setTreeState((prev) => ({
+            ...prev,
+            loading: { ...prev.loading, [path]: false },
+            children: { ...prev.children, [path]: files },
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load directory:', error);
+        setTreeState((prev) => ({
           ...prev,
           loading: { ...prev.loading, [path]: false },
-          children: { ...prev.children, [path]: files },
         }));
       }
-    } catch (error) {
-      console.error('Failed to load directory:', error);
-      setTreeState(prev => ({
-        ...prev,
-        loading: { ...prev.loading, [path]: false },
-      }));
-    }
-  }, [treeState.loading, treeState.children]);
+    },
+    [treeState.loading, treeState.children]
+  );
 
   // Handle file upload
-  const handleUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
+  const handleUpload = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
 
-    setIsUploading(true);
-    try {
-      // Determine target directory: selected folder or working directory
-      let targetDir = workingDirectory;
-      if (selectedFile) {
-        // Check if selected file is a directory
-        const selectedInfo = Object.values(treeState.children)
-          .flat()
-          .find(f => f.path === selectedFile);
-        if (selectedInfo?.type === 'directory') {
-          targetDir = selectedFile;
-        } else if (selectedFile) {
-          // Use parent directory of selected file
-          const lastSlash = selectedFile.lastIndexOf('/');
-          if (lastSlash > 0) {
-            targetDir = selectedFile.substring(0, lastSlash);
+      setIsUploading(true);
+      try {
+        // Determine target directory: selected folder or working directory
+        let targetDir = workingDirectory;
+        if (selectedFile) {
+          // Check if selected file is a directory
+          const selectedInfo = Object.values(treeState.children)
+            .flat()
+            .find((f) => f.path === selectedFile);
+          if (selectedInfo?.type === 'directory') {
+            targetDir = selectedFile;
+          } else if (selectedFile) {
+            // Use parent directory of selected file
+            const lastSlash = selectedFile.lastIndexOf('/');
+            if (lastSlash > 0) {
+              targetDir = selectedFile.substring(0, lastSlash);
+            }
           }
         }
-      }
 
-      const formData = new FormData();
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        if (file) {
-          formData.append('files', file);
+        const formData = new FormData();
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (file) {
+            formData.append('files', file);
+          }
+        }
+
+        // Pass targetDirectory as query param (not in body) because multer's
+        // destination callback runs before body is parsed
+        const response = await api.post<
+          ApiResponse<{ files: { name: string; path: string; size: number }[] }>
+        >(`/api/files/upload?targetDirectory=${encodeURIComponent(targetDir)}`, formData);
+
+        if (response.data.success) {
+          // Refresh the file tree
+          refetch();
+          // Also refresh the target directory if it's expanded
+          if (targetDir !== workingDirectory && treeState.children[targetDir]) {
+            setTreeState((prev) => ({
+              ...prev,
+              children: { ...prev.children, [targetDir]: undefined as unknown as FileInfo[] },
+            }));
+            loadDirectory(targetDir);
+          }
+        }
+      } catch (error) {
+        console.error('Upload failed:', error);
+      } finally {
+        setIsUploading(false);
+        // Reset input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
         }
       }
-
-      // Pass targetDirectory as query param (not in body) because multer's
-      // destination callback runs before body is parsed
-      const response = await api.post<ApiResponse<{ files: { name: string; path: string; size: number }[] }>>(`/api/files/upload?targetDirectory=${encodeURIComponent(targetDir)}`, formData);
-
-      if (response.data.success) {
-        // Refresh the file tree
-        refetch();
-        // Also refresh the target directory if it's expanded
-        if (targetDir !== workingDirectory && treeState.children[targetDir]) {
-          setTreeState(prev => ({
-            ...prev,
-            children: { ...prev.children, [targetDir]: undefined as unknown as FileInfo[] },
-          }));
-          loadDirectory(targetDir);
-        }
-      }
-    } catch (error) {
-      console.error('Upload failed:', error);
-    } finally {
-      setIsUploading(false);
-      // Reset input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  }, [workingDirectory, selectedFile, treeState.children, refetch, loadDirectory]);
+    },
+    [workingDirectory, selectedFile, treeState.children, refetch, loadDirectory]
+  );
 
   // Toggle directory expansion
-  const toggleExpand = useCallback((path: string, isDirectory: boolean) => {
-    if (!isDirectory) return;
+  const toggleExpand = useCallback(
+    (path: string, isDirectory: boolean) => {
+      if (!isDirectory) return;
 
-    setTreeState(prev => {
-      const isExpanded = !prev.expanded[path];
-      return {
-        ...prev,
-        expanded: { ...prev.expanded, [path]: isExpanded },
-      };
-    });
+      setTreeState((prev) => {
+        const isExpanded = !prev.expanded[path];
+        return {
+          ...prev,
+          expanded: { ...prev.expanded, [path]: isExpanded },
+        };
+      });
 
-    // Load contents if expanding and not loaded
-    if (!treeState.expanded[path] && !treeState.children[path]) {
-      loadDirectory(path);
-    }
-  }, [treeState.expanded, treeState.children, loadDirectory]);
+      // Load contents if expanding and not loaded
+      if (!treeState.expanded[path] && !treeState.children[path]) {
+        loadDirectory(path);
+      }
+    },
+    [treeState.expanded, treeState.children, loadDirectory]
+  );
 
   // Handle file selection
-  const handleSelect = useCallback((path: string) => {
-    onFileSelect(path);
-  }, [onFileSelect]);
+  const handleSelect = useCallback(
+    (path: string) => {
+      onFileSelect(path);
+    },
+    [onFileSelect]
+  );
 
   // Handle file open (double-click)
-  const handleOpen = useCallback(async (file: FileInfo) => {
-    if (file.type === 'directory' || !onFileOpen) return;
+  const handleOpen = useCallback(
+    async (file: FileInfo) => {
+      if (file.type === 'directory' || !onFileOpen) return;
 
-    try {
-      const response = await api.get<ApiResponse<{ content: string }>>(
-        `/api/files/content?path=${encodeURIComponent(file.path)}`
-      );
-      if (response.data.success && response.data.data) {
-        onFileOpen(file.path, response.data.data.content);
+      try {
+        const response = await api.get<ApiResponse<{ content: string }>>(
+          `/api/files/content?path=${encodeURIComponent(file.path)}`
+        );
+        if (response.data.success && response.data.data) {
+          onFileOpen(file.path, response.data.data.content);
+        }
+      } catch (error) {
+        console.error('Failed to read file:', error);
       }
-    } catch (error) {
-      console.error('Failed to read file:', error);
-    }
-  }, [onFileOpen]);
+    },
+    [onFileOpen]
+  );
 
   // Filter files based on search query
-  const filterFiles = useCallback((files: FileInfo[], query: string): FileInfo[] => {
-    if (!query) return files;
+  const filterFiles = useCallback(
+    (files: FileInfo[], query: string): FileInfo[] => {
+      if (!query) return files;
 
-    const lowerQuery = query.toLowerCase();
-    return files.filter(file => {
-      const nameMatch = file.name.toLowerCase().includes(lowerQuery);
-      if (nameMatch) return true;
+      const lowerQuery = query.toLowerCase();
+      return files.filter((file) => {
+        const nameMatch = file.name.toLowerCase().includes(lowerQuery);
+        if (nameMatch) return true;
 
-      // If directory, check if any children match
-      if (file.type === 'directory') {
-        const children = treeState.children[file.path];
-        if (children) {
-          return filterFiles(children, query).length > 0;
+        // If directory, check if any children match
+        if (file.type === 'directory') {
+          const children = treeState.children[file.path];
+          if (children) {
+            return filterFiles(children, query).length > 0;
+          }
         }
-      }
-      return false;
-    });
-  }, [treeState.children]);
+        return false;
+      });
+    },
+    [treeState.children]
+  );
 
   // Render tree node
-  const renderNode = useCallback((file: FileInfo, depth: number): React.ReactNode => {
-    const isDirectory = file.type === 'directory';
-    const isExpanded = treeState.expanded[file.path];
-    const isLoading = treeState.loading[file.path];
-    const children = treeState.children[file.path];
-    const isSelected = selectedFile === file.path;
-    const paddingLeft = depth * 16 + 8;
+  const renderNode = useCallback(
+    (file: FileInfo, depth: number): React.ReactNode => {
+      const isDirectory = file.type === 'directory';
+      const isExpanded = treeState.expanded[file.path];
+      const isLoading = treeState.loading[file.path];
+      const children = treeState.children[file.path];
+      const isSelected = selectedFile === file.path;
+      const paddingLeft = depth * 16 + 8;
 
-    // Filter children if search query exists
-    const filteredChildren = children ? filterFiles(children, searchQuery) : [];
+      // Filter children if search query exists
+      const filteredChildren = children ? filterFiles(children, searchQuery) : [];
 
-    // Auto-expand directories with matching children during search
-    const shouldAutoExpand = searchQuery && isDirectory && filteredChildren.length > 0;
-    if (shouldAutoExpand && !isExpanded && !treeState.loading[file.path]) {
-      // Trigger expansion in next tick to avoid state update during render
-      setTimeout(() => toggleExpand(file.path, true), 0);
-    }
+      // Auto-expand directories with matching children during search
+      const shouldAutoExpand = searchQuery && isDirectory && filteredChildren.length > 0;
+      if (shouldAutoExpand && !isExpanded && !treeState.loading[file.path]) {
+        // Trigger expansion in next tick to avoid state update during render
+        setTimeout(() => toggleExpand(file.path, true), 0);
+      }
 
-    return (
-      <div key={file.path}>
-        <div
-          role="treeitem"
-          tabIndex={0}
-          aria-expanded={isDirectory ? isExpanded : undefined}
-          aria-selected={isSelected}
-          className={cn(
-            'group flex items-center gap-1.5 py-1 px-2 cursor-pointer rounded-sm transition-colors',
-            'hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary/50',
-            isSelected && 'bg-primary/10 text-primary'
-          )}
-          style={{ paddingLeft }}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isDirectory) {
-              toggleExpand(file.path, true);
-            }
-            handleSelect(file.path);
-          }}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            if (!isDirectory) {
-              handleOpen(file);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
+      return (
+        <div key={file.path}>
+          <div
+            role="treeitem"
+            tabIndex={0}
+            aria-expanded={isDirectory ? isExpanded : undefined}
+            aria-selected={isSelected}
+            className={cn(
+              'group flex items-center gap-1.5 py-1 px-2 cursor-pointer rounded-sm transition-colors',
+              'hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary/50',
+              isSelected && 'bg-primary/10 text-primary'
+            )}
+            style={{ paddingLeft }}
+            onClick={(e) => {
+              e.stopPropagation();
               if (isDirectory) {
                 toggleExpand(file.path, true);
-              } else {
+              }
+              handleSelect(file.path);
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              if (!isDirectory) {
                 handleOpen(file);
               }
-            } else if (e.key === 'ArrowRight' && isDirectory && !isExpanded) {
-              toggleExpand(file.path, true);
-            } else if (e.key === 'ArrowLeft' && isDirectory && isExpanded) {
-              toggleExpand(file.path, true);
-            }
-          }}
-        >
-          {/* Expand/Collapse indicator */}
-          <span className="w-4 h-4 flex items-center justify-center shrink-0">
-            {isDirectory ? (
-              isLoading ? (
-                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-              ) : isExpanded ? (
-                <ChevronDown className="h-3 w-3 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3 w-3 text-muted-foreground" />
-              )
-            ) : null}
-          </span>
-
-          {/* File/Folder icon */}
-          <FileIcon
-            filename={file.name}
-            isDirectory={isDirectory}
-            isOpen={isExpanded}
-            className="h-4 w-4 shrink-0"
-          />
-
-          {/* Filename with search highlight and metadata */}
-          <div className="flex-1 min-w-0 flex items-center gap-2">
-            <span className="text-sm truncate flex-1 min-w-0">
-              {searchQuery ? highlightMatch(file.name, searchQuery) : file.name}
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (isDirectory) {
+                  toggleExpand(file.path, true);
+                } else {
+                  handleOpen(file);
+                }
+              } else if (e.key === 'ArrowRight' && isDirectory && !isExpanded) {
+                toggleExpand(file.path, true);
+              } else if (e.key === 'ArrowLeft' && isDirectory && isExpanded) {
+                toggleExpand(file.path, true);
+              }
+            }}
+          >
+            {/* Expand/Collapse indicator */}
+            <span className="w-4 h-4 flex items-center justify-center shrink-0">
+              {isDirectory ? (
+                isLoading ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                ) : isExpanded ? (
+                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                )
+              ) : null}
             </span>
-            {/* Compact mode: show size for files */}
-            {viewMode === 'compact' && !isDirectory && file.size > 0 && (
-              <span className="text-[10px] text-muted-foreground shrink-0">
-                {formatFileSize(file.size)}
+
+            {/* File/Folder icon */}
+            <FileIcon
+              filename={file.name}
+              isDirectory={isDirectory}
+              isOpen={isExpanded}
+              className="h-4 w-4 shrink-0"
+            />
+
+            {/* Filename with search highlight and metadata */}
+            <div className="flex-1 min-w-0 flex items-center gap-2">
+              <span className="text-sm truncate flex-1 min-w-0">
+                {searchQuery ? highlightMatch(file.name, searchQuery) : file.name}
               </span>
+              {/* Compact mode: show size for files */}
+              {viewMode === 'compact' && !isDirectory && file.size > 0 && (
+                <span className="text-[10px] text-muted-foreground shrink-0">
+                  {formatFileSize(file.size)}
+                </span>
+              )}
+              {/* Detailed mode: show size and date */}
+              {viewMode === 'detailed' && (
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground shrink-0 ml-auto">
+                  {!isDirectory && file.size > 0 && (
+                    <span className="w-14 text-right">{formatFileSize(file.size)}</span>
+                  )}
+                  {file.modifiedAt && (
+                    <span className="w-16 text-right">{formatDate(file.modifiedAt)}</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Preview button for previewable files */}
+            {!isDirectory && isPreviewable(file.name) && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openPreview(file.path);
+                }}
+                title="Preview file"
+              >
+                <Eye className="h-3 w-3" />
+              </Button>
             )}
-            {/* Detailed mode: show size and date */}
-            {viewMode === 'detailed' && (
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground shrink-0 ml-auto">
-                {!isDirectory && file.size > 0 && (
-                  <span className="w-14 text-right">{formatFileSize(file.size)}</span>
-                )}
-                {file.modifiedAt && (
-                  <span className="w-16 text-right">{formatDate(file.modifiedAt)}</span>
-                )}
-              </div>
+
+            {/* Download button for files */}
+            {!isDirectory && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  downloadFile(file.path, file.name);
+                }}
+                title="Download file"
+              >
+                <Download className="h-3 w-3" />
+              </Button>
             )}
           </div>
 
-          {/* Preview button for previewable files */}
-          {!isDirectory && isPreviewable(file.name) && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={(e) => {
-                e.stopPropagation();
-                openPreview(file.path);
-              }}
-              title="Preview file"
-            >
-              <Eye className="h-3 w-3" />
-            </Button>
-          )}
-
-          {/* Download button for files */}
-          {!isDirectory && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={(e) => {
-                e.stopPropagation();
-                downloadFile(file.path, file.name);
-              }}
-              title="Download file"
-            >
-              <Download className="h-3 w-3" />
-            </Button>
+          {/* Children */}
+          {isDirectory && isExpanded && (
+            <div role="group">
+              {isLoading ? (
+                <div
+                  className="flex items-center gap-2 py-2 text-muted-foreground"
+                  style={{ paddingLeft: paddingLeft + 24 }}
+                >
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="text-xs">Loading...</span>
+                </div>
+              ) : filteredChildren.length > 0 ? (
+                filteredChildren
+                  .sort((a, b) => {
+                    // Directories first, then alphabetically
+                    if (a.type === 'directory' && b.type !== 'directory') return -1;
+                    if (a.type !== 'directory' && b.type === 'directory') return 1;
+                    return a.name.localeCompare(b.name);
+                  })
+                  .map((child) => renderNode(child, depth + 1))
+              ) : null}
+            </div>
           )}
         </div>
-
-        {/* Children */}
-        {isDirectory && isExpanded && (
-          <div role="group">
-            {isLoading ? (
-              <div className="flex items-center gap-2 py-2 text-muted-foreground" style={{ paddingLeft: paddingLeft + 24 }}>
-                <Loader2 className="h-3 w-3 animate-spin" />
-                <span className="text-xs">Loading...</span>
-              </div>
-            ) : filteredChildren.length > 0 ? (
-              filteredChildren
-                .sort((a, b) => {
-                  // Directories first, then alphabetically
-                  if (a.type === 'directory' && b.type !== 'directory') return -1;
-                  if (a.type !== 'directory' && b.type === 'directory') return 1;
-                  return a.name.localeCompare(b.name);
-                })
-                .map(child => renderNode(child, depth + 1))
-            ) : null}
-          </div>
-        )}
-      </div>
-    );
-  }, [treeState, selectedFile, searchQuery, viewMode, filterFiles, toggleExpand, handleSelect, handleOpen, isPreviewable, openPreview]);
+      );
+    },
+    [
+      treeState,
+      selectedFile,
+      searchQuery,
+      viewMode,
+      filterFiles,
+      toggleExpand,
+      handleSelect,
+      handleOpen,
+      isPreviewable,
+      openPreview,
+      downloadFile,
+    ]
+  );
 
   // Sort and filter root files
   const displayFiles = useMemo(() => {
@@ -592,7 +645,7 @@ export function FileTree({
               {searchQuery ? 'No matching files' : 'No files found'}
             </div>
           ) : (
-            displayFiles.map(file => renderNode(file, 0))
+            displayFiles.map((file) => renderNode(file, 0))
           )}
         </div>
       </ScrollArea>
@@ -605,11 +658,7 @@ export function FileTree({
       </div>
 
       {/* File preview dialog */}
-      <FilePreviewDialog
-        open={previewOpen}
-        onOpenChange={setPreviewOpen}
-        filePath={previewPath}
-      />
+      <FilePreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} filePath={previewPath} />
     </div>
   );
 }

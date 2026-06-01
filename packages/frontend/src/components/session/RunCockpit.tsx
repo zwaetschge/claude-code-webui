@@ -1,0 +1,466 @@
+import { useMemo, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import {
+  Activity,
+  AlertCircle,
+  CheckCircle2,
+  Circle,
+  Clock3,
+  FileText,
+  GitBranch,
+  Loader2,
+  MessageSquare,
+  RotateCcw,
+  ShieldCheck,
+  SquareTerminal,
+  Wrench,
+  X,
+  Zap,
+} from 'lucide-react';
+import type {
+  ApiResponse,
+  GitStatus,
+  Message,
+  SessionQueueData,
+  SessionStatus,
+  ToolExecution,
+  UsageData,
+} from '@claude-code-webui/shared';
+import type { ActivityState, TodoItem } from '@/stores/sessionStore';
+import { api } from '@/services/api';
+import { cn } from '@/lib/utils';
+
+interface RunCockpitProps {
+  workingDirectory: string;
+  providerLabel: string;
+  sessionStatus: SessionStatus;
+  messages: Message[];
+  streamingContent: string;
+  activity: ActivityState;
+  todos: TodoItem[];
+  tools: ToolExecution[];
+  usage?: UsageData;
+  queue?: SessionQueueData | null;
+  onClose: () => void;
+  onInterrupt: () => void;
+  onRestart: () => void;
+  onReviewChanges: () => void;
+}
+
+type RunTone = 'neutral' | 'good' | 'warn' | 'bad' | 'live';
+
+function stripPreview(content: string, max = 92): string {
+  const compact = content
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[#>*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return compact.length > max ? `${compact.slice(0, max).trim()}...` : compact;
+}
+
+function timeShort(value: string | number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function inputPreview(input: unknown): string {
+  if (!input) return '';
+  if (typeof input === 'string') return input;
+  const obj = input as Record<string, unknown>;
+  return String(obj.command || obj.file_path || obj.path || obj.pattern || obj.query || '');
+}
+
+function StatPill({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string | number;
+  tone?: RunTone;
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-md border px-2.5 py-2',
+        tone === 'live' && 'border-primary/30 bg-primary/10',
+        tone === 'good' && 'border-emerald-500/25 bg-emerald-500/10',
+        tone === 'warn' && 'border-amber-500/25 bg-amber-500/10',
+        tone === 'bad' && 'border-red-500/25 bg-red-500/10',
+        tone === 'neutral' && 'border-border/50 bg-foreground/[0.025]'
+      )}
+    >
+      <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="border-t border-border/45 px-4 py-4">
+      <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
+        {icon}
+        <span>{title}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function GateRow({ tone, label, detail }: { tone: RunTone; label: string; detail: string }) {
+  const Icon =
+    tone === 'bad'
+      ? AlertCircle
+      : tone === 'warn'
+        ? Circle
+        : tone === 'live'
+          ? Loader2
+          : CheckCircle2;
+  return (
+    <div className="flex items-start gap-2.5 rounded-md px-2 py-2">
+      <Icon
+        className={cn(
+          'mt-0.5 h-3.5 w-3.5 shrink-0',
+          tone === 'bad' && 'text-red-500',
+          tone === 'warn' && 'text-amber-500',
+          tone === 'live' && 'animate-spin text-primary',
+          tone === 'good' && 'text-emerald-500',
+          tone === 'neutral' && 'text-muted-foreground'
+        )}
+      />
+      <div className="min-w-0">
+        <div className="text-xs font-medium text-foreground">{label}</div>
+        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+export function RunCockpit({
+  workingDirectory,
+  providerLabel,
+  sessionStatus,
+  messages,
+  streamingContent,
+  activity,
+  todos,
+  tools,
+  usage,
+  queue,
+  onClose,
+  onInterrupt,
+  onRestart,
+  onReviewChanges,
+}: RunCockpitProps) {
+  const isLive =
+    sessionStatus === 'running' ||
+    activity.type === 'thinking' ||
+    activity.type === 'tool' ||
+    streamingContent.length > 0;
+
+  const { data: gitStatus, isFetching: gitFetching } = useQuery({
+    queryKey: ['run-cockpit-git-status', workingDirectory],
+    queryFn: async () => {
+      try {
+        const response = await api.get<ApiResponse<GitStatus>>(
+          `/api/git/status?path=${encodeURIComponent(workingDirectory)}`
+        );
+        return response.data.data ?? null;
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!workingDirectory,
+    refetchInterval: isLive ? 4000 : 10000,
+  });
+
+  const changedFiles = useMemo(() => {
+    if (!gitStatus) return [];
+    return Array.from(
+      new Set([...gitStatus.staged, ...gitStatus.unstaged, ...gitStatus.untracked])
+    );
+  }, [gitStatus]);
+
+  const pendingTodos = todos.filter((todo) => todo.status !== 'completed');
+  const runningTools = tools.filter((tool) => tool.status === 'started');
+  const failedTools = tools.filter((tool) => tool.status === 'error');
+  const lastVerifyTool = [...tools]
+    .reverse()
+    .find(
+      (tool) =>
+        tool.toolName === 'Bash' &&
+        /(test|typecheck|lint|build|tsc|eslint|vitest|jest|playwright|pnpm|npm)/i.test(
+          inputPreview(tool.input)
+        )
+    );
+
+  const lastAssistantIndex = [...messages]
+    .reverse()
+    .findIndex((message) => message.role === 'assistant');
+  const assistantBoundary =
+    lastAssistantIndex === -1 ? -1 : messages.length - 1 - lastAssistantIndex;
+  const openUserMessages = messages
+    .slice(assistantBoundary + 1)
+    .filter((message) => message.role === 'user');
+  const derivedQueued = isLive ? openUserMessages.slice(1) : [];
+  const queuedItems =
+    queue && queue.depth > 0
+      ? queue.items
+      : derivedQueued.map((message) => ({
+          id: message.id,
+          preview: stripPreview(message.content, 120),
+          createdAt: message.createdAt,
+        }));
+
+  const runEvents = useMemo(() => {
+    const messageEvents = messages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({
+        id: `m-${message.id}`,
+        kind: message.role === 'user' ? 'Input' : providerLabel,
+        text: stripPreview(message.content),
+        ts: new Date(message.createdAt).getTime(),
+        icon: message.role === 'user' ? MessageSquare : Activity,
+      }));
+    const toolEvents = tools.map((tool) => ({
+      id: `t-${tool.toolId}`,
+      kind: tool.toolName,
+      text: inputPreview(tool.input) || tool.status,
+      ts: tool.timestamp,
+      icon: tool.toolName === 'Bash' ? SquareTerminal : Wrench,
+    }));
+    return [...messageEvents, ...toolEvents]
+      .filter((event) => event.text)
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 8);
+  }, [messages, providerLabel, tools]);
+
+  const runTone: RunTone =
+    sessionStatus === 'error' ? 'bad' : isLive ? 'live' : failedTools.length > 0 ? 'warn' : 'good';
+  const runLabel = sessionStatus === 'error' ? 'Error' : isLive ? 'Running' : 'Ready';
+  const dirtyCount = changedFiles.length;
+
+  return (
+    <aside className="run-cockpit-rail">
+      <div className="flex items-start justify-between gap-3 px-4 pb-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                'h-2 w-2 rounded-full',
+                runTone === 'live' && 'animate-pulse bg-primary',
+                runTone === 'good' && 'bg-emerald-500',
+                runTone === 'warn' && 'bg-amber-500',
+                runTone === 'bad' && 'bg-red-500'
+              )}
+            />
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Run
+            </h3>
+          </div>
+          <div className="mt-1 text-lg font-semibold tracking-display text-foreground">
+            {runLabel}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">{providerLabel}</div>
+        </div>
+        <button type="button" className="turn-map-close" onClick={onClose} title="Close run panel">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 px-4 pb-4">
+        <StatPill
+          label="Tools"
+          value={runningTools.length || tools.length}
+          tone={isLive ? 'live' : 'neutral'}
+        />
+        <StatPill
+          label="Queue"
+          value={queue?.depth ?? queuedItems.length}
+          tone={queuedItems.length ? 'warn' : 'neutral'}
+        />
+        <StatPill label="Files" value={dirtyCount} tone={dirtyCount ? 'warn' : 'good'} />
+      </div>
+
+      <div className="flex gap-2 px-4 pb-4">
+        <button
+          type="button"
+          onClick={onInterrupt}
+          disabled={!isLive}
+          className="panel-trigger h-8 flex-1 justify-center disabled:pointer-events-none disabled:opacity-45"
+        >
+          <Zap className="h-3.5 w-3.5" />
+          <span>Stop</span>
+        </button>
+        <button
+          type="button"
+          onClick={onRestart}
+          className="panel-trigger h-8 flex-1 justify-center"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          <span>Restart</span>
+        </button>
+      </div>
+
+      <Section title="Queue" icon={<MessageSquare className="h-3.5 w-3.5" />}>
+        {queuedItems.length === 0 ? (
+          <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+            Empty
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {queuedItems.slice(0, 3).map((item, index) => (
+              <div
+                key={item.id}
+                className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
+                  <span>Next {index + 1}</span>
+                  <span>{timeShort(item.createdAt)}</span>
+                </div>
+                <div className="mt-1 text-xs leading-relaxed text-foreground">
+                  {stripPreview(item.preview, 120)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Diff" icon={<GitBranch className="h-3.5 w-3.5" />}>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs text-muted-foreground">
+              {gitStatus ? gitStatus.branch : gitFetching ? 'Checking' : 'No git repo'}
+            </div>
+            <button
+              type="button"
+              onClick={onReviewChanges}
+              disabled={!gitStatus || dirtyCount === 0}
+              className="panel-trigger h-7 px-2 text-[11px] disabled:pointer-events-none disabled:opacity-45"
+            >
+              <ShieldCheck className="h-3 w-3" />
+              Review
+            </button>
+          </div>
+          {changedFiles.length === 0 ? (
+            <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+              Clean
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {changedFiles.slice(0, 6).map((file) => (
+                <div
+                  key={file}
+                  className="flex items-center gap-2 rounded-md bg-foreground/[0.025] px-2 py-1.5 text-xs"
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate font-mono">{file}</span>
+                </div>
+              ))}
+              {changedFiles.length > 6 && (
+                <div className="px-2 pt-1 text-[11px] text-muted-foreground">
+                  +{changedFiles.length - 6}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Verify" icon={<CheckCircle2 className="h-3.5 w-3.5" />}>
+        <div className="space-y-1">
+          <GateRow
+            tone={isLive ? 'live' : 'good'}
+            label="Agent"
+            detail={isLive ? activity.message || activity.toolName || 'Working' : 'Idle'}
+          />
+          <GateRow
+            tone={failedTools.length ? 'bad' : runningTools.length ? 'live' : 'good'}
+            label="Tools"
+            detail={
+              failedTools.length
+                ? `${failedTools.length} failed`
+                : runningTools.length
+                  ? `${runningTools.length} running`
+                  : `${tools.length} recorded`
+            }
+          />
+          <GateRow
+            tone={pendingTodos.length ? 'warn' : 'good'}
+            label="Tasks"
+            detail={pendingTodos.length ? `${pendingTodos.length} open` : 'Complete'}
+          />
+          <GateRow
+            tone={
+              !lastVerifyTool
+                ? 'neutral'
+                : lastVerifyTool.status === 'error'
+                  ? 'bad'
+                  : lastVerifyTool.status === 'started'
+                    ? 'live'
+                    : 'good'
+            }
+            label="Check"
+            detail={
+              lastVerifyTool
+                ? inputPreview(lastVerifyTool.input) || lastVerifyTool.status
+                : 'Not run in this session'
+            }
+          />
+        </div>
+      </Section>
+
+      <Section title="Timeline" icon={<Clock3 className="h-3.5 w-3.5" />}>
+        <div className="space-y-1">
+          {runEvents.length === 0 ? (
+            <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+              Empty
+            </div>
+          ) : (
+            runEvents.map((event) => {
+              const Icon = event.icon;
+              return (
+                <div key={event.id} className="grid grid-cols-[16px_1fr_auto] gap-2 px-1 py-1.5">
+                  <Icon className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-foreground">{event.kind}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{event.text}</div>
+                  </div>
+                  <div className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                    {timeShort(event.ts)}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </Section>
+
+      {usage && (
+        <div className="mt-auto border-t border-border/45 px-4 py-3 text-[11px] text-muted-foreground">
+          <span className="tabular-nums">{usage.totalTokens.toLocaleString()}</span> ctx
+          <span className="mx-2">/</span>
+          <span className="tabular-nums">
+            {usage.totalCostUsd < 0.01
+              ? `$${usage.totalCostUsd.toFixed(4)}`
+              : `$${usage.totalCostUsd.toFixed(2)}`}
+          </span>
+        </div>
+      )}
+    </aside>
+  );
+}

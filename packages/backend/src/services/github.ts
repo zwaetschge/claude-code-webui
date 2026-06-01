@@ -10,7 +10,9 @@ export class GitHubService {
     return new Octokit({ auth: token });
   }
 
-  async validateToken(userId: string): Promise<{ valid: boolean; user?: GitHubUser; scopes?: string[]; error?: string }> {
+  async validateToken(
+    userId: string
+  ): Promise<{ valid: boolean; user?: GitHubUser; scopes?: string[]; error?: string }> {
     const octokit = this.getOctokit(userId);
     if (!octokit) {
       return { valid: false, error: 'No GitHub token configured' };
@@ -59,7 +61,11 @@ export class GitHubService {
     }
   }
 
-  async listRepos(userId: string, page = 1, perPage = 30): Promise<{ repos: GitHubRepo[]; hasMore: boolean }> {
+  async listRepos(
+    userId: string,
+    page = 1,
+    perPage = 30
+  ): Promise<{ repos: GitHubRepo[]; hasMore: boolean }> {
     const octokit = this.getOctokit(userId);
     if (!octokit) {
       return { repos: [], hasMore: false };
@@ -100,7 +106,10 @@ export class GitHubService {
     }
   }
 
-  async createRepo(userId: string, request: CreateRepoRequest): Promise<{ success: boolean; repo?: GitHubRepo; error?: string }> {
+  async createRepo(
+    userId: string,
+    request: CreateRepoRequest
+  ): Promise<{ success: boolean; repo?: GitHubRepo; error?: string }> {
     const octokit = this.getOctokit(userId);
     if (!octokit) {
       return { success: false, error: 'No GitHub token configured' };
@@ -195,14 +204,14 @@ export class GitHubService {
 
       // Check if remote exists
       const remotes = await git.getRemotes(true);
-      const remoteExists = remotes.some(r => r.name === remote);
+      const remoteExists = remotes.some((r) => r.name === remote);
 
       if (!remoteExists) {
         return { success: false, error: `Remote '${remote}' not found` };
       }
 
       // Get remote URL and inject token if needed
-      const remoteUrl = remotes.find(r => r.name === remote)?.refs.push || '';
+      const remoteUrl = remotes.find((r) => r.name === remote)?.refs.push || '';
 
       if (token && remoteUrl.startsWith('https://github.com/')) {
         const tokenUrl = remoteUrl.replace('https://github.com/', `https://${token}@github.com/`);
@@ -242,7 +251,7 @@ export class GitHubService {
 
       // Check if remote already exists
       const remotes = await git.getRemotes();
-      if (remotes.some(r => r.name === remoteName)) {
+      if (remotes.some((r) => r.name === remoteName)) {
         // Update existing remote
         await git.remote(['set-url', remoteName, repoUrl]);
       } else {
@@ -259,7 +268,9 @@ export class GitHubService {
     }
   }
 
-  async getRateLimitStatus(userId: string): Promise<{ remaining: number; limit: number; reset: Date } | null> {
+  async getRateLimitStatus(
+    userId: string
+  ): Promise<{ remaining: number; limit: number; reset: Date } | null> {
     const octokit = this.getOctokit(userId);
     if (!octokit) return null;
 

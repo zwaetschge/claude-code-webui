@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build --outDir dist",
     "preview": "electron-vite preview",
     "package": "electron-builder",
     "package:linux": "electron-builder --linux AppImage rpm",

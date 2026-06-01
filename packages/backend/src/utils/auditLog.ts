@@ -65,16 +65,13 @@ export function stampLogin(
   metadata: Record<string, unknown> = {}
 ): void {
   try {
-    // db import is deferred to avoid a circular dependency at module load time
-    // (auditLog → db → migrations that may import other utils that import auditLog).
-    const { getDatabase } = require('../db') as typeof import('../db');
     const db = getDatabase();
     db.prepare(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`).run(userId);
   } catch (err) {
     console.error('[audit] last_login_at update failed:', err);
   }
   const ip = req
-    ? ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null)
+    ? (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null
     : null;
   const userAgent = req ? ((req.headers['user-agent'] as string | undefined) ?? null) : null;
   recordAudit({

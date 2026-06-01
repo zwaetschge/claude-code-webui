@@ -7,6 +7,7 @@ import { AppError } from '../middleware/errorHandler';
 import { addPatternToSettings } from './claude-settings';
 import { getDatabase } from '../db';
 import { config } from '../config';
+import { opencodeServer } from '../services/opencode/OpencodeServer';
 
 const router = Router();
 
@@ -71,7 +72,7 @@ const permissionRequestSchema = z.object({
 });
 
 const permissionRespondSchema = z.object({
-  requestId: z.string().uuid(),
+  requestId: z.string().min(1),
   action: z.enum(['allow_once', 'allow_project', 'allow_global', 'deny']),
   pattern: z.string().optional(),
 });
@@ -199,6 +200,22 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
   const request = pendingRequests.get(requestId);
 
   if (!request) {
+    try {
+      const reply = action === 'deny' ? 'reject' : action === 'allow_global' ? 'always' : 'once';
+      const handled = await opencodeServer.replyPermission(requestId, reply, pattern);
+      if (handled) {
+        return res.json({
+          success: true,
+          action,
+          pattern,
+          provider: 'opencode',
+        });
+      }
+    } catch (err) {
+      console.error(`[PERMISSIONS] OpenCode permission reply failed for ${requestId}:`, err);
+      throw new AppError('Failed to respond to OpenCode permission request', 502, 'OPENCODE_ERROR');
+    }
+
     throw new AppError('Permission request not found or expired', 404, 'NOT_FOUND');
   }
 

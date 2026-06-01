@@ -67,11 +67,17 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
   };
 
   // Fetch directory contents
-  const { data: contents, isLoading, error } = useQuery({
+  const {
+    data: contents,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['files-list', currentPath],
     queryFn: async () => {
       if (!currentPath) return null;
-      const response = await api.get<ApiResponse<DirectoryContents>>(`/api/files?path=${encodeURIComponent(currentPath)}`);
+      const response = await api.get<ApiResponse<DirectoryContents>>(
+        `/api/files?path=${encodeURIComponent(currentPath)}`
+      );
       return response.data.data;
     },
     enabled: canFetchPath(currentPath),
@@ -84,7 +90,8 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
       // Priority: value prop > first common path > first allowed path
       let initialPath = value;
       if (!initialPath || initialPath === '/') {
-        initialPath = homeInfo.commonPaths?.[0]?.path || homeInfo.allowedPaths?.[0] || homeInfo.homeDir;
+        initialPath =
+          homeInfo.commonPaths?.[0]?.path || homeInfo.allowedPaths?.[0] || homeInfo.homeDir;
       }
       if (initialPath && initialPath !== '/') {
         setCurrentPath(initialPath);
@@ -114,12 +121,12 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
       // Root is only allowed if explicitly in the list
       return homeInfo.allowedPaths.includes('/');
     }
-    return homeInfo.allowedPaths.some(base =>
-      path.startsWith(base) || // path is inside allowed base
-      base.startsWith(path + '/') // path is a parent of allowed base
+    return homeInfo.allowedPaths.some(
+      (base) =>
+        path.startsWith(base) || // path is inside allowed base
+        base.startsWith(path + '/') // path is a parent of allowed base
     );
   };
-
 
   const handleSelect = () => {
     onChange(currentPath);
@@ -132,8 +139,8 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
     }
   };
 
-  const directories = contents?.files.filter(f => f.type === 'directory') || [];
-  const files = showFiles ? contents?.files.filter(f => f.type === 'file') || [] : [];
+  const directories = contents?.files.filter((f) => f.type === 'directory') || [];
+  const files = showFiles ? contents?.files.filter((f) => f.type === 'file') || [] : [];
 
   const pathParts = currentPath.split('/').filter(Boolean);
 
@@ -161,7 +168,11 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
               className="h-7 text-xs shrink-0"
               onClick={() => navigateTo(p.path)}
             >
-              {p.name === 'Home' ? <Home className="h-3 w-3 mr-1" /> : <Folder className="h-3 w-3 mr-1" />}
+              {p.name === 'Home' ? (
+                <Home className="h-3 w-3 mr-1" />
+              ) : (
+                <Folder className="h-3 w-3 mr-1" />
+              )}
               {p.name}
             </Button>
           ))}
@@ -175,7 +186,10 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
           size="icon"
           className="h-8 w-8 shrink-0"
           onClick={navigateUp}
-          disabled={currentPath === '/' || !isPathAllowed(currentPath.split('/').slice(0, -1).join('/') || '/')}
+          disabled={
+            currentPath === '/' ||
+            !isPathAllowed(currentPath.split('/').slice(0, -1).join('/') || '/')
+          }
         >
           <ArrowUp className="h-4 w-4" />
         </Button>
@@ -196,7 +210,7 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
           onClick={() => queryClient.invalidateQueries({ queryKey: ['files-list', currentPath] })}
           title="Refresh"
         >
-          <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+          <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
         </Button>
       </div>
 
@@ -240,7 +254,9 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
         ) : error ? (
           <div className="text-center py-8 text-sm text-destructive">
             <p>Cannot access this directory</p>
-            <p className="text-xs text-muted-foreground mt-1">Path may not be allowed or doesn't exist</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Path may not be allowed or doesn't exist
+            </p>
           </div>
         ) : directories.length === 0 && files.length === 0 ? (
           <div className="text-center py-8 text-sm text-muted-foreground">
@@ -253,8 +269,8 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
               <div
                 key={dir.path}
                 className={cn(
-                  "group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors",
-                  "hover:bg-muted"
+                  'group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
+                  'hover:bg-muted'
                 )}
                 onClick={() => navigateTo(dir.path)}
               >
@@ -278,9 +294,7 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
 
       {/* Footer */}
       <div className="flex items-center justify-between gap-2 p-3 border-t bg-muted/30">
-        <div className="text-xs text-muted-foreground truncate flex-1">
-          {currentPath}
-        </div>
+        <div className="text-xs text-muted-foreground truncate flex-1">{currentPath}</div>
         <div className="flex gap-2 shrink-0">
           {onClose && (
             <Button variant="ghost" size="sm" onClick={onClose}>
@@ -305,12 +319,20 @@ interface FolderBrowserDialogProps {
   onChange: (path: string) => void;
 }
 
-export function FolderBrowserDialog({ open, onOpenChange, value, onChange }: FolderBrowserDialogProps) {
+export function FolderBrowserDialog({
+  open,
+  onOpenChange,
+  value,
+  onChange,
+}: FolderBrowserDialogProps) {
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" onClick={() => onOpenChange(false)} />
+      <div
+        className="fixed inset-0 bg-background/80 backdrop-blur-sm"
+        onClick={() => onOpenChange(false)}
+      />
       <div className="relative w-full max-w-lg mx-4 animate-scale-in">
         <FolderBrowser
           value={value}

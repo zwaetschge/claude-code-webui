@@ -242,12 +242,7 @@ export function AdminAuditLogPage() {
             Next
             <ChevronRight className="h-4 w-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isFetching}
-          >
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             Refresh
           </Button>
         </div>

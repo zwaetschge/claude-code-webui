@@ -86,11 +86,7 @@ function OpenCodeLoader({ size = 44, className, accent }: LoaderProps) {
       style={{ width: w, height: h }}
       aria-hidden="true"
     >
-      <svg
-        viewBox="0 0 100 160"
-        preserveAspectRatio="none"
-        style={{ filter: `url(#${id}-goo)` }}
-      >
+      <svg viewBox="0 0 100 160" preserveAspectRatio="none" style={{ filter: `url(#${id}-goo)` }}>
         <defs>
           <GooFilter id={`${id}-goo`} stdDeviation={6} />
         </defs>

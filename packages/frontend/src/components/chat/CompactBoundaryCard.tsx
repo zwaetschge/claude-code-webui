@@ -28,11 +28,8 @@ export function CompactBoundaryCard({ content, className }: CompactBoundaryCardP
         >
           <Scissors className="h-3 w-3" />
           <span>Context Compacted</span>
-          {summary && (
-            expanded
-              ? <ChevronDown className="h-3 w-3" />
-              : <ChevronRight className="h-3 w-3" />
-          )}
+          {summary &&
+            (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
         </button>
         <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
       </div>

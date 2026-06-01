@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   X,
@@ -30,12 +30,14 @@ interface MarketplacePluginInfo {
   version: string;
   author?: { name: string; email?: string };
   category?: string;
+  enabled?: boolean;
+  installed?: boolean;
 }
 
 interface MarketplaceInfo {
   id: string;
   name: string;
-  source: { source: 'github' | 'git'; repo?: string; url?: string };
+  source: { source: 'github' | 'git' | 'local'; repo?: string; url?: string };
   installLocation: string;
   lastUpdated: string;
   plugins?: MarketplacePluginInfo[];
@@ -45,6 +47,8 @@ interface InstalledPluginInfo {
   id: string;
   name: string;
   marketplace?: string;
+  enabled?: boolean;
+  installed?: boolean;
 }
 
 interface MarketplaceBrowserProps {
@@ -55,6 +59,7 @@ interface MarketplaceBrowserProps {
 export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrowserProps) {
   const queryClient = useQueryClient();
   const providerKey = configProvider || 'default';
+  const isCodex = configProvider === 'codex';
   const withProvider = (endpoint: string) => {
     if (!configProvider) return endpoint;
     return `${endpoint}${endpoint.includes('?') ? '&' : '?'}provider=${encodeURIComponent(configProvider)}`;
@@ -75,7 +80,9 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
   const { data: marketplaces, isLoading: marketplacesLoading } = useQuery({
     queryKey: ['marketplaces', providerKey],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<MarketplaceInfo[]>>(withProvider('/api/claude-config/marketplaces'));
+      const response = await api.get<ApiResponse<MarketplaceInfo[]>>(
+        isCodex ? '/api/codex/marketplaces' : withProvider('/api/claude-config/marketplaces')
+      );
       return response.data.data || [];
     },
   });
@@ -84,15 +91,26 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
   const { data: installedPlugins } = useQuery({
     queryKey: ['installed-plugins', providerKey],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<InstalledPluginInfo[]>>(withProvider('/api/claude-config/plugins'));
+      const response = await api.get<ApiResponse<InstalledPluginInfo[]>>(
+        isCodex ? '/api/codex/plugins' : withProvider('/api/claude-config/plugins')
+      );
       return response.data.data || [];
     },
   });
 
+  useEffect(() => {
+    if (!selectedMarketplace && marketplaces?.[0]) {
+      setSelectedMarketplace(marketplaces[0].id);
+    }
+  }, [marketplaces, selectedMarketplace]);
+
   // Add marketplace mutation
   const addMarketplaceMutation = useMutation({
     mutationFn: async (data: typeof newMarketplace) => {
-      const response = await api.post<ApiResponse<MarketplaceInfo>>(withProvider('/api/claude-config/marketplaces'), data);
+      const response = await api.post<ApiResponse<MarketplaceInfo>>(
+        withProvider('/api/claude-config/marketplaces'),
+        data
+      );
       return response.data.data;
     },
     onSuccess: () => {
@@ -109,7 +127,11 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
   // Refresh marketplace mutation
   const refreshMarketplaceMutation = useMutation({
     mutationFn: async (marketplaceId: string) => {
-      const response = await api.post<ApiResponse<MarketplaceInfo>>(withProvider(`/api/claude-config/marketplace/${marketplaceId}/refresh`));
+      const response = await api.post<ApiResponse<MarketplaceInfo>>(
+        isCodex
+          ? `/api/codex/marketplace/${encodeURIComponent(marketplaceId)}/refresh`
+          : withProvider(`/api/claude-config/marketplace/${marketplaceId}/refresh`)
+      );
       return response.data.data;
     },
     onSuccess: () => {
@@ -139,17 +161,30 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
 
   // Install plugin mutation
   const installPluginMutation = useMutation({
-    mutationFn: async ({ pluginName, marketplaceId }: { pluginName: string; marketplaceId: string }) => {
-      const response = await api.post<ApiResponse<unknown>>(withProvider('/api/claude-config/plugins/install'), {
-        pluginName,
-        marketplaceId,
-      });
+    mutationFn: async ({
+      pluginName,
+      marketplaceId,
+    }: {
+      pluginName: string;
+      marketplaceId: string;
+    }) => {
+      const response = await api.post<ApiResponse<unknown>>(
+        isCodex ? '/api/codex/plugins/install' : withProvider('/api/claude-config/plugins/install'),
+        {
+          pluginName,
+          marketplaceId,
+        }
+      );
       return response.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['installed-plugins', providerKey] });
       queryClient.invalidateQueries({ queryKey: ['plugins', providerKey] });
-      toast({ title: 'Plugin installed successfully' });
+      queryClient.invalidateQueries({ queryKey: ['marketplaces', providerKey] });
+      if (isCodex) {
+        queryClient.invalidateQueries({ queryKey: ['codex-plugins'] });
+      }
+      toast({ title: isCodex ? 'Codex plugin enabled' : 'Plugin installed successfully' });
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -158,17 +193,26 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
 
   const isPluginInstalled = (pluginName: string, marketplaceId: string) => {
     const pluginId = `${pluginName}@${marketplaceId}`;
-    return installedPlugins?.some((p: InstalledPluginInfo) => p.id === pluginId);
+    const plugin = installedPlugins?.find((p: InstalledPluginInfo) => p.id === pluginId);
+    return isCodex ? Boolean(plugin?.enabled) : Boolean(plugin);
   };
 
-  const selectedMarketplaceData = marketplaces?.find((m: MarketplaceInfo) => m.id === selectedMarketplace);
+  const getInstalledPlugin = (pluginName: string, marketplaceId: string) => {
+    const pluginId = `${pluginName}@${marketplaceId}`;
+    return installedPlugins?.find((p: InstalledPluginInfo) => p.id === pluginId);
+  };
+
+  const selectedMarketplaceData = marketplaces?.find(
+    (m: MarketplaceInfo) => m.id === selectedMarketplace
+  );
 
   // Filter plugins based on search and category
   const filteredPlugins = useMemo(() => {
     if (!selectedMarketplaceData?.plugins) return [];
 
     return selectedMarketplaceData.plugins.filter((plugin: MarketplacePluginInfo) => {
-      const matchesSearch = !searchQuery ||
+      const matchesSearch =
+        !searchQuery ||
         plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         plugin.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         plugin.author?.name?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -213,7 +257,9 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
           <div className="flex-1">
             <h2 className="text-lg font-semibold">Plugin Marketplace</h2>
             <p className="text-sm text-muted-foreground">
-              Browse and install plugins from {marketplaces?.length || 0} marketplace{(marketplaces?.length || 0) !== 1 ? 's' : ''}
+              Browse and {isCodex ? 'enable' : 'install'} plugins from {marketplaces?.length || 0}{' '}
+              marketplace
+              {(marketplaces?.length || 0) !== 1 ? 's' : ''}
             </p>
           </div>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
@@ -225,19 +271,21 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar - Marketplace List */}
           <div className="w-64 border-r bg-muted/20 flex flex-col shrink-0">
-            <div className="p-3 border-b">
-              <Button
-                size="sm"
-                onClick={() => setShowAddForm(!showAddForm)}
-                className="w-full gap-2 bg-violet-600 hover:bg-violet-700"
-              >
-                <Plus className="h-4 w-4" />
-                Add Marketplace
-              </Button>
-            </div>
+            {!isCodex && (
+              <div className="p-3 border-b">
+                <Button
+                  size="sm"
+                  onClick={() => setShowAddForm(!showAddForm)}
+                  className="w-full gap-2 bg-violet-600 hover:bg-violet-700"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Marketplace
+                </Button>
+              </div>
+            )}
 
             {/* Add Marketplace Form */}
-            {showAddForm && (
+            {!isCodex && showAddForm && (
               <div className="p-3 border-b bg-violet-500/5 space-y-3">
                 <Input
                   placeholder="Marketplace name"
@@ -247,7 +295,12 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                 />
                 <select
                   value={newMarketplace.source}
-                  onChange={(e) => setNewMarketplace({ ...newMarketplace, source: e.target.value as 'github' | 'git' })}
+                  onChange={(e) =>
+                    setNewMarketplace({
+                      ...newMarketplace,
+                      source: e.target.value as 'github' | 'git',
+                    })
+                  }
                   className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm"
                 >
                   <option value="github">GitHub</option>
@@ -272,9 +325,12 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                   <Button
                     size="sm"
                     onClick={() => addMarketplaceMutation.mutate(newMarketplace)}
-                    disabled={!newMarketplace.name || addMarketplaceMutation.isPending ||
+                    disabled={
+                      !newMarketplace.name ||
+                      addMarketplaceMutation.isPending ||
                       (newMarketplace.source === 'github' && !newMarketplace.repo) ||
-                      (newMarketplace.source === 'git' && !newMarketplace.url)}
+                      (newMarketplace.source === 'git' && !newMarketplace.url)
+                    }
                     className="flex-1 h-8"
                   >
                     {addMarketplaceMutation.isPending ? (
@@ -312,16 +368,18 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                       setSelectedCategory(null);
                     }}
                     className={cn(
-                      "w-full flex items-center gap-2 p-2.5 rounded-lg text-left transition-colors",
+                      'w-full flex items-center gap-2 p-2.5 rounded-lg text-left transition-colors',
                       selectedMarketplace === mp.id
-                        ? "bg-violet-500/15 text-violet-600 dark:text-violet-400"
-                        : "hover:bg-muted"
+                        ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
+                        : 'hover:bg-muted'
                     )}
                   >
-                    <div className={cn(
-                      "p-1.5 rounded-md",
-                      mp.source.source === 'github' ? "bg-gray-500/10" : "bg-orange-500/10"
-                    )}>
+                    <div
+                      className={cn(
+                        'p-1.5 rounded-md',
+                        mp.source.source === 'github' ? 'bg-gray-500/10' : 'bg-orange-500/10'
+                      )}
+                    >
                       {mp.source.source === 'github' ? (
                         <Github className="h-3.5 w-3.5" />
                       ) : (
@@ -341,7 +399,9 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                   <Store className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
                   <p className="text-sm text-muted-foreground">No marketplaces added</p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Click "Add Marketplace" to get started
+                    {isCodex
+                      ? 'Codex has not cached the official marketplace yet'
+                      : 'Click "Add Marketplace" to get started'}
                   </p>
                 </div>
               )}
@@ -358,9 +418,11 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                     <div>
                       <h3 className="font-semibold">{selectedMarketplaceData.name}</h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {selectedMarketplaceData.source.source === 'github'
-                          ? selectedMarketplaceData.source.repo
-                          : selectedMarketplaceData.source.url}
+                        {selectedMarketplaceData.source.source === 'local'
+                          ? selectedMarketplaceData.installLocation
+                          : selectedMarketplaceData.source.source === 'github'
+                            ? selectedMarketplaceData.source.repo
+                            : selectedMarketplaceData.source.url}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -370,11 +432,18 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => refreshMarketplaceMutation.mutate(selectedMarketplaceData.id)}
+                        onClick={() =>
+                          refreshMarketplaceMutation.mutate(selectedMarketplaceData.id)
+                        }
                         disabled={refreshMarketplaceMutation.isPending}
                         className="h-8 gap-1.5"
                       >
-                        <RefreshCw className={cn("h-3.5 w-3.5", refreshMarketplaceMutation.isPending && "animate-spin")} />
+                        <RefreshCw
+                          className={cn(
+                            'h-3.5 w-3.5',
+                            refreshMarketplaceMutation.isPending && 'animate-spin'
+                          )}
+                        />
                         Refresh
                       </Button>
                       <Button
@@ -382,7 +451,10 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                         variant="ghost"
                         onClick={() => deleteMarketplaceMutation.mutate(selectedMarketplaceData.id)}
                         disabled={deleteMarketplaceMutation.isPending}
-                        className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        className={cn(
+                          'h-8 text-destructive hover:text-destructive hover:bg-destructive/10',
+                          isCodex && 'hidden'
+                        )}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -418,8 +490,8 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                           variant="outline"
                           onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
                           className={cn(
-                            "h-9 gap-1.5",
-                            selectedCategory && "bg-violet-500/10 border-violet-500/30"
+                            'h-9 gap-1.5',
+                            selectedCategory && 'bg-violet-500/10 border-violet-500/30'
                           )}
                         >
                           <Filter className="h-3.5 w-3.5" />
@@ -441,8 +513,8 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                                   setShowCategoryDropdown(false);
                                 }}
                                 className={cn(
-                                  "w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors",
-                                  !selectedCategory && "bg-violet-500/10"
+                                  'w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
+                                  !selectedCategory && 'bg-violet-500/10'
                                 )}
                               >
                                 All Categories
@@ -459,8 +531,8 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                                     setShowCategoryDropdown(false);
                                   }}
                                   className={cn(
-                                    "w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors capitalize",
-                                    selectedCategory === category && "bg-violet-500/10"
+                                    'w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors capitalize',
+                                    selectedCategory === category && 'bg-violet-500/10'
                                   )}
                                 >
                                   {category}
@@ -479,7 +551,8 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                   {/* Results count */}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>
-                      Showing {filteredPlugins.length} of {selectedMarketplaceData.plugins?.length || 0} plugins
+                      Showing {filteredPlugins.length} of{' '}
+                      {selectedMarketplaceData.plugins?.length || 0} plugins
                     </span>
                     {(searchQuery || selectedCategory) && (
                       <button
@@ -501,22 +574,36 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                   {filteredPlugins.length > 0 ? (
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       {filteredPlugins.map((plugin: MarketplacePluginInfo) => {
-                        const installed = isPluginInstalled(plugin.name, selectedMarketplaceData.id);
+                        const installedInfo = getInstalledPlugin(
+                          plugin.name,
+                          selectedMarketplaceData.id
+                        );
+                        const installed = isPluginInstalled(
+                          plugin.name,
+                          selectedMarketplaceData.id
+                        );
+                        const cached = isCodex && Boolean(installedInfo?.installed);
                         return (
                           <div
                             key={plugin.name}
                             className={cn(
-                              "p-4 rounded-xl border bg-card transition-all hover:shadow-md",
-                              installed ? "border-green-500/30 bg-green-500/5" : "hover:border-violet-500/30"
+                              'p-4 rounded-xl border bg-card transition-all hover:shadow-md',
+                              installed
+                                ? 'border-green-500/30 bg-green-500/5'
+                                : cached
+                                  ? 'border-blue-500/25 bg-blue-500/5'
+                                  : 'hover:border-violet-500/30'
                             )}
                           >
                             <div className="flex items-start gap-3">
-                              <div className={cn(
-                                "p-2 rounded-lg shrink-0",
-                                installed
-                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                  : "bg-violet-500/10 text-violet-600 dark:text-violet-400"
-                              )}>
+                              <div
+                                className={cn(
+                                  'p-2 rounded-lg shrink-0',
+                                  installed
+                                    ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                    : 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
+                                )}
+                              >
                                 <Puzzle className="h-4 w-4" />
                               </div>
                               <div className="flex-1 min-w-0">
@@ -529,6 +616,11 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                                   )}
                                   {installed && (
                                     <span className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/10 text-green-600 dark:text-green-400 shrink-0">
+                                      {isCodex ? 'Enabled' : 'Installed'}
+                                    </span>
+                                  )}
+                                  {!installed && cached && (
+                                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 shrink-0">
                                       Installed
                                     </span>
                                   )}
@@ -559,15 +651,17 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                                   className="h-8 gap-1.5 text-green-600 border-green-500/30"
                                 >
                                   <Check className="h-3.5 w-3.5" />
-                                  Installed
+                                  {isCodex ? 'Enabled' : 'Installed'}
                                 </Button>
                               ) : (
                                 <Button
                                   size="sm"
-                                  onClick={() => installPluginMutation.mutate({
-                                    pluginName: plugin.name,
-                                    marketplaceId: selectedMarketplaceData.id,
-                                  })}
+                                  onClick={() =>
+                                    installPluginMutation.mutate({
+                                      pluginName: plugin.name,
+                                      marketplaceId: selectedMarketplaceData.id,
+                                    })
+                                  }
                                   disabled={installPluginMutation.isPending}
                                   className="h-8 gap-1.5 bg-violet-600 hover:bg-violet-700"
                                 >
@@ -576,7 +670,7 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                                   ) : (
                                     <Download className="h-3.5 w-3.5" />
                                   )}
-                                  Install
+                                  {isCodex && cached ? 'Enable' : 'Install'}
                                 </Button>
                               )}
                             </div>
@@ -608,7 +702,8 @@ export function MarketplaceBrowser({ onClose, configProvider }: MarketplaceBrows
                       <AlertTriangle className="h-10 w-10 text-amber-500/50 mb-3" />
                       <p className="font-medium text-muted-foreground">No plugins found</p>
                       <p className="text-sm text-muted-foreground/70 max-w-xs mt-1">
-                        This marketplace doesn't have a marketplace.json file or has no plugins listed.
+                        This marketplace doesn't have a marketplace.json file or has no plugins
+                        listed.
                       </p>
                     </div>
                   )}
@@ -637,7 +732,11 @@ interface MarketplaceBrowserDialogProps {
   configProvider?: string;
 }
 
-export function MarketplaceBrowserDialog({ open, onOpenChange, configProvider }: MarketplaceBrowserDialogProps) {
+export function MarketplaceBrowserDialog({
+  open,
+  onOpenChange,
+  configProvider,
+}: MarketplaceBrowserDialogProps) {
   if (!open) return null;
 
   return <MarketplaceBrowser onClose={() => onOpenChange(false)} configProvider={configProvider} />;

@@ -1,13 +1,13 @@
-import { TaskManager } from "./TaskManager";
+import { TaskManager } from './TaskManager';
 
-export { TaskManager } from "./TaskManager";
-export type { TaskRunner, TaskContext } from "./TaskManager";
+export { TaskManager } from './TaskManager';
+export type { TaskRunner, TaskContext } from './TaskManager';
 
 let taskManager: TaskManager | null = null;
 
 export function getTaskManager(): TaskManager {
   if (!taskManager) {
-    throw new Error("TaskManager not initialized. Call initTaskManager() first.");
+    throw new Error('TaskManager not initialized. Call initTaskManager() first.');
   }
   return taskManager;
 }
@@ -18,6 +18,6 @@ export function initTaskManager(): TaskManager {
   taskManager = new TaskManager();
   taskManager.start();
 
-  console.log("[tasks] TaskManager initialized");
+  console.log('[tasks] TaskManager initialized');
   return taskManager;
 }

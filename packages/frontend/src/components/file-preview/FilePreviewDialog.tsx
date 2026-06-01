@@ -138,7 +138,11 @@ export function FilePreviewDialog({ open, onOpenChange, filePath }: FilePreviewD
           {!loading && !error && data && (
             <>
               {(data.type === 'csv' || data.type === 'xlsx') && (
-                <DataTablePreview data={data} activeSheet={activeSheet} onSheetChange={setActiveSheet} />
+                <DataTablePreview
+                  data={data}
+                  activeSheet={activeSheet}
+                  onSheetChange={setActiveSheet}
+                />
               )}
 
               {data.type === 'json' && (
@@ -162,7 +166,8 @@ export function FilePreviewDialog({ open, onOpenChange, filePath }: FilePreviewD
 
         <div className="shrink-0 flex justify-between items-center pt-4 border-t">
           <div className="text-sm text-muted-foreground">
-            {data?.type === 'csv' && `${data.totalRows} rows${data.truncated ? ' (showing first 100)' : ''}`}
+            {data?.type === 'csv' &&
+              `${data.totalRows} rows${data.truncated ? ' (showing first 100)' : ''}`}
             {data?.type === 'xlsx' && `${data.sheetNames.length} sheet(s)`}
           </div>
           <div className="flex gap-2">
@@ -216,7 +221,9 @@ function DataTablePreview({ data, activeSheet, onSheetChange }: DataTablePreview
         <table className="w-full text-sm">
           <thead className="bg-muted sticky top-0">
             <tr>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b w-10">#</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground border-b w-10">
+                #
+              </th>
               {headers.map((header, i) => (
                 <th key={i} className="px-3 py-2 text-left font-medium border-b whitespace-nowrap">
                   {header || `Column ${i + 1}`}
@@ -241,9 +248,7 @@ function DataTablePreview({ data, activeSheet, onSheetChange }: DataTablePreview
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && (
-          <div className="p-8 text-center text-muted-foreground">No data</div>
-        )}
+        {rows.length === 0 && <div className="p-8 text-center text-muted-foreground">No data</div>}
       </ScrollArea>
     </div>
   );

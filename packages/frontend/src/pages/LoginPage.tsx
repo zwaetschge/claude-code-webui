@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Github, AlertCircle, ExternalLink, CheckCircle2, ArrowRight, Sparkles } from 'lucide-react';
+import {
+  Github,
+  AlertCircle,
+  ExternalLink,
+  CheckCircle2,
+  ArrowRight,
+  Sparkles,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,9 +30,14 @@ const errorMessages: Record<string, string> = {
   github: 'GitHub authentication failed. Please try again.',
   google: 'Google authentication failed. Please try again.',
   claude: 'Claude authentication failed. Please try again.',
-  claude_not_logged_in: 'Claude CLI not logged in. Use the WebUI login below or run "claude /login".',
+  claude_not_logged_in:
+    'Claude CLI not logged in. Use the WebUI login below or run "claude /login".',
   codex: 'Codex authentication failed. Please try again.',
   codex_not_logged_in: 'Codex CLI not logged in. Run "codex login" first.',
+  opencode: 'OpenCode authentication failed. Please try again.',
+  opencode_not_logged_in: 'OpenCode CLI not logged in. Run "opencode auth login" first.',
+  vibe: 'Mistral Vibe authentication failed. Please try again.',
+  vibe_not_logged_in: 'Mistral Vibe CLI not logged in. Run "vibe login" first.',
   unauthorized: 'You are not authorized. Please sign in.',
   expired: 'Your session has expired. Please sign in again.',
 };
@@ -36,6 +48,7 @@ interface AuthProviders {
   claude: boolean;
   codex?: boolean;
   opencode?: boolean;
+  vibe?: boolean;
 }
 
 type CliLoginStatus = 'starting' | 'awaiting_code' | 'completed' | 'error';
@@ -52,14 +65,17 @@ interface CliLoginResponse {
 }
 
 // Provider brand configurations
-type ProviderStyleKey = 'claude' | 'codex' | 'opencode';
-const providerStyles: Record<ProviderStyleKey, {
-  bg: string;
-  hover: string;
-  text: string;
-  gradient: string;
-  glow: string;
-}> = {
+type ProviderStyleKey = 'claude' | 'codex' | 'opencode' | 'vibe';
+const providerStyles: Record<
+  ProviderStyleKey,
+  {
+    bg: string;
+    hover: string;
+    text: string;
+    gradient: string;
+    glow: string;
+  }
+> = {
   claude: {
     bg: 'bg-[#CC785C]',
     hover: 'hover:bg-[#B8694F]',
@@ -80,6 +96,13 @@ const providerStyles: Record<ProviderStyleKey, {
     text: 'text-white',
     gradient: 'from-[#3b82f6] to-[#6366f1]',
     glow: 'shadow-[#3b82f6]/30',
+  },
+  vibe: {
+    bg: 'bg-[#FA520F]',
+    hover: 'hover:bg-[#E04510]',
+    text: 'text-white',
+    gradient: 'from-[#FA520F] to-[#FFB347]',
+    glow: 'shadow-[#FA520F]/30',
   },
 };
 
@@ -167,9 +190,11 @@ export function LoginPage() {
   const handleProviderLogin = (provider: UiProvider) => {
     const routes: Record<string, string> = {
       codex: '/auth/codex',
+      opencode: '/auth/opencode',
+      vibe: '/auth/vibe',
       claude: '/auth/claude',
     };
-    window.location.href = routes[provider] || '/auth/claude';
+    window.location.href = routes[provider] || '/auth/codex';
   };
 
   const startClaudeLogin = async () => {
@@ -219,9 +244,10 @@ export function LoginPage() {
 
   // Count available CLI providers
   const availableProviders = [
-    providers?.claude && 'claude',
     providers?.codex && 'codex',
     providers?.opencode && 'opencode',
+    providers?.vibe && 'vibe',
+    providers?.claude && 'claude',
   ].filter(Boolean);
 
   return (
@@ -231,11 +257,11 @@ export function LoginPage() {
         {/* Dynamic gradient orbs */}
         <div
           className={cn(
-            "absolute w-[800px] h-[800px] rounded-full blur-[120px] transition-all duration-1000 ease-out",
-            hoveredProvider === 'claude' && "bg-[#CC785C]/20",
-            hoveredProvider === 'codex' && "bg-white/10",
-            hoveredProvider === 'opencode' && "bg-[#3b82f6]/20",
-            !hoveredProvider && "bg-primary/10"
+            'absolute w-[800px] h-[800px] rounded-full blur-[120px] transition-all duration-1000 ease-out',
+            hoveredProvider === 'claude' && 'bg-[#CC785C]/20',
+            hoveredProvider === 'codex' && 'bg-white/10',
+            hoveredProvider === 'opencode' && 'bg-[#3b82f6]/20',
+            !hoveredProvider && 'bg-primary/10'
           )}
           style={{
             top: '10%',
@@ -245,11 +271,11 @@ export function LoginPage() {
         />
         <div
           className={cn(
-            "absolute w-[600px] h-[600px] rounded-full blur-[100px] transition-all duration-1000 ease-out",
-            hoveredProvider === 'claude' && "bg-[#C377FF]/15",
-            hoveredProvider === 'codex' && "bg-[#74aa9c]/15",
-            hoveredProvider === 'opencode' && "bg-[#6366f1]/15",
-            !hoveredProvider && "bg-accent/10"
+            'absolute w-[600px] h-[600px] rounded-full blur-[100px] transition-all duration-1000 ease-out',
+            hoveredProvider === 'claude' && 'bg-[#C377FF]/15',
+            hoveredProvider === 'codex' && 'bg-[#74aa9c]/15',
+            hoveredProvider === 'opencode' && 'bg-[#6366f1]/15',
+            !hoveredProvider && 'bg-accent/10'
           )}
           style={{
             bottom: '5%',
@@ -280,11 +306,7 @@ export function LoginPage() {
         <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 xl:p-16">
           <div>
             <div className="flex items-center gap-4 mb-16">
-              <img
-                src="/logos/plum.png"
-                alt=""
-                className="h-12 w-12 object-contain"
-              />
+              <img src="/logos/plum.png" alt="" className="h-12 w-12 object-contain" />
               <div>
                 <h2 className="text-xl font-semibold tracking-tight">Plum Code</h2>
                 <p className="text-sm text-muted-foreground">WebUI</p>
@@ -299,8 +321,8 @@ export function LoginPage() {
                 </span>
               </h1>
               <p className="text-lg text-muted-foreground leading-relaxed">
-                A unified interface for AI-powered coding assistants.
-                Connect your favorite CLI tools and start building.
+                A unified interface for AI-powered coding assistants. Connect your favorite CLI
+                tools and start building.
               </p>
             </div>
           </div>
@@ -311,7 +333,7 @@ export function LoginPage() {
               Supported Providers
             </p>
             <div className="flex items-center gap-6">
-              {['claude', 'codex', 'opencode'].map((p, i) => (
+              {['codex', 'opencode', 'vibe', 'claude'].map((p, i) => (
                 <div
                   key={p}
                   className="opacity-40 hover:opacity-100 transition-opacity duration-300"
@@ -334,16 +356,10 @@ export function LoginPage() {
             {/* Mobile logo */}
             <div className="lg:hidden mb-10 text-center">
               <div className="inline-flex items-center gap-3 mb-4">
-                <img
-                  src="/logos/plum.png"
-                  alt=""
-                  className="h-10 w-10 object-contain"
-                />
+                <img src="/logos/plum.png" alt="" className="h-10 w-10 object-contain" />
                 <h1 className="text-2xl font-bold tracking-tight">Plum Code</h1>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Connect your CLI provider to continue
-              </p>
+              <p className="text-sm text-muted-foreground">Connect your CLI provider to continue</p>
             </div>
 
             {/* Error message */}
@@ -360,23 +376,99 @@ export function LoginPage() {
                 Connect a CLI provider
               </p>
 
-              {providers?.claude && (
+              {providers?.codex && (
+                <button
+                  onClick={() => handleProviderLogin('codex')}
+                  onMouseEnter={() => setHoveredProvider('codex')}
+                  onMouseLeave={() => setHoveredProvider(null)}
+                  className={cn(
+                    'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                    'flex items-center justify-between px-5',
+                    providerStyles.codex.bg,
+                    providerStyles.codex.hover,
+                    providerStyles.codex.text,
+                    'hover:shadow-lg hover:shadow-white/10 hover:scale-[1.02] active:scale-[0.98]',
+                    'border border-neutral-800'
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <ProviderLogo provider="codex" className="h-6 w-6" alt="" />
+                    <span>{UI_PROVIDER_META.codex.loginCta}</span>
+                  </span>
+                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                </button>
+              )}
+
+              {providers?.opencode && (
                 <div className="space-y-2">
+                  <button
+                    onClick={() => handleProviderLogin('opencode')}
+                    onMouseEnter={() => setHoveredProvider('opencode')}
+                    onMouseLeave={() => setHoveredProvider(null)}
+                    className={cn(
+                      'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                      'flex items-center justify-between px-5',
+                      providerStyles.opencode.bg,
+                      providerStyles.opencode.hover,
+                      providerStyles.opencode.text,
+                      'hover:shadow-lg hover:shadow-[#3b82f6]/25 hover:scale-[1.02] active:scale-[0.98]'
+                    )}
+                  >
+                    <span className="flex items-center gap-3">
+                      <ProviderLogo provider="opencode" className="h-6 w-6" alt="" />
+                      <span>Sign in with OpenCode</span>
+                    </span>
+                    <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                  </button>
+                </div>
+              )}
+
+              {providers?.vibe && (
+                <button
+                  onClick={() => handleProviderLogin('vibe')}
+                  onMouseEnter={() => setHoveredProvider('vibe')}
+                  onMouseLeave={() => setHoveredProvider(null)}
+                  className={cn(
+                    'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                    'flex items-center justify-between px-5',
+                    providerStyles.vibe.bg,
+                    providerStyles.vibe.hover,
+                    providerStyles.vibe.text,
+                    'hover:shadow-lg hover:shadow-[#FA520F]/25 hover:scale-[1.02] active:scale-[0.98]'
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <ProviderLogo provider="vibe" className="h-6 w-6" alt="" />
+                    <span>{UI_PROVIDER_META.vibe.loginCta}</span>
+                  </span>
+                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                </button>
+              )}
+
+              {providers?.claude && (
+                <div className="space-y-2 pt-2">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                    Legacy
+                  </p>
                   <button
                     onClick={() => handleProviderLogin('claude')}
                     onMouseEnter={() => setHoveredProvider('claude')}
                     onMouseLeave={() => setHoveredProvider(null)}
                     className={cn(
-                      "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
-                      "flex items-center justify-between px-5",
+                      'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                      'flex items-center justify-between px-5',
                       providerStyles.claude.bg,
                       providerStyles.claude.hover,
                       providerStyles.claude.text,
-                      "hover:shadow-lg hover:shadow-[#CC785C]/25 hover:scale-[1.02] active:scale-[0.98]"
+                      'hover:shadow-lg hover:shadow-[#CC785C]/25 hover:scale-[1.02] active:scale-[0.98]'
                     )}
                   >
                     <span className="flex items-center gap-3">
-                      <ProviderLogo provider="claude" className="h-6 w-6 brightness-0 invert" alt="" />
+                      <ProviderLogo
+                        provider="claude"
+                        className="h-6 w-6 brightness-0 invert"
+                        alt=""
+                      />
                       <span>{UI_PROVIDER_META.claude.loginCta}</span>
                     </span>
                     <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
@@ -415,22 +507,32 @@ export function LoginPage() {
                         <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 1</p>
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                                Step 1
+                              </p>
                               <p className="text-sm font-medium">Start login session</p>
                             </div>
                             <Button
                               type="button"
                               onClick={startClaudeLogin}
-                              disabled={claudeLoginWorking || claudeLoginStatus === 'awaiting_code' || claudeLoginStatus === 'completed'}
+                              disabled={
+                                claudeLoginWorking ||
+                                claudeLoginStatus === 'awaiting_code' ||
+                                claudeLoginStatus === 'completed'
+                              }
                             >
-                              {claudeLoginWorking && claudeLoginStatus === 'starting' ? 'Starting...' : 'Start login'}
+                              {claudeLoginWorking && claudeLoginStatus === 'starting'
+                                ? 'Starting...'
+                                : 'Start login'}
                             </Button>
                           </div>
                         </div>
 
                         <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
                           <div>
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 2</p>
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                              Step 2
+                            </p>
                             <p className="text-sm font-medium">Open the authorization link</p>
                           </div>
                           <div className="flex gap-2">
@@ -443,7 +545,10 @@ export function LoginPage() {
                             <Button
                               type="button"
                               variant="outline"
-                              onClick={() => claudeLoginUrl && window.open(claudeLoginUrl, '_blank', 'noopener,noreferrer')}
+                              onClick={() =>
+                                claudeLoginUrl &&
+                                window.open(claudeLoginUrl, '_blank', 'noopener,noreferrer')
+                              }
                               disabled={!claudeLoginUrl}
                             >
                               Open
@@ -453,7 +558,9 @@ export function LoginPage() {
 
                         <div className="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
                           <div>
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground">Step 3</p>
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                              Step 3
+                            </p>
                             <p className="text-sm font-medium">Paste the code</p>
                           </div>
                           <div className="space-y-2">
@@ -469,7 +576,12 @@ export function LoginPage() {
                               <Button
                                 type="button"
                                 onClick={submitClaudeLoginCode}
-                                disabled={!claudeLoginId || !claudeLoginCode.trim() || claudeLoginWorking || claudeLoginStatus === 'completed'}
+                                disabled={
+                                  !claudeLoginId ||
+                                  !claudeLoginCode.trim() ||
+                                  claudeLoginWorking ||
+                                  claudeLoginStatus === 'completed'
+                                }
                               >
                                 Submit
                               </Button>
@@ -487,55 +599,6 @@ export function LoginPage() {
                   </Dialog>
                 </div>
               )}
-
-              {providers?.codex && (
-                <button
-                  onClick={() => handleProviderLogin('codex')}
-                  onMouseEnter={() => setHoveredProvider('codex')}
-                  onMouseLeave={() => setHoveredProvider(null)}
-                  className={cn(
-                    "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
-                    "flex items-center justify-between px-5",
-                    providerStyles.codex.bg,
-                    providerStyles.codex.hover,
-                    providerStyles.codex.text,
-                    "hover:shadow-lg hover:shadow-white/10 hover:scale-[1.02] active:scale-[0.98]",
-                    "border border-neutral-800"
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <ProviderLogo provider="codex" className="h-6 w-6" alt="" />
-                    <span>{UI_PROVIDER_META.codex.loginCta}</span>
-                  </span>
-                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
-                </button>
-              )}
-
-              {providers?.opencode && (
-                <div className="space-y-2">
-                  <button
-                    onClick={() => handleProviderLogin('opencode')}
-                    onMouseEnter={() => setHoveredProvider('opencode')}
-                    onMouseLeave={() => setHoveredProvider(null)}
-                    className={cn(
-                      "group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300",
-                      "flex items-center justify-between px-5",
-                      providerStyles.opencode.bg,
-                      providerStyles.opencode.hover,
-                      providerStyles.opencode.text,
-                      "hover:shadow-lg hover:shadow-[#3b82f6]/25 hover:scale-[1.02] active:scale-[0.98]"
-                    )}
-                  >
-                    <span className="flex items-center gap-3">
-                      <ProviderLogo provider="opencode" className="h-6 w-6" alt="" />
-                      <span>Sign in with OpenCode</span>
-                    </span>
-                    <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
-                  </button>
-                </div>
-              )}
-
-
             </div>
 
             {/* Divider */}
@@ -558,10 +621,10 @@ export function LoginPage() {
                 <button
                   onClick={handleGitHubLogin}
                   className={cn(
-                    "h-12 rounded-xl font-medium text-sm transition-all duration-300",
-                    "flex items-center justify-center gap-2 px-4",
-                    "bg-card border border-border/60 hover:border-border",
-                    "hover:bg-muted/50 active:scale-[0.98]"
+                    'h-12 rounded-xl font-medium text-sm transition-all duration-300',
+                    'flex items-center justify-center gap-2 px-4',
+                    'bg-card border border-border/60 hover:border-border',
+                    'hover:bg-muted/50 active:scale-[0.98]'
                   )}
                 >
                   <Github className="h-5 w-5" />
@@ -573,17 +636,29 @@ export function LoginPage() {
                 <button
                   onClick={handleGoogleLogin}
                   className={cn(
-                    "h-12 rounded-xl font-medium text-sm transition-all duration-300",
-                    "flex items-center justify-center gap-2 px-4",
-                    "bg-card border border-border/60 hover:border-border",
-                    "hover:bg-muted/50 active:scale-[0.98]"
+                    'h-12 rounded-xl font-medium text-sm transition-all duration-300',
+                    'flex items-center justify-center gap-2 px-4',
+                    'bg-card border border-border/60 hover:border-border',
+                    'hover:bg-muted/50 active:scale-[0.98]'
                   )}
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                    <path
+                      fill="#4285F4"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                    />
                   </svg>
                   <span>Google</span>
                 </button>
@@ -591,24 +666,33 @@ export function LoginPage() {
             </div>
 
             {/* No providers message */}
-            {!providers?.claude && !providers?.codex && !providers?.github && !providers?.google && (
-              <div className="text-center py-8">
-                <Sparkles className="h-10 w-10 mx-auto text-muted-foreground/40 mb-4" />
-                <p className="text-sm text-muted-foreground">
-                  No authentication providers configured.
-                </p>
-                <p className="text-xs text-muted-foreground/60 mt-1">
-                  Contact your administrator to set up CLI providers.
-                </p>
-              </div>
-            )}
+            {!providers?.codex &&
+              !providers?.opencode &&
+              !providers?.vibe &&
+              !providers?.claude &&
+              !providers?.github &&
+              !providers?.google && (
+                <div className="text-center py-8">
+                  <Sparkles className="h-10 w-10 mx-auto text-muted-foreground/40 mb-4" />
+                  <p className="text-sm text-muted-foreground">
+                    No authentication providers configured.
+                  </p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">
+                    Contact your administrator to set up CLI providers.
+                  </p>
+                </div>
+              )}
 
             {/* Footer note */}
             <p className="mt-8 text-center text-xs text-muted-foreground/60">
               Theme switching is available on the dashboard after connecting.
             </p>
 
-            <Button variant="ghost" asChild className="mt-4 w-full text-muted-foreground hover:text-foreground">
+            <Button
+              variant="ghost"
+              asChild
+              className="mt-4 w-full text-muted-foreground hover:text-foreground"
+            >
               <Link to="/">
                 <ArrowRight className="h-4 w-4 mr-2 rotate-180" />
                 Back to dashboard

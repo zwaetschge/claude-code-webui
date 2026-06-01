@@ -38,8 +38,8 @@ interface ToolExecutionCardProps {
 
 // Map subagent types to display info
 const agentTypeMap: Record<string, { icon: typeof Wrench; label: string }> = {
-  'Explore': { icon: Search, label: 'Explorer' },
-  'Plan': { icon: BookOpen, label: 'Planner' },
+  Explore: { icon: Search, label: 'Explorer' },
+  Plan: { icon: BookOpen, label: 'Planner' },
   'general-purpose': { icon: Brain, label: 'General Agent' },
   'research-bot': { icon: Globe, label: 'Research' },
   'frontend-developer': { icon: Code2, label: 'Frontend Dev' },
@@ -63,36 +63,39 @@ const agentTypeMap: Record<string, { icon: typeof Wrench; label: string }> = {
 };
 
 // Map tool names to icons and labels
-export const getToolDisplay = (toolName: string, input?: unknown): { icon: typeof Wrench; label: string; inputLabel: string } => {
+export const getToolDisplay = (
+  toolName: string,
+  input?: unknown
+): { icon: typeof Wrench; label: string; inputLabel: string } => {
   // For Task/Agent tools, extract subagent_type for better display
   if (toolName === 'Task' || toolName === 'Agent') {
     const inputObj = input as Record<string, unknown> | undefined;
     const subagentType = inputObj?.subagent_type as string | undefined;
-    
+
     if (subagentType && agentTypeMap[subagentType]) {
       const agent = agentTypeMap[subagentType];
       return { icon: agent.icon, label: agent.label, inputLabel: 'Task' };
     }
-    
+
     if (subagentType) {
       return { icon: Brain, label: subagentType, inputLabel: 'Task' };
     }
-    
+
     return { icon: Cpu, label: 'Agent', inputLabel: 'Task' };
   }
 
   const toolMap: Record<string, { icon: typeof Wrench; label: string; inputLabel: string }> = {
-    'Write': { icon: FileText, label: 'Write', inputLabel: 'File' },
-    'Read': { icon: Search, label: 'Read', inputLabel: 'File' },
-    'Edit': { icon: Edit3, label: 'Edit', inputLabel: 'File' },
-    'Bash': { icon: Terminal, label: 'Bash', inputLabel: 'Command' },
-    'WebFetch': { icon: Globe, label: 'Fetch', inputLabel: 'URL' },
-    'WebSearch': { icon: Globe, label: 'Search', inputLabel: 'Query' },
-    'Glob': { icon: FolderSearch, label: 'Glob', inputLabel: 'Pattern' },
-    'Grep': { icon: Search, label: 'Grep', inputLabel: 'Pattern' },
-    'LS': { icon: FolderSearch, label: 'List', inputLabel: 'Path' },
-    'TodoWrite': { icon: CheckSquare, label: 'Todo', inputLabel: 'Tasks' },
-    'Git': { icon: GitBranch, label: 'Git', inputLabel: 'Command' },
+    Write: { icon: FileText, label: 'Write', inputLabel: 'File' },
+    Read: { icon: Search, label: 'Read', inputLabel: 'File' },
+    Edit: { icon: Edit3, label: 'Edit', inputLabel: 'File' },
+    Bash: { icon: Terminal, label: 'Bash', inputLabel: 'Command' },
+    WebFetch: { icon: Globe, label: 'Fetch', inputLabel: 'URL' },
+    WebSearch: { icon: Globe, label: 'Search', inputLabel: 'Query' },
+    Glob: { icon: FolderSearch, label: 'Glob', inputLabel: 'Pattern' },
+    Grep: { icon: Search, label: 'Grep', inputLabel: 'Pattern' },
+    LS: { icon: FolderSearch, label: 'List', inputLabel: 'Path' },
+    TodoWrite: { icon: CheckSquare, label: 'Todo', inputLabel: 'Tasks' },
+    Git: { icon: GitBranch, label: 'Git', inputLabel: 'Command' },
   };
 
   return toolMap[toolName] || { icon: Wrench, label: toolName, inputLabel: 'Input' };
@@ -138,7 +141,8 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
   switch (toolName) {
     case 'Bash':
       if (inputObj.command) result.push({ label: 'Command', value: String(inputObj.command) });
-      if (inputObj.description) result.push({ label: 'Description', value: String(inputObj.description) });
+      if (inputObj.description)
+        result.push({ label: 'Description', value: String(inputObj.description) });
       if (inputObj.timeout) result.push({ label: 'Timeout', value: `${inputObj.timeout}ms` });
       break;
     case 'Read':
@@ -148,12 +152,19 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
       break;
     case 'Write':
       if (inputObj.file_path) result.push({ label: 'File', value: String(inputObj.file_path) });
-      if (inputObj.content) result.push({ label: 'Content', value: String(inputObj.content).substring(0, 500) + (String(inputObj.content).length > 500 ? '...' : '') });
+      if (inputObj.content)
+        result.push({
+          label: 'Content',
+          value:
+            String(inputObj.content).substring(0, 500) +
+            (String(inputObj.content).length > 500 ? '...' : ''),
+        });
       break;
     case 'Edit':
       if (inputObj.file_path) result.push({ label: 'File', value: String(inputObj.file_path) });
       if (inputObj.old_string) result.push({ label: 'Find', value: String(inputObj.old_string) });
-      if (inputObj.new_string) result.push({ label: 'Replace', value: String(inputObj.new_string) });
+      if (inputObj.new_string)
+        result.push({ label: 'Replace', value: String(inputObj.new_string) });
       break;
     case 'Glob':
       if (inputObj.pattern) result.push({ label: 'Pattern', value: String(inputObj.pattern) });
@@ -173,9 +184,17 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
       break;
     case 'Task':
     case 'Agent':
-      if (inputObj.description) result.push({ label: 'Description', value: String(inputObj.description) });
-      if (inputObj.prompt) result.push({ label: 'Prompt', value: String(inputObj.prompt).substring(0, 500) + (String(inputObj.prompt).length > 500 ? '...' : '') });
-      if (inputObj.subagent_type) result.push({ label: 'Agent Type', value: String(inputObj.subagent_type) });
+      if (inputObj.description)
+        result.push({ label: 'Description', value: String(inputObj.description) });
+      if (inputObj.prompt)
+        result.push({
+          label: 'Prompt',
+          value:
+            String(inputObj.prompt).substring(0, 500) +
+            (String(inputObj.prompt).length > 500 ? '...' : ''),
+        });
+      if (inputObj.subagent_type)
+        result.push({ label: 'Agent Type', value: String(inputObj.subagent_type) });
       break;
     default:
       result.push({ label: 'Input', value: JSON.stringify(input, null, 2) });
@@ -219,7 +238,9 @@ const StatusIcon = ({ status }: { status: 'started' | 'completed' | 'error' }) =
   }
 };
 
-export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: ToolExecutionCardProps) {
+export const ToolExecutionCard = memo(function ToolExecutionCard({
+  execution,
+}: ToolExecutionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const { icon: Icon, label } = getToolDisplay(execution.toolName, execution.input);
 
@@ -236,9 +257,7 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: 
   const truncatedPreview = preview.length > 80 ? preview.substring(0, 80) + '...' : preview;
 
   // Duration
-  const duration = execution.completedAt
-    ? execution.completedAt - execution.timestamp
-    : null;
+  const duration = execution.completedAt ? execution.completedAt - execution.timestamp : null;
   const isRunning = execution.status === 'started';
 
   // Subagent runs (Task/Agent tools) get distinct styling so that nested agent
@@ -259,7 +278,9 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: 
         onClick={() => isClickable && setExpanded(!expanded)}
       >
         {isRunning ? (
-          <span className={`flex items-center justify-center w-6 h-6 flex-shrink-0 ${isSubagent ? 'text-primary' : 'text-primary'}`}>
+          <span
+            className={`flex items-center justify-center w-6 h-6 flex-shrink-0 ${isSubagent ? 'text-primary' : 'text-primary'}`}
+          >
             <ToolLoader toolName={execution.toolName} size={24} />
           </span>
         ) : isSubagent ? (
@@ -267,7 +288,9 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: 
         ) : (
           <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
         )}
-        <span className={`font-medium ${isSubagent ? 'text-primary' : 'text-foreground'}`}>{label}</span>
+        <span className={`font-medium ${isSubagent ? 'text-primary' : 'text-foreground'}`}>
+          {label}
+        </span>
         {isSubagent && (
           <span className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 flex-shrink-0">
             Subagent
@@ -282,7 +305,9 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: 
         {isRunning ? (
           <LiveDuration startedAt={execution.timestamp} />
         ) : duration != null ? (
-          <span className={`text-[10px] font-mono tabular-nums ml-1 ${duration > 5000 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+          <span
+            className={`text-[10px] font-mono tabular-nums ml-1 ${duration > 5000 ? 'text-amber-400' : 'text-muted-foreground'}`}
+          >
             {formatDuration(duration)}
           </span>
         ) : null}
@@ -306,7 +331,9 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: 
             <div className="space-y-1">
               {formattedInput.map((item, idx) => (
                 <div key={idx} className="flex flex-col gap-0.5">
-                  <span className="text-muted-foreground text-[10px] uppercase tracking-wide">{item.label}</span>
+                  <span className="text-muted-foreground text-[10px] uppercase tracking-wide">
+                    {item.label}
+                  </span>
                   <pre className="p-2 bg-muted/50 rounded text-xs overflow-auto max-h-40 whitespace-pre-wrap break-all text-foreground font-mono">
                     {item.value}
                   </pre>
@@ -318,7 +345,9 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({ execution }: 
           {/* Output/Result */}
           {execution.result && (
             <div className="flex flex-col gap-0.5">
-              <span className="text-muted-foreground text-[10px] uppercase tracking-wide">Output</span>
+              <span className="text-muted-foreground text-[10px] uppercase tracking-wide">
+                Output
+              </span>
               <pre className="p-2 bg-muted/50 rounded text-xs overflow-auto max-h-60 whitespace-pre-wrap break-all text-foreground font-mono">
                 {execution.result}
               </pre>

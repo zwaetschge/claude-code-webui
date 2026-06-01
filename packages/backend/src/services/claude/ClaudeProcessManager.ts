@@ -7,7 +7,7 @@ import type {
   BufferedMessage,
   SessionMode,
 } from '@claude-code-webui/shared';
-import { getAppConfig, getDatabase } from '../../db';
+import { getDatabase } from '../../db';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -17,12 +17,22 @@ import { fileURLToPath } from 'url';
 import { ChildProcess, spawn as cpSpawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { config } from '../../config';
-import { CLI_PROVIDERS, getCLIArgs, formatInputMessage, type CLIProvider } from '../cli-providers.js';
+import {
+  CLI_PROVIDERS,
+  getCLIArgs,
+  formatInputMessage,
+  getVibeModelAlias,
+  type CLIProvider,
+} from '../cli-providers.js';
+import type { CodexServiceTier, CodexWebSearchMode } from '@claude-code-webui/shared';
 import { opencodeServer, type OpencodeEvent } from '../opencode/OpencodeServer.js';
 import { resolveConfigHome } from '../../utils/configPaths.js';
 import { syncExternalSkills } from '../../utils/skillSync.js';
 import { scanProject, formatProjectContext } from '../../utils/projectScanner.js';
 import { safeJsonParse } from '../../utils/json.js';
+import { getMistralApiKeyForUser } from '../../routes/settings.js';
+import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
+import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerLinks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,7 +77,7 @@ function longestBoundarySuffix(haystack: string, marker: string): number {
 
 function stripThoughtChunk(
   state: ThoughtStripState,
-  chunk: string,
+  chunk: string
 ): { state: ThoughtStripState; emit: string } {
   let buf = state.pending + chunk;
   let out = '';
@@ -136,9 +146,9 @@ interface SharedPlugin {
 
 async function getCliModelForUser(userId: string, provider: CLIProvider): Promise<string | null> {
   const db = getDatabase();
-  const row = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json?: string | null } | undefined;
+  const row = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
 
   const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
   const models = settingsJson.cliProviderModels;
@@ -166,6 +176,23 @@ function contextWindowFor(model: string | null | undefined): number {
   if (/(opus|sonnet|haiku)-?(4|5)/.test(id)) {
     return ONE_MILLION_CONTEXT;
   }
+  // Codex / GPT-5.x — context windows observed in `model_context_window` events
+  // from codex session logs: gpt-5.5 → 258400, gpt-5.4 → 196k, gpt-5.4-mini → 128k.
+  // The actual window can be overwritten when codex reports `model_context_window`
+  // in a token_count event. Without this, codex sessions defaulted to 200k Claude
+  // rates which made the context-used % calculation wrong on long sessions.
+  if (id.startsWith('gpt-5.4-mini')) {
+    return 128_000;
+  }
+  if (id.startsWith('gpt-5.4')) {
+    return 196_000;
+  }
+  if (id.startsWith('gpt-5.5')) {
+    return 256_000;
+  }
+  if (id.startsWith('gpt-5')) {
+    return 256_000;
+  }
   return DEFAULT_CONTEXT_WINDOW;
 }
 
@@ -183,11 +210,14 @@ function normalizeReasoningLevel(value: unknown): string | null {
   return VALID_REASONING_LEVELS.has(normalized) ? normalized : null;
 }
 
-async function getCliReasoningForUser(userId: string, provider: CLIProvider): Promise<string | null> {
+async function getCliReasoningForUser(
+  userId: string,
+  provider: CLIProvider
+): Promise<string | null> {
   const db = getDatabase();
-  const row = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json?: string | null } | undefined;
+  const row = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
 
   const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
   const levels = settingsJson.cliProviderReasoning;
@@ -197,6 +227,66 @@ async function getCliReasoningForUser(userId: string, provider: CLIProvider): Pr
 
   const level = (levels as Record<string, unknown>)[provider];
   return normalizeReasoningLevel(level);
+}
+
+function getCliServiceTierForUser(userId: string, provider: CLIProvider): CodexServiceTier | null {
+  if (provider !== 'codex') {
+    return null;
+  }
+
+  const db = getDatabase();
+  const row = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
+
+  const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
+  const tiers = settingsJson.cliProviderServiceTiers;
+  if (!tiers || typeof tiers !== 'object') {
+    return null;
+  }
+
+  return (tiers as Record<string, unknown>).codex === 'fast' ? 'fast' : null;
+}
+
+function getCodexWebSearchForUser(userId: string): CodexWebSearchMode {
+  const db = getDatabase();
+  const row = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
+
+  const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
+  const value = settingsJson.codexWebSearch;
+  return value === 'cached' || value === 'live' || value === 'disabled' || value === 'auto'
+    ? value
+    : 'auto';
+}
+
+function getCodexUsageBaselineFromDatabase(
+  sessionId: string
+): { input: number; cached: number; output: number } | undefined {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `
+      SELECT
+        COALESCE(SUM(input_tokens + cache_read_tokens), 0) as input,
+        COALESCE(SUM(cache_read_tokens), 0) as cached,
+        COALESCE(SUM(output_tokens), 0) as output
+      FROM usage_history
+      WHERE session_id = ?
+        AND (model LIKE 'gpt-%' OR lower(model) LIKE '%codex%')
+    `
+    )
+    .get(sessionId) as { input: number; cached: number; output: number } | undefined;
+
+  if (!row) return undefined;
+  const input = Number(row.input) || 0;
+  const cached = Number(row.cached) || 0;
+  const output = Number(row.output) || 0;
+  if (input <= 0 && cached <= 0 && output <= 0) {
+    return undefined;
+  }
+  return { input, cached, output };
 }
 
 /**
@@ -256,7 +346,10 @@ class CircularBuffer<T> {
   }
 }
 
-function parseMarkdownFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
+function parseMarkdownFrontmatter(content: string): {
+  frontmatter: Record<string, string>;
+  body: string;
+} {
   const frontmatter: Record<string, string> = {};
   let body = content;
 
@@ -385,7 +478,9 @@ async function readSharedPlugins(configHome: string): Promise<SharedPlugin[]> {
 
   try {
     const content = await fs.readFile(installedPluginsFile, 'utf-8');
-    const data = JSON.parse(content) as { plugins?: Record<string, Array<{ installPath: string; version?: string }>> };
+    const data = JSON.parse(content) as {
+      plugins?: Record<string, Array<{ installPath: string; version?: string }>>;
+    };
     const entries = Object.entries(data.plugins || {});
     for (const [pluginId, installs] of entries) {
       const install = installs?.[0];
@@ -428,7 +523,17 @@ function formatCodexSharedContext(
 
   const lines: string[] = [];
   lines.push('[Shared Claude Config]');
-  lines.push('Registry of available skills, agents, and plugins. Load full instructions from their files only when needed.');
+  lines.push(
+    'Registry of available skills, agents, and plugins. Load full instructions from their files only when needed.'
+  );
+  lines.push('');
+  lines.push('Runtime tools:');
+  lines.push(
+    '- System Chromium is available at /usr/local/bin/plum-chromium; browser env vars CHROME_BIN, BROWSER, PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, and PUPPETEER_EXECUTABLE_PATH point there.'
+  );
+  lines.push(
+    '- The Chromium wrapper adds Docker-safe flags such as --no-sandbox and --disable-dev-shm-usage, so do not apk add Chromium inside a session.'
+  );
 
   if (skills.length > 0) {
     lines.push('');
@@ -483,10 +588,15 @@ function formatSharedInstructionFile(
   const lines: string[] = [];
   lines.push(WEBUI_MANAGED_BLOCK_START);
   lines.push('# Shared Provider Context');
-  lines.push('Registry of available skills and agents. Full instructions live in their own files — loaded on demand.');
+  lines.push(
+    'Registry of available skills and agents. Full instructions live in their own files — loaded on demand.'
+  );
   lines.push('');
   lines.push('- Skills: `~/.claude/skills/<name>/SKILL.md`');
   lines.push('- Agents: `~/.claude/agents/<name>.md`');
+  lines.push(
+    '- System Chromium is available at `/usr/local/bin/plum-chromium`; browser env vars are preconfigured for Playwright/Puppeteer-style tests.'
+  );
   lines.push('- Remove this block to opt out of automatic updates.');
 
   if (skills.length > 0) {
@@ -546,7 +656,12 @@ function formatSharedInstructionFile(
   return lines.join('\n');
 }
 
-function replaceManagedBlock(existing: string, startMarker: string, endMarker: string, newBlock: string): string | null {
+function replaceManagedBlock(
+  existing: string,
+  startMarker: string,
+  endMarker: string,
+  newBlock: string
+): string | null {
   const pattern = new RegExp(`${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`, 'm');
   if (!pattern.test(existing)) {
     return null;
@@ -589,13 +704,16 @@ async function writeManagedBlock(
   content: string,
   startMarker: string,
   endMarker: string,
-  legacyMarker?: string,
+  legacyMarker?: string
 ): Promise<void> {
   let safePath: string;
   try {
     safePath = await resolveSafeFilePath(filePath);
   } catch (err) {
-    console.warn(`[writeManagedBlock] Skipping unsafe path ${filePath}:`, err instanceof Error ? err.message : err);
+    console.warn(
+      `[writeManagedBlock] Skipping unsafe path ${filePath}:`,
+      err instanceof Error ? err.message : err
+    );
     return;
   }
 
@@ -605,7 +723,10 @@ async function writeManagedBlock(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code !== 'ENOENT') {
-      console.warn(`[writeManagedBlock] Failed to read ${safePath}:`, err instanceof Error ? err.message : err);
+      console.warn(
+        `[writeManagedBlock] Failed to read ${safePath}:`,
+        err instanceof Error ? err.message : err
+      );
     }
   }
 
@@ -631,7 +752,10 @@ async function writeManagedBlock(
 
     await fs.writeFile(safePath, content, 'utf-8');
   } catch (err) {
-    console.warn(`[writeManagedBlock] Failed to write ${safePath}:`, err instanceof Error ? err.message : err);
+    console.warn(
+      `[writeManagedBlock] Failed to write ${safePath}:`,
+      err instanceof Error ? err.message : err
+    );
   }
 }
 
@@ -641,9 +765,15 @@ async function writeManagedBlock(
 async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
   try {
     const existing = await fs.readFile(filePath, 'utf-8');
-    const pattern = new RegExp(`${escapeRegex(WEBUI_MANAGED_BLOCK_START)}[\\s\\S]*?${escapeRegex(WEBUI_MANAGED_BLOCK_END)}`, 'm');
+    const pattern = new RegExp(
+      `${escapeRegex(WEBUI_MANAGED_BLOCK_START)}[\\s\\S]*?${escapeRegex(WEBUI_MANAGED_BLOCK_END)}`,
+      'm'
+    );
     if (pattern.test(existing)) {
-      const cleaned = existing.replace(pattern, '').replace(/\n{3,}/g, '\n\n').trim();
+      const cleaned = existing
+        .replace(pattern, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
       await fs.writeFile(filePath, cleaned + '\n', 'utf-8');
     }
   } catch {
@@ -678,7 +808,7 @@ async function ensureGlobalInstructions(configHome: string): Promise<void> {
     content,
     WEBUI_MANAGED_BLOCK_START,
     WEBUI_MANAGED_BLOCK_END,
-    WEBUI_MANAGED_MARKER,
+    WEBUI_MANAGED_MARKER
   );
 }
 
@@ -705,7 +835,7 @@ function formatSkillsSummary(skills: SharedSkill[], agents: SharedAgent[]): stri
 async function ensureProjectInstructions(
   workingDir: string,
   configHome: string,
-  cliProvider: string,
+  cliProvider: string
 ): Promise<void> {
   // Scan project for auto-detected context
   let projectContext: string;
@@ -745,7 +875,7 @@ async function ensureProjectInstructions(
     claudeMdPath,
     content,
     PROJECT_CONTEXT_BLOCK_START,
-    PROJECT_CONTEXT_BLOCK_END,
+    PROJECT_CONTEXT_BLOCK_END
   );
 
   // Also clean up old AGENTS.md managed block (no longer generated)
@@ -759,22 +889,198 @@ interface FileAttachmentData {
   filename?: string;
 }
 
-function buildIntegrationEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  const comfyuiUrl = getAppConfig('comfyui_url');
-  if (comfyuiUrl) {
-    env.COMFYUI_URL = comfyuiUrl;
+// Walk every vibe session log under VIBE_HOME and collect the message_ids vibe
+// already persisted. Used at WebUI session start to prime the dedupe set so
+// `--continue`'s history replay doesn't re-emit prior turns to the frontend.
+async function loadVibeSeenMessageIds(vibeSessionHome: string): Promise<Set<string>> {
+  const seen = new Set<string>();
+  const sessionsDir = path.join(vibeSessionHome, 'logs', 'session');
+  let entries: import('fs').Dirent[];
+  try {
+    entries = await fs.readdir(sessionsDir, { withFileTypes: true });
+  } catch {
+    return seen;
   }
-  const loraTesterUrl = getAppConfig('lora_tester_url');
-  if (loraTesterUrl) {
-    env.LORA_TESTER_URL = loraTesterUrl;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const messagesPath = path.join(sessionsDir, entry.name, 'messages.jsonl');
+    let raw: string;
+    try {
+      raw = await fs.readFile(messagesPath, 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const id = (JSON.parse(line) as { message_id?: string }).message_id;
+        if (id) seen.add(id);
+      } catch {
+        // Skip malformed lines.
+      }
+    }
   }
-  return env;
+  return seen;
 }
 
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function normalizeVibeThinkingLevel(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!normalized) return null;
+  if (normalized === 'extra_high' || normalized === 'xhigh') return 'max';
+  if (normalized === 'minimal' || normalized === 'none') return 'off';
+  if (['off', 'low', 'medium', 'high', 'max'].includes(normalized)) return normalized;
+  return null;
+}
+
+function rewriteVibeSessionConfig(
+  raw: string,
+  opts: { sessionLogDir: string; activeAlias?: string | null; thinking?: string | null }
+): string {
+  let next = raw;
+  const saveDirLine = `save_dir = ${tomlString(opts.sessionLogDir)}`;
+  if (/^\s*save_dir\s*=\s*"[^"]*"/m.test(next)) {
+    next = next.replace(/^\s*save_dir\s*=\s*"[^"]*"/m, saveDirLine);
+  } else if (/^\s*\[session_logging\]\s*$/m.test(next)) {
+    next = next.replace(/^\s*\[session_logging\]\s*$/m, (line) => `${line}\n${saveDirLine}`);
+  } else {
+    next = `${next.trimEnd()}\n\n[session_logging]\n${saveDirLine}\n`;
+  }
+
+  if (opts.activeAlias) {
+    const activeLine = `active_model = ${tomlString(opts.activeAlias)}`;
+    if (/^\s*active_model\s*=\s*"[^"]*"/m.test(next)) {
+      next = next.replace(/^\s*active_model\s*=\s*"[^"]*"/m, activeLine);
+    } else {
+      next = `${activeLine}\n${next}`;
+    }
+  }
+
+  if (opts.activeAlias && opts.thinking) {
+    const blockRe = /^\s*\[\[models\]\]\s*$/gm;
+    const starts: number[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = blockRe.exec(next)) !== null) {
+      starts.push(match.index);
+    }
+    for (let i = 0; i < starts.length; i += 1) {
+      const start = starts[i]!;
+      const end = starts[i + 1] ?? next.length;
+      const block = next.slice(start, end);
+      const alias = block.match(/^\s*alias\s*=\s*"([^"]+)"/m)?.[1];
+      const name = block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
+      if (alias !== opts.activeAlias && name !== opts.activeAlias) continue;
+      const thinkingLine = `thinking = ${tomlString(opts.thinking)}`;
+      const rewrittenBlock = /^\s*thinking\s*=\s*"[^"]*"/m.test(block)
+        ? block.replace(/^\s*thinking\s*=\s*"[^"]*"/m, thinkingLine)
+        : block.replace(/^\s*alias\s*=\s*"[^"]*"/m, (line) => `${line}\n${thinkingLine}`);
+      next = next.slice(0, start) + rewrittenBlock + next.slice(end);
+      break;
+    }
+  }
+
+  return next;
+}
+
+type VibeSessionStats = {
+  session_prompt_tokens?: number;
+  session_completion_tokens?: number;
+  last_turn_prompt_tokens?: number;
+  last_turn_completion_tokens?: number;
+  context_tokens?: number;
+  input_price_per_million?: number;
+  output_price_per_million?: number;
+  session_cost?: number;
+};
+
+// Copy the user's global ~/.vibe/config.toml into a per-session VIBE_HOME and
+// rewrite session_logging.save_dir to point at the per-session logs dir. Vibe
+// will otherwise write a fresh default config inside the empty VIBE_HOME on
+// first run, which would drop skill_paths / user customizations.
+async function seedVibeSessionConfig(
+  vibeBaseHome: string,
+  vibeSessionHome: string,
+  selectedModel?: string | null,
+  selectedReasoning?: string | null
+): Promise<{ activeAlias: string | null; thinking: string | null }> {
+  const sessionConfig = path.join(vibeSessionHome, 'config.toml');
+  const globalConfig = path.join(vibeBaseHome, 'config.toml');
+  let raw: string;
+  try {
+    raw = await fs.readFile(globalConfig, 'utf-8');
+  } catch {
+    return { activeAlias: null, thinking: null }; // No global config to copy.
+  }
+  const sessionLogDir = path.join(vibeSessionHome, 'logs', 'session');
+  const activeAlias = getVibeModelAlias(selectedModel, raw);
+  const thinking = normalizeVibeThinkingLevel(selectedReasoning);
+  const sessionRewritten = rewriteVibeSessionConfig(raw, { sessionLogDir, activeAlias, thinking });
+  const rewritten = applyVibeProviderLinks(sessionRewritten).content;
+  try {
+    await fs.writeFile(sessionConfig, rewritten, 'utf-8');
+  } catch (err) {
+    console.error(`[VIBE] Failed to seed config.toml at ${sessionConfig}:`, err);
+  }
+  return { activeAlias, thinking };
+}
+
+async function readLatestVibeSessionMeta(vibeSessionHome: string): Promise<{
+  sessionId: string | null;
+  stats: VibeSessionStats | null;
+} | null> {
+  const sessionsDir = path.join(vibeSessionHome, 'logs', 'session');
+  let entries: Array<{ path: string; mtimeMs: number }> = [];
+  try {
+    const dirs = await fs.readdir(sessionsDir, { withFileTypes: true });
+    entries = await Promise.all(
+      dirs
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const metaPath = path.join(sessionsDir, entry.name, 'meta.json');
+          try {
+            const stat = await fs.stat(metaPath);
+            return { path: metaPath, mtimeMs: stat.mtimeMs };
+          } catch {
+            return { path: metaPath, mtimeMs: 0 };
+          }
+        })
+    );
+  } catch {
+    return null;
+  }
+
+  const latest = entries
+    .filter((entry) => entry.mtimeMs > 0)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!latest) return null;
+
+  try {
+    const raw = await fs.readFile(latest.path, 'utf-8');
+    const parsed = JSON.parse(raw) as {
+      session_id?: string;
+      stats?: Record<string, unknown>;
+    };
+    return {
+      sessionId: typeof parsed.session_id === 'string' ? parsed.session_id : null,
+      stats: (parsed.stats as VibeSessionStats | undefined) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 // Helper to determine attachment type
-function getAttachmentType(mimeType: string, filename?: string): 'image' | 'text' | 'pdf' | 'document' {
+function getAttachmentType(
+  mimeType: string,
+  filename?: string
+): 'image' | 'text' | 'pdf' | 'document' {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType === 'application/pdf') return 'pdf';
   if (
@@ -782,7 +1088,10 @@ function getAttachmentType(mimeType: string, filename?: string): 'image' | 'text
     mimeType === 'application/json' ||
     mimeType === 'application/xml' ||
     mimeType === 'application/javascript' ||
-    (filename && /\.(md|txt|json|yaml|yml|js|ts|tsx|jsx|py|rb|go|rs|java|sql|sh|html|css|xml|csv|toml|ini|cfg|conf|env|gitignore)$/i.test(filename))
+    (filename &&
+      /\.(md|txt|json|yaml|yml|js|ts|tsx|jsx|py|rb|go|rs|java|sql|sh|html|css|xml|csv|toml|ini|cfg|conf|env|gitignore)$/i.test(
+        filename
+      ))
   ) {
     return 'text';
   }
@@ -814,6 +1123,64 @@ function getFileExtension(mimeType: string, filename?: string): string {
     'image/svg+xml': 'svg',
   };
   return mimeMap[mimeType] || mimeType.split('/')[1] || 'bin';
+}
+
+interface CodexReviewCommand {
+  args: string[];
+  prompt?: string;
+}
+
+function splitSlashArgs(input: string): string[] {
+  const tokens: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(input)) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3] ?? '');
+  }
+  return tokens;
+}
+
+function parseCodexReviewCommand(message: string): CodexReviewCommand | null {
+  const trimmed = message.trim();
+  if (!trimmed.startsWith('/review')) return null;
+  const first = trimmed.split(/\s+/, 1)[0];
+  if (first !== '/review') return null;
+
+  const tokens = splitSlashArgs(trimmed.slice('/review'.length).trim());
+  const args: string[] = [];
+  const promptParts: string[] = [];
+  let hasTarget = false;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token) continue;
+    if (token === '--uncommitted') {
+      args.push('--uncommitted');
+      hasTarget = true;
+      continue;
+    }
+    if ((token === '--base' || token === '--commit' || token === '--title') && tokens[i + 1]) {
+      args.push(token, tokens[i + 1]!);
+      if (token === '--base' || token === '--commit') {
+        hasTarget = true;
+      }
+      i += 1;
+      continue;
+    }
+    promptParts.push(token);
+  }
+
+  const prompt = promptParts.join(' ').trim();
+
+  if (!hasTarget) {
+    args.unshift('--uncommitted');
+  }
+
+  return prompt ? { args, prompt } : { args };
+}
+
+function isCodexNativeSlashCommand(message: string): boolean {
+  return /^\/(?:goal|compact)(?:\s|$)/i.test(message.trim());
 }
 
 interface UsageInfo {
@@ -859,12 +1226,14 @@ interface PermissionDenial {
 interface StreamJsonMessage {
   type: string;
   content?: string;
-  message?: string | {
-    role: string;
-    model?: string;
-    content: string | { type: string; text?: string }[];
-    usage?: UsageInfo;
-  };
+  message?:
+    | string
+    | {
+        role: string;
+        model?: string;
+        content: string | { type: string; text?: string }[];
+        usage?: UsageInfo;
+      };
   tool_use?: {
     name: string;
     id: string;
@@ -924,6 +1293,12 @@ interface ClaudeProcess {
   turnCacheReadTokens: number;
   turnCacheCreationTokens: number;
   turnOutputTokens: number;
+  // Current model-call context usage. Some providers, notably Codex, report
+  // both per-call context usage and summed turn billing usage; keep those
+  // separate so the context bar does not display cumulative/cache-billing totals.
+  contextInputTokens?: number;
+  contextCacheReadTokens?: number;
+  contextCacheCreationTokens?: number;
   userId: string;
   workingDirectory: string;
   claudeSessionId: string | null;
@@ -948,9 +1323,13 @@ interface ClaudeProcess {
   cacheCreationTokens: number;
   totalCostUsd: number;
   previousTotalCostUsd: number; // For calculating per-turn cost
+  turnCostUsd?: number;
   // Context reminder flag for resumed sessions
   needsWorkingDirReminder: boolean;
-  contextReminder: { summary: string; reason: 'mode-change' | 'provider-switch' | 'context-limit' } | null;
+  contextReminder: {
+    summary: string;
+    reason: 'mode-change' | 'provider-switch' | 'context-limit';
+  } | null;
   // Reconnect buffer
   outputBuffer: CircularBuffer<BufferedMessage>;
   lastActivityAt: number;
@@ -963,12 +1342,54 @@ interface ClaudeProcess {
   modePromptInjected: SessionMode | null;
   lastContextLimitAt?: number;
   codexIdle?: boolean; // True when codex process exited after turn.completed, awaiting respawn
+  // Codex CLI 0.130+ persists sessions at ~/.codex/sessions/<uuid>.jsonl. Once captured
+  // from the first `thread.started` event, we use `codex exec resume <id>` on respawn
+  // for native context continuity instead of transcript replay.
+  codexSessionId?: string;
+  // Image paths to attach via `--image` on the next codex respawn. Populated by
+  // sendMessage when codex is the provider, consumed (and cleared) by respawnCodexProcess.
+  codexPendingImages?: string[];
+  // Dedicated Codex exec workflow to use for the next respawn instead of the
+  // normal chat prompt, e.g. `codex exec review`.
+  codexPendingExecCommand?: { type: 'review'; args: string[]; prompt?: string };
+  // Codex `exec` cannot accept another stdin prompt after the first EOF. User
+  // messages submitted while a turn is still running are stored here and
+  // dispatched FIFO as fresh `codex exec` turns once the child exits.
+  codexQueuedTurns?: CodexPreparedTurn[];
+  codexQueueDraining?: boolean;
+  codexPreemptingForQueuedTurn?: boolean;
+  codexPreemptKillTimer?: ReturnType<typeof setTimeout>;
+  // Track tool callIDs we've already emitted 'started' for during a codex turn, mirroring
+  // the opencode emittedTools pattern. Reset at the start of each turn.
+  codexEmittedTools?: Set<string>;
+  // Last cumulative-token snapshot Codex reported for this session. We use it to
+  // compute per-turn deltas because `turn.completed.usage` in resume mode reports
+  // CUMULATIVE counts (input + cached + output grow monotonically across the
+  // session). Without deltas, analytics gets multi-million-token rows for what
+  // should be ~50k-per-turn API calls.
+  codexLastReportedTokens?: { input: number; cached: number; output: number };
+  // Mistral Vibe is per-turn like Codex, but prompt is delivered via argv (-p TEXT)
+  // not stdin. We always start `idle` and spawn a fresh child for each message.
+  vibeIdle?: boolean;
+  // Isolated VIBE_HOME so each WebUI chat is its own vibe session (enables --continue
+  // without cross-session bleed). Path is created at startSession.
+  vibeHome?: string;
+  // Track tool_call_id → tool name across vibe streaming chunks so the matching
+  // tool result message can be paired with the originating call.
+  vibeToolNames?: Map<string, string>;
+  // Track vibe message_ids we've already forwarded so `--continue` replays
+  // (which restream the whole conversation history) don't duplicate prior
+  // assistant/tool messages on every turn.
+  vibeSeenMessageIds?: Set<string>;
   // Server-backed providers (opencode in HTTP/SSE mode) have no child process.
   // `process` is a no-op stub; all lifecycle goes through HTTP + SSE subscription.
   serverBacked?: boolean;
   // Accumulates content per opencode part.id so we can emit streaming deltas
   // and a final isComplete=true when the session goes idle.
-  partStreams?: Map<string, { type: 'text' | 'reasoning'; text: string; cleaned?: string; thoughtState?: ThoughtStripState }>;
+  partStreams?: Map<
+    string,
+    { type: 'text' | 'reasoning'; text: string; cleaned?: string; thoughtState?: ThoughtStripState }
+  >;
   // Track tool callIDs we've already emitted 'started' for, so we don't
   // re-emit on every status transition (pending → running → completed).
   emittedTools?: Set<string>;
@@ -976,10 +1397,25 @@ interface ClaudeProcess {
   lastSavedAssistantAt?: number;
 }
 
+interface CodexPreparedTurn {
+  queueId: string;
+  queuedAt: string;
+  originalMessage: string;
+  messageForClaude: string;
+  attachments?: FileAttachmentData[];
+  updateLastMessage: boolean;
+  codexImagePaths: string[];
+  codexExecCommand?: { type: 'review'; args: string[]; prompt?: string };
+  codexNativeSlashCommand: boolean;
+}
+
 export class ClaudeProcessManager {
   private processes: Map<string, ClaudeProcess> = new Map();
   private pendingModes: Map<string, SessionMode> = new Map(); // Store modes for sessions not yet started
-  private pendingContextReminders: Map<string, { summary: string; reason: 'mode-change' | 'provider-switch' | 'context-limit' }> = new Map();
+  private pendingContextReminders: Map<
+    string,
+    { summary: string; reason: 'mode-change' | 'provider-switch' | 'context-limit' }
+  > = new Map();
   private io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
   /** Public event emitter for external consumers */
@@ -1040,7 +1476,9 @@ export class ClaudeProcessManager {
       return fallbackPath;
     }
 
-    console.warn(`[HOOKS] Could not find permission-prompt-wrapper.sh, tried: ${devPath}, ${prodPath}, ${fallbackPath}`);
+    console.warn(
+      `[HOOKS] Could not find permission-prompt-wrapper.sh, tried: ${devPath}, ${prodPath}, ${fallbackPath}`
+    );
     return devPath; // Return dev path as default
   }
 
@@ -1055,7 +1493,7 @@ export class ClaudeProcessManager {
       hooks: {
         PreToolUse: [
           {
-            matcher: '*',  // Match all tools
+            matcher: '*', // Match all tools
             hooks: [
               {
                 type: 'command',
@@ -1108,23 +1546,35 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   }
 
   // Wrapper to emit and buffer status
-  private emitStatus(sessionId: string, data: { sessionId: string; status: 'running' | 'stopped' | 'error' }): void {
+  private emitStatus(
+    sessionId: string,
+    data: { sessionId: string; status: 'running' | 'stopped' | 'error' }
+  ): void {
     this.bufferMessage(sessionId, 'status', data);
     this.io.to(`session:${sessionId}`).emit('session:status', data);
   }
 
   // Wrapper to emit and buffer tool_use events
-  private emitToolUse(sessionId: string, data: {
-    sessionId: string;
-    toolName: string;
-    status: 'started' | 'completed' | 'error';
-    toolId?: string;
-    input?: unknown;
-    result?: string;
-    error?: string;
-  }): void {
-    this.bufferMessage(sessionId, 'tool_use', data);
-    this.io.to(`session:${sessionId}`).emit('session:tool_use', data);
+  private emitToolUse(
+    sessionId: string,
+    data: {
+      sessionId: string;
+      toolName: string;
+      status: 'started' | 'completed' | 'error';
+      toolId?: string;
+      input?: unknown;
+      result?: string;
+      error?: string;
+    }
+  ): void {
+    // Stamp with the backend clock so the frontend can sort tools against
+    // assistant messages (which already use the backend clock via
+    // saveAssistantMessage's `createdAt`). Mixing FE Date.now() with BE
+    // ISO timestamps caused the timeline to pile tools at the bottom
+    // whenever the browser clock drifted ahead of the server.
+    const stamped = { ...data, timestamp: Date.now() };
+    this.bufferMessage(sessionId, 'tool_use', stamped);
+    this.io.to(`session:${sessionId}`).emit('session:tool_use', stamped);
   }
 
   private emitModeChange(sessionId: string, mode: SessionMode): void {
@@ -1144,7 +1594,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
    */
   getSessionBufferStatus(
     sessionId: string,
-    sinceTimestamp?: number,
+    sinceTimestamp?: number
   ): { items: BufferedMessage[]; needsFullResync: boolean } {
     const proc = this.processes.get(sessionId);
     if (!proc) return { items: [], needsFullResync: false };
@@ -1189,7 +1639,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   private cleanupDisconnectedSessions(): void {
     const now = Date.now();
     for (const [sessionId, proc] of this.processes.entries()) {
-      if (proc.disconnectedAt && (now - proc.disconnectedAt) > DISCONNECT_TIMEOUT_MS) {
+      if (proc.disconnectedAt && now - proc.disconnectedAt > DISCONNECT_TIMEOUT_MS) {
         console.log(`Cleaning up disconnected session ${sessionId} (timeout exceeded)`);
         this.stopSessionInternal(sessionId);
       }
@@ -1214,7 +1664,14 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
     const session = db
       .prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?')
-      .get(sessionId, userId) as { working_directory: string; claude_session_id: string | null; allowed_directories: string | null; cli_provider: CLIProvider | null } | undefined;
+      .get(sessionId, userId) as
+      | {
+          working_directory: string;
+          claude_session_id: string | null;
+          allowed_directories: string | null;
+          cli_provider: CLIProvider | null;
+        }
+      | undefined;
 
     if (!session) {
       throw new Error('Session not found');
@@ -1224,18 +1681,20 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       return;
     }
 
-
     // Use provided mode, or pending mode, or default to 'auto-accept'
     const effectiveMode = mode ?? this.pendingModes.get(sessionId) ?? 'auto-accept';
     this.pendingModes.delete(sessionId); // Clear pending mode once used
-    // Get CLI provider (default to claude for backwards compatibility)
-    const cliProvider: CLIProvider = session.cli_provider || 'claude';
+    // Codex is the primary provider. Only very old rows can have NULL here.
+    const cliProvider: CLIProvider = session.cli_provider || 'codex';
     const providerConfig = CLI_PROVIDERS[cliProvider];
     const configHome = resolveConfigHome(cliProvider);
     const selectedModel = await getCliModelForUser(userId, cliProvider);
     const selectedReasoning = await getCliReasoningForUser(userId, cliProvider);
+    const selectedServiceTier = getCliServiceTierForUser(userId, cliProvider);
 
-    console.log(`[MODE] Starting session ${sessionId} with mode ${effectiveMode}, provider ${cliProvider}`);
+    console.log(
+      `[MODE] Starting session ${sessionId} with mode ${effectiveMode}, provider ${cliProvider}`
+    );
 
     // Parse allowed directories
     const allowedDirs: string[] = session.allowed_directories
@@ -1248,6 +1707,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project context
     await ensureGlobalInstructions(configHome);
     await ensureProjectInstructions(session.working_directory, configHome, cliProvider);
+    syncProviderLinks({ quiet: true });
 
     if (cliProvider === 'opencode') {
       // Server-backed path: opencode HTTP/SSE via the singleton `opencode serve`.
@@ -1261,8 +1721,15 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         remoteId = null;
       }
       if (!remoteId) {
-        remoteId = await opencodeServer.createSession(session.working_directory);
-        db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(remoteId, sessionId);
+        remoteId = await opencodeServer.createSession(session.working_directory, {
+          model: selectedModel,
+          mode: effectiveMode,
+          variant: selectedReasoning,
+        });
+        db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(
+          remoteId,
+          sessionId
+        );
       }
 
       console.log(`[SESSION] ========== Starting Session (opencode server) ==========`);
@@ -1334,6 +1801,170 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       return;
     }
 
+    if (cliProvider === 'vibe') {
+      // Mistral Vibe takes its prompt via argv (-p TEXT) and exits after the turn.
+      // There is no useful child process to spawn until the first user message
+      // arrives — so we register a virtual process and respawn on every sendMessage.
+      const vibeBaseHome = providerConfig.credentialsPath.replace('~', os.homedir());
+      const vibeSessionHome = path.join(vibeBaseHome, 'webui-sessions', sessionId);
+      try {
+        await fs.mkdir(vibeSessionHome, { recursive: true });
+      } catch (err) {
+        console.error(`[VIBE] Failed to create VIBE_HOME ${vibeSessionHome}:`, err);
+      }
+      // Seed per-session config.toml from the global one so skill_paths and any
+      // user customization carry over. Vibe writes its own copy on first run
+      // otherwise — and that fresh copy loses our skill_paths override.
+      await seedVibeSessionConfig(vibeBaseHome, vibeSessionHome, selectedModel, selectedReasoning);
+      // On resume (or after a server restart), prime the dedupe set with every
+      // message_id vibe has already persisted on disk so `--continue`-driven
+      // history replays don't re-emit prior turns to the frontend.
+      const seenIds = await loadVibeSeenMessageIds(vibeSessionHome);
+
+      console.log(`[SESSION] ========== Starting Session (vibe) ==========`);
+      console.log(`[SESSION] Session ID: ${sessionId}`);
+      console.log(`[SESSION] VIBE_HOME: ${vibeSessionHome}`);
+      console.log(`[SESSION] Working directory: ${session.working_directory}`);
+      console.log(`[SESSION] Model: ${selectedModel ?? '(default)'}`);
+      console.log(`[SESSION] Resuming: ${isResuming}`);
+      console.log(`[SESSION] ==============================================`);
+
+      const virtualProc = createVirtualChildProcess();
+      const claudeProcess: ClaudeProcess = {
+        process: virtualProc,
+        sessionId,
+        cliProvider,
+        userId,
+        workingDirectory: session.working_directory,
+        claudeSessionId: session.claude_session_id,
+        buffer: '',
+        streamingText: '',
+        isStreaming: false,
+        mode: effectiveMode,
+        currentToolName: null,
+        currentToolId: null,
+        currentToolInput: '',
+        pendingToolResults: new Map(),
+        currentAgentType: null,
+        model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
+        contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
+        turnInputTokens: 0,
+        turnCacheReadTokens: 0,
+        turnCacheCreationTokens: 0,
+        turnOutputTokens: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        previousTotalCostUsd: 0,
+        needsWorkingDirReminder: isResuming,
+        contextReminder: this.pendingContextReminders.get(sessionId) || null,
+        outputBuffer: new CircularBuffer<BufferedMessage>(BUFFER_SIZE),
+        lastActivityAt: Date.now(),
+        disconnectedAt: null,
+        lastUserMessage: null,
+        lastAttachments: null,
+        pendingPermissionDenials: null,
+        sharedContextInjected: false,
+        modePromptInjected: null,
+        lastContextLimitAt: undefined,
+        vibeIdle: true,
+        vibeHome: vibeSessionHome,
+        vibeToolNames: new Map(),
+        vibeSeenMessageIds: seenIds,
+      };
+
+      this.pendingContextReminders.delete(sessionId);
+      this.processes.set(sessionId, claudeProcess);
+
+      db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        'running',
+        sessionId
+      );
+      this.emitStatus(sessionId, { sessionId, status: 'running' });
+      return;
+    }
+
+    if (cliProvider === 'codex') {
+      // Codex `exec` is single-shot and important launch parameters such as
+      // `--image` can only be supplied at process spawn time. Register the WebUI
+      // session as running, but delay the actual child process until sendMessage()
+      // has the user prompt and attachments. This gives first-turn image input
+      // the same behavior as later turns.
+      const persistedCodexSessionId = session.claude_session_id || undefined;
+      const codexTokenBaseline = persistedCodexSessionId
+        ? getCodexUsageBaselineFromDatabase(sessionId)
+        : undefined;
+
+      console.log(`[SESSION] ========== Starting Session (codex idle) ==========`);
+      console.log(`[SESSION] Session ID: ${sessionId}`);
+      console.log(`[SESSION] Codex session ID: ${persistedCodexSessionId || '(new)'}`);
+      console.log(`[SESSION] Working directory: ${session.working_directory}`);
+      console.log(`[SESSION] Mode: ${effectiveMode}`);
+      console.log(`[SESSION] Model: ${selectedModel ?? '(default)'}`);
+      console.log(`[SESSION] Resuming: ${isResuming}`);
+      console.log(`[SESSION] ==============================================`);
+
+      const virtualProc = createVirtualChildProcess();
+      const claudeProcess: ClaudeProcess = {
+        process: virtualProc,
+        sessionId,
+        cliProvider,
+        userId,
+        workingDirectory: session.working_directory,
+        claudeSessionId: session.claude_session_id,
+        buffer: '',
+        streamingText: '',
+        isStreaming: false,
+        mode: effectiveMode,
+        currentToolName: null,
+        currentToolId: null,
+        currentToolInput: '',
+        pendingToolResults: new Map(),
+        currentAgentType: null,
+        model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
+        contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
+        turnInputTokens: 0,
+        turnCacheReadTokens: 0,
+        turnCacheCreationTokens: 0,
+        turnOutputTokens: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        previousTotalCostUsd: 0,
+        needsWorkingDirReminder: isResuming,
+        contextReminder: this.pendingContextReminders.get(sessionId) || null,
+        outputBuffer: new CircularBuffer<BufferedMessage>(BUFFER_SIZE),
+        lastActivityAt: Date.now(),
+        disconnectedAt: null,
+        lastUserMessage: null,
+        lastAttachments: null,
+        pendingPermissionDenials: null,
+        sharedContextInjected: false,
+        modePromptInjected: null,
+        lastContextLimitAt: undefined,
+        codexIdle: true,
+        codexSessionId: persistedCodexSessionId,
+        codexPendingImages: [],
+        codexPendingExecCommand: undefined,
+        codexEmittedTools: new Set(),
+        codexLastReportedTokens: codexTokenBaseline,
+      };
+
+      this.pendingContextReminders.delete(sessionId);
+      this.processes.set(sessionId, claudeProcess);
+
+      db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        'running',
+        sessionId
+      );
+      this.emitStatus(sessionId, { sessionId, status: 'running' });
+      return;
+    }
+
     if (cliProvider === 'claude') {
       // Build command args for stream-json mode (hooks-based permissions)
       // IMPORTANT: Always use --dangerously-skip-permissions so our hook is the ONLY permission layer
@@ -1341,9 +1972,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       args = [
         '--print',
         '--verbose',
-        '--debug', 'hooks',
-        '--output-format', 'stream-json',
-        '--input-format', 'stream-json',
+        '--debug',
+        'hooks',
+        '--output-format',
+        'stream-json',
+        '--input-format',
+        'stream-json',
         '--include-partial-messages',
         '--dangerously-skip-permissions',
       ];
@@ -1388,9 +2022,8 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       if (effectiveMode === 'planning') {
         args.push('--append-system-prompt', this.getPlanningPrompt());
       }
-
     } else {
-      const resumeId = isResuming ? session.claude_session_id ?? undefined : undefined;
+      const resumeId = isResuming ? (session.claude_session_id ?? undefined) : undefined;
 
       // Build command args using CLI provider abstraction
       args = getCLIArgs(cliProvider, {
@@ -1400,6 +2033,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         workingDirectory: session.working_directory,
         model: selectedModel ?? undefined,
         reasoningLevel: selectedReasoning ?? undefined,
+        serviceTier: selectedServiceTier ?? undefined,
       });
     }
 
@@ -1414,7 +2048,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     console.log(`[SESSION] Env WEBUI_SESSION_ID: ${sessionId}`);
     console.log(`[SESSION] Env WEBUI_BACKEND_URL: http://localhost:${config.port}`);
     console.log(`[SESSION] Env WEBUI_PROJECT_PATH: ${session.working_directory}`);
-    console.log(`[SESSION] ==============================================`); 
+    console.log(`[SESSION] ==============================================`);
 
     const extraEnv: Record<string, string> = {};
     if (cliProvider === 'claude') {
@@ -1422,21 +2056,6 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     }
     extraEnv.WEBUI_SESSION_MODE = effectiveMode;
     extraEnv.WEBUI_CONFIG_HOME = configHome;
-    if (cliProvider === 'codex') {
-      const codexHome = providerConfig.credentialsPath.replace('~', os.homedir());
-      extraEnv.CODEX_HOME = codexHome;
-      try {
-        const authPath = path.join(codexHome, 'auth.json');
-        const auth = safeJsonParse<Record<string, unknown>>(await fs.readFile(authPath, 'utf-8'), {});
-        const hasTokens = typeof auth.tokens === 'object' && !!(auth.tokens as { access_token?: string }).access_token;
-        const hasApiKey = typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.length > 0;
-        if (hasTokens && !hasApiKey) {
-          args.push('--config', 'auth_mode="chatgpt"');
-        }
-      } catch {
-        // Ignore missing or unreadable auth.json; codex will handle auth errors.
-      }
-    }
     Object.assign(extraEnv, buildIntegrationEnv());
     // Use regular spawn for CLI providers
     const proc: ChildProcess = cpSpawn(providerConfig.command, args, {
@@ -1535,24 +2154,6 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
       const managedProc = this.processes.get(sessionId);
       if (managedProc) {
-        // Codex/OpenCode: single-shot `run`/`exec` processes that exit after each turn.
-        // On clean exit (code 0), keep the session entry alive for respawn instead of
-        // tearing down the whole session.
-        if (managedProc.cliProvider === 'codex' && exitCode === 0) {
-          console.log(`[CODEX] Process exited cleanly, marking idle for respawn [${sessionId}]`);
-          if (managedProc.streamingText?.trim().length) {
-            this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
-          }
-          managedProc.codexIdle = true;
-          managedProc.streamingText = '';
-          managedProc.isStreaming = false;
-          managedProc.buffer = '';
-          this.io.to(`session:${sessionId}`).emit('session:thinking', {
-            sessionId,
-            isThinking: false,
-          });
-          return; // Do NOT clean up — session stays alive for respawn
-        }
         // For providers that don't send a result message,
         // save any remaining streaming text and stop thinking indicator
         if (managedProc.streamingText?.trim().length) {
@@ -1564,9 +2165,6 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           sessionId,
           isThinking: false,
         });
-      }
-      if (typeof exitCode === 'number' && exitCode !== 0) {
-
       }
       this.cleanupProcess(sessionId);
     });
@@ -1604,11 +2202,26 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           }
           continue;
         }
+        if (proc.cliProvider === 'vibe') {
+          const translated = this.translateVibeMessage(sessionId, raw);
+          if (Array.isArray(translated)) {
+            for (const msg of translated) {
+              this.processStreamMessage(sessionId, msg);
+            }
+          } else if (translated) {
+            this.processStreamMessage(sessionId, translated);
+          }
+          continue;
+        }
         this.processStreamMessage(sessionId, raw as StreamJsonMessage);
       } catch (e) {
-        // Not valid JSON, emit as raw output for debugging (skip noisy codex/opencode prompts)
+        // Not valid JSON, emit as raw output for debugging (skip noisy codex/opencode/vibe prompts)
         console.log(`Non-JSON output [${sessionId}]:`, line);
-        if (proc.cliProvider !== 'codex' && proc.cliProvider !== 'opencode') {
+        if (
+          proc.cliProvider !== 'codex' &&
+          proc.cliProvider !== 'opencode' &&
+          proc.cliProvider !== 'vibe'
+        ) {
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
             content: line + '\n',
@@ -1619,66 +2232,412 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     }
   }
 
+  /**
+   * Translate a Codex CLI JSON event (`codex exec --json` / app-server) to our
+   * Socket.IO event vocabulary.
+   *
+   * Codex emits events in two notations depending on version/transport:
+   *   - dot notation:   `item.completed`, `agent_message.delta`, `turn.started`
+   *   - slash notation: `item/completed`, `item/agentMessage/delta`, `turn/started`
+   *
+   * Both are normalized to a single canonical form before switching.
+   *
+   * Event categories handled:
+   *   - thread/turn lifecycle (capture sessionId, mark idle)
+   *   - agent message deltas + completed (streaming text)
+   *   - reasoning deltas + completed (thinking summaries)
+   *   - tool events: commandExecution, fileChange, mcpToolCall, webSearch, imageView
+   *   - plan updates (turn/plan/updated)
+   *   - diff updates (turn/diff/updated) — currently informational, future work
+   *   - context compaction, model rerouting, errors
+   */
   private translateCodexMessage(sessionId: string, raw: unknown): StreamJsonMessage | null {
     if (!raw || typeof raw !== 'object') return null;
+
     const data = raw as {
       type?: string;
-      item?: { type?: string; text?: string };
-      usage?: { input_tokens?: number; output_tokens?: number; cached_input_tokens?: number };
+      // delta payloads
+      delta?: string;
+      text?: string;
+      // shared id / thread context
+      threadId?: string;
+      turnId?: string;
+      // item payloads
+      item?: {
+        id?: string;
+        type?: string;
+        text?: string;
+        delta?: string;
+        // command execution
+        command?: string | string[];
+        cwd?: string;
+        status?: string;
+        aggregatedOutput?: string;
+        exitCode?: number;
+        durationMs?: number;
+        // file change
+        changes?: unknown;
+        // mcp tool call
+        server?: string;
+        tool?: string;
+        arguments?: unknown;
+        result?: unknown;
+        error?: unknown;
+        // web search
+        query?: string;
+        action?: unknown;
+        // image view
+        path?: string;
+        // reasoning
+        summary?: string;
+        content?: string;
+      };
+      thread?: { id?: string };
+      turn?: { id?: string; status?: string };
+      // plan update
+      plan?: Array<{ step: string; status: string }>;
+      explanation?: string;
+      // diff
+      diff?: string;
+      // model reroute
+      fromModel?: string;
+      toModel?: string;
+      reason?: string;
+      // turn usage — Codex `turn.completed.usage` shape is:
+      //   { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens }
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cached_input_tokens?: number;
+        reasoning_output_tokens?: number;
+      };
+      model_context_window?: number;
+      info?: {
+        model_context_window?: number;
+        total_token_usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cached_input_tokens?: number;
+          reasoning_output_tokens?: number;
+          total_tokens?: number;
+        };
+        last_token_usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cached_input_tokens?: number;
+          reasoning_output_tokens?: number;
+          total_tokens?: number;
+        };
+      } | null;
       message?: string;
     };
 
-    switch (data.type) {
+    // Normalize event type: collapse `item/foo/bar` ↔ `item.foo.bar` to canonical
+    // lowercase camelCase so a single switch covers both notations.
+    //
+    //   item/agentMessage/delta  →  item.agentmessage.delta
+    //   item.commandExecution    →  item.commandexecution
+    //   turn/plan/updated        →  turn.plan.updated
+    const eventType = (data.type || '').replace(/\//g, '.').toLowerCase();
+
+    switch (eventType) {
+      // ── Thread lifecycle ────────────────────────────────────────────────
+      case 'thread.started': {
+        const threadId = data.thread?.id || data.threadId;
+        if (threadId) {
+          const proc = this.processes.get(sessionId);
+          if (proc && proc.cliProvider === 'codex' && !proc.codexSessionId) {
+            proc.codexSessionId = threadId;
+            proc.claudeSessionId = threadId;
+            const db = getDatabase();
+            db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(
+              threadId,
+              sessionId
+            );
+            console.log(`[CODEX] Captured session id ${threadId} for ${sessionId}`);
+          }
+        }
+        return null;
+      }
+
+      // ── Turn lifecycle ──────────────────────────────────────────────────
+      case 'task.started':
+      case 'task_started':
       case 'turn.started':
+        {
+          const codexProc = this.processes.get(sessionId);
+          const reportedWindow = data.model_context_window;
+          if (codexProc && typeof reportedWindow === 'number' && reportedWindow > 0) {
+            codexProc.contextWindow = reportedWindow;
+          }
+        }
         this.io.to(`session:${sessionId}`).emit('session:thinking', {
           sessionId,
           isThinking: true,
         });
         return null;
-      case 'item.completed':
-        if (data.item?.type === 'reasoning' && data.item.text) {
-          const summary = this.formatCodexReasoning(data.item.text);
-          if (summary) {
-            this.io.to(`session:${sessionId}`).emit('session:thinking', {
-              sessionId,
-              isThinking: true,
-              message: summary,
-            });
-          }
+
+      case 'token_count': {
+        const codexProc = this.processes.get(sessionId);
+        if (!codexProc || codexProc.cliProvider !== 'codex') {
           return null;
         }
-        if (data.item?.type === 'agent_message' && data.item.text) {
-          return {
-            type: 'assistant',
-            message: {
-              role: 'assistant',
-              content: data.item.text,
-            },
-          };
+
+        const reportedWindow = data.info?.model_context_window ?? data.model_context_window;
+        if (typeof reportedWindow === 'number' && reportedWindow > 0) {
+          codexProc.contextWindow = reportedWindow;
+        }
+
+        // `last_token_usage` is the current model-call prompt, which is what a
+        // context window meter should show. `total_token_usage` is summed across
+        // all model calls in the Codex exec turn and can legitimately exceed the
+        // model context window; that belongs in analytics/cost, not the context bar.
+        const lastUsage = data.info?.last_token_usage;
+        if (lastUsage) {
+          const contextInputTotal = lastUsage.input_tokens ?? 0;
+          const contextCached = Math.min(lastUsage.cached_input_tokens ?? 0, contextInputTotal);
+          codexProc.contextInputTokens = Math.max(contextInputTotal - contextCached, 0);
+          codexProc.contextCacheReadTokens = contextCached;
+          codexProc.contextCacheCreationTokens = 0;
+          this.emitUsage(sessionId, codexProc);
         }
         return null;
-      case 'turn.completed': {
-        // Codex process teardown is now handled in the exit handler (exit code 0 → codexIdle).
-        // If turn.completed arrives before process exit, just mark idle proactively.
+      }
+
+      case 'turn.completed':
+      case 'turn.failed': {
         const codexProc = this.processes.get(sessionId);
-        if (codexProc && codexProc.cliProvider === 'codex' && !codexProc.codexIdle) {
-          console.log(`[CODEX] turn.completed received, marking idle [${sessionId}]`);
-          codexProc.codexIdle = true;
+        if (codexProc && codexProc.cliProvider === 'codex') {
+          console.log(`[CODEX] ${eventType} received [${sessionId}]`);
         }
-        if (data.usage) {
+        if (data.usage && codexProc) {
+          // Codex's `turn.completed.usage` reports CUMULATIVE counts in resume
+          // mode (each respawn loads the full session JSONL — totals grow across
+          // turns). Sending the raw values to usage_history multiplied analytics
+          // tokens 10-100x and produced single rows with 5M+ cached_input_tokens
+          // (impossible for a single 256k-context API call).
+          //
+          // Solution: track the last-reported totals per session and compute
+          // per-turn deltas. Edge cases:
+          //   - First call (no snapshot): use raw values
+          //   - Any counter decrease (counter reset / fresh codex spawn after
+          //     session detach): use raw values (don't write a negative delta)
+          //   - Monotonic increase: write delta
+          //
+          // Schema difference vs Claude:
+          //   Codex:  input_tokens INCLUDES cached_input_tokens (overlapping)
+          //   Claude: input_tokens and cache_read_input_tokens are disjoint
+          //
+          // After computing deltas we split into the disjoint pair Claude-style
+          // so contextWindow math + usage_history rows stay consistent.
+          //
+          // Reasoning output tokens are billed like regular output upstream, so
+          // we fold them into output_tokens for cost calculation.
+          const totalInput = data.usage.input_tokens ?? 0;
+          const totalCached = data.usage.cached_input_tokens ?? 0;
+          const totalOutput =
+            (data.usage.output_tokens ?? 0) + (data.usage.reasoning_output_tokens ?? 0);
+
+          const prev = codexProc.codexLastReportedTokens;
+          let deltaInput: number;
+          let deltaCached: number;
+          let deltaOutput: number;
+          if (
+            !prev ||
+            totalInput < prev.input ||
+            totalCached < prev.cached ||
+            totalOutput < prev.output
+          ) {
+            // First call OR counter reset → take values as-is. The reset case
+            // includes the very first turn after a fresh `codex exec` (no resume).
+            deltaInput = totalInput;
+            deltaCached = totalCached;
+            deltaOutput = totalOutput;
+          } else {
+            deltaInput = totalInput - prev.input;
+            deltaCached = totalCached - prev.cached;
+            deltaOutput = totalOutput - prev.output;
+          }
+          codexProc.codexLastReportedTokens = {
+            input: totalInput,
+            cached: totalCached,
+            output: totalOutput,
+          };
+
+          // Sanity cap: even cumulative-delta values shouldn't exceed roughly 4x
+          // the context window in a single turn. If they do, clamp to keep
+          // analytics sane. Caps are generous (1M each) so legitimate large turns
+          // still pass through.
+          const PER_TURN_CAP = 1_000_000;
+          deltaInput = Math.min(deltaInput, PER_TURN_CAP);
+          deltaCached = Math.min(deltaCached, PER_TURN_CAP);
+          deltaOutput = Math.min(deltaOutput, PER_TURN_CAP);
+
+          // Split into disjoint non-cached + cached for Claude-shape compatibility.
+          const nonCachedInput = Math.max(deltaInput - deltaCached, 0);
+
+          codexProc.turnInputTokens = nonCachedInput;
+          codexProc.turnOutputTokens = deltaOutput;
+          codexProc.turnCacheReadTokens = deltaCached;
+          codexProc.turnCacheCreationTokens = 0; // Codex doesn't surface cache writes.
+
+          // If this Codex version did not emit token_count.last_token_usage, keep
+          // the live context meter bounded. The turn totals are billing totals
+          // across all model calls and may exceed the model context window.
+          if (
+            codexProc.contextInputTokens === undefined &&
+            codexProc.contextCacheReadTokens === undefined
+          ) {
+            const boundedContextInput = Math.min(deltaInput, codexProc.contextWindow);
+            const boundedContextCached = Math.min(deltaCached, boundedContextInput);
+            codexProc.contextInputTokens = Math.max(boundedContextInput - boundedContextCached, 0);
+            codexProc.contextCacheReadTokens = boundedContextCached;
+            codexProc.contextCacheCreationTokens = 0;
+          }
+
+          const turnCostUsd = this.calculateTurnCost(codexProc);
+          codexProc.previousTotalCostUsd = codexProc.totalCostUsd;
+          codexProc.totalCostUsd += turnCostUsd;
+          this.emitUsage(sessionId, codexProc);
+
           return {
             type: 'result',
             usage: {
-              input_tokens: data.usage.input_tokens || 0,
-              output_tokens: data.usage.output_tokens || 0,
-              cache_read_input_tokens: data.usage.cached_input_tokens || 0,
+              input_tokens: nonCachedInput,
+              output_tokens: deltaOutput,
+              cache_read_input_tokens: deltaCached,
               cache_creation_input_tokens: 0,
             },
           };
         }
         return null;
       }
+
+      // ── Agent message deltas (token-by-token streaming) ─────────────────
+      // Variants we've seen in the wild across Codex versions:
+      //   item.delta, item.text.delta, item.agentmessage.delta,
+      //   agent_message.delta, text.delta, response.output_text.delta
+      case 'item.delta':
+      case 'item.text.delta':
+      case 'item.agentmessage.delta':
+      case 'agent_message.delta':
+      case 'text.delta':
+      case 'response.output_text.delta': {
+        const chunk =
+          (typeof data.delta === 'string' && data.delta) ||
+          (typeof data.text === 'string' && data.text) ||
+          (data.item && typeof data.item.delta === 'string' && data.item.delta) ||
+          (data.item && typeof data.item.text === 'string' && data.item.text) ||
+          '';
+        if (!chunk) return null;
+        const proc = this.processes.get(sessionId);
+        if (proc) {
+          proc.streamingText = (proc.streamingText || '') + chunk;
+          proc.isStreaming = true;
+        }
+        this.io.to(`session:${sessionId}`).emit('session:output', {
+          sessionId,
+          content: chunk,
+          isComplete: false,
+        });
+        return null;
+      }
+
+      // ── Reasoning deltas (live thinking) ────────────────────────────────
+      case 'item.reasoning.delta':
+      case 'reasoning.delta': {
+        const chunk =
+          (typeof data.delta === 'string' && data.delta) ||
+          (data.item && typeof data.item.delta === 'string' && data.item.delta) ||
+          '';
+        if (!chunk) return null;
+        const summary = this.formatCodexReasoning(chunk);
+        if (summary) {
+          this.io.to(`session:${sessionId}`).emit('session:thinking', {
+            sessionId,
+            isThinking: true,
+            message: summary,
+          });
+        }
+        return null;
+      }
+
+      // ── Command execution (shell tool) ──────────────────────────────────
+      case 'item.started':
+      case 'item.completed':
+        return this.translateCodexItem(sessionId, data, eventType === 'item.completed');
+
+      // ── Command output streaming ────────────────────────────────────────
+      case 'item.commandexecution.outputdelta':
+      case 'command.exec.outputdelta':
+      case 'commandexecution.outputdelta': {
+        const chunk = typeof data.delta === 'string' ? data.delta : '';
+        if (!chunk) return null;
+        // We surface command output as inline session:output for now. A future
+        // enhancement could pipe to per-tool execution cards using the item.id.
+        this.io.to(`session:${sessionId}`).emit('session:output', {
+          sessionId,
+          content: chunk,
+          isComplete: false,
+        });
+        return null;
+      }
+
+      // ── Plan updates (matches Claude's TodoWrite UX) ────────────────────
+      case 'turn.plan.updated': {
+        if (Array.isArray(data.plan)) {
+          this.emitToolUse(sessionId, {
+            sessionId,
+            toolName: 'TodoWrite',
+            status: 'completed',
+            toolId: `codex-plan-${data.turnId || Date.now()}`,
+            input: { todos: data.plan },
+            result: data.explanation || '',
+          });
+        }
+        return null;
+      }
+
+      // ── Diff updates (whole-turn unified diff snapshot) ─────────────────
+      case 'turn.diff.updated':
+        // Informational; could render a "files changed" preview. Skipping for now
+        // — individual fileChange items already cover the per-edit detail.
+        return null;
+
+      // ── Context compaction (auto-summarization at context limits) ───────
+      case 'context_compacted':
+      case 'context_compaction':
+      case 'context.compacted':
+      case 'context.compaction':
+      case 'contextcompaction':
+      case 'compacted': {
+        const codexProc = this.processes.get(sessionId);
+        if (codexProc && codexProc.cliProvider === 'codex') {
+          this.resetCurrentContextUsage(codexProc);
+          this.emitUsage(sessionId, codexProc);
+        }
+        this.io.to(`session:${sessionId}`).emit('session:compact', {
+          sessionId,
+          message: 'Context was compacted to reduce token usage',
+          reason: 'auto-compact',
+        });
+        return null;
+      }
+
+      // ── Model rerouting (codex backend switched models on us) ───────────
+      case 'model.rerouted': {
+        const note = `\n[Codex rerouted ${data.fromModel || ''} → ${data.toModel || ''}${data.reason ? `: ${data.reason}` : ''}]\n`;
+        this.io.to(`session:${sessionId}`).emit('session:output', {
+          sessionId,
+          content: note,
+          isComplete: false,
+        });
+        return null;
+      }
+
       case 'error':
+      case 'configwarning':
+      case 'warning':
         if (data.message) {
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
@@ -1686,17 +2645,235 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
             isComplete: false,
           });
         }
-
         return null;
+
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Translate an `item.started` / `item.completed` event into a tool-use lifecycle
+   * notification or an assistant message. Covers commandExecution, fileChange,
+   * mcpToolCall, webSearch, imageView, agentMessage, and reasoning items.
+   */
+  private translateCodexItem(
+    sessionId: string,
+    data: {
+      item?: {
+        id?: string;
+        type?: string;
+        text?: string;
+        command?: string | string[];
+        cwd?: string;
+        status?: string;
+        aggregatedOutput?: string;
+        exitCode?: number;
+        durationMs?: number;
+        changes?: unknown;
+        server?: string;
+        tool?: string;
+        arguments?: unknown;
+        result?: unknown;
+        error?: unknown;
+        query?: string;
+        action?: unknown;
+        path?: string;
+        summary?: string;
+        content?: string;
+      };
+    },
+    isCompleted: boolean
+  ): StreamJsonMessage | null {
+    const item = data.item;
+    if (!item) return null;
+    // Codex item types may be camelCase (`commandExecution`) or snake_case
+    // (`command_execution`) — normalize for switching.
+    const itemType = (item.type || '').replace(/_/g, '').toLowerCase();
+    const itemId = item.id || `codex-${itemType}-${Date.now()}`;
+    const proc = this.processes.get(sessionId);
+
+    // Skip duplicate started events; track which item ids we've emitted started for.
+    if (proc) {
+      proc.codexEmittedTools = proc.codexEmittedTools || new Set<string>();
+    }
+
+    switch (itemType) {
+      case 'agentmessage':
+      case 'agent_message': {
+        if (!isCompleted || !item.text) return null;
+        // If we already streamed the full text via deltas, the streamingText buffer
+        // ≈ item.text; persist as the canonical assistant message and clear buffer.
+        if (proc?.streamingText && proc.streamingText.length >= item.text.length * 0.5) {
+          proc.streamingText = '';
+          proc.isStreaming = false;
+        }
+        return {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: item.text,
+          },
+        };
+      }
+
+      case 'reasoning': {
+        if (!isCompleted) return null;
+        const text = item.summary || item.text || item.content || '';
+        if (!text) return null;
+        const summary = this.formatCodexReasoning(text);
+        if (summary) {
+          this.io.to(`session:${sessionId}`).emit('session:thinking', {
+            sessionId,
+            isThinking: true,
+            message: summary,
+          });
+        }
+        return null;
+      }
+
+      case 'commandexecution': {
+        const command = Array.isArray(item.command) ? item.command.join(' ') : item.command || '';
+        if (!isCompleted) {
+          if (proc && !proc.codexEmittedTools?.has(itemId)) {
+            proc.codexEmittedTools?.add(itemId);
+            this.emitToolUse(sessionId, {
+              sessionId,
+              toolName: 'Bash',
+              status: 'started',
+              toolId: itemId,
+              input: { command, description: item.cwd },
+            });
+          }
+          return null;
+        }
+        const success = item.status === 'completed' && (item.exitCode ?? 0) === 0;
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName: 'Bash',
+          status: success ? 'completed' : 'error',
+          toolId: itemId,
+          input: { command, description: item.cwd },
+          result: item.aggregatedOutput || '',
+          error: success ? undefined : `exit ${item.exitCode ?? '?'}`,
+        });
+        return null;
+      }
+
+      case 'filechange': {
+        const changes = item.changes;
+        if (!isCompleted) {
+          if (proc && !proc.codexEmittedTools?.has(itemId)) {
+            proc.codexEmittedTools?.add(itemId);
+            this.emitToolUse(sessionId, {
+              sessionId,
+              toolName: 'Edit',
+              status: 'started',
+              toolId: itemId,
+              input: { changes },
+            });
+          }
+          return null;
+        }
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName: 'Edit',
+          status: item.status === 'completed' ? 'completed' : 'error',
+          toolId: itemId,
+          input: { changes },
+          result: typeof item.result === 'string' ? item.result : JSON.stringify(item.result ?? ''),
+          error: item.error ? String(item.error) : undefined,
+        });
+        return null;
+      }
+
+      case 'mcptoolcall':
+      case 'mcp_tool_call': {
+        const toolName = `${item.server || 'mcp'}.${item.tool || 'tool'}`;
+        if (!isCompleted) {
+          if (proc && !proc.codexEmittedTools?.has(itemId)) {
+            proc.codexEmittedTools?.add(itemId);
+            this.emitToolUse(sessionId, {
+              sessionId,
+              toolName,
+              status: 'started',
+              toolId: itemId,
+              input: item.arguments,
+            });
+          }
+          return null;
+        }
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName,
+          status: item.status === 'completed' ? 'completed' : 'error',
+          toolId: itemId,
+          input: item.arguments,
+          result: typeof item.result === 'string' ? item.result : JSON.stringify(item.result ?? ''),
+          error: item.error ? String(item.error) : undefined,
+        });
+        return null;
+      }
+
+      case 'websearch':
+      case 'web_search': {
+        if (!isCompleted) {
+          if (proc && !proc.codexEmittedTools?.has(itemId)) {
+            proc.codexEmittedTools?.add(itemId);
+            this.emitToolUse(sessionId, {
+              sessionId,
+              toolName: 'WebSearch',
+              status: 'started',
+              toolId: itemId,
+              input: { query: item.query },
+            });
+          }
+          return null;
+        }
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName: 'WebSearch',
+          status: 'completed',
+          toolId: itemId,
+          input: { query: item.query, action: item.action },
+        });
+        return null;
+      }
+
+      case 'imageview':
+      case 'image_view':
+        if (isCompleted && item.path) {
+          this.emitToolUse(sessionId, {
+            sessionId,
+            toolName: 'Read',
+            status: 'completed',
+            toolId: itemId,
+            input: { file_path: item.path },
+          });
+        }
+        return null;
+
+      case 'usermessage':
+      case 'user_message':
+        // Echo of the user input we just sent — ignore, we already persisted it.
+        return null;
+
       default:
         return null;
     }
   }
 
   private formatCodexReasoning(text: string): string {
-    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    const lines = text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
     if (lines.length === 0) return '';
-    const stripMd = (value: string) => value.replace(/\*\*/g, '').replace(/^#+\s*/, '').trim();
+    const stripMd = (value: string) =>
+      value
+        .replace(/\*\*/g, '')
+        .replace(/^#+\s*/, '')
+        .trim();
     const firstLine = lines[0] ?? '';
     let candidate = stripMd(firstLine);
     if (candidate.length < 8 && lines[1]) {
@@ -1705,6 +2882,139 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     const trimmed = candidate.replace(/\s+/g, ' ').trim();
     if (!trimmed) return '';
     return trimmed.length > 160 ? `${trimmed.slice(0, 157)}...` : trimmed;
+  }
+
+  /**
+   * Translate a Mistral Vibe streaming JSON message (one LLMMessage per line).
+   *
+   * Schema (from mistral-vibe/core/output_formatters.py StreamingJsonOutputFormatter):
+   *   { role: 'assistant' | 'tool' | 'user' | 'system',
+   *     content: string | null,
+   *     reasoning_content?: string | null,
+   *     tool_calls?: [{ id, function: { name, arguments }, type }] | null,
+   *     name?: string | null,       // tool name on tool-result messages
+   *     tool_call_id?: string,      // tool result correlation id
+   *     message_id?: string,
+   *     usage?: { input_tokens, output_tokens, ... } }
+   */
+  private translateVibeMessage(
+    sessionId: string,
+    raw: unknown
+  ): StreamJsonMessage | StreamJsonMessage[] | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const proc = this.processes.get(sessionId);
+    if (!proc) return null;
+    const data = raw as {
+      role?: string;
+      content?: string | null;
+      reasoning_content?: string | null;
+      tool_calls?: Array<{
+        id?: string;
+        function?: { name?: string; arguments?: string };
+        type?: string;
+      }> | null;
+      name?: string | null;
+      tool_call_id?: string;
+      message_id?: string;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        cached_tokens?: number;
+      };
+    };
+
+    const emissions: StreamJsonMessage[] = [];
+    proc.vibeToolNames ??= new Map();
+    proc.vibeSeenMessageIds ??= new Set();
+
+    // Dedup: `vibe --continue` replays the entire prior conversation on stdout
+    // before emitting the new turn. Skip any message we've already forwarded.
+    // System/user echoes have no actionable side-effect for us regardless, but
+    // we still mark them as seen so the set tracks vibe's monotonic id history.
+    if (data.message_id) {
+      if (proc.vibeSeenMessageIds.has(data.message_id)) {
+        return null;
+      }
+      proc.vibeSeenMessageIds.add(data.message_id);
+    }
+
+    // Reasoning content → thinking indicator with summary
+    if (typeof data.reasoning_content === 'string' && data.reasoning_content.trim()) {
+      const summary = this.formatCodexReasoning(data.reasoning_content);
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: true,
+        message: summary || undefined,
+      });
+    }
+
+    // Assistant text → emit as assistant content
+    if (data.role === 'assistant' && typeof data.content === 'string' && data.content) {
+      emissions.push({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: data.content,
+        },
+      });
+    }
+
+    // Tool calls fired by the model
+    if (data.role === 'assistant' && Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
+      for (const call of data.tool_calls) {
+        const toolName = call.function?.name || 'unknown';
+        const callId = call.id || `vibe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        let parsedArgs: unknown = call.function?.arguments;
+        try {
+          if (typeof call.function?.arguments === 'string') {
+            parsedArgs = JSON.parse(call.function.arguments);
+          }
+        } catch {
+          // Keep raw string if not JSON
+        }
+        proc.vibeToolNames.set(callId, toolName);
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName,
+          status: 'started',
+          toolId: callId,
+          input: parsedArgs,
+        });
+      }
+    }
+
+    // Tool result message (role='tool')
+    if (data.role === 'tool' && data.tool_call_id) {
+      const toolName = data.name || proc.vibeToolNames.get(data.tool_call_id) || 'unknown';
+      const output =
+        typeof data.content === 'string' ? data.content : JSON.stringify(data.content ?? '');
+      this.emitToolUse(sessionId, {
+        sessionId,
+        toolName,
+        status: 'completed',
+        toolId: data.tool_call_id,
+        result: output,
+      });
+    }
+
+    // Usage stats (vibe may include them on the final assistant message)
+    if (data.usage) {
+      const inputTokens = data.usage.input_tokens ?? data.usage.prompt_tokens ?? 0;
+      const outputTokens = data.usage.output_tokens ?? data.usage.completion_tokens ?? 0;
+      emissions.push({
+        type: 'result',
+        usage: {
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_read_input_tokens: data.usage.cached_tokens ?? 0,
+          cache_creation_input_tokens: 0,
+        },
+      });
+    }
+
+    return emissions.length === 0 ? null : emissions.length === 1 ? emissions[0]! : emissions;
   }
 
   /**
@@ -1720,12 +3030,16 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     sessionId: string,
     proc: ClaudeProcess,
     partId: string,
-    rawChunk: string,
+    rawChunk: string
   ): void {
     if (!rawChunk) return;
-    const streams = proc.partStreams ??= new Map();
+    const streams = (proc.partStreams ??= new Map());
     const existing = streams.get(partId);
-    const entry = existing ?? { type: 'text' as const, text: '', thoughtState: { inside: false, pending: '' } };
+    const entry = existing ?? {
+      type: 'text' as const,
+      text: '',
+      thoughtState: { inside: false, pending: '' },
+    };
     entry.thoughtState ??= { inside: false, pending: '' };
 
     entry.text += rawChunk;
@@ -1741,7 +3055,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
     if (emit) {
       if (process.env.OPENCODE_DEBUG_EVENTS === '1') {
-        console.log(`[OC-EMIT] session=${sessionId} partId=${partId} chunk=${JSON.stringify(emit).slice(0, 80)} totalCleaned=${entry.cleaned.length}`);
+        console.log(
+          `[OC-EMIT] session=${sessionId} partId=${partId} chunk=${JSON.stringify(emit).slice(0, 80)} totalCleaned=${entry.cleaned.length}`
+        );
       }
       this.io.to(`session:${sessionId}`).emit('session:output', {
         sessionId,
@@ -1767,9 +3083,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       case 'session.status': {
         const status = props.status as { type?: string } | undefined;
         if (status?.type === 'busy') {
-          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: true });
+          this.io
+            .to(`session:${sessionId}`)
+            .emit('session:thinking', { sessionId, isThinking: true });
         } else if (status?.type === 'idle') {
-          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+          this.io
+            .to(`session:${sessionId}`)
+            .emit('session:thinking', { sessionId, isThinking: false });
         }
         return;
       }
@@ -1796,10 +3116,35 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           }
           streams.clear();
         }
+        this.saveUsageToDatabase(sessionId, proc);
         proc.streamingText = '';
         proc.isStreaming = false;
         proc.emittedTools?.clear();
-        this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
+        return;
+      }
+
+      case 'permission.asked': {
+        const requestId = typeof props.id === 'string' ? props.id : undefined;
+        const permission = typeof props.permission === 'string' ? props.permission : 'tool';
+        const patterns = Array.isArray(props.patterns)
+          ? props.patterns.filter((item): item is string => typeof item === 'string')
+          : [];
+        const metadata = props.metadata ?? {};
+        if (!requestId) return;
+        this.io.to(`session:${sessionId}`).emit('session:permission_request', {
+          sessionId,
+          requestId,
+          toolName: permission,
+          toolInput: metadata,
+          description: `OpenCode requests ${permission}${patterns[0] ? `: ${patterns[0]}` : ''}`,
+          suggestedPattern: patterns[0] || `${permission}:*`,
+        });
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
         return;
       }
 
@@ -1811,7 +3156,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           content: `${message}\n`,
           isComplete: true,
         });
-        this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
         return;
       }
 
@@ -1850,9 +3197,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         if (partType === 'tool') {
           const callId = (part.callID as string) || partId;
           const toolName = part.tool as string;
-          const state = part.state as { status?: string; input?: unknown; output?: string; error?: string } | undefined;
+          const state = part.state as
+            | { status?: string; input?: unknown; output?: string; error?: string }
+            | undefined;
           if (!toolName || !state) return;
-          const emittedTools = proc.emittedTools ??= new Set();
+          const emittedTools = (proc.emittedTools ??= new Set());
 
           if (state.status === 'pending' || state.status === 'running') {
             if (!emittedTools.has(callId)) {
@@ -1869,7 +3218,8 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           }
 
           if (state.status === 'completed') {
-            const output = typeof state.output === 'string' ? state.output : JSON.stringify(state.output ?? '');
+            const output =
+              typeof state.output === 'string' ? state.output : JSON.stringify(state.output ?? '');
             this.emitToolUse(sessionId, {
               sessionId,
               toolName,
@@ -1896,18 +3246,27 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         }
 
         if (partType === 'step-start') {
-          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: true });
+          this.io
+            .to(`session:${sessionId}`)
+            .emit('session:thinking', { sessionId, isThinking: true });
           return;
         }
 
         if (partType === 'step-finish') {
-          const tokens = part.tokens as { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } | undefined;
+          const tokens = part.tokens as
+            | {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
+              }
+            | undefined;
           const cost = typeof part.cost === 'number' ? (part.cost as number) : 0;
           if (tokens) {
-            proc.turnInputTokens = tokens.input ?? 0;
-            proc.turnOutputTokens = tokens.output ?? 0;
-            proc.turnCacheReadTokens = tokens.cache?.read ?? 0;
-            proc.turnCacheCreationTokens = tokens.cache?.write ?? 0;
+            proc.turnInputTokens += tokens.input ?? 0;
+            proc.turnOutputTokens += tokens.output ?? 0;
+            proc.turnCacheReadTokens += tokens.cache?.read ?? 0;
+            proc.turnCacheCreationTokens += tokens.cache?.write ?? 0;
             proc.totalInputTokens += tokens.input ?? 0;
             proc.totalOutputTokens += tokens.output ?? 0;
             proc.cacheReadTokens += tokens.cache?.read ?? 0;
@@ -1916,6 +3275,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           if (cost > 0) {
             proc.previousTotalCostUsd = proc.totalCostUsd;
             proc.totalCostUsd += cost;
+            proc.turnCostUsd = (proc.turnCostUsd ?? 0) + cost;
           }
           this.emitUsage(sessionId, proc);
           return;
@@ -1955,11 +3315,15 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     const providerConfig = CLI_PROVIDERS.codex;
     const selectedModel = proc.model || providerConfig.defaultModel;
     const selectedReasoning = await getCliReasoningForUser(proc.userId, 'codex');
+    const selectedServiceTier = getCliServiceTierForUser(proc.userId, 'codex');
+    const webSearchMode = getCodexWebSearchForUser(proc.userId);
 
     const db = getDatabase();
     const session = db
       .prepare('SELECT working_directory, allowed_directories FROM sessions WHERE id = ?')
-      .get(sessionId) as { working_directory: string; allowed_directories: string | null } | undefined;
+      .get(sessionId) as
+      | { working_directory: string; allowed_directories: string | null }
+      | undefined;
 
     if (!session) throw new Error('Session not found for codex respawn');
 
@@ -1973,7 +3337,20 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       workingDirectory: session.working_directory,
       model: selectedModel || undefined,
       reasoningLevel: selectedReasoning ?? undefined,
+      serviceTier: selectedServiceTier ?? undefined,
+      webSearchMode,
+      codexExecCommand: proc.codexPendingExecCommand,
+      // Use native codex resume once we've captured a sessionId from `thread.started`.
+      resumeSessionId: proc.codexPendingExecCommand ? undefined : proc.codexSessionId,
     });
+    proc.codexPendingExecCommand = undefined;
+
+    // Attach pending images via Codex's `--image` flag (PNG/JPEG/GIF/WebP, <5MB each).
+    // codex exec accepts a single comma-separated path list. We clear after consuming.
+    if (proc.codexPendingImages && proc.codexPendingImages.length > 0) {
+      args.push('--image', proc.codexPendingImages.join(','));
+      proc.codexPendingImages = [];
+    }
 
     // Build env (same as startSession codex block)
     const extraEnv: Record<string, string> = {};
@@ -1982,7 +3359,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     try {
       const authPath = path.join(codexHome, 'auth.json');
       const auth = safeJsonParse<Record<string, unknown>>(await fs.readFile(authPath, 'utf-8'), {});
-      const hasTokens = typeof auth.tokens === 'object' && !!(auth.tokens as { access_token?: string }).access_token;
+      const hasTokens =
+        typeof auth.tokens === 'object' &&
+        !!(auth.tokens as { access_token?: string }).access_token;
       const hasApiKey = typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY.length > 0;
       if (hasTokens && !hasApiKey) {
         args.push('--config', 'auth_mode="chatgpt"');
@@ -2011,6 +3390,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.buffer = '';
     proc.streamingText = '';
     proc.isStreaming = false;
+    proc.turnInputTokens = 0;
+    proc.turnOutputTokens = 0;
+    proc.turnCacheReadTokens = 0;
+    proc.turnCacheCreationTokens = 0;
+    proc.contextInputTokens = undefined;
+    proc.contextCacheReadTokens = undefined;
+    proc.contextCacheCreationTokens = undefined;
 
     // Re-attach output handlers
     newChildProc.stdout?.on('data', (data: Buffer) => {
@@ -2020,20 +3406,47 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       console.error(`Claude stderr [${sessionId}]:`, data.toString());
     });
     newChildProc.on('exit', (exitCode) => {
-      console.log(`[CODEX] Respawned process for session ${sessionId} exited with code ${exitCode}`);
+      console.log(
+        `[CODEX] Respawned process for session ${sessionId} exited with code ${exitCode}`
+      );
       const managedProc = this.processes.get(sessionId);
       if (managedProc) {
-        // Clean exit → mark idle for next respawn
-        if (exitCode === 0) {
-          console.log(`[CODEX] Respawned process exited cleanly, marking idle [${sessionId}]`);
+        if (managedProc.codexPreemptKillTimer) {
+          clearTimeout(managedProc.codexPreemptKillTimer);
+          managedProc.codexPreemptKillTimer = undefined;
+        }
+
+        const hasQueuedTurns = (managedProc.codexQueuedTurns?.length ?? 0) > 0;
+
+        // Clean exit, or an intentional queued-input interruption, means the
+        // manager should keep the session alive and immediately run the FIFO.
+        if (exitCode === 0 || hasQueuedTurns) {
+          if (exitCode === 0) {
+            console.log(`[CODEX] Respawned process exited cleanly, marking idle [${sessionId}]`);
+          } else {
+            console.log(
+              `[CODEX] Respawned process exited with code ${exitCode}; draining queued input [${sessionId}], depth=${managedProc.codexQueuedTurns?.length ?? 0}`
+            );
+          }
           if (managedProc.streamingText?.trim().length) {
-            this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
+            const suffix = exitCode === 0 ? '' : '\n\n[Interrupted by newer user message]';
+            this.saveAssistantMessage(sessionId, `${managedProc.streamingText.trim()}${suffix}`);
           }
           managedProc.codexIdle = true;
+          managedProc.codexPreemptingForQueuedTurn = false;
           managedProc.streamingText = '';
           managedProc.isStreaming = false;
           managedProc.buffer = '';
-          this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+          if (hasQueuedTurns) {
+            console.log(
+              `[CODEX] Draining queued turn after process exit [${sessionId}], depth=${managedProc.codexQueuedTurns?.length ?? 0}`
+            );
+            void this.drainCodexQueuedTurns(sessionId, managedProc);
+          } else {
+            this.io
+              .to(`session:${sessionId}`)
+              .emit('session:thinking', { sessionId, isThinking: false });
+          }
           return;
         }
         if (managedProc.streamingText?.trim().length) {
@@ -2043,9 +3456,6 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         }
       }
       this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
-      if (typeof exitCode === 'number' && exitCode !== 0) {
-
-      }
       this.cleanupProcess(sessionId);
     });
     newChildProc.on('error', (err) => {
@@ -2057,19 +3467,248 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     console.log(`[CODEX] Respawned process [${sessionId}], args: ${args.join(' ')}`);
   }
 
+  /**
+   * Spawn a fresh Mistral Vibe process for the upcoming turn.
+   * Vibe receives the prompt via argv `-p TEXT` and exits when done — there is
+   * no stdin handoff. Each user message therefore spawns a new child. VIBE_HOME
+   * is set per-WebUI-session so `--continue` resumes the right vibe session.
+   */
+  private async respawnVibeProcess(
+    sessionId: string,
+    proc: ClaudeProcess,
+    prompt: string
+  ): Promise<void> {
+    const providerConfig = CLI_PROVIDERS.vibe;
+    const selectedModel = proc.model || providerConfig.defaultModel;
+    const selectedReasoning = await getCliReasoningForUser(proc.userId, 'vibe');
+
+    const db = getDatabase();
+    const session = db
+      .prepare('SELECT working_directory, allowed_directories FROM sessions WHERE id = ?')
+      .get(sessionId) as
+      | { working_directory: string; allowed_directories: string | null }
+      | undefined;
+
+    if (!session) throw new Error('Session not found for vibe respawn');
+
+    const allowedDirs: string[] = session.allowed_directories
+      ? JSON.parse(session.allowed_directories)
+      : [];
+
+    // We use --continue when a vibe session already exists in this VIBE_HOME.
+    // First spawn (no prior session) ⇒ omit --continue. We mark that the first
+    // call has happened by checking proc.claudeSessionId / a session marker file.
+    const vibeHome = proc.vibeHome || providerConfig.credentialsPath.replace('~', os.homedir());
+    const sessionMarker = path.join(vibeHome, '.webui-session-started');
+    let hasPriorSession = false;
+    try {
+      await fs.access(sessionMarker);
+      hasPriorSession = true;
+    } catch {
+      // First turn: no marker yet.
+    }
+
+    const args = getCLIArgs('vibe', {
+      mode: proc.mode,
+      resumeSessionId: hasPriorSession ? 'continue' : undefined,
+      allowedDirectories: allowedDirs,
+      workingDirectory: session.working_directory,
+      model: selectedModel || undefined,
+      reasoningLevel: selectedReasoning ?? undefined,
+    });
+
+    // Prompt must be the last argv pair, separated so vibe interprets it correctly.
+    args.push('-p', prompt);
+
+    const vibeConfig = await seedVibeSessionConfig(
+      providerConfig.credentialsPath.replace('~', os.homedir()),
+      vibeHome,
+      selectedModel,
+      selectedReasoning
+    );
+    this.resetCurrentContextUsage(proc);
+
+    const extraEnv: Record<string, string> = {};
+    extraEnv.VIBE_HOME = vibeHome;
+    if (vibeConfig.activeAlias) {
+      extraEnv.VIBE_ACTIVE_MODEL = vibeConfig.activeAlias;
+    }
+    // Vibe authenticates via MISTRAL_API_KEY. Source priority:
+    //   1. per-user setting stored encrypted in SQLite (Settings → API Keys → Mistral)
+    //   2. parent process env (set via docker-compose MISTRAL_API_KEY)
+    //   3. ~/.vibe/.env (created by interactive `vibe --setup`)
+    // Per-user setting wins so the WebUI can override an outdated .env key without a restart.
+    const userKey = proc.userId ? getMistralApiKeyForUser(proc.userId) : null;
+    if (userKey) {
+      extraEnv.MISTRAL_API_KEY = userKey;
+    } else if (!process.env.MISTRAL_API_KEY) {
+      try {
+        const globalEnvPath = path.join(os.homedir(), '.vibe', '.env');
+        const raw = await fs.readFile(globalEnvPath, 'utf-8');
+        const match = raw.match(/^MISTRAL_API_KEY=(.+)$/m);
+        if (match?.[1]) extraEnv.MISTRAL_API_KEY = match[1].trim();
+      } catch {
+        // No fallback found; fail-fast below.
+      }
+    }
+    // Fail fast: vibe hangs silently on missing auth — surface the problem to the user.
+    if (!process.env.MISTRAL_API_KEY && !extraEnv.MISTRAL_API_KEY) {
+      const errMsg =
+        'Mistral Vibe konnte nicht starten: MISTRAL_API_KEY ist nicht gesetzt. ' +
+        'Trage den Schlüssel unter Settings → API Keys → Mistral Vibe ein.';
+      console.error(`[VIBE] ${errMsg} [${sessionId}]`);
+      this.saveAssistantMessage(sessionId, errMsg);
+      this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+      proc.vibeIdle = true;
+      proc.process = createVirtualChildProcess();
+      return;
+    }
+    Object.assign(extraEnv, buildIntegrationEnv());
+
+    const newChildProc = cpSpawn(providerConfig.command, args, {
+      cwd: session.working_directory,
+      env: {
+        ...process.env,
+        ...extraEnv,
+        WEBUI_SESSION_ID: sessionId,
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        WEBUI_PROJECT_PATH: session.working_directory,
+        WEBUI_HOOK_SECRET: config.hookSecret,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    proc.process = newChildProc;
+    proc.vibeIdle = false;
+    proc.buffer = '';
+    proc.streamingText = '';
+    proc.isStreaming = false;
+
+    // Vibe waits on stdin even with -p set; if we leave the pipe open it hangs and
+    // exits 0 without ever calling the LLM. Close stdin right after spawn so vibe
+    // proceeds to the single-shot completion path.
+    newChildProc.stdin?.end();
+
+    // Drop a marker so the next turn uses --continue — but only after the child
+    // exits successfully (code 0). A premature marker write would lock subsequent
+    // turns into --continue even though no real vibe session was ever created.
+
+    newChildProc.stdout?.on('data', (data: Buffer) => {
+      this.handleJsonOutput(sessionId, data.toString());
+    });
+    newChildProc.stderr?.on('data', (data: Buffer) => {
+      console.error(`Vibe stderr [${sessionId}]:`, data.toString());
+    });
+    newChildProc.on('exit', (exitCode) => {
+      console.log(`[VIBE] Process for session ${sessionId} exited with code ${exitCode}`);
+      void (async () => {
+        const managedProc = this.processes.get(sessionId);
+        if (managedProc && managedProc.cliProvider === 'vibe') {
+          if (managedProc.streamingText?.trim().length) {
+            this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
+          }
+          if (exitCode === 0) {
+            const latest = await readLatestVibeSessionMeta(vibeHome);
+            if (latest?.stats) {
+              const stats = latest.stats;
+              const input = Number(stats.last_turn_prompt_tokens ?? 0);
+              const output = Number(stats.last_turn_completion_tokens ?? 0);
+              managedProc.turnInputTokens = Number.isFinite(input) ? input : 0;
+              managedProc.turnOutputTokens = Number.isFinite(output) ? output : 0;
+              managedProc.contextInputTokens =
+                typeof stats.context_tokens === 'number'
+                  ? stats.context_tokens
+                  : managedProc.turnInputTokens;
+              managedProc.totalInputTokens =
+                typeof stats.session_prompt_tokens === 'number'
+                  ? stats.session_prompt_tokens
+                  : managedProc.totalInputTokens + managedProc.turnInputTokens;
+              managedProc.totalOutputTokens =
+                typeof stats.session_completion_tokens === 'number'
+                  ? stats.session_completion_tokens
+                  : managedProc.totalOutputTokens + managedProc.turnOutputTokens;
+              const inputPrice =
+                typeof stats.input_price_per_million === 'number'
+                  ? stats.input_price_per_million
+                  : 0;
+              const outputPrice =
+                typeof stats.output_price_per_million === 'number'
+                  ? stats.output_price_per_million
+                  : 0;
+              managedProc.turnCostUsd =
+                (managedProc.turnInputTokens / 1_000_000) * inputPrice +
+                (managedProc.turnOutputTokens / 1_000_000) * outputPrice;
+              if (typeof stats.session_cost === 'number') {
+                managedProc.totalCostUsd = stats.session_cost;
+              }
+              this.emitUsage(sessionId, managedProc);
+              this.saveUsageToDatabase(sessionId, managedProc);
+            }
+            if (latest?.sessionId) {
+              managedProc.claudeSessionId = latest.sessionId;
+              try {
+                getDatabase()
+                  .prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?')
+                  .run(latest.sessionId, sessionId);
+              } catch {
+                // Non-critical: --continue uses VIBE_HOME, not the DB id.
+              }
+            }
+          }
+          managedProc.streamingText = '';
+          managedProc.isStreaming = false;
+          managedProc.buffer = '';
+          managedProc.vibeIdle = true;
+          // Only mark the session continuable if vibe exited cleanly. Otherwise
+          // a transient crash (missing model, missing API key) would falsely
+          // arm --continue and keep failing forever.
+          if (exitCode === 0 && !hasPriorSession) {
+            fs.writeFile(sessionMarker, new Date().toISOString(), 'utf-8').catch(() => undefined);
+          }
+          // Replace live child with a virtual stub so the manager keeps the session alive
+          // for the next message without a dangling exited process.
+          managedProc.process = createVirtualChildProcess();
+          this.io
+            .to(`session:${sessionId}`)
+            .emit('session:thinking', { sessionId, isThinking: false });
+        }
+      })().catch((err) => {
+        console.error(`[VIBE] Failed to finalize session ${sessionId}:`, err);
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
+      });
+    });
+    newChildProc.on('error', (err) => {
+      console.error(`Vibe process error [${sessionId}]:`, err);
+      this.cleanupProcess(sessionId);
+    });
+
+    console.log(
+      `[VIBE] Spawned process [${sessionId}], args: ${args.slice(0, -2).join(' ')} -p <prompt:${prompt.length} chars>`
+    );
+  }
+
   private emitUsage(sessionId: string, proc: ClaudeProcess): void {
-    // Context usage only counts INPUT tokens (including cache), NOT output tokens
-    // Use per-turn values for context display (not cumulative session values)
-    const contextTokens = proc.turnInputTokens + proc.turnCacheReadTokens + proc.turnCacheCreationTokens;
-    const contextUsedPercent = Math.round((contextTokens / proc.contextWindow) * 100);
+    const contextInputTokens = proc.contextInputTokens ?? proc.turnInputTokens;
+    const contextCacheReadTokens = proc.contextCacheReadTokens ?? proc.turnCacheReadTokens;
+    const contextCacheCreationTokens =
+      proc.contextCacheCreationTokens ?? proc.turnCacheCreationTokens;
+
+    // Context usage only counts INPUT tokens (including cache), NOT output tokens.
+    // Prefer current model-call context usage over summed turn billing usage when
+    // a provider reports both.
+    const contextTokens = contextInputTokens + contextCacheReadTokens + contextCacheCreationTokens;
+    const contextUsedPercent =
+      proc.contextWindow > 0 ? Math.round((contextTokens / proc.contextWindow) * 100) : 0;
 
     this.io.to(`session:${sessionId}`).emit('session:usage', {
       sessionId,
-      // Per-turn values for context display
-      inputTokens: proc.turnInputTokens,
+      // Current context values for display
+      inputTokens: contextInputTokens,
       outputTokens: proc.turnOutputTokens,
-      cacheReadTokens: proc.turnCacheReadTokens,
-      cacheCreationTokens: proc.turnCacheCreationTokens,
+      cacheReadTokens: contextCacheReadTokens,
+      cacheCreationTokens: contextCacheCreationTokens,
       totalTokens: contextTokens, // Context tokens only (no output) for display
       contextWindow: proc.contextWindow,
       contextUsedPercent,
@@ -2080,18 +3719,46 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     // Note: DB saving moved to saveUsageToDatabase() called only on turn completion
   }
 
+  private resetCurrentContextUsage(proc: ClaudeProcess): void {
+    proc.turnInputTokens = 0;
+    proc.turnOutputTokens = 0;
+    proc.turnCacheReadTokens = 0;
+    proc.turnCacheCreationTokens = 0;
+    proc.contextInputTokens = 0;
+    proc.contextCacheReadTokens = 0;
+    proc.contextCacheCreationTokens = 0;
+    proc.turnCostUsd = undefined;
+  }
+
   // Calculate cost for tokens based on model pricing
   // Prices per 1M tokens (as of 2025)
-  private static readonly MODEL_PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
+  // Prices per 1M tokens (USD). Codex models map to OpenAI's published API rates,
+  // even though most users come via ChatGPT plans (where billing is flat). We
+  // record the rate-card cost so analytics charts compare apples-to-apples
+  // across providers. Users on ChatGPT plans can treat the figure as
+  // "equivalent API spend".
+  private static readonly MODEL_PRICING: Record<
+    string,
+    { input: number; output: number; cacheRead: number; cacheWrite: number }
+  > = {
+    // Anthropic Claude
     'claude-opus-4-5-20251101': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
     'claude-sonnet-4-20250514': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
     'claude-3-5-sonnet-20241022': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
     'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+    // OpenAI Codex (rate-card equivalents; subscription users pay flat)
+    'gpt-5.5': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+    'gpt-5.4': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+    'gpt-5.4-mini': { input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: 0 },
+    'gpt-5.3-codex': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+    'gpt-5.2': { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
   };
 
   private calculateTurnCost(proc: ClaudeProcess): number {
-    // Get pricing for model, fallback to opus pricing
-    const defaultPricing = { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 };
+    // Pricing lookup; default to Codex gpt-5.5 rates for unknown models (the new
+    // primary provider). Previous default was Claude Opus pricing which over-
+    // attributed cost to Codex sessions on cache misses.
+    const defaultPricing = { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 };
     const pricing = ClaudeProcessManager.MODEL_PRICING[proc.model] ?? defaultPricing;
 
     // Calculate cost (prices are per 1M tokens)
@@ -2105,20 +3772,25 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
   // Save usage to database - called ONCE per turn when result is received
   private saveUsageToDatabase(sessionId: string, proc: ClaudeProcess): void {
-    const turnTotalTokens = proc.turnInputTokens + proc.turnOutputTokens + proc.turnCacheReadTokens + proc.turnCacheCreationTokens;
+    const turnTotalTokens =
+      proc.turnInputTokens +
+      proc.turnOutputTokens +
+      proc.turnCacheReadTokens +
+      proc.turnCacheCreationTokens;
 
     if (turnTotalTokens <= 0) return;
 
-
     // Calculate cost from tokens (not from CLI cumulative value)
-    const turnCostUsd = this.calculateTurnCost(proc);
+    const turnCostUsd = proc.turnCostUsd ?? this.calculateTurnCost(proc);
 
     try {
       const db = getDatabase();
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO usage_history (user_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+      `
+      ).run(
         proc.userId,
         sessionId,
         proc.turnInputTokens,
@@ -2129,14 +3801,22 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         turnCostUsd,
         proc.model
       );
-      console.log(`[USAGE] Saved turn usage: ${turnTotalTokens} tokens, $${turnCostUsd.toFixed(4)}`);
+      console.log(
+        `[USAGE] Saved turn usage: ${turnTotalTokens} tokens, $${turnCostUsd.toFixed(4)}`
+      );
+      proc.turnCostUsd = undefined;
     } catch (error) {
       console.error('[USAGE] Failed to save usage to database:', error);
     }
   }
 
   private extractErrorText(msg: StreamJsonMessage): string | null {
-    const msgAny = msg as unknown as { message?: unknown; error?: unknown; detail?: unknown; text?: unknown };
+    const msgAny = msg as unknown as {
+      message?: unknown;
+      error?: unknown;
+      detail?: unknown;
+      text?: unknown;
+    };
     if (typeof msgAny?.message === 'string') return msgAny.message;
     if (typeof msgAny?.error === 'string') return msgAny.error;
     if (typeof msgAny?.detail === 'string') return msgAny.detail;
@@ -2146,11 +3826,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
   private isContextLimitError(text: string): boolean {
     const normalized = text.toLowerCase();
-    return normalized.includes('context window')
-      || normalized.includes('context limit')
-      || normalized.includes('context length')
-      || normalized.includes('maximum context')
-      || normalized.includes('token limit');
+    return (
+      normalized.includes('context window') ||
+      normalized.includes('context limit') ||
+      normalized.includes('context length') ||
+      normalized.includes('maximum context') ||
+      normalized.includes('token limit')
+    );
   }
 
   private handleContextLimit(sessionId: string, proc: ClaudeProcess, errorText: string): void {
@@ -2173,6 +3855,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.totalOutputTokens = 0;
     proc.cacheReadTokens = 0;
     proc.cacheCreationTokens = 0;
+    this.resetCurrentContextUsage(proc);
     proc.streamingText = '';
     proc.isStreaming = false;
 
@@ -2189,13 +3872,16 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       reason: 'context-limit',
       error: errorText,
     });
+    this.emitUsage(sessionId, proc);
   }
 
   private processStreamMessage(sessionId: string, msg: StreamJsonMessage): void {
     const proc = this.processes.get(sessionId);
     if (!proc) return;
 
-    console.log(`[MSG] type=${msg.type} subtype=${msg.subtype || ''} event.type=${msg.event?.type || ''}`);
+    console.log(
+      `[MSG] type=${msg.type} subtype=${msg.subtype || ''} event.type=${msg.event?.type || ''}`
+    );
 
     if (msg.type === 'error' || (msg.type === 'system' && msg.subtype === 'error')) {
       const errorText = this.extractErrorText(msg);
@@ -2203,7 +3889,6 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         this.handleContextLimit(sessionId, proc, errorText);
         return;
       }
-
     }
 
     // Debug: Log full message for stream_event
@@ -2263,8 +3948,10 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           // Update per-turn usage with delta values
           proc.turnInputTokens = event.usage.input_tokens || proc.turnInputTokens;
           proc.turnOutputTokens = event.usage.output_tokens || proc.turnOutputTokens;
-          proc.turnCacheReadTokens = event.usage.cache_read_input_tokens || proc.turnCacheReadTokens;
-          proc.turnCacheCreationTokens = event.usage.cache_creation_input_tokens || proc.turnCacheCreationTokens;
+          proc.turnCacheReadTokens =
+            event.usage.cache_read_input_tokens || proc.turnCacheReadTokens;
+          proc.turnCacheCreationTokens =
+            event.usage.cache_creation_input_tokens || proc.turnCacheCreationTokens;
           this.emitUsage(sessionId, proc);
         }
         // If stop_reason is tool_use, Claude is about to use a tool - show thinking
@@ -2286,9 +3973,10 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       // Handle content_block_start inside stream_event
       if (event.type === 'content_block_start') {
         // Check if this is a tool_use block or text block
-        const contentBlock = (event as { content_block?: { type: string; name?: string; id?: string } }).content_block;
+        const contentBlock = (
+          event as { content_block?: { type: string; name?: string; id?: string } }
+        ).content_block;
         if (contentBlock?.type === 'tool_use') {
-
           // Tool is being called - track it and show indicator
           proc.currentToolName = contentBlock.name || null;
           proc.currentToolId = contentBlock.id || nanoid();
@@ -2332,12 +4020,16 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
       // Handle content_block_delta inside stream_event
       if (event.type === 'content_block_delta') {
-        const delta = event.delta as { type?: string; text?: string; partial_json?: string } | undefined;
+        const delta = event.delta as
+          | { type?: string; text?: string; partial_json?: string }
+          | undefined;
 
         // Handle text streaming
         if (delta?.type === 'text_delta' && delta.text) {
           proc.streamingText += delta.text;
-          console.log(`[STREAM] Emitting session:output with text: "${delta.text.substring(0, 50)}..."`);
+          console.log(
+            `[STREAM] Emitting session:output with text: "${delta.text.substring(0, 50)}..."`
+          );
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
             content: delta.text,
@@ -2362,7 +4054,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
         // Process completed tool input and emit completion
         if (proc.currentToolName) {
-          console.log(`[TOOL] ${proc.currentToolName} completed with input length: ${proc.currentToolInput.length}`);
+          console.log(
+            `[TOOL] ${proc.currentToolName} completed with input length: ${proc.currentToolInput.length}`
+          );
 
           let inputData: unknown = null;
           if (proc.currentToolInput.trim().length > 0) {
@@ -2392,7 +4086,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
             input: inputData ?? undefined,
           });
 
-          const normalizedToolName = (proc.currentToolName || '').replace(/[_-]/g, '').toLowerCase();
+          const normalizedToolName = (proc.currentToolName || '')
+            .replace(/[_-]/g, '')
+            .toLowerCase();
 
           if (normalizedToolName === 'exitplanmode') {
             proc.mode = 'auto-accept';
@@ -2414,13 +4110,17 @@ The planning phase is complete. You are now in Auto-Accept mode.
 3. Mark todos as completed as you finish each task`,
               reason: 'mode-change',
             };
-            console.log(`[MODE] Plan mode ended for session ${sessionId}, switching to auto-accept`);
+            console.log(
+              `[MODE] Plan mode ended for session ${sessionId}, switching to auto-accept`
+            );
           }
 
           // Handle TodoWrite tool
           if (normalizedToolName === 'todowrite') {
             try {
-              const todoInput = JSON.parse(proc.currentToolInput) as { todos?: Array<{ content: string; status: string; activeForm?: string }> };
+              const todoInput = JSON.parse(proc.currentToolInput) as {
+                todos?: Array<{ content: string; status: string; activeForm?: string }>;
+              };
               if (todoInput.todos && Array.isArray(todoInput.todos)) {
                 console.log(`[TODOS] Emitting ${todoInput.todos.length} todos`);
                 this.io.to(`session:${sessionId}`).emit('session:todos', {
@@ -2440,9 +4140,14 @@ The planning phase is complete. You are now in Auto-Accept mode.
           // Handle Task tool (agents)
           if (normalizedToolName === 'task') {
             try {
-              const taskInput = JSON.parse(proc.currentToolInput) as { subagent_type?: string; description?: string };
+              const taskInput = JSON.parse(proc.currentToolInput) as {
+                subagent_type?: string;
+                description?: string;
+              };
               if (taskInput.subagent_type) {
-                console.log(`[AGENT] Agent starting: ${taskInput.subagent_type} - ${taskInput.description || ''}`);
+                console.log(
+                  `[AGENT] Agent starting: ${taskInput.subagent_type} - ${taskInput.description || ''}`
+                );
                 proc.currentAgentType = taskInput.subagent_type;
                 this.io.to(`session:${sessionId}`).emit('session:agent', {
                   sessionId,
@@ -2470,7 +4175,10 @@ The planning phase is complete. You are now in Auto-Accept mode.
     if (msg.type === 'result') {
       // Check for permission denials
       if (msg.permission_denials && msg.permission_denials.length > 0) {
-        console.log(`[PERMISSION] Permission denied for tools:`, msg.permission_denials.map(d => d.tool_name).join(', '));
+        console.log(
+          `[PERMISSION] Permission denied for tools:`,
+          msg.permission_denials.map((d) => d.tool_name).join(', ')
+        );
         proc.pendingPermissionDenials = msg.permission_denials;
 
         // Emit permission request event to frontend
@@ -2507,12 +4215,13 @@ The planning phase is complete. You are now in Auto-Accept mode.
         proc.totalInputTokens = msg.usage.input_tokens || proc.totalInputTokens;
         proc.totalOutputTokens = msg.usage.output_tokens || proc.totalOutputTokens;
         proc.cacheReadTokens = msg.usage.cache_read_input_tokens || proc.cacheReadTokens;
-        proc.cacheCreationTokens = msg.usage.cache_creation_input_tokens || proc.cacheCreationTokens;
+        proc.cacheCreationTokens =
+          msg.usage.cache_creation_input_tokens || proc.cacheCreationTokens;
       }
       // Get context window from modelUsage if available
       if (msg.modelUsage) {
-        const primaryModel = Object.entries(msg.modelUsage).find(([key]) =>
-          key.includes('opus') || key.includes('sonnet')
+        const primaryModel = Object.entries(msg.modelUsage).find(
+          ([key]) => key.includes('opus') || key.includes('sonnet')
         );
         if (primaryModel && primaryModel[1].contextWindow) {
           proc.contextWindow = primaryModel[1].contextWindow;
@@ -2557,7 +4266,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
     }
 
     // Handle complete assistant messages (non-streaming fallback)
-    if (msg.type === 'assistant' && msg.message && typeof msg.message !== 'string' && !proc.isStreaming) {
+    if (
+      msg.type === 'assistant' &&
+      msg.message &&
+      typeof msg.message !== 'string' &&
+      !proc.isStreaming
+    ) {
       let content = '';
       if (typeof msg.message.content === 'string') {
         content = msg.message.content;
@@ -2609,7 +4323,15 @@ The planning phase is complete. You are now in Auto-Accept mode.
       });
 
       // Extract tool results from user message content
-      const userMsg = msg as { message?: { content?: Array<{ type: string; tool_use_id?: string; content?: string | Array<{ type: string; text?: string }> }> } };
+      const userMsg = msg as {
+        message?: {
+          content?: Array<{
+            type: string;
+            tool_use_id?: string;
+            content?: string | Array<{ type: string; text?: string }>;
+          }>;
+        };
+      };
       if (userMsg.message?.content && Array.isArray(userMsg.message.content)) {
         for (const block of userMsg.message.content) {
           if (block.type === 'tool_result' && block.tool_use_id) {
@@ -2626,7 +4348,9 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
             // Emit tool result update
             if (resultText) {
-              console.log(`[TOOL] Result for ${block.tool_use_id}: ${resultText.substring(0, 100)}...`);
+              console.log(
+                `[TOOL] Result for ${block.tool_use_id}: ${resultText.substring(0, 100)}...`
+              );
               this.io.to(`session:${sessionId}`).emit('session:tool_use', {
                 sessionId,
                 toolId: block.tool_use_id,
@@ -2644,14 +4368,21 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
     // Handle compact/summarization events
     // Claude sends these when auto-compacting context
-    if (msg.type === 'system' && (msg.subtype === 'compact' || msg.subtype === 'pre_compact' ||
-        (msg.message && typeof msg.message === 'string' && msg.message.toLowerCase().includes('compact')))) {
+    if (
+      msg.type === 'system' &&
+      (msg.subtype === 'compact' ||
+        msg.subtype === 'pre_compact' ||
+        (msg.message &&
+          typeof msg.message === 'string' &&
+          msg.message.toLowerCase().includes('compact')))
+    ) {
       console.log(`[COMPACT] Context compaction detected for session ${sessionId}`);
       // Reset token counts since context was compacted
       proc.totalInputTokens = 0;
       proc.totalOutputTokens = 0;
       proc.cacheReadTokens = 0;
       proc.cacheCreationTokens = 0;
+      this.resetCurrentContextUsage(proc);
       // Notify frontend about compaction
       this.io.to(`session:${sessionId}`).emit('session:compact', {
         sessionId,
@@ -2663,7 +4394,6 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
     // Handle result/completion
     if (msg.type === 'result' || (msg.type === 'system' && msg.subtype === 'turn_end')) {
-
       // Save any remaining streaming content
       if (proc.streamingText.trim().length > 0) {
         this.saveAssistantMessage(sessionId, proc.streamingText.trim());
@@ -2707,10 +4437,9 @@ The planning phase is complete. You are now in Auto-Accept mode.
       'assistant',
       content
     );
-    db.prepare('UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-      content.substring(0, 200),
-      sessionId
-    );
+    db.prepare(
+      'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(content.substring(0, 200), sessionId);
 
     if (proc) {
       proc.lastSavedAssistantContent = content;
@@ -2729,6 +4458,172 @@ The planning phase is complete. You are now in Auto-Accept mode.
     });
 
     console.log(`Saved assistant message [${sessionId}]: ${content.substring(0, 100)}...`);
+  }
+
+  private queueCodexTurn(sessionId: string, proc: ClaudeProcess, turn: CodexPreparedTurn): void {
+    proc.codexQueuedTurns ??= [];
+    proc.codexQueuedTurns.push(turn);
+    console.log(
+      `[CODEX] Queued user turn while current turn is running [${sessionId}], depth=${proc.codexQueuedTurns.length}`
+    );
+    this.emitQueueState(sessionId, proc);
+  }
+
+  private emitQueueState(sessionId: string, proc: ClaudeProcess): void {
+    const items = (proc.codexQueuedTurns ?? []).map((turn) => ({
+      id: turn.queueId,
+      preview: turn.originalMessage.slice(0, 240),
+      createdAt: turn.queuedAt,
+      attachments: turn.attachments?.length,
+    }));
+    this.io.to(`session:${sessionId}`).emit('session:queue', {
+      sessionId,
+      provider: proc.cliProvider,
+      depth: items.length,
+      items,
+      preempting: !!proc.codexPreemptingForQueuedTurn,
+    });
+  }
+
+  private requestCodexQueuePreemption(sessionId: string, proc: ClaudeProcess): void {
+    if (proc.cliProvider !== 'codex' || proc.codexIdle || proc.codexPreemptingForQueuedTurn) {
+      return;
+    }
+
+    const child = proc.process;
+    if (!child || child.stdin === null) {
+      return;
+    }
+
+    proc.codexPreemptingForQueuedTurn = true;
+    console.log(`[CODEX] Interrupting active turn to drain queued input [${sessionId}]`);
+    this.emitQueueState(sessionId, proc);
+
+    if (proc.streamingText.trim().length > 0) {
+      this.saveAssistantMessage(
+        sessionId,
+        `${proc.streamingText.trim()}\n\n[Interrupted by newer user message]`
+      );
+      proc.streamingText = '';
+      proc.isStreaming = false;
+    }
+
+    child.kill('SIGINT');
+
+    proc.codexPreemptKillTimer = setTimeout(() => {
+      const latest = this.processes.get(sessionId);
+      if (latest !== proc || latest.process !== child || !latest.codexPreemptingForQueuedTurn) {
+        return;
+      }
+
+      console.warn(`[CODEX] Queued-input interrupt did not exit; sending SIGTERM [${sessionId}]`);
+      child.kill('SIGTERM');
+
+      latest.codexPreemptKillTimer = setTimeout(() => {
+        const stillLatest = this.processes.get(sessionId);
+        if (
+          stillLatest !== proc ||
+          stillLatest.process !== child ||
+          !stillLatest.codexPreemptingForQueuedTurn
+        ) {
+          return;
+        }
+
+        console.warn(`[CODEX] Queued-input SIGTERM did not exit; sending SIGKILL [${sessionId}]`);
+        child.kill('SIGKILL');
+      }, 5000);
+    }, 5000);
+  }
+
+  private async dispatchCodexTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: CodexPreparedTurn
+  ): Promise<void> {
+    if (proc.cliProvider !== 'codex') {
+      throw new Error('dispatchCodexTurn called for non-Codex session');
+    }
+    if (!proc.codexIdle) {
+      throw new Error('Codex process is still running');
+    }
+    proc.codexIdle = false;
+
+    if (turn.updateLastMessage) {
+      proc.lastUserMessage = turn.originalMessage;
+      proc.lastAttachments = turn.attachments || null;
+    }
+    proc.pendingPermissionDenials = null;
+
+    this.io.to(`session:${sessionId}`).emit('session:thinking', {
+      sessionId,
+      isThinking: true,
+    });
+
+    proc.codexPendingExecCommand = turn.codexExecCommand;
+    proc.codexPendingImages = [...turn.codexImagePaths];
+
+    console.log(`[CODEX] Respawning process for next message [${sessionId}]`);
+    try {
+      await this.respawnCodexProcess(sessionId, proc);
+    } catch (err) {
+      proc.codexIdle = true;
+      throw err;
+    }
+
+    let payloadForProvider = turn.messageForClaude;
+    if (!turn.codexExecCommand && !turn.codexNativeSlashCommand && !proc.codexSessionId) {
+      // First turn or session id not yet captured — prepend prior conversation
+      // so the fresh codex process has continuity. Once `thread.started` lands
+      // and proc.codexSessionId is set, subsequent respawns use native
+      // `codex exec resume <id>` and we skip the manual prefix entirely.
+      const contextPrefix = this.buildCodexContextPrefix(sessionId, turn.originalMessage);
+      if (contextPrefix) {
+        payloadForProvider = `${contextPrefix}\nUser's new message:\n${turn.messageForClaude}`;
+      }
+    }
+
+    if (turn.codexExecCommand) {
+      proc.process.stdin?.end();
+    } else {
+      proc.process.stdin?.end(formatInputMessage(proc.cliProvider, payloadForProvider));
+    }
+
+    console.log(
+      `Sent message [${sessionId}] via codex: ${turn.messageForClaude.substring(0, 100)}...`
+    );
+  }
+
+  private async drainCodexQueuedTurns(sessionId: string, proc: ClaudeProcess): Promise<void> {
+    if (proc.cliProvider !== 'codex' || proc.codexQueueDraining || !proc.codexIdle) {
+      return;
+    }
+
+    const nextTurn = proc.codexQueuedTurns?.shift();
+    if (!nextTurn) {
+      this.emitQueueState(sessionId, proc);
+      return;
+    }
+
+    proc.codexQueueDraining = true;
+    this.emitQueueState(sessionId, proc);
+    try {
+      await this.dispatchCodexTurn(sessionId, proc, nextTurn);
+    } catch (err) {
+      proc.codexQueuedTurns?.unshift(nextTurn);
+      this.emitQueueState(sessionId, proc);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[CODEX] Failed to dispatch queued turn [${sessionId}]:`, err);
+      this.io.to(`session:${sessionId}`).emit('session:error', {
+        sessionId,
+        error: `Failed to start queued Codex message: ${message}`,
+      });
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+    } finally {
+      proc.codexQueueDraining = false;
+    }
   }
 
   async sendMessage(
@@ -2755,7 +4650,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
     }
 
     // Process attachments by type
-    const filePaths: { path: string; filename: string; type: 'image' | 'text' | 'pdf' | 'document'; mimeType: string }[] = [];
+    const filePaths: {
+      path: string;
+      filename: string;
+      type: 'image' | 'text' | 'pdf' | 'document';
+      mimeType: string;
+    }[] = [];
     const inlineTextContents: { filename: string; content: string }[] = [];
 
     if (attachments && attachments.length > 0) {
@@ -2795,9 +4695,23 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
     // Build message for Claude (with attachment instructions and/or working dir reminder if needed)
     let messageForClaude = message;
+    const codexReviewCommand =
+      proc.cliProvider === 'codex' ? parseCodexReviewCommand(message) : null;
+    const codexNativeSlashCommand =
+      proc.cliProvider === 'codex' && !codexReviewCommand && isCodexNativeSlashCommand(message);
+    let codexExecCommandForTurn: CodexPreparedTurn['codexExecCommand'];
+    const codexImagePathsForTurn: string[] = [];
+    if (codexReviewCommand) {
+      codexExecCommandForTurn = {
+        type: 'review',
+        args: codexReviewCommand.args,
+        prompt: codexReviewCommand.prompt,
+      };
+      messageForClaude = '';
+    }
 
     // Add working directory reminder for resumed sessions (only once)
-    if (proc.needsWorkingDirReminder) {
+    if (proc.needsWorkingDirReminder && !codexNativeSlashCommand) {
       const workingDirReminder = `<system-reminder>
 IMPORTANT: Your current working directory is: ${proc.workingDirectory}
 This is the project you should be working on. All file operations should be relative to this directory.
@@ -2809,7 +4723,7 @@ This is the project you should be working on. All file operations should be rela
       console.log(`Added working directory reminder for resumed session [${sessionId}]`);
     }
 
-    if (proc.contextReminder) {
+    if (proc.contextReminder && !codexNativeSlashCommand) {
       let label = 'Context from previous session';
       if (proc.contextReminder.reason === 'provider-switch') {
         label = 'Provider switch handoff (detailed)';
@@ -2829,7 +4743,12 @@ ${proc.contextReminder.summary}
       console.log(`Added context reminder after ${label.toLowerCase()} [${sessionId}]`);
     }
 
-    if (proc.cliProvider === 'codex' && !proc.sharedContextInjected) {
+    if (
+      proc.cliProvider === 'codex' &&
+      !codexReviewCommand &&
+      !codexNativeSlashCommand &&
+      !proc.sharedContextInjected
+    ) {
       const configHome = resolveConfigHome(proc.cliProvider);
       const [agents, skills, plugins] = await Promise.all([
         readSharedAgents(configHome),
@@ -2843,7 +4762,12 @@ ${proc.contextReminder.summary}
       proc.sharedContextInjected = true;
     }
 
-    if ((proc.cliProvider === 'codex' || proc.cliProvider === 'opencode') && proc.modePromptInjected !== proc.mode) {
+    if (
+      !codexReviewCommand &&
+      !codexNativeSlashCommand &&
+      (proc.cliProvider === 'codex' || proc.cliProvider === 'opencode') &&
+      proc.modePromptInjected !== proc.mode
+    ) {
       const modePrompt = this.getModePrompt(proc.mode);
       if (modePrompt) {
         messageForClaude = `${modePrompt}\n\n${messageForClaude}`;
@@ -2869,17 +4793,43 @@ ${proc.contextReminder.summary}
 
       if (imageFiles.length > 0) {
         const refs = imageFiles.map((f) => `- ${f.path}`).join('\n');
-        instructions.push(`Please analyze the following image files:\n${refs}\nUse the Read tool on these paths.`);
+        if (proc.cliProvider === 'vibe') {
+          // Mistral Vibe CLI explicitly disables image input (acp_agent_loop has
+          // image=False) and the default model (mistral-medium-3.5) has no vision.
+          // Tell the model bluntly so it doesn't bluff a "analysis" off the bytes.
+          const names = imageFiles.map((f) => f.filename).join(', ');
+          instructions.push(
+            `The user attached ${imageFiles.length} image file(s) (${names}), saved at:\n${refs}\n` +
+              `IMPORTANT: Mistral Vibe and the active model (mistral-medium-3.5) do NOT support vision. ` +
+              `You cannot view or analyze the image content. Do not attempt to "read" the PNG bytes — that ` +
+              `will only produce metadata/garbage. Tell the user clearly that vibe lacks vision support and ` +
+              `suggest they either describe the image in text or switch to a vision-capable provider ` +
+              `(Claude or Codex) for image tasks.`
+          );
+        } else if (proc.cliProvider === 'codex') {
+          // Codex supports native multimodal input via --image. Stage the paths for
+          // this turn's respawn instead of asking the model to Read them — that wastes
+          // a tool turn and the model can't actually see PNG bytes via fs reads anyway.
+          codexImagePathsForTurn.push(...imageFiles.map((f) => f.path));
+        } else {
+          instructions.push(
+            `Please analyze the following image files:\n${refs}\nUse the Read tool on these paths.`
+          );
+        }
       }
 
       if (pdfFiles.length > 0) {
         const refs = pdfFiles.map((f) => `- ${f.path}`).join('\n');
-        instructions.push(`Please read and analyze the following PDF files:\n${refs}\nUse the Read tool on these paths.`);
+        instructions.push(
+          `Please read and analyze the following PDF files:\n${refs}\nUse the Read tool on these paths.`
+        );
       }
 
       if (otherFiles.length > 0) {
         const refs = otherFiles.map((f) => `- ${f.path}`).join('\n');
-        instructions.push(`Please read the following files:\n${refs}\nUse the Read tool on these paths.`);
+        instructions.push(
+          `Please read the following files:\n${refs}\nUse the Read tool on these paths.`
+        );
       }
 
       if (instructions.length > 0) {
@@ -2913,14 +4863,14 @@ ${proc.contextReminder.summary}
 
     const recordMessage = options?.recordMessage !== false;
     const updateLastMessage = options?.updateLastMessage !== false;
+    let recordedMessageId = nanoid();
+    let recordedCreatedAt = new Date().toISOString();
 
     if (recordMessage) {
       // Save user message and emit to frontend (show original message, images as metadata)
       const db = getDatabase();
-      const messageId = nanoid();
-      const createdAt = new Date().toISOString();
       db.prepare('INSERT INTO messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').run(
-        messageId,
+        recordedMessageId,
         sessionId,
         'user',
         message // Store only the user's original message
@@ -2935,16 +4885,39 @@ ${proc.contextReminder.summary}
 
       // Emit user message to frontend so it appears in chat
       this.io.to(`session:${sessionId}`).emit('session:message', {
-        id: messageId,
+        id: recordedMessageId,
         sessionId,
         role: 'user',
         content: message,
-        createdAt,
+        createdAt: recordedCreatedAt,
         images: imageMetadata.length > 0 ? imageMetadata : undefined,
         attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
       });
 
       this.events.emit('userMessage', sessionId, message);
+    }
+
+    if (proc.cliProvider === 'codex') {
+      const codexTurn: CodexPreparedTurn = {
+        queueId: recordedMessageId,
+        queuedAt: recordedCreatedAt,
+        originalMessage: message,
+        messageForClaude,
+        attachments,
+        updateLastMessage,
+        codexImagePaths: codexImagePathsForTurn,
+        codexExecCommand: codexExecCommandForTurn,
+        codexNativeSlashCommand,
+      };
+
+      if (!proc.codexIdle || proc.codexQueueDraining) {
+        this.queueCodexTurn(sessionId, proc, codexTurn);
+        this.requestCodexQueuePreemption(sessionId, proc);
+        return;
+      }
+
+      await this.dispatchCodexTurn(sessionId, proc, codexTurn);
+      return;
     }
 
     if (updateLastMessage) {
@@ -2960,32 +4933,37 @@ ${proc.contextReminder.summary}
       isThinking: true,
     });
 
-    // Codex respawn: codex CLI is single-shot (stdin EOF → response → exit), so we
-    // need a fresh process for each user message. OpenCode is now server-backed
-    // (HTTP/SSE), so it doesn't need respawn — the session lives in the singleton.
-    if (proc.cliProvider === 'codex' && proc.codexIdle) {
-      console.log(`[CODEX] Respawning process for next message [${sessionId}]`);
-      await this.respawnCodexProcess(sessionId, proc);
+    // Vibe: prompt is delivered via argv (-p TEXT) so every turn requires a new spawn.
+    // We branch out of the normal stdin dispatch entirely here.
+    if (proc.cliProvider === 'vibe') {
+      console.log(`[VIBE] Spawning fresh process for next message [${sessionId}]`);
+      await this.respawnVibeProcess(sessionId, proc, messageForClaude);
+      console.log(
+        `Sent message [${sessionId}] via vibe (argv): ${messageForClaude.substring(0, 100)}...`
+      );
+      return;
     }
 
-    // Dispatch: server-backed opencode uses HTTP/SSE; claude/codex use stdin.
+    // Dispatch: server-backed opencode uses HTTP/SSE; claude uses stdin.
     if (proc.cliProvider === 'opencode' && proc.serverBacked && proc.claudeSessionId) {
+      const selectedReasoning = await getCliReasoningForUser(proc.userId, 'opencode');
+      this.resetCurrentContextUsage(proc);
       await opencodeServer.sendPrompt(proc.claudeSessionId, {
         text: messageForClaude,
         model: proc.model,
         mode: proc.mode,
+        variant: selectedReasoning,
         directory: proc.workingDirectory,
       });
-      console.log(`Sent message [${sessionId}] via opencode HTTP: ${messageForClaude.substring(0, 100)}...`);
+      console.log(
+        `Sent message [${sessionId}] via opencode HTTP: ${messageForClaude.substring(0, 100)}...`
+      );
     } else {
       const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
-      if (proc.cliProvider === 'codex') {
-        // codex: single-shot process reads stdin until EOF before responding.
-        proc.process.stdin?.end(formattedMessage);
-      } else {
-        proc.process.stdin?.write(formattedMessage);
-      }
-      console.log(`Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`);
+      proc.process.stdin?.write(formattedMessage);
+      console.log(
+        `Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`
+      );
     }
   }
 
@@ -3057,31 +5035,20 @@ ${proc.contextReminder.summary}
 
     const proc = this.processes.get(sessionId);
     const db = getDatabase();
-    const sessionRow = db.prepare(
-      'SELECT cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?'
-    ).get(sessionId, userId) as { cliProvider: CLIProvider | null } | undefined;
-    const nextProvider = sessionRow?.cliProvider || proc?.cliProvider || 'claude';
+    const sessionRow = db
+      .prepare('SELECT cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, userId) as { cliProvider: CLIProvider | null } | undefined;
+    const nextProvider = sessionRow?.cliProvider || proc?.cliProvider || 'codex';
     const providerChanged = !!proc && nextProvider !== proc.cliProvider;
 
     if (providerChanged) {
-      const summary = this.buildHandoffSummary(sessionId);
-      if (summary) {
-        this.pendingContextReminders.set(sessionId, { summary, reason: 'provider-switch' });
-        this.io.to(`session:${sessionId}`).emit('session:compact', {
-          sessionId,
-          message: '🔄 Provider switched. Detailed handoff context captured.',
-          summary,
-          clear: true,
-          reason: 'provider-switch',
-        });
-      } else {
-        this.io.to(`session:${sessionId}`).emit('session:compact', {
-          sessionId,
-          message: '🔄 Provider switched. No handoff context available.',
-          clear: true,
-          reason: 'provider-switch',
-        });
-      }
+      this.pendingContextReminders.delete(sessionId);
+      this.io.to(`session:${sessionId}`).emit('session:compact', {
+        sessionId,
+        message: 'Provider switched. Fresh CLI context started.',
+        clear: true,
+        reason: 'provider-switch',
+      });
     }
     const currentMode = proc?.mode ?? this.pendingModes.get(sessionId) ?? 'auto-accept';
 
@@ -3091,20 +5058,21 @@ ${proc.contextReminder.summary}
         throw new Error('Unauthorized');
       }
 
+      proc.codexQueuedTurns = [];
+      this.emitQueueState(sessionId, proc);
       // Kill the process immediately
       proc.process.kill('SIGTERM');
       this.processes.delete(sessionId);
     }
 
     // Clear claude_session_id to start fresh (not resume)
-    db.prepare('UPDATE sessions SET status = ?, claude_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-      'stopped',
-      sessionId
-    );
+    db.prepare(
+      'UPDATE sessions SET status = ?, claude_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run('stopped', sessionId);
     console.log(`[SESSION] Cleared claude_session_id for fresh start`);
 
     // Wait a moment for cleanup
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Start fresh with the same mode
     await this.startSession(sessionId, userId, currentMode);
@@ -3112,11 +5080,17 @@ ${proc.contextReminder.summary}
     console.log(`[SESSION] Session ${sessionId} restarted`);
   }
 
-  private buildContextSummary(sessionId: string, maxMessages: number, maxChars: number): string | null {
+  private buildContextSummary(
+    sessionId: string,
+    maxMessages: number,
+    maxChars: number
+  ): string | null {
     const db = getDatabase();
-    const rows = db.prepare(
-      'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
-    ).all(sessionId, maxMessages) as { role: string; content: string }[];
+    const rows = db
+      .prepare(
+        'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
+      )
+      .all(sessionId, maxMessages) as { role: string; content: string }[];
 
     if (!rows.length) {
       return null;
@@ -3125,7 +5099,8 @@ ${proc.contextReminder.summary}
     const formatted = rows
       .reverse()
       .map((row) => {
-        const role = row.role === 'assistant' ? 'Assistant' : row.role === 'user' ? 'User' : row.role;
+        const role =
+          row.role === 'assistant' ? 'Assistant' : row.role === 'user' ? 'User' : row.role;
         return `${role}: ${row.content.trim()}`;
       })
       .join('\n\n');
@@ -3137,8 +5112,61 @@ ${proc.contextReminder.summary}
     return `${formatted.slice(0, maxChars)}...`;
   }
 
-  private buildHandoffSummary(sessionId: string): string | null {
-    return this.buildContextSummary(sessionId, HANDOFF_CONTEXT_MAX_MESSAGES, HANDOFF_CONTEXT_MAX_CHARS);
+  /**
+   * Build a Codex-friendly transcript of prior turns, excluding the just-saved
+   * latest user message (which becomes the new prompt).
+   *
+   * Codex CLI has no native resume — every turn is a fresh process. To simulate
+   * continuity, we prepend a structured transcript so the model has context.
+   *
+   * Returns null if there are no prior turns to replay.
+   */
+  private buildCodexContextPrefix(sessionId: string, latestUserMessage: string): string | null {
+    const db = getDatabase();
+    const MAX_MESSAGES = 40;
+    const MAX_CHARS = 24_000;
+
+    const rows = db
+      .prepare(
+        'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
+      )
+      .all(sessionId, MAX_MESSAGES + 1) as { role: string; content: string }[];
+
+    const newest = rows[0];
+    if (!newest) return null;
+
+    // Drop the just-saved latest user message if it matches (sendMessage saves
+    // before respawn, so it's the newest row when we get here).
+    const prior =
+      newest.role === 'user' && newest.content.trim() === latestUserMessage.trim()
+        ? rows.slice(1)
+        : rows;
+
+    if (!prior.length) return null;
+
+    const formatted = prior
+      .slice(0, MAX_MESSAGES)
+      .reverse()
+      .map((row) => {
+        const role =
+          row.role === 'assistant' ? 'Assistant' : row.role === 'user' ? 'User' : row.role;
+        return `${role}: ${row.content.trim()}`;
+      })
+      .join('\n\n');
+
+    if (!formatted.trim()) return null;
+
+    const truncated =
+      formatted.length > MAX_CHARS
+        ? '[earlier turns omitted]\n\n' + formatted.slice(formatted.length - MAX_CHARS)
+        : formatted;
+
+    return [
+      '[Prior conversation context — for your reference only, do not repeat verbatim]',
+      truncated,
+      '[End of prior context]',
+      '',
+    ].join('\n');
   }
 
   // Set permission mode for a session
@@ -3147,7 +5175,9 @@ ${proc.contextReminder.summary}
 
     // If no process running, store the mode for when it starts
     if (!proc) {
-      console.log(`[MODE] No running process for ${sessionId}, storing mode ${mode} for next start`);
+      console.log(
+        `[MODE] No running process for ${sessionId}, storing mode ${mode} for next start`
+      );
       this.pendingModes.set(sessionId, mode);
       return;
     }
@@ -3246,8 +5276,9 @@ ${proc.contextReminder.summary}
         console.error(`[SHUTDOWN] SIGTERM failed for ${sessionId}:`, err);
       }
       try {
-        db.prepare(`UPDATE sessions SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-          .run(sessionId);
+        db.prepare(
+          `UPDATE sessions SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).run(sessionId);
       } catch {
         // DB may already be closing — best effort.
       }
@@ -3313,7 +5344,13 @@ ${proc.contextReminder.summary}
     const db = getDatabase();
     const session = db
       .prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?')
-      .get(sessionId, userId) as { working_directory: string; claude_session_id: string | null; allowed_directories: string | null } | undefined;
+      .get(sessionId, userId) as
+      | {
+          working_directory: string;
+          claude_session_id: string | null;
+          allowed_directories: string | null;
+        }
+      | undefined;
 
     if (!session) {
       throw new Error('Session not found');
@@ -3325,16 +5362,20 @@ ${proc.contextReminder.summary}
       : [];
 
     let args: string[] = [];
-    const requestedModel = proc.model && proc.model !== 'unknown'
-      ? proc.model
-      : await getCliModelForUser(userId, cliProvider);
+    const requestedModel =
+      proc.model && proc.model !== 'unknown'
+        ? proc.model
+        : await getCliModelForUser(userId, cliProvider);
     const requestedReasoning = await getCliReasoningForUser(userId, cliProvider);
+    const requestedServiceTier = getCliServiceTierForUser(userId, cliProvider);
     if (cliProvider === 'claude') {
       args = [
         '--print',
         '--verbose',
-        '--output-format', 'stream-json',
-        '--input-format', 'stream-json',
+        '--output-format',
+        'stream-json',
+        '--input-format',
+        'stream-json',
         '--include-partial-messages',
         ...this.getPermissionFlags(mode),
       ];
@@ -3368,6 +5409,7 @@ ${proc.contextReminder.summary}
         allowedTools: toolNames,
         model: requestedModel ?? undefined,
         reasoningLevel: requestedReasoning ?? undefined,
+        serviceTier: requestedServiceTier ?? undefined,
       });
     }
 
@@ -3444,9 +5486,6 @@ ${proc.contextReminder.summary}
 
     newProc.on('exit', (exitCode) => {
       console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
-      if (typeof exitCode === 'number' && exitCode !== 0) {
-
-      }
       this.cleanupProcess(sessionId);
     });
 

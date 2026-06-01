@@ -39,7 +39,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           <div className="max-w-md w-full rounded-lg border border-destructive/40 bg-destructive/5 p-6 space-y-4">
             <h2 className="text-lg font-semibold">Something went wrong.</h2>
             <p className="text-sm text-muted-foreground">
-              {this.state.error.message || 'An unexpected error occurred while rendering this view.'}
+              {this.state.error.message ||
+                'An unexpected error occurred while rendering this view.'}
             </p>
             <div className="flex gap-2">
               <button

@@ -1,6 +1,8 @@
 # Plum Code WebUI
 
-Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-time streaming, tool execution tracking, multi-session management, integrated git/GitHub, file browsing, and ComfyUI image generation — all behind a single Docker container.
+Self-hosted web interface for the Codex, OpenCode, Mistral Vibe, and Claude Code CLIs. Real-time streaming, tool execution tracking, multi-session management, integrated git/GitHub, file browsing, and ComfyUI image generation — all behind a single Docker container.
+
+> **Default provider: Codex.** Anthropic is restricting `claude -p` / introducing a credit system, so Codex is now the primary CLI. Claude stays available as a legacy option.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
@@ -11,27 +13,27 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 ## Desktop
 
 ![Sessions dashboard](docs/screenshots/dashboard.png)
-*Sessions dashboard — pick up where you left off across providers and projects.*
+_Sessions dashboard — pick up where you left off across providers and projects._
 
 ![Claude Code chat](docs/screenshots/chat-claude.png)
-*Live chat session driving the Claude Code CLI with streaming responses, tool execution, and inline preview.*
+_Live chat session driving the Claude Code CLI with streaming responses, tool execution, and inline preview._
 
 ![OpenCode multi-provider chat](docs/screenshots/chat-opencode.png)
-*OpenCode session running Kimi K2.6 — 75+ LLMs available behind a single CLI.*
+_OpenCode session running Kimi K2.6 — 75+ LLMs available behind a single CLI._
 
 ![Analytics page](docs/screenshots/analytics.png)
-*Analytics — token volume, cost, request count, cache efficiency, and per-model breakdown.*
+_Analytics — token volume, cost, request count, cache efficiency, and per-model breakdown._
 
 ## Mobile
 
 <img src="docs/screenshots/mobile-chat.png" alt="Mobile chat view" width="320" />
 
-*Responsive chat with the same provider-aware UI on phone-sized viewports.*
-
+_Responsive chat with the same provider-aware UI on phone-sized viewports._
 
 ## Features
 
 ### Chat Interface
+
 - Real-time streaming responses via WebSocket
 - Multi-session management with history
 - Image attachments + inline image generation via ComfyUI MCP
@@ -42,24 +44,29 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 - Subagent (Task tool) lifecycle rendering with distinct cards
 
 ### DevTools Integration
+
 - **Context Popover**: Inline progress bar showing context window usage (green→yellow→red), click to see full token breakdown (input/output/cache read/cache write), cost, and model
 - **Tool-Log Panel**: Full tool execution timeline with filter buttons (All, Read, Write, Bash, Web, Agent), duration tracking per tool, live timers for running tools, expandable input/output details
 - **Compaction Boundary Cards**: Visual separators in chat when context is compacted, with expandable summary text
 
 ### Multi-Provider Support
-- **Claude Code** (Anthropic) — primary provider, full stream-json
-- **Codex** (OpenAI) — per-turn process model with auto-respawn
-- **OpenCode** — routes to GLM (`z-ai/glm-*`), Kimi, and 75+ other LLMs through a single CLI
+
+- **Codex** (OpenAI) — **default provider**, per-turn process model with auto-respawn
+- **OpenCode** — routes to GLM (`z-ai/glm-*`), Kimi, and 75+ other LLMs through a single CLI; full stream-json
+- **Mistral Vibe** — Mistral Medium 3.5 / Devstral coding models; isolated `VIBE_HOME` per session
+- **Claude Code** (Anthropic) — legacy option; still works, but no longer the default
 - Per-session provider selection
-- Independent CLI instances + persisted auth per provider (`~/.claude`, `~/.codex`, `~/.opencode`)
+- Independent CLI instances + persisted auth per provider (`~/.codex`, `~/.local/share/opencode`, `~/.vibe`, `~/.claude`)
 
 ### File Management
+
 - File Tree Browser with lazy loading and git status
 - Monaco Code Editor with syntax highlighting
 - Create, edit, delete, and rename files
 - Three view modes: Simple, Compact, Detailed
 
 ### Git Integration
+
 - Full Git Panel (staging, commits, diffs, history)
 - Visual branch management (create, publish, delete)
 - Commit history with diff viewer
@@ -67,33 +74,39 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 - Pull/Fetch with remote status (ahead/behind)
 
 ### GitHub Integration
+
 - Create new repositories
 - Clone repositories (with repo browser)
 - Push to GitHub with remote management
 - Token-authenticated operations
 
 ### Custom Commands
+
 - Built-in commands: `/help`, `/clear`, `/model`, `/status`, `/cost`, `/compact`
 - User commands from `~/.claude/commands/*.md`
 - Project commands from `{project}/.claude/commands/*.md`
 - Autocomplete dropdown when typing `/`
 
 ### Project Management
+
 - Project Auto-Discovery from `~/.claude/projects`
 - Working directory navigation
 - Session starring and filtering
 - PTY Reconnect with 30-minute buffer
 
 ### MCP Servers (built-in)
+
 - **comfyui-images** — `generate_image` tool backed by a ComfyUI Flux server, renders inline in chat
 - **android-builder** — ~25 tools for building, installing, launching, and testing Android apps via the `android-app-creator` backend (project lifecycle, build, ADB, emulator, on-device testing)
 
 ### Admin
+
 - Admin pages: user list, role management, audit log
 - `AUTH_ALLOWED_EMAILS` env-var allowlist (gates both OAuth and basic-auth)
 - First-login admin bootstrap via `SEED_ADMIN_EMAIL`
 
 ### Mobile Support
+
 - Progressive Web App (PWA)
 - Bottom tab navigation
 - Swipe gestures for panel navigation
@@ -101,6 +114,7 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 - Native Android client (`packages/android`)
 
 ### Settings
+
 - Tabbed settings interface
 - Theme configuration
 - Per-provider API key / OAuth management (Anthropic, GitHub, Google)
@@ -110,6 +124,7 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 ## Tech Stack
 
 ### Backend
+
 - **Express.js** - HTTP server
 - **Socket.IO** - Real-time communication
 - **SQLite** (better-sqlite3) - Database
@@ -118,6 +133,7 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 - **@octokit/rest** - GitHub API
 
 ### Frontend
+
 - **React 18** - UI framework
 - **Vite** - Build tool with code splitting
 - **Radix UI** - Accessible components
@@ -128,6 +144,7 @@ Self-hosted web interface for the Claude Code, Codex, and OpenCode CLIs. Real-ti
 - **KaTeX** - Math rendering
 
 ### Shared
+
 - **TypeScript** - Type safety across all packages
 
 ## Installation
@@ -141,6 +158,7 @@ cd plum-code-webui
 ```
 
 The installer walks you through:
+
 1. **Prereq check** — docker, docker compose plugin, openssl, daemon connectivity.
 2. **Interactive `.env`** — public URL, port, allowlisted login emails, host paths for data/config/workspace. Auto-generates `SESSION_SECRET` + `JWT_SECRET`.
 3. **`docker compose build` + `up -d`** — first run takes a few minutes.
@@ -188,22 +206,25 @@ pnpm start
 
 Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on startup). Most setups can ignore everything below the divider — `scripts/install.sh` writes the required values into `.env` for you.
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SESSION_SECRET` | Express session secret (min 32 chars). Installer auto-generates. | Yes |
-| `JWT_SECRET` | JWT signing key (min 32 chars). Installer auto-generates. | Yes |
-| `AUTH_ALLOWED_EMAILS` | Comma-separated email allowlist enforced for both OAuth and basic-auth. **Empty = no allowlist** — only safe behind a private network or SSO proxy. | Recommended |
-| `FRONTEND_URL` | Public URL the WebUI is reached at (default: `http://localhost:4545`). Used for CORS + OAuth redirects. | No |
-| `CORS_ALLOWED_ORIGINS` | Comma-separated additional CORS origins. | No |
-| `SEED_ADMIN_EMAIL` | First user with this email gets `role=admin` on first login. | No |
-| `WEBUI_PORT` | Host port to expose (default: `4545`). Container always listens on `3001` internally. | No |
-| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR` | Host paths bind-mounted to `/app/packages/backend/data`, `/home/node/.<cli>`, and `/workspace` (defaults: `./data`, `./config`, `./workspace`). | No |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL` | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`. | No |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL` | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`. | No |
-| `CLI_PROVIDER_CLAUDE_MODELS` | Override the Claude model menu (default: `opus,sonnet,haiku`). | No |
-| `CLI_PROVIDER_CODEX_MODELS` / `CLI_PROVIDER_OPENCODE_MODELS` | Empty = auto-discover from the installed CLI. | No |
-| `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL` | Default model for OpenCode sessions (default: `z-ai/glm-5.1`). | No |
-| `TRUST_PROXY` | Express `trust proxy` (default: `1`). Setting `true` without a guarding proxy defeats IP-based rate-limiting. | No |
+| Variable                                                                           | Description                                                                                                                                                 | Required    |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `SESSION_SECRET`                                                                   | Express session secret (min 32 chars). Installer auto-generates.                                                                                            | Yes         |
+| `JWT_SECRET`                                                                       | JWT signing key (min 32 chars). Installer auto-generates.                                                                                                   | Yes         |
+| `AUTH_ALLOWED_EMAILS`                                                              | Comma-separated email allowlist enforced for both OAuth and basic-auth. **Empty = no allowlist** — only safe behind a private network or SSO proxy.         | Recommended |
+| `FRONTEND_URL`                                                                     | Public URL the WebUI is reached at (default: `http://localhost:4545`). Used for CORS + OAuth redirects.                                                     | No          |
+| `CORS_ALLOWED_ORIGINS`                                                             | Comma-separated additional CORS origins.                                                                                                                    | No          |
+| `SEED_ADMIN_EMAIL`                                                                 | First user with this email gets `role=admin` on first login.                                                                                                | No          |
+| `WEBUI_PORT`                                                                       | Host port to expose (default: `4545`). Container always listens on `3001` internally.                                                                       | No          |
+| `WEBUI_SHM_SIZE`                                                                   | Container shared memory for Chromium/browser tests (default: `1gb`).                                                                                        | No          |
+| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR`                                        | Host paths bind-mounted to `/app/packages/backend/data`, `/home/node/.<cli>`, and `/workspace` (defaults: `./data`, `./config`, `./workspace`).             | No          |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL`                | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`.                                                                                    | No          |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL`                | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`.                                                                                    | No          |
+| `CLI_PROVIDER_CLAUDE_MODELS`                                                       | Override the Claude model menu (default: `opus,sonnet,haiku`).                                                                                              | No          |
+| `CLI_PROVIDER_CODEX_MODELS` / `CLI_PROVIDER_OPENCODE_MODELS`                       | Empty = auto-discover from the installed CLI.                                                                                                               | No          |
+| `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL`                                              | Default model for OpenCode sessions (default: `z-ai/glm-5.1`).                                                                                              | No          |
+| `CODEX_WEBUI_SANDBOX_MODE` / `CODEX_WEBUI_APPROVAL_POLICY`                         | Codex Docker defaults. The image defaults to `danger-full-access` / `never` because Codex's Landlock `workspace-write` sandbox is unreliable inside Docker. | No          |
+| `CHROME_BIN` / `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` / `PUPPETEER_EXECUTABLE_PATH` | System Chromium wrapper exposed to CLI sessions (default: `/usr/local/bin/plum-chromium`).                                                                  | No          |
+| `TRUST_PROXY`                                                                      | Express `trust proxy` (default: `1`). Setting `true` without a guarding proxy defeats IP-based rate-limiting.                                               | No          |
 
 ### CLI Integration
 
@@ -221,7 +242,7 @@ codex …
 opencode …
 ```
 
-All three CLIs ship inside the container; their auth/state directories (`~/.claude`, `~/.codex`, `~/.opencode`) survive rebuilds via the `${CONFIG_DIR}` bind mount.
+All CLIs ship inside the container; their auth/state directories (`~/.claude`, `~/.codex`, `~/.opencode`, `~/.vibe`) survive rebuilds via the `${CONFIG_DIR}` bind mount. The runtime image also includes system Chromium, Chromedriver, fonts, and Xvfb; sessions inherit `CHROME_BIN=/usr/local/bin/plum-chromium` plus Playwright/Puppeteer executable-path env vars for headless browser checks.
 
 ## Project Structure
 
@@ -255,12 +276,14 @@ packages/
 ## API Endpoints
 
 ### Sessions
+
 - `GET /api/sessions` - List all sessions
 - `POST /api/sessions` - Create new session
 - `GET /api/sessions/:id` - Get session details
 - `PATCH /api/sessions/:id/star` - Toggle star
 
 ### Files
+
 - `GET /api/files?path=` - List directory contents
 - `GET /api/files/content?path=` - Read file content
 - `POST /api/files` - Create file
@@ -268,6 +291,7 @@ packages/
 - `DELETE /api/files?path=` - Delete file
 
 ### Git
+
 - `GET /api/git/status?path=` - Get git status
 - `POST /api/git/stage` - Stage files
 - `POST /api/git/commit` - Create commit
@@ -277,24 +301,28 @@ packages/
 - `POST /api/git/generate-commit-message` - AI commit message
 
 ### GitHub
+
 - `GET /api/github/repos` - List user repos
 - `POST /api/github/repos` - Create repo
 - `POST /api/github/clone` - Clone repo
 - `POST /api/github/push` - Push to GitHub
 
 ### Commands
+
 - `GET /api/commands` - List available commands
 - `POST /api/commands/execute` - Execute command
 
 ## WebSocket Events
 
 ### Client → Server
+
 - `session:send` - Send message to Claude
 - `session:subscribe` - Subscribe to session updates
 - `session:interrupt` - Interrupt Claude (Ctrl+C)
 - `session:reconnect` - Reconnect with buffer replay
 
 ### Server → Client
+
 - `session:output` - Streaming text deltas
 - `session:message` - Complete persisted message
 - `session:thinking` - Thinking indicator (boolean)

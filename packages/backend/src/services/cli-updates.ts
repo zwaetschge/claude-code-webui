@@ -8,12 +8,15 @@ import { getCliEnv, getNpmPrefix } from '../utils/cliPaths.js';
 
 const execAsync = promisify(exec);
 
-export const CLI_UPDATE_PROVIDERS = ['claude', 'codex', 'opencode'] as const;
+export const CLI_UPDATE_PROVIDERS = ['claude', 'codex', 'opencode', 'vibe'] as const;
 
 const CLI_UPDATE_COMMANDS: Record<CLIProvider, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code@latest',
   codex: 'npm install -g @openai/codex@latest',
   opencode: 'npm install -g opencode-ai@latest',
+  // Vibe ships as a Python package installed via pipx — fall back to fresh install
+  // when no existing pipx env is present so first-time provision also works.
+  vibe: 'pipx upgrade mistral-vibe || pipx install mistral-vibe',
 };
 
 let updateInFlight: Promise<CliProviderUpdateResponse> | null = null;
@@ -34,7 +37,9 @@ async function runUpdateCommand(command: string, env: NodeJS.ProcessEnv, timeout
       stderr?: string;
       code?: number | string;
     };
-    const output = [err.stdout, err.stderr, err.message].filter((value) => value && value.length > 0).join('\n');
+    const output = [err.stdout, err.stderr, err.message]
+      .filter((value) => value && value.length > 0)
+      .join('\n');
     const exitCode = typeof err.code === 'number' ? err.code : null;
     return { output, exitCode };
   }
@@ -46,22 +51,21 @@ export async function runCliUpdates(providers?: CLIProvider[]): Promise<CliProvi
   }
 
   updateInFlight = (async () => {
-    const targetProviders = providers && providers.length > 0
-      ? providers
-      : [...CLI_UPDATE_PROVIDERS];
+    const targetProviders =
+      providers && providers.length > 0 ? providers : [...CLI_UPDATE_PROVIDERS];
 
-  const results: CliProviderUpdateResponse['results'] = [];
-  for (const provider of targetProviders) {
-    const prefix = getNpmPrefix();
-    const env = getCliEnv();
-    await fs.mkdir(path.join(prefix, 'bin'), { recursive: true });
-    await fs.mkdir(path.join(prefix, 'lib'), { recursive: true });
+    const results: CliProviderUpdateResponse['results'] = [];
+    for (const provider of targetProviders) {
+      const prefix = getNpmPrefix();
+      const env = getCliEnv();
+      await fs.mkdir(path.join(prefix, 'bin'), { recursive: true });
+      await fs.mkdir(path.join(prefix, 'lib'), { recursive: true });
 
-    const command = CLI_UPDATE_COMMANDS[provider];
-    if (!command) {
-      results.push({
-        provider,
-        command: '',
+      const command = CLI_UPDATE_COMMANDS[provider];
+      if (!command) {
+        results.push({
+          provider,
+          command: '',
           output: 'No update command configured.',
           exitCode: null,
           status: 'failed',
@@ -69,8 +73,8 @@ export async function runCliUpdates(providers?: CLIProvider[]): Promise<CliProvi
         continue;
       }
 
-    const timeoutMs = 5 * 60 * 1000;
-    const { output, exitCode } = await runUpdateCommand(command, env, timeoutMs);
+      const timeoutMs = 5 * 60 * 1000;
+      const { output, exitCode } = await runUpdateCommand(command, env, timeoutMs);
       results.push({
         provider,
         command,

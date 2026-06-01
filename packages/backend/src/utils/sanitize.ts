@@ -103,12 +103,15 @@ export function sanitizeFilename(filename: string): string {
 export function validateMimeType(buffer: Buffer, claimedMimeType: string): boolean {
   // Check common file signatures (magic numbers)
   const signatures: Record<string, number[][]> = {
-    'image/png': [[0x89, 0x50, 0x4E, 0x47]],
-    'image/jpeg': [[0xFF, 0xD8, 0xFF]],
+    'image/png': [[0x89, 0x50, 0x4e, 0x47]],
+    'image/jpeg': [[0xff, 0xd8, 0xff]],
     'image/gif': [[0x47, 0x49, 0x46, 0x38]],
     'image/webp': [[0x52, 0x49, 0x46, 0x46]], // RIFF header
     'application/pdf': [[0x25, 0x50, 0x44, 0x46]], // %PDF
-    'application/zip': [[0x50, 0x4B, 0x03, 0x04], [0x50, 0x4B, 0x05, 0x06]],
+    'application/zip': [
+      [0x50, 0x4b, 0x03, 0x04],
+      [0x50, 0x4b, 0x05, 0x06],
+    ],
   };
 
   const expectedSignatures = signatures[claimedMimeType];
@@ -117,7 +120,7 @@ export function validateMimeType(buffer: Buffer, claimedMimeType: string): boole
     return true;
   }
 
-  return expectedSignatures.some(signature =>
+  return expectedSignatures.some((signature) =>
     signature.every((byte, index) => buffer[index] === byte)
   );
 }
@@ -147,16 +150,16 @@ export const ALLOWED_UPLOAD_MIME_TYPES = new Set([
   'application/javascript',
   'application/typescript',
   // Spreadsheets
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  // .xlsx
-  'application/vnd.ms-excel',                                          // .xls
-  'application/vnd.oasis.opendocument.spreadsheet',                    // .ods
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'application/vnd.oasis.opendocument.spreadsheet', // .ods
   // Word documents
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-  'application/msword',                                                     // .doc
-  'application/vnd.oasis.opendocument.text',                                // .odt
+  'application/msword', // .doc
+  'application/vnd.oasis.opendocument.text', // .odt
   // Presentations
   'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
-  'application/vnd.ms-powerpoint',                                             // .ppt
+  'application/vnd.ms-powerpoint', // .ppt
   // Archives
   'application/zip',
   'application/x-tar',

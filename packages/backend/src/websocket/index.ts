@@ -67,7 +67,10 @@ function canAccessSession(sessionId: string, userId: string): boolean {
       .get(sessionId, userId, userId);
     return !!row;
   } catch (err) {
-    console.error(`[WS] canAccessSession check failed sessionId=${sessionId} userId=${userId}:`, err);
+    console.error(
+      `[WS] canAccessSession check failed sessionId=${sessionId} userId=${userId}:`,
+      err
+    );
     return false;
   }
 }
@@ -86,7 +89,10 @@ function canControlSession(sessionId: string, userId: string): boolean {
       .get(sessionId, userId);
     return !!row;
   } catch (err) {
-    console.error(`[WS] canControlSession check failed sessionId=${sessionId} userId=${userId}:`, err);
+    console.error(
+      `[WS] canControlSession check failed sessionId=${sessionId} userId=${userId}:`,
+      err
+    );
     return false;
   }
 }
@@ -165,7 +171,11 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
     // Debug: Log all incoming events
     socket.onAny((eventName, ...args) => {
-      console.log(`[SOCKET EVENT] ${eventName}:`, args[0]?.sessionId || '', args[0]?.message?.substring(0, 30) || '');
+      console.log(
+        `[SOCKET EVENT] ${eventName}:`,
+        args[0]?.sessionId || '',
+        args[0]?.message?.substring(0, 30) || ''
+      );
     });
 
     // Subscribe to session output
@@ -209,9 +219,7 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
     const denyControl = (sessionId: string, event: string): boolean => {
       if (canControlSession(sessionId, socket.data.userId)) return false;
-      console.warn(
-        `[WS] DENIED ${event} userId=${socket.data.userId} sessionId=${sessionId}`
-      );
+      console.warn(`[WS] DENIED ${event} userId=${socket.data.userId} sessionId=${sessionId}`);
       socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
       return true;
     };
@@ -298,13 +306,22 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     // Approve permission request
     socket.on('session:approve_permission', async ({ sessionId, toolNames, originalMessage }) => {
       if (denyControl(sessionId, 'session:approve_permission')) return;
-      console.log(`Received session:approve_permission for ${sessionId}: tools=${toolNames.join(', ')}`);
+      console.log(
+        `Received session:approve_permission for ${sessionId}: tools=${toolNames.join(', ')}`
+      );
       try {
-        await processManager.approvePermission(sessionId, socket.data.userId, toolNames, originalMessage);
+        await processManager.approvePermission(
+          sessionId,
+          socket.data.userId,
+          toolNames,
+          originalMessage
+        );
       } catch (err) {
         socket.emit('session:error', {
           sessionId,
-          error: logError('session:approve_permission', sessionId, err) || 'Failed to approve permission',
+          error:
+            logError('session:approve_permission', sessionId, err) ||
+            'Failed to approve permission',
         });
       }
     });

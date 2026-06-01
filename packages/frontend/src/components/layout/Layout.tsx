@@ -104,12 +104,7 @@ export function Layout() {
             </div>
           </Link>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            asChild
-            className="h-9 w-9"
-          >
+          <Button variant="ghost" size="icon" asChild className="h-9 w-9">
             <Link to="/?new=true">
               <Plus className="h-5 w-5" />
             </Link>
@@ -117,7 +112,11 @@ export function Layout() {
         </header>
 
         {/* Page Content */}
-        <main className={isFullBleed ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1 overflow-auto p-4 md:p-6'}>
+        <main
+          className={
+            isFullBleed ? 'flex-1 min-h-0 overflow-hidden' : 'flex-1 overflow-auto p-4 md:p-6'
+          }
+        >
           <Outlet />
         </main>
       </div>

@@ -163,11 +163,15 @@ const filenameMap: Record<string, FileIconConfig> = {
   '.eslintrc.json': { icon: Settings, color: 'text-purple-400' },
   '.prettierrc': { icon: Settings, color: 'text-pink-400' },
   'readme.md': { icon: FileText, color: 'text-blue-400' },
-  'license': { icon: FileText, color: 'text-yellow-500' },
+  license: { icon: FileText, color: 'text-yellow-500' },
   'license.md': { icon: FileText, color: 'text-yellow-500' },
 };
 
-export function getFileIcon(filename: string, isDirectory: boolean, isOpen?: boolean): FileIconConfig {
+export function getFileIcon(
+  filename: string,
+  isDirectory: boolean,
+  isOpen?: boolean
+): FileIconConfig {
   if (isDirectory) {
     return {
       icon: isOpen ? FolderOpen : Folder,

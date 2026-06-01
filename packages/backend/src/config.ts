@@ -20,7 +20,10 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z.string().optional(),
   ALLOWED_BASE_PATHS: z.string().default('/home,/Users'),
   // Claude OAuth (uses official Claude Code client ID) - enabled by default
-  CLAUDE_OAUTH_ENABLED: z.string().optional().transform(v => v !== 'false'),
+  CLAUDE_OAUTH_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false'),
   // User email for display (since Anthropic API is Cloudflare-protected)
   CLAUDE_USER_EMAIL: z.string().optional(),
   PREVIEW_HOSTNAME: z.string().optional(),
@@ -72,8 +75,8 @@ function loadConfig() {
   const allowedOrigins = [env.FRONTEND_URL.toLowerCase()];
   if (env.CORS_ALLOWED_ORIGINS) {
     const additionalOrigins = env.CORS_ALLOWED_ORIGINS.split(',')
-      .map(o => o.trim().toLowerCase())
-      .filter(o => o.length > 0);
+      .map((o) => o.trim().toLowerCase())
+      .filter((o) => o.length > 0);
     allowedOrigins.push(...additionalOrigins);
   }
 

@@ -57,9 +57,12 @@ export function GitCommit({ workingDirectory }: GitCommitProps) {
   // Generate commit message mutation
   const generateMutation = useMutation({
     mutationFn: async () => {
-      const response = await api.post<ApiResponse<{ message: string }>>('/api/git/generate-commit-message', {
-        path: workingDirectory,
-      });
+      const response = await api.post<ApiResponse<{ message: string }>>(
+        '/api/git/generate-commit-message',
+        {
+          path: workingDirectory,
+        }
+      );
       return response.data;
     },
     onSuccess: (data) => {

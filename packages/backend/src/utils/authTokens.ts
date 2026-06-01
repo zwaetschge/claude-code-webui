@@ -11,5 +11,7 @@ export function generateUserToken(userId: string, options: TokenOptions = {}): s
     userId,
     basicAuth: options.basicAuth || false,
   };
-  return jwt.sign(payload, config.jwtSecret, { expiresIn: options.expiresIn || '7d' } as jwt.SignOptions);
+  return jwt.sign(payload, config.jwtSecret, {
+    expiresIn: options.expiresIn || '7d',
+  } as jwt.SignOptions);
 }

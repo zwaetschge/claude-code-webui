@@ -38,9 +38,7 @@ export function GitHistory({ workingDirectory, limit = 20 }: GitHistoryProps) {
         path: workingDirectory,
         limit: limit.toString(),
       });
-      const response = await api.get<ApiResponse<GitCommit[]>>(
-        `/api/git/log?${params}`
-      );
+      const response = await api.get<ApiResponse<GitCommit[]>>(`/api/git/log?${params}`);
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
@@ -57,11 +55,7 @@ export function GitHistory({ workingDirectory, limit = 20 }: GitHistoryProps) {
   }
 
   if (!commits || commits.length === 0) {
-    return (
-      <div className="text-center py-4 text-sm text-muted-foreground">
-        No commits yet
-      </div>
-    );
+    return <div className="text-center py-4 text-sm text-muted-foreground">No commits yet</div>;
   }
 
   // Show diff viewer when a commit is selected
@@ -116,19 +110,14 @@ export function GitHistory({ workingDirectory, limit = 20 }: GitHistoryProps) {
                 )}
               >
                 <GitCommitIcon
-                  className={cn(
-                    'h-3 w-3',
-                    index === 0 ? 'text-primary' : 'text-muted-foreground'
-                  )}
+                  className={cn('h-3 w-3', index === 0 ? 'text-primary' : 'text-muted-foreground')}
                 />
               </div>
 
               {/* Commit info */}
               <div className="flex-1 min-w-0">
                 {/* Message */}
-                <p className="text-sm font-medium leading-tight line-clamp-2">
-                  {commit.message}
-                </p>
+                <p className="text-sm font-medium leading-tight line-clamp-2">{commit.message}</p>
 
                 {/* Meta */}
                 <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">

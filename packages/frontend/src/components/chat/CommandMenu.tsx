@@ -80,9 +80,7 @@ export function CommandMenu({
               onClick={() => onSelect(cmd)}
               className={cn(
                 'w-full flex items-center gap-2 px-3 py-2 text-left rounded-md transition-colors',
-                index === selectedIndex
-                  ? 'bg-accent text-accent-foreground'
-                  : 'hover:bg-muted'
+                index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'
               )}
             >
               {getScopeIcon(cmd.scope)}
@@ -95,9 +93,7 @@ export function CommandMenu({
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground truncate">
-                  {cmd.description}
-                </p>
+                <p className="text-xs text-muted-foreground truncate">{cmd.description}</p>
               </div>
             </button>
           ))}

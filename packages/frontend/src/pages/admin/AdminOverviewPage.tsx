@@ -49,12 +49,14 @@ export function AdminOverviewPage() {
         return (
           <Card key={card.key}>
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{card.label}</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {card.label}
+              </CardTitle>
               <Icon className={`h-4 w-4 ${card.tone}`} />
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-semibold tracking-tight tabular-nums">
-                {isLoading ? <span className="text-muted-foreground/50">—</span> : value ?? 0}
+                {isLoading ? <span className="text-muted-foreground/50">—</span> : (value ?? 0)}
               </div>
             </CardContent>
           </Card>

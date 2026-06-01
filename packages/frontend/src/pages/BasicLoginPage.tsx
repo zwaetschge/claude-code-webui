@@ -21,7 +21,9 @@ export function BasicLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const fromState = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)?.from;
+  const fromState = (
+    location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null
+  )?.from;
   const from =
     fromState?.pathname && fromState.pathname !== '/login'
       ? `${fromState.pathname}${fromState.search ?? ''}${fromState.hash ?? ''}`
@@ -59,17 +61,15 @@ export function BasicLoginPage() {
         <div className="space-y-6 text-center lg:text-left">
           <div className="flex items-center justify-center gap-3 lg:justify-start">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-card/80 shadow-lg ring-1 ring-border/60 backdrop-blur-sm">
-              <img
-                src="/logos/plum.png"
-                alt="Plum Code WebUI"
-                className="h-7 w-7 object-contain"
-              />
+              <img src="/logos/plum.png" alt="Plum Code WebUI" className="h-7 w-7 object-contain" />
             </div>
             <div className="text-left">
               <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-muted-foreground">
                 Plum Code WebUI
               </p>
-              <p className="text-sm text-muted-foreground">A violet command center for CLI coding</p>
+              <p className="text-sm text-muted-foreground">
+                A violet command center for CLI coding
+              </p>
             </div>
           </div>
 
@@ -78,12 +78,13 @@ export function BasicLoginPage() {
               Orchestrate every CLI session from one plum-tinted cockpit.
             </h1>
             <p className="text-base text-muted-foreground">
-              Manage sessions, switch providers, and keep context stitched together with a single dashboard.
+              Manage sessions, switch providers, and keep context stitched together with a single
+              dashboard.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-start">
-            {(['claude', 'codex', 'opencode'] as const).map((provider) => (
+            {(['claude', 'codex', 'opencode', 'vibe'] as const).map((provider) => (
               <span key={provider} className="ui-pill ui-pill-subtle gap-2 backdrop-blur-sm">
                 <ProviderLogo provider={provider} className="h-4 w-4" alt="" />
                 <span className="text-xs font-medium">{UI_PROVIDER_META[provider].label}</span>
@@ -93,13 +94,17 @@ export function BasicLoginPage() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-border/60 bg-card/70 p-4 shadow-sm backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Session Handoff</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Session Handoff
+              </p>
               <p className="text-sm text-muted-foreground">
                 Switch providers without losing context or momentum.
               </p>
             </div>
             <div className="rounded-xl border border-border/60 bg-card/70 p-4 shadow-sm backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Shared Skills</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Shared Skills
+              </p>
               <p className="text-sm text-muted-foreground">
                 Reuse agents, skills, and tools across every CLI.
               </p>

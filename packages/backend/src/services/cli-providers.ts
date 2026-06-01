@@ -12,11 +12,12 @@ import path from 'path';
 import fs from 'fs';
 import { execFile, execFileSync, execSync } from 'child_process';
 import { promisify } from 'util';
-import type { SessionMode } from '@claude-code-webui/shared';
+import type { CodexServiceTier, CodexWebSearchMode, SessionMode } from '@claude-code-webui/shared';
+import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from '../utils/codexDefaults';
 
 const execFileAsync = promisify(execFile);
 
-export type CLIProvider = 'claude' | 'codex' | 'opencode';
+export type CLIProvider = 'claude' | 'codex' | 'opencode' | 'vibe';
 
 export interface CLIProviderConfig {
   id: CLIProvider;
@@ -31,23 +32,46 @@ export interface CLIProviderConfig {
   models?: string[];
 }
 
+export interface VibeModelEntry {
+  name: string;
+  alias: string;
+  thinking?: string;
+}
+
 // Fallback models - used when CLI discovery fails or CLI not installed
 // Can be overridden via CLI_PROVIDER_<PROVIDER>_MODELS env var
 const CLI_PROVIDER_MODELS: Record<CLIProvider, string[]> = {
   claude: ['opus', 'sonnet', 'haiku'],
-  codex: ['gpt-5.4', 'gpt-5.4-codex', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.2', 'gpt-5.1-codex-mini'],
-  opencode: ['z-ai/glm-5.1', 'z-ai/glm-5', 'anthropic/claude-sonnet-4-5', 'openai/gpt-4o', 'deepseek/deepseek-chat', 'google/gemini-2.5-pro'],
+  // Fallback only — runtime list comes from ~/.codex/models_cache.json (filtered to
+  // visibility=list, sorted by priority). Cache refreshes via the codex CLI itself;
+  // if the user's auth token is expired, the cache freezes and the dropdown stays on
+  // whatever was last fetched. gpt-5.5 is the new default (codex CLI 0.130+).
+  codex: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.2'],
+  opencode: [
+    'z-ai/glm-5.1',
+    'z-ai/glm-5',
+    'anthropic/claude-sonnet-4-5',
+    'openai/gpt-4o',
+    'deepseek/deepseek-chat',
+    'google/gemini-2.5-pro',
+  ],
+  // Names must match `[[models]].name` in ~/.vibe/config.toml. Vibe ships with
+  // mistral-vibe-cli-latest (alias mistral-medium-3.5) and devstral-small-latest.
+  vibe: ['mistral-vibe-cli-latest', 'devstral-small-latest'],
 };
 
 // Display labels — enhanced at startup by CLI discovery
 const MODEL_DISPLAY_LABELS: Record<string, string> = {
   // Claude (aliases resolve server-side to latest version)
-  opus: 'Opus 4.7', sonnet: 'Sonnet 4.6', haiku: 'Haiku 4.5',
-  // Codex
-  'gpt-5.4-codex': 'GPT 5.4 Codex', 'gpt-5.4': 'GPT 5.4', 'gpt-5.3-codex': 'GPT 5.3 Codex', 'gpt-5.2-codex': 'GPT 5.2 Codex', 'gpt-5.2': 'GPT 5.2',
-  'gpt-5.1-codex-max': 'GPT 5.1 Codex Max', 'gpt-5.1-codex': 'GPT 5.1 Codex',
-  'gpt-5.1-codex-mini': 'GPT 5.1 Codex Mini', 'gpt-5.1': 'GPT 5.1',
-  'gpt-5-codex': 'GPT 5 Codex', 'gpt-5': 'GPT 5', 'gpt-5-codex-mini': 'GPT 5 Codex Mini',
+  opus: 'Opus 4.7',
+  sonnet: 'Sonnet 4.6',
+  haiku: 'Haiku 4.5',
+  // Codex (labels for the currently-listed models in upstream models_cache.json)
+  'gpt-5.5': 'GPT 5.5',
+  'gpt-5.4': 'GPT 5.4',
+  'gpt-5.4-mini': 'GPT 5.4 Mini',
+  'gpt-5.3-codex': 'GPT 5.3 Codex',
+  'gpt-5.2': 'GPT 5.2',
   // OpenCode (provider/model format)
   'z-ai/glm-5.1': 'GLM 5.1',
   'z-ai/glm-5': 'GLM 5',
@@ -55,6 +79,9 @@ const MODEL_DISPLAY_LABELS: Record<string, string> = {
   'openai/gpt-4o': 'GPT-4o',
   'deepseek/deepseek-chat': 'DeepSeek Chat',
   'google/gemini-2.5-pro': 'Gemini 2.5 Pro',
+  // Mistral Vibe (name → alias resolves to mistral-medium-3.5 / devstral-small)
+  'mistral-vibe-cli-latest': 'Mistral Medium 3.5 (Vibe)',
+  'devstral-small-latest': 'Devstral Small',
 };
 
 // ── CLI Model Discovery ──────────────────────────────────────────────
@@ -69,7 +96,9 @@ function findCliBinary(command: string): string | null {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     return p ? fs.realpathSync(p) : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -94,8 +123,8 @@ function discoverClaude(): void {
   try {
     const bin = findCliBinary('claude');
     if (!bin) return;
-    const source = readCliFile(bin, 'cli.js')
-      ?? readCliFile(bin, '@anthropic-ai', 'claude-code', 'cli.js');
+    const source =
+      readCliFile(bin, 'cli.js') ?? readCliFile(bin, '@anthropic-ai', 'claude-code', 'cli.js');
     if (!source) return;
 
     // Try v2.1.34+ format: {opus:"claude-opus-4-6",sonnet:...}
@@ -125,7 +154,10 @@ function discoverClaude(): void {
       modelIds.sort().reverse();
       const latest = modelIds[0]!;
       const stripped = latest.replace(/^claude-(?:opus|sonnet|haiku)-/, '');
-      const version = stripped.replace(/-\d{8}$/, '').split('-').join('.');
+      const version = stripped
+        .replace(/-\d{8}$/, '')
+        .split('-')
+        .join('.');
       const family = alias.charAt(0).toUpperCase() + alias.slice(1);
       const newLabel = `${family} ${version}`;
       // Only update if discovered version is newer than hardcoded
@@ -134,9 +166,13 @@ function discoverClaude(): void {
       if (version >= currentVersion) {
         MODEL_DISPLAY_LABELS[alias] = newLabel;
       }
-      console.log(`[CLI-PROVIDERS] claude: ${alias} → ${latest} (label: ${MODEL_DISPLAY_LABELS[alias]})`);
+      console.log(
+        `[CLI-PROVIDERS] claude: ${alias} → ${latest} (label: ${MODEL_DISPLAY_LABELS[alias]})`
+      );
     }
-  } catch { /* keep defaults */ }
+  } catch {
+    /* keep defaults */
+  }
 }
 
 /**
@@ -165,11 +201,11 @@ function discoverCodex(): void {
       if (cache.models && cache.models.length > 0) {
         // Sort by priority (lower = more important), filter to visible models
         const sorted = cache.models
-          .filter(m => m.visibility === 'list')
+          .filter((m) => m.visibility === 'list')
           .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
 
         if (sorted.length > 0) {
-          const modelIds = sorted.map(m => m.slug);
+          const modelIds = sorted.map((m) => m.slug);
           discoveredModels.codex = modelIds;
 
           for (const m of sorted) {
@@ -179,7 +215,10 @@ function discoverCodex(): void {
           const age = cache.fetched_at
             ? Math.round((Date.now() - new Date(cache.fetched_at).getTime()) / 3600000) + 'h ago'
             : 'unknown';
-          console.log(`[CLI-PROVIDERS] codex: discovered ${modelIds.length} models from cache (${age}):`, modelIds);
+          console.log(
+            `[CLI-PROVIDERS] codex: discovered ${modelIds.length} models from cache (${age}):`,
+            modelIds
+          );
           return;
         }
       }
@@ -187,7 +226,9 @@ function discoverCodex(): void {
 
     // Fallback: extract model strings from the Rust binary
     discoverCodexFromBinary();
-  } catch { /* keep defaults */ }
+  } catch {
+    /* keep defaults */
+  }
 }
 
 /**
@@ -211,15 +252,31 @@ function discoverCodexFromBinary(): void {
 
     const binaryPaths = [
       path.join(cliDir, '..', 'vendor', triple, 'codex', 'codex'),
-      path.join(cliDir, '..', 'lib', 'node_modules', '@openai', 'codex', 'vendor', triple, 'codex', 'codex'),
+      path.join(
+        cliDir,
+        '..',
+        'lib',
+        'node_modules',
+        '@openai',
+        'codex',
+        'vendor',
+        triple,
+        'codex',
+        'codex'
+      ),
     ];
 
     let binaryPath = '';
     for (const p of binaryPaths) {
       try {
         const stat = fs.statSync(p);
-        if (stat.size > 0) { binaryPath = p; break; }
-      } catch { /* next */ }
+        if (stat.size > 0) {
+          binaryPath = p;
+          break;
+        }
+      } catch {
+        /* next */
+      }
     }
     if (!binaryPath) return;
 
@@ -253,7 +310,9 @@ function discoverCodexFromBinary(): void {
       }
       console.log(`[CLI-PROVIDERS] codex: discovered ${sorted.length} models from binary:`, sorted);
     }
-  } catch { /* keep defaults */ }
+  } catch {
+    /* keep defaults */
+  }
 }
 
 function formatCodexLabel(modelId: string): string {
@@ -279,12 +338,17 @@ function discoverOpenCode(): void {
     // Honor CLI_PROVIDER_OPENCODE_CREDENTIALS_PATH (default ~/.local/share/opencode)
     // so operators can relocate OpenCode state without forking the backend.
     // Config path follows XDG config convention independently.
-    const authDir = (getProviderEnv('opencode', 'CREDENTIALS_PATH') || path.join(homeDir, '.local', 'share', 'opencode')).replace(/^~/, homeDir);
-    const configDir = (getProviderEnv('opencode', 'CONFIG_PATH') || path.join(homeDir, '.config', 'opencode')).replace(/^~/, homeDir);
+    const authDir = (
+      getProviderEnv('opencode', 'CREDENTIALS_PATH') ||
+      path.join(homeDir, '.local', 'share', 'opencode')
+    ).replace(/^~/, homeDir);
+    const configDir = (
+      getProviderEnv('opencode', 'CONFIG_PATH') || path.join(homeDir, '.config', 'opencode')
+    ).replace(/^~/, homeDir);
     const configPath = path.join(configDir, 'opencode.json');
     const authPath = path.join(authDir, 'auth.json');
 
-    let userModels: string[] = [];
+    const userModels: string[] = [];
     // Top-level `models` is an explicit allow-list — honor it and skip
     // auth-based expansion. Provider blocks are additive: they declare custom
     // providers (e.g. llama-local) that should coexist with the models
@@ -295,7 +359,11 @@ function discoverOpenCode(): void {
     if (fs.existsSync(configPath)) {
       try {
         const raw = fs.readFileSync(configPath, 'utf-8');
-        const cfg = JSON.parse(raw) as { model?: string; models?: string[]; provider?: Record<string, { models?: Record<string, unknown> }> };
+        const cfg = JSON.parse(raw) as {
+          model?: string;
+          models?: string[];
+          provider?: Record<string, { models?: Record<string, unknown> }>;
+        };
         if (Array.isArray(cfg.models) && cfg.models.length > 0) {
           userModels.push(...cfg.models);
           hasExplicitAllowList = true;
@@ -321,7 +389,7 @@ function discoverOpenCode(): void {
         const raw = fs.readFileSync(authPath, 'utf-8');
         const auth = JSON.parse(raw) as Record<string, unknown>;
         const configuredProviders = Object.keys(auth).filter(
-          (id) => typeof auth[id] === 'object' && auth[id] !== null,
+          (id) => typeof auth[id] === 'object' && auth[id] !== null
         );
 
         // Prefer live data from `opencode models`: it knows every provider the
@@ -420,6 +488,93 @@ function formatOpenCodeLabel(modelId: string): string {
   return cleaned;
 }
 
+export function parseVibeModelsToml(raw: string): VibeModelEntry[] {
+  const models: VibeModelEntry[] = [];
+  const blockRe = /^\s*\[\[models\]\]\s*$/gm;
+  const starts: number[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = blockRe.exec(raw)) !== null) {
+    starts.push(match.index);
+  }
+
+  for (let i = 0; i < starts.length; i += 1) {
+    const start = starts[i]!;
+    const end = starts[i + 1] ?? raw.length;
+    const block = raw.slice(start, end);
+    const name = block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1]?.trim();
+    const alias = block.match(/^\s*alias\s*=\s*"([^"]+)"/m)?.[1]?.trim();
+    const thinking = block.match(/^\s*thinking\s*=\s*"([^"]+)"/m)?.[1]?.trim();
+    if (name || alias) {
+      models.push({
+        name: name || alias!,
+        alias: alias || name!,
+        thinking,
+      });
+    }
+  }
+
+  return models;
+}
+
+export function getVibeModelAlias(
+  modelId: string | null | undefined,
+  rawConfig: string
+): string | null {
+  if (!modelId) return null;
+  const wanted = modelId.trim();
+  if (!wanted) return null;
+  const models = parseVibeModelsToml(rawConfig);
+  const byName = models.find((model) => model.name === wanted);
+  if (byName) return byName.alias;
+  const byAlias = models.find((model) => model.alias === wanted);
+  if (byAlias) return byAlias.alias;
+  return null;
+}
+
+function formatVibeLabel(entry: VibeModelEntry): string {
+  const base = entry.alias || entry.name;
+  if (base === 'mistral-medium-3.5') return 'Mistral Medium 3.5 (Vibe)';
+  if (base === 'devstral-small') return 'Devstral Small';
+  return base
+    .replace(/[-_]/g, ' ')
+    .split(' ')
+    .map((segment) => {
+      if (/^\d/.test(segment)) return segment;
+      if (segment.toLowerCase() === 'mistral') return 'Mistral';
+      if (segment.toLowerCase() === 'devstral') return 'Devstral';
+      return segment.charAt(0).toUpperCase() + segment.slice(1);
+    })
+    .join(' ');
+}
+
+function discoverVibe(): void {
+  try {
+    const homeDir = os.homedir();
+    const configDir = (
+      getProviderEnv('vibe', 'CREDENTIALS_PATH') || path.join(homeDir, '.vibe')
+    ).replace(/^~/, homeDir);
+    const configPath = path.join(configDir, 'config.toml');
+    if (!fs.existsSync(configPath)) return;
+
+    const models = parseVibeModelsToml(fs.readFileSync(configPath, 'utf-8'));
+    if (models.length === 0) return;
+
+    const ids = [...new Set(models.map((model) => model.name).filter(Boolean))];
+    discoveredModels.vibe = ids;
+    for (const entry of models) {
+      if (!MODEL_DISPLAY_LABELS[entry.name]) {
+        MODEL_DISPLAY_LABELS[entry.name] = formatVibeLabel(entry);
+      }
+      if (!MODEL_DISPLAY_LABELS[entry.alias]) {
+        MODEL_DISPLAY_LABELS[entry.alias] = formatVibeLabel(entry);
+      }
+    }
+    console.log(`[CLI-PROVIDERS] vibe: discovered ${ids.length} models:`, ids);
+  } catch {
+    // Keep defaults
+  }
+}
+
 // ── Discovery Cache ──────────────────────────────────────────────────
 
 const discoveredModels: Partial<Record<CLIProvider, string[]>> = {};
@@ -431,6 +586,7 @@ function ensureDiscovery(): void {
   discoverClaude();
   discoverCodex();
   discoverOpenCode();
+  discoverVibe();
 }
 
 /**
@@ -442,6 +598,7 @@ export function resetDiscovery(): void {
   delete discoveredModels.claude;
   delete discoveredModels.codex;
   delete discoveredModels.opencode;
+  delete discoveredModels.vibe;
 }
 
 // Single shared promise so concurrent callers don't spawn multiple Codex processes
@@ -515,29 +672,24 @@ function envOr(provider: CLIProvider, key: string, fallback: string): string {
   return getProviderEnv(provider, key) || fallback;
 }
 
+// Insertion order matters: routes/cli-providers.ts uses Object.values() so the
+// frontend picker lists providers in this order. Codex is the primary going
+// forward; Claude is intentionally last (legacy) since claude -p is being
+// restricted / moved to a credit system upstream.
 export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
-  claude: {
-    id: 'claude',
-    name: 'Claude Code',
-    command: envOr('claude', 'COMMAND', 'claude'),
-    icon: '🟠',
-    credentialsPath: envOr('claude', 'CREDENTIALS_PATH', '~/.claude'),
-    supportsStreamJson: true,
-    supportsResume: true,
-    supportsModes: true,
-    defaultModel: getProviderEnv('claude', 'DEFAULT_MODEL') || 'sonnet',
-    models: parseEnvModels('claude') ?? CLI_PROVIDER_MODELS.claude,
-  },
   codex: {
     id: 'codex',
     name: 'Codex',
     command: envOr('codex', 'COMMAND', 'codex'),
     icon: '🟢',
     credentialsPath: envOr('codex', 'CREDENTIALS_PATH', '~/.codex'),
-    supportsStreamJson: false,
-    supportsResume: false,
+    // Codex CLI itself is single-shot per turn, but the WebUI simulates streaming
+    // by handling `item.delta` events and resume by prepending a transcript of
+    // prior turns to each respawned process's stdin.
+    supportsStreamJson: true,
+    supportsResume: true,
     supportsModes: true,
-    defaultModel: getProviderEnv('codex', 'DEFAULT_MODEL') || 'gpt-5.4',
+    defaultModel: getProviderEnv('codex', 'DEFAULT_MODEL') || 'gpt-5.5',
     models: parseEnvModels('codex') ?? CLI_PROVIDER_MODELS.codex,
   },
   opencode: {
@@ -555,6 +707,35 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     defaultModel: getProviderEnv('opencode', 'DEFAULT_MODEL') || 'z-ai/glm-5.1',
     models: parseEnvModels('opencode') ?? CLI_PROVIDER_MODELS.opencode,
   },
+  vibe: {
+    id: 'vibe',
+    name: 'Mistral Vibe',
+    command: envOr('vibe', 'COMMAND', 'vibe'),
+    icon: '🟣',
+    // Vibe state lives in ~/.vibe by default; we override per-session via VIBE_HOME
+    // at spawn time so each WebUI chat is an isolated agent session.
+    credentialsPath: envOr('vibe', 'CREDENTIALS_PATH', '~/.vibe'),
+    // Vibe streams newline-delimited JSON (one LLMMessage per line) under --output streaming.
+    supportsStreamJson: true,
+    // Continuation is provided by reusing the same VIBE_HOME — the CLI's --continue
+    // flag picks up the last session in that home dir.
+    supportsResume: true,
+    supportsModes: true,
+    defaultModel: getProviderEnv('vibe', 'DEFAULT_MODEL') || 'mistral-vibe-cli-latest',
+    models: parseEnvModels('vibe') ?? CLI_PROVIDER_MODELS.vibe,
+  },
+  claude: {
+    id: 'claude',
+    name: 'Claude Code',
+    command: envOr('claude', 'COMMAND', 'claude'),
+    icon: '🟠',
+    credentialsPath: envOr('claude', 'CREDENTIALS_PATH', '~/.claude'),
+    supportsStreamJson: true,
+    supportsResume: true,
+    supportsModes: true,
+    defaultModel: getProviderEnv('claude', 'DEFAULT_MODEL') || 'sonnet',
+    models: parseEnvModels('claude') ?? CLI_PROVIDER_MODELS.claude,
+  },
 };
 
 /**
@@ -570,6 +751,9 @@ export function getCLIArgs(
     allowedTools?: string[];
     model?: string;
     reasoningLevel?: string;
+    serviceTier?: CodexServiceTier | string | null;
+    webSearchMode?: CodexWebSearchMode;
+    codexExecCommand?: { type: 'review'; args: string[]; prompt?: string };
   }
 ): string[] {
   const config = CLI_PROVIDERS[provider];
@@ -581,8 +765,10 @@ export function getCLIArgs(
       args.push(
         '--print',
         '--verbose',
-        '--output-format', 'stream-json',
-        '--input-format', 'stream-json',
+        '--output-format',
+        'stream-json',
+        '--input-format',
+        'stream-json',
         '--include-partial-messages'
       );
 
@@ -609,32 +795,84 @@ export function getCLIArgs(
       }
       break;
 
-    case 'codex':
-      // Codex CLI arguments (non-interactive JSONL output)
-      args.push('exec', '--json');
+    case 'codex': {
+      // Codex CLI 0.130 non-interactive: `codex exec [resume <id>] [opts] [prompt]`
+      // Native resume preferred when a sessionId is known. Note: `codex exec resume`
+      // accepts a NARROWER flag set than `codex exec` — no --sandbox, no --add-dir;
+      // those settings are inherited from the resumed thread.
+      const isReview = options.codexExecCommand?.type === 'review';
+      const isResume = !!(options.resumeSessionId && config.supportsResume);
+      if (isReview) {
+        args.push('exec', '--json');
+      } else if (isResume) {
+        args.push('exec', 'resume', options.resumeSessionId as string, '--json');
+      } else {
+        args.push('exec', '--json');
+      }
 
-      const codexApprovalArgs = getCodexApprovalArgs(options.mode);
-      args.push(...codexApprovalArgs);
+      // Sandbox / approval flags only apply to fresh `exec`, not `exec resume`.
+      if (!isResume) {
+        args.push(...getCodexApprovalArgs(options.mode));
+      }
 
       if (options.model) {
         args.push('--model', options.model);
       }
 
-      if (options.reasoningLevel) {
-        args.push('-c', `reasoning_level=${options.reasoningLevel}`);
+      // Reasoning effort. Valid Codex values: none | minimal | low | medium | high | xhigh.
+      // Map common aliases (extra_high / extrahigh / very_high) → xhigh; drop unknown
+      // values silently so a stale user setting doesn't crash the spawn.
+      const VALID_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+      const EFFORT_ALIASES: Record<string, (typeof VALID_EFFORTS)[number]> = {
+        extra_high: 'xhigh',
+        extrahigh: 'xhigh',
+        very_high: 'xhigh',
+        veryhigh: 'xhigh',
+        max: 'xhigh',
+      };
+      const rawEffort =
+        options.mode === 'planning' && !options.reasoningLevel ? 'high' : options.reasoningLevel;
+      let effort: (typeof VALID_EFFORTS)[number] | undefined;
+      if (rawEffort) {
+        const normalized = rawEffort.toLowerCase().trim();
+        if ((VALID_EFFORTS as readonly string[]).includes(normalized)) {
+          effort = normalized as (typeof VALID_EFFORTS)[number];
+        } else if (EFFORT_ALIASES[normalized]) {
+          effort = EFFORT_ALIASES[normalized];
+        }
+      }
+      if (effort) {
+        args.push('-c', `model_reasoning_effort="${effort}"`);
       }
 
-      if (options.workingDirectory) {
+      if (options.serviceTier === 'fast') {
+        args.push('-c', 'features.fast_mode=true');
+        args.push('-c', 'service_tier="fast"');
+      }
+
+      if (options.webSearchMode && options.webSearchMode !== 'auto') {
+        args.push('-c', `web_search="${options.webSearchMode}"`);
+      }
+
+      if (options.workingDirectory && !isResume) {
         args.push('--cd', options.workingDirectory);
         args.push('--skip-git-repo-check');
       }
 
-      if (options.allowedDirectories) {
+      // --add-dir is exec-only (resume inherits from the original session).
+      if (!isResume && options.allowedDirectories) {
         for (const dir of options.allowedDirectories) {
           args.push('--add-dir', dir);
         }
       }
+      if (isReview) {
+        args.push('review', ...options.codexExecCommand!.args);
+        if (options.codexExecCommand!.prompt) {
+          args.push(options.codexExecCommand!.prompt);
+        }
+      }
       break;
+    }
 
     case 'opencode':
       // OpenCode CLI: `opencode run --format json --model <model> "prompt"`
@@ -644,6 +882,10 @@ export function getCLIArgs(
 
       if (options.model) {
         args.push('--model', options.model);
+      }
+
+      if (options.reasoningLevel) {
+        args.push('--variant', normalizeOpenCodeVariant(options.reasoningLevel));
       }
 
       // Resume explicit session; OpenCode also supports --continue for the
@@ -659,9 +901,62 @@ export function getCLIArgs(
         args.push('--dangerously-skip-permissions');
       }
       break;
+
+    case 'vibe':
+      // Mistral Vibe: prompt is passed via argv (-p), output streams newline-JSON.
+      // The actual prompt text is appended by the spawner just before exec, since
+      // it changes every turn — here we set up everything else.
+      // --trust skips the folder-trust prompt. Tool policy is selected through
+      // Vibe's builtin agents so WebUI modes stay meaningful in programmatic mode.
+      // Note: vibe has no --model flag; the spawner rewrites per-session config.toml.
+      args.push('--output', 'streaming', '--trust');
+
+      if (options.mode && config.supportsModes) {
+        args.push('--agent', getVibeAgentForMode(options.mode));
+      }
+
+      if (options.workingDirectory) {
+        args.push('--workdir', options.workingDirectory);
+      }
+
+      if (options.allowedDirectories) {
+        for (const dir of options.allowedDirectories) {
+          args.push('--add-dir', dir);
+        }
+      }
+
+      if (options.resumeSessionId && config.supportsResume) {
+        args.push('--continue');
+      }
+      break;
   }
 
   return args;
+}
+
+function normalizeOpenCodeVariant(reasoningLevel: string): string {
+  const normalized = reasoningLevel
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (normalized === 'extra_high' || normalized === 'xhigh') return 'max';
+  return normalized;
+}
+
+function getVibeAgentForMode(mode?: SessionMode): string {
+  switch (mode) {
+    case 'planning':
+      return 'plan';
+    case 'manual':
+      return 'default';
+    case 'danger':
+      return 'auto-approve';
+    case 'auto-accept':
+    default:
+      // Vibe's non-interactive default is already auto-approve. Be explicit so
+      // the WebUI mode survives future Vibe default changes.
+      return 'auto-approve';
+  }
 }
 
 /**
@@ -722,28 +1017,92 @@ export function buildOpenCodePermissionJson(mode?: SessionMode): string {
   }
 }
 
-function getCodexApprovalArgs(mode?: SessionMode): string[] {
-  // Codex CLI 0.115+: only --full-auto, --sandbox, --dangerously-bypass-approvals-and-sandbox.
-  // The -a flag does NOT exist for `codex exec`.
-  //
-  // In Docker containers, Landlock sandbox (used by --full-auto and --sandbox workspace-write)
-  // often fails with LandlockRestrict errors because the kernel may not support it or
-  // the container lacks the required capabilities. Use danger-full-access instead.
-  const isDocker = !!process.env.CONTAINER_NAME;
+export type OpenCodePermissionRule = {
+  permission: string;
+  pattern: string;
+  action: 'allow' | 'deny' | 'ask';
+};
+
+export function buildOpenCodePermissionRules(mode?: SessionMode): OpenCodePermissionRule[] {
+  const allowRead: OpenCodePermissionRule[] = [
+    { permission: 'read', pattern: '*', action: 'allow' },
+    { permission: 'list', pattern: '*', action: 'allow' },
+    { permission: 'glob', pattern: '*', action: 'allow' },
+    { permission: 'grep', pattern: '*', action: 'allow' },
+    { permission: 'webfetch', pattern: '*', action: 'allow' },
+    { permission: 'websearch', pattern: '*', action: 'allow' },
+  ];
 
   switch (mode) {
-    case 'manual':
     case 'planning':
-      return isDocker
-        ? ['--sandbox', 'danger-full-access']
-        : ['--sandbox', 'workspace-write'];
+      return [
+        ...allowRead,
+        { permission: 'edit', pattern: '*', action: 'deny' },
+        { permission: 'bash', pattern: '*', action: 'deny' },
+        { permission: 'task', pattern: '*', action: 'deny' },
+        { permission: 'todowrite', pattern: '*', action: 'deny' },
+        { permission: 'external_directory', pattern: '*', action: 'deny' },
+        { permission: 'repo_clone', pattern: '*', action: 'deny' },
+        { permission: 'plan_enter', pattern: '*', action: 'deny' },
+        { permission: 'plan_exit', pattern: '*', action: 'deny' },
+      ];
+    case 'manual':
+      return [
+        ...allowRead,
+        { permission: 'edit', pattern: '*', action: 'ask' },
+        { permission: 'bash', pattern: '*', action: 'ask' },
+        { permission: 'task', pattern: '*', action: 'ask' },
+        { permission: 'todowrite', pattern: '*', action: 'ask' },
+        { permission: 'external_directory', pattern: '*', action: 'ask' },
+        { permission: 'repo_clone', pattern: '*', action: 'ask' },
+      ];
+    case 'danger':
+      return [
+        { permission: '*', pattern: '*', action: 'allow' },
+        { permission: 'question', pattern: '*', action: 'deny' },
+      ];
+    case 'auto-accept':
+    default:
+      return [
+        ...allowRead,
+        { permission: 'edit', pattern: '*', action: 'allow' },
+        { permission: 'bash', pattern: '*', action: 'allow' },
+        { permission: 'task', pattern: '*', action: 'allow' },
+        { permission: 'todowrite', pattern: '*', action: 'allow' },
+        { permission: 'external_directory', pattern: '*', action: 'allow' },
+        { permission: 'repo_clone', pattern: '*', action: 'allow' },
+        { permission: 'question', pattern: '*', action: 'deny' },
+      ];
+  }
+}
+
+function getCodexApprovalArgs(mode?: SessionMode): string[] {
+  // Codex CLI 0.130 `exec` subcommand only exposes:
+  //   -s, --sandbox (read-only | workspace-write | danger-full-access)
+  //   --dangerously-bypass-approvals-and-sandbox
+  // It does NOT expose `--ask-for-approval` or `--full-auto` directly — approval
+  // policy comes via `-c approval_policy=<value>` config override.
+  //
+  // In Docker the Landlock sandbox used by workspace-write often fails with
+  // LandlockRestrict errors (kernel/capability mismatch), so the WebUI default
+  // is danger-full-access there. Operators can override it with
+  // CODEX_WEBUI_SANDBOX_MODE=read-only|workspace-write|danger-full-access.
+  const defaultSandbox = getCodexWebuiSandboxMode();
+  const defaultApproval = getCodexWebuiApprovalPolicy();
+
+  switch (mode) {
+    case 'planning':
+      // Read-only filesystem: agent designs without mutating files. Approval=never
+      // because plans surface through the WebUI, not blocking prompts.
+      return ['--sandbox', 'read-only', '-c', 'approval_policy="never"'];
+    case 'manual':
+      // User-facing approval: surface every shell/file action back to the WebUI.
+      return ['--sandbox', defaultSandbox, '-c', 'approval_policy="untrusted"'];
     case 'danger':
       return ['--dangerously-bypass-approvals-and-sandbox'];
     case 'auto-accept':
     default:
-      return isDocker
-        ? ['--sandbox', 'danger-full-access']
-        : ['--full-auto'];
+      return ['--sandbox', defaultSandbox, '-c', `approval_policy="${defaultApproval}"`];
   }
 }
 
@@ -776,6 +1135,14 @@ export async function isProviderAvailable(provider: CLIProvider): Promise<boolea
   const credPath = config.credentialsPath.replace('~', os.homedir());
 
   try {
+    if (provider === 'codex') {
+      const raw = await fs.readFile(path.join(credPath, 'auth.json'), 'utf-8');
+      const auth = JSON.parse(raw) as {
+        OPENAI_API_KEY?: string | null;
+        tokens?: { access_token?: string | null };
+      };
+      return !!(auth.tokens?.access_token || auth.OPENAI_API_KEY);
+    }
     await fs.access(credPath);
     return true;
   } catch {
@@ -834,18 +1201,26 @@ export function formatInputMessage(provider: CLIProvider, message: string): stri
   switch (provider) {
     case 'claude':
       // Claude uses stream-json input
-      return JSON.stringify({
-        type: 'user',
-        message: {
-          role: 'user',
-          content: message,
-        },
-      }) + '\n';
+      return (
+        JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: message,
+          },
+        }) + '\n'
+      );
 
     case 'codex':
     case 'opencode':
       // Plain text + newline
       return message + '\n';
+
+    case 'vibe':
+      // Vibe takes the prompt via argv (-p), not stdin. The spawner appends -p <message>
+      // to the argv just before exec; we return the raw text here so the manager can
+      // detect the provider and route accordingly.
+      return message;
 
     default:
       return message + '\n';

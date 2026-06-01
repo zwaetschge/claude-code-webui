@@ -87,7 +87,10 @@ function getProjectSettingsPath(projectPath: string): string {
 }
 
 // Get working directory for a session
-async function getSessionWorkingDirectory(sessionId: string, userId: string): Promise<string | null> {
+async function getSessionWorkingDirectory(
+  sessionId: string,
+  userId: string
+): Promise<string | null> {
   const db = getDatabase();
   const session = db
     .prepare('SELECT working_directory FROM sessions WHERE id = ? AND user_id = ?')
@@ -100,168 +103,194 @@ async function getSessionWorkingDirectory(sessionId: string, userId: string): Pr
  * GET /api/claude-settings/global
  * Get global Claude settings
  */
-router.get('/global', requireAuth, asyncHandler(async (_req: Request, res: Response) => {
-  const settingsPath = getGlobalSettingsPath();
-  const settings = await readSettingsFile(settingsPath);
+router.get(
+  '/global',
+  requireAuth,
+  asyncHandler(async (_req: Request, res: Response) => {
+    const settingsPath = getGlobalSettingsPath();
+    const settings = await readSettingsFile(settingsPath);
 
-  res.json({
-    success: true,
-    data: {
-      path: settingsPath,
-      settings,
-      allowPatterns: settings.permissions?.allow || [],
-      denyPatterns: settings.permissions?.deny || [],
-    },
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        path: settingsPath,
+        settings,
+        allowPatterns: settings.permissions?.allow || [],
+        denyPatterns: settings.permissions?.deny || [],
+      },
+    });
+  })
+);
 
 /**
  * GET /api/claude-settings/project/:sessionId
  * Get project-specific Claude settings for a session
  */
-router.get('/project/:sessionId', requireAuth, asyncHandler(async (req: Request, res: Response) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const sessionId = req.params.sessionId;
-  if (!sessionId) {
-    throw new AppError('Missing sessionId', 400, 'VALIDATION_ERROR');
-  }
+router.get(
+  '/project/:sessionId',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const sessionId = req.params.sessionId;
+    if (!sessionId) {
+      throw new AppError('Missing sessionId', 400, 'VALIDATION_ERROR');
+    }
 
-  const workingDirectory = await getSessionWorkingDirectory(sessionId, userId);
+    const workingDirectory = await getSessionWorkingDirectory(sessionId, userId);
 
-  if (!workingDirectory) {
-    throw new AppError('Session not found', 404, 'NOT_FOUND');
-  }
+    if (!workingDirectory) {
+      throw new AppError('Session not found', 404, 'NOT_FOUND');
+    }
 
-  const settingsPath = getProjectSettingsPath(workingDirectory);
-  const settings = await readSettingsFile(settingsPath);
+    const settingsPath = getProjectSettingsPath(workingDirectory);
+    const settings = await readSettingsFile(settingsPath);
 
-  res.json({
-    success: true,
-    data: {
-      path: settingsPath,
-      projectPath: workingDirectory,
-      settings,
-      allowPatterns: settings.permissions?.allow || [],
-      denyPatterns: settings.permissions?.deny || [],
-    },
-  });
-}));
+    res.json({
+      success: true,
+      data: {
+        path: settingsPath,
+        projectPath: workingDirectory,
+        settings,
+        allowPatterns: settings.permissions?.allow || [],
+        denyPatterns: settings.permissions?.deny || [],
+      },
+    });
+  })
+);
 
 /**
  * POST /api/claude-settings/add-pattern
  * Add a permission pattern to settings
  */
-router.post('/add-pattern', requireAuth, asyncHandler(async (req: Request, res: Response) => {
-  const parsed = addPatternSchema.safeParse(req.body);
+router.post(
+  '/add-pattern',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const parsed = addPatternSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    throw new AppError('Invalid request data', 400, 'VALIDATION_ERROR');
-  }
-
-  const { pattern, type, scope, projectPath } = parsed.data;
-
-  let settingsPath: string;
-  let actualProjectPath: string | undefined;
-
-  if (scope === 'global') {
-    settingsPath = getGlobalSettingsPath();
-  } else {
-    // For project scope, we need the project path
-    if (!projectPath) {
-      throw new AppError('Project path is required for project scope', 400, 'MISSING_PROJECT_PATH');
+    if (!parsed.success) {
+      throw new AppError('Invalid request data', 400, 'VALIDATION_ERROR');
     }
 
-    actualProjectPath = projectPath;
-    settingsPath = getProjectSettingsPath(projectPath);
-  }
+    const { pattern, type, scope, projectPath } = parsed.data;
 
-  // Read existing settings
-  const settings = await readSettingsFile(settingsPath);
+    let settingsPath: string;
+    let actualProjectPath: string | undefined;
 
-  // Initialize permissions if needed
-  if (!settings.permissions) {
-    settings.permissions = {};
-  }
+    if (scope === 'global') {
+      settingsPath = getGlobalSettingsPath();
+    } else {
+      // For project scope, we need the project path
+      if (!projectPath) {
+        throw new AppError(
+          'Project path is required for project scope',
+          400,
+          'MISSING_PROJECT_PATH'
+        );
+      }
 
-  const listKey = type === 'allow' ? 'allow' : 'deny';
-  if (!settings.permissions[listKey]) {
-    settings.permissions[listKey] = [];
-  }
+      actualProjectPath = projectPath;
+      settingsPath = getProjectSettingsPath(projectPath);
+    }
 
-  // Add pattern if not already present
-  const patterns = settings.permissions[listKey]!;
-  if (!patterns.includes(pattern)) {
-    patterns.push(pattern);
-  }
+    // Read existing settings
+    const settings = await readSettingsFile(settingsPath);
 
-  // Write updated settings
-  await writeSettingsFile(settingsPath, settings);
+    // Initialize permissions if needed
+    if (!settings.permissions) {
+      settings.permissions = {};
+    }
 
-  console.log(`[CLAUDE-SETTINGS] Added ${type} pattern "${pattern}" to ${scope} settings`);
+    const listKey = type === 'allow' ? 'allow' : 'deny';
+    if (!settings.permissions[listKey]) {
+      settings.permissions[listKey] = [];
+    }
 
-  res.json({
-    success: true,
-    data: {
-      pattern,
-      type,
-      scope,
-      path: settingsPath,
-      projectPath: actualProjectPath,
-      patterns: patterns,
-    },
-  });
-}));
+    // Add pattern if not already present
+    const patterns = settings.permissions[listKey]!;
+    if (!patterns.includes(pattern)) {
+      patterns.push(pattern);
+    }
+
+    // Write updated settings
+    await writeSettingsFile(settingsPath, settings);
+
+    console.log(`[CLAUDE-SETTINGS] Added ${type} pattern "${pattern}" to ${scope} settings`);
+
+    res.json({
+      success: true,
+      data: {
+        pattern,
+        type,
+        scope,
+        path: settingsPath,
+        projectPath: actualProjectPath,
+        patterns: patterns,
+      },
+    });
+  })
+);
 
 /**
  * POST /api/claude-settings/remove-pattern
  * Remove a permission pattern from settings
  */
-router.post('/remove-pattern', requireAuth, asyncHandler(async (req: Request, res: Response) => {
-  const parsed = removePatternSchema.safeParse(req.body);
+router.post(
+  '/remove-pattern',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const parsed = removePatternSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    throw new AppError('Invalid request data', 400, 'VALIDATION_ERROR');
-  }
-
-  const { pattern, type, scope, projectPath } = parsed.data;
-
-  let settingsPath: string;
-
-  if (scope === 'global') {
-    settingsPath = getGlobalSettingsPath();
-  } else {
-    if (!projectPath) {
-      throw new AppError('Project path is required for project scope', 400, 'MISSING_PROJECT_PATH');
+    if (!parsed.success) {
+      throw new AppError('Invalid request data', 400, 'VALIDATION_ERROR');
     }
-    settingsPath = getProjectSettingsPath(projectPath);
-  }
 
-  // Read existing settings
-  const settings = await readSettingsFile(settingsPath);
+    const { pattern, type, scope, projectPath } = parsed.data;
 
-  const listKey = type === 'allow' ? 'allow' : 'deny';
-  const patterns = settings.permissions?.[listKey];
+    let settingsPath: string;
 
-  if (patterns) {
-    const index = patterns.indexOf(pattern);
-    if (index !== -1) {
-      patterns.splice(index, 1);
-      await writeSettingsFile(settingsPath, settings);
-      console.log(`[CLAUDE-SETTINGS] Removed ${type} pattern "${pattern}" from ${scope} settings`);
+    if (scope === 'global') {
+      settingsPath = getGlobalSettingsPath();
+    } else {
+      if (!projectPath) {
+        throw new AppError(
+          'Project path is required for project scope',
+          400,
+          'MISSING_PROJECT_PATH'
+        );
+      }
+      settingsPath = getProjectSettingsPath(projectPath);
     }
-  }
 
-  res.json({
-    success: true,
-    data: {
-      pattern,
-      type,
-      scope,
-      path: settingsPath,
-      patterns: patterns || [],
-    },
-  });
-}));
+    // Read existing settings
+    const settings = await readSettingsFile(settingsPath);
+
+    const listKey = type === 'allow' ? 'allow' : 'deny';
+    const patterns = settings.permissions?.[listKey];
+
+    if (patterns) {
+      const index = patterns.indexOf(pattern);
+      if (index !== -1) {
+        patterns.splice(index, 1);
+        await writeSettingsFile(settingsPath, settings);
+        console.log(
+          `[CLAUDE-SETTINGS] Removed ${type} pattern "${pattern}" from ${scope} settings`
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        pattern,
+        type,
+        scope,
+        path: settingsPath,
+        patterns: patterns || [],
+      },
+    });
+  })
+);
 
 /**
  * Helper function to add a pattern (used by permissions route)

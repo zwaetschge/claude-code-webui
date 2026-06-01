@@ -22,8 +22,7 @@ export const usePanelDockStore = create<PanelDockState>()(
         set((state) => ({
           pinned: { ...state.pinned, [panel]: pinned },
         })),
-      unpinAll: () =>
-        set({ pinned: { files: false, tasks: false, config: false, tools: false } }),
+      unpinAll: () => set({ pinned: { files: false, tasks: false, config: false, tools: false } }),
     }),
     {
       name: 'claude-webui-panel-dock',

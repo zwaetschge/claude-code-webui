@@ -6,10 +6,17 @@ import os from 'os';
 import path from 'path';
 import { URL } from 'url';
 import type { SessionMode } from '@claude-code-webui/shared';
+import { buildOpenCodePermissionRules } from '../cli-providers.js';
+import { config } from '../../config.js';
+import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
 
 const DEBUG_LOG = '/app/packages/backend/data/oc-debug.log';
 function ocDbg(line: string): void {
-  try { fs.appendFileSync(DEBUG_LOG, new Date().toISOString() + ' ' + line + '\n'); } catch (e) { console.error('[OC-DBG-ERR]', e); }
+  try {
+    fs.appendFileSync(DEBUG_LOG, new Date().toISOString() + ' ' + line + '\n');
+  } catch (e) {
+    console.error('[OC-DBG-ERR]', e);
+  }
 }
 
 // The OpenCode SSE `GET /event` stream delivers every event for every session
@@ -35,8 +42,16 @@ interface PromptOptions {
   model?: string | null;
   agent?: string | null;
   mode?: SessionMode;
+  variant?: string | null;
   /** Session working directory, used to sandbox tools. */
   directory?: string;
+}
+
+interface CreateSessionOptions {
+  model?: string | null;
+  agent?: string | null;
+  mode?: SessionMode;
+  variant?: string | null;
 }
 
 const READY_LINE_RE = /opencode server listening on (http:\/\/[^\s]+)/i;
@@ -69,24 +84,27 @@ class OpencodeServer {
   // compensate by polling /session/{id}/message after each prompt and
   // synthesising the events the dispatcher would have seen.
   private pollTimers = new Map<string, NodeJS.Timeout>();
-  private pollState = new Map<string, {
-    // partID → length of text/output already surfaced, so we only re-emit growth
-    textLens: Map<string, number>;
-    // partID → last observed tool state.status, so we don't re-emit unchanged states
-    toolStatus: Map<string, string>;
-    // messageIDs we've already flushed as finished
-    finishedMessages: Set<string>;
-    // idle flag: once we emit session.idle we stop polling
-    idled: boolean;
-    // Timestamp when the last assistant message landed in a terminal state
-    // (finish=stop). We wait 2s of no further activity before firing idle —
-    // opencode's multi-step loop creates a fresh assistant message per step
-    // with finish=tool-calls/length between steps, so we can only be sure
-    // the run is over when finish=stop stays put.
-    idleCandidateAt: number | null;
-    // When polling started — safety cap so a stuck session doesn't poll forever.
-    startedAt: number;
-  }>();
+  private pollState = new Map<
+    string,
+    {
+      // partID → length of text/output already surfaced, so we only re-emit growth
+      textLens: Map<string, number>;
+      // partID → last observed tool state.status, so we don't re-emit unchanged states
+      toolStatus: Map<string, string>;
+      // messageIDs we've already flushed as finished
+      finishedMessages: Set<string>;
+      // idle flag: once we emit session.idle we stop polling
+      idled: boolean;
+      // Timestamp when the last assistant message landed in a terminal state
+      // (finish=stop). We wait 2s of no further activity before firing idle —
+      // opencode's multi-step loop creates a fresh assistant message per step
+      // with finish=tool-calls/length between steps, so we can only be sure
+      // the run is over when finish=stop stays put.
+      idleCandidateAt: number | null;
+      // When polling started — safety cap so a stuck session doesn't poll forever.
+      startedAt: number;
+    }
+  >();
 
   private events = new EventEmitter();
 
@@ -111,15 +129,17 @@ class OpencodeServer {
     return new Promise<string>((resolve, reject) => {
       const env = {
         ...process.env,
+        ...buildIntegrationEnv(),
         OPENCODE_CONFIG_DIR: path.join(os.homedir(), '.config', 'opencode'),
         OPENCODE_DATA_DIR: path.join(os.homedir(), '.local', 'share', 'opencode'),
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        WEBUI_HOOK_SECRET: config.hookSecret,
       };
 
-      const proc = cpSpawn(
-        'opencode',
-        ['serve', '--port', '0', '--hostname', '127.0.0.1'],
-        { env, stdio: ['ignore', 'pipe', 'pipe'] }
-      );
+      const proc = cpSpawn('opencode', ['serve', '--port', '0', '--hostname', '127.0.0.1'], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
       this.proc = proc;
       let ready = false;
@@ -163,7 +183,11 @@ class OpencodeServer {
       // the first session attempt forever.
       setTimeout(() => {
         if (!ready) {
-          try { proc.kill('SIGKILL'); } catch { /* noop */ }
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
           reject(new Error('opencode serve did not announce readiness within 15s'));
         }
       }, 15_000);
@@ -230,7 +254,13 @@ class OpencodeServer {
           ocDbg('[SSE] connected baseUrl=' + this.baseUrl);
           this.sseConnected = true;
           const waiters = this.sseReadyWaiters.splice(0);
-          for (const w of waiters) { try { w(); } catch { /* noop */ } }
+          for (const w of waiters) {
+            try {
+              w();
+            } catch {
+              /* noop */
+            }
+          }
 
           let buffer = '';
           res.on('data', (chunk: string) => {
@@ -272,9 +302,17 @@ class OpencodeServer {
       // so shutdown()/reconnect can tear it down.
       const controller = new AbortController();
       this.sseController = controller;
-      controller.signal.addEventListener('abort', () => {
-        try { req.destroy(); } catch { /* noop */ }
-      }, { once: true });
+      controller.signal.addEventListener(
+        'abort',
+        () => {
+          try {
+            req.destroy();
+          } catch {
+            /* noop */
+          }
+        },
+        { once: true }
+      );
 
       req.on('error', (err) => {
         this.sseConnected = false;
@@ -297,7 +335,10 @@ class OpencodeServer {
         if (i >= 0) this.sseReadyWaiters.splice(i, 1);
         reject(new Error(`SSE did not reconnect within ${timeoutMs}ms`));
       }, timeoutMs);
-      const done = () => { clearTimeout(timer); resolve(); };
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
       this.sseReadyWaiters.push(done);
     });
   }
@@ -306,7 +347,13 @@ class OpencodeServer {
     const sid = extractSessionId(evt);
     if (evt.type !== 'server.heartbeat') {
       const routed = sid && this.handlers.has(sid);
-      ocDbg(`[OC-DISPATCH] type=${evt.type} sid=${sid ?? 'NONE'} routed=${routed} handlers=${Array.from(this.handlers.keys()).map(k=>k.slice(-10)).join(',')}`);
+      ocDbg(
+        `[OC-DISPATCH] type=${evt.type} sid=${sid ?? 'NONE'} routed=${routed} handlers=${Array.from(
+          this.handlers.keys()
+        )
+          .map((k) => k.slice(-10))
+          .join(',')}`
+      );
     }
     if (process.env.OPENCODE_DEBUG_EVENTS === '1') {
       const routed = sid && this.handlers.has(sid);
@@ -324,7 +371,11 @@ class OpencodeServer {
     }
     // Always fan out to global handlers (e.g. for logging).
     for (const h of this.globalHandlers) {
-      try { h(evt); } catch { /* noop */ }
+      try {
+        h(evt);
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -343,14 +394,26 @@ class OpencodeServer {
   }
 
   /** Create a new opencode session, returns the session ID. */
-  async createSession(cwd: string): Promise<string> {
+  async createSession(cwd: string, opts: CreateSessionOptions = {}): Promise<string> {
     await this.ensureStarted();
     await this.waitForSseReady();
     const url = `${this.baseUrl}/session?directory=${encodeURIComponent(cwd)}`;
+    const body: Record<string, unknown> = {};
+    const model = opts.model ? splitModel(opts.model) : null;
+    if (model) {
+      body.model = {
+        id: model.modelID,
+        providerID: model.providerID,
+        ...(opts.variant ? { variant: normalizeVariant(opts.variant) } : {}),
+      };
+    }
+    if (opts.agent) body.agent = opts.agent;
+    body.permission = buildOpenCodePermissionRules(opts.mode);
+
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       throw new Error(`createSession failed: ${res.status} ${await res.text()}`);
@@ -378,6 +441,7 @@ class OpencodeServer {
       if (model) body.model = model;
     }
     if (opts.agent) body.agent = opts.agent;
+    if (opts.variant) body.variant = normalizeVariant(opts.variant);
 
     // NOTE: Do not pass a `tools` map here. When `tools` is present in the
     // /prompt_async body, opencode silently suppresses ALL bus events
@@ -386,7 +450,9 @@ class OpencodeServer {
     // policy has to be configured via session/agent config instead.
     const qs = opts.directory ? `?directory=${encodeURIComponent(opts.directory)}` : '';
     const url = `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async${qs}`;
-    ocDbg(`[OC-SEND] sid=${opencodeSessionId} subscribed=${this.handlers.has(opencodeSessionId)} handlerCount=${this.handlers.size} sseConnected=${this.sseConnected} body=${JSON.stringify(body).slice(0,200)}`);
+    ocDbg(
+      `[OC-SEND] sid=${opencodeSessionId} subscribed=${this.handlers.has(opencodeSessionId)} handlerCount=${this.handlers.size} sseConnected=${this.sseConnected} body=${JSON.stringify(body).slice(0, 200)}`
+    );
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -456,7 +522,7 @@ class OpencodeServer {
     }
 
     const res = await fetch(
-      `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/message`,
+      `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/message`
     );
     if (!res.ok) return;
     const data = (await res.json()) as Array<{
@@ -574,13 +640,30 @@ class OpencodeServer {
     }
   }
 
+  async replyPermission(
+    requestId: string,
+    reply: 'once' | 'always' | 'reject',
+    message?: string
+  ): Promise<boolean> {
+    await this.ensureStarted();
+    const url = `${this.baseUrl}/permission/${encodeURIComponent(requestId)}/reply`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
+    });
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      throw new Error(`permission reply failed: ${res.status} ${await res.text()}`);
+    }
+    return true;
+  }
+
   /** Confirm the session still exists in the server (e.g. after a server restart). */
   async sessionExists(opencodeSessionId: string): Promise<boolean> {
     if (!this.baseUrl) return false;
     try {
-      const res = await fetch(
-        `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}`,
-      );
+      const res = await fetch(`${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}`);
       return res.ok;
     } catch {
       return false;
@@ -594,16 +677,27 @@ class OpencodeServer {
     for (const t of this.pollTimers.values()) clearInterval(t);
     this.pollTimers.clear();
     this.pollState.clear();
-    try { this.sseController?.abort(); } catch { /* noop */ }
+    try {
+      this.sseController?.abort();
+    } catch {
+      /* noop */
+    }
     const proc = this.proc;
     if (proc && !proc.killed) {
       proc.kill('SIGTERM');
       await new Promise<void>((r) => {
         const t = setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch { /* noop */ }
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
           r();
         }, 2000);
-        proc.once('exit', () => { clearTimeout(t); r(); });
+        proc.once('exit', () => {
+          clearTimeout(t);
+          r();
+        });
       });
     }
     this.proc = null;
@@ -636,6 +730,15 @@ function splitModel(slashForm: string): { providerID: string; modelID: string } 
     providerID: slashForm.slice(0, idx),
     modelID: slashForm.slice(idx + 1),
   };
+}
+
+function normalizeVariant(variant: string): string {
+  const normalized = variant
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (normalized === 'extra_high' || normalized === 'xhigh') return 'max';
+  return normalized;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -1,19 +1,15 @@
-import { nanoid } from "nanoid";
+import { nanoid } from 'nanoid';
 import type {
   DelegatedTaskStatus,
   DelegatedTaskType,
   DelegatedTaskInfo,
   DelegatedTaskSubmitRequest,
   DelegatedTaskSubmitResponse,
-} from "@claude-code-webui/shared";
+} from '@claude-code-webui/shared';
 
 export interface TaskRunner {
   taskType: string;
-  execute(
-    taskId: string,
-    params: Record<string, unknown>,
-    ctx: TaskContext
-  ): Promise<unknown>;
+  execute(taskId: string, params: Record<string, unknown>, ctx: TaskContext): Promise<unknown>;
   cancel?(taskId: string): void;
   handleInput?(taskId: string, data: unknown): void;
 }
@@ -71,7 +67,7 @@ export class TaskManager {
     const task: InternalTask = {
       id,
       taskType: req.taskType,
-      status: "queued",
+      status: 'queued',
       requestedBy: req.requestedBy,
       createdAt: now,
       waiters: [],
@@ -84,7 +80,7 @@ export class TaskManager {
 
     return {
       taskId: id,
-      status: "queued",
+      status: 'queued',
       createdAt: new Date(now).toISOString(),
     };
   }
@@ -99,7 +95,7 @@ export class TaskManager {
     if (!task) return null;
 
     // If already in a terminal/awaiting state, return immediately
-    if (task.status !== "queued" && task.status !== "running") {
+    if (task.status !== 'queued' && task.status !== 'running') {
       return this.toInfo(task);
     }
 
@@ -123,7 +119,7 @@ export class TaskManager {
 
   sendInput(taskId: string, data: unknown): boolean {
     const task = this.tasks.get(taskId);
-    if (!task || task.status !== "awaiting_input") return false;
+    if (!task || task.status !== 'awaiting_input') return false;
 
     const runner = this.runners.get(task.taskType);
     if (!runner?.handleInput) return false;
@@ -139,7 +135,7 @@ export class TaskManager {
     const runner = this.runners.get(task.taskType);
     runner?.cancel?.(taskId);
 
-    task.status = "cancelled";
+    task.status = 'cancelled';
     task.completedAt = Date.now();
     this.notifyWaiters(task);
     return true;
@@ -160,7 +156,7 @@ export class TaskManager {
     runner: TaskRunner,
     params: Record<string, unknown>
   ): Promise<void> {
-    task.status = "running";
+    task.status = 'running';
     task.startedAt = Date.now();
     this.notifyWaiters(task);
 
@@ -181,14 +177,14 @@ export class TaskManager {
 
     try {
       const result = await runner.execute(task.id, params, ctx);
-      if (task.status === "running" || task.status === "awaiting_input") {
-        task.status = "completed";
+      if (task.status === 'running' || task.status === 'awaiting_input') {
+        task.status = 'completed';
         task.result = result ?? task.result;
       }
     } catch (err) {
       // cancelTask() may have set status externally during execution
-      if ((task.status as DelegatedTaskStatus) !== "cancelled") {
-        task.status = "error";
+      if ((task.status as DelegatedTaskStatus) !== 'cancelled') {
+        task.status = 'error';
         task.error = err instanceof Error ? err.message : String(err);
       }
     } finally {

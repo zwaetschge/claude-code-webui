@@ -24,10 +24,14 @@ const updateNoteSchema = z.object({
   pinned: z.boolean().optional(),
 });
 
-function userOwnsSession(db: ReturnType<typeof getDatabase>, sessionId: string, userId: string): boolean {
-  const row = db.prepare(`SELECT 1 AS ok FROM sessions WHERE id = ? AND user_id = ?`).get(sessionId, userId) as
-    | { ok: number }
-    | undefined;
+function userOwnsSession(
+  db: ReturnType<typeof getDatabase>,
+  sessionId: string,
+  userId: string
+): boolean {
+  const row = db
+    .prepare(`SELECT 1 AS ok FROM sessions WHERE id = ? AND user_id = ?`)
+    .get(sessionId, userId) as { ok: number } | undefined;
   return !!row;
 }
 
@@ -104,7 +108,10 @@ router.post('/', requireAuth, (req, res) => {
   if (!parsed.success) {
     const response: ApiResponse<null> = {
       success: false,
-      error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0]?.message || 'Invalid request' },
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: parsed.error.issues[0]?.message || 'Invalid request',
+      },
     };
     return res.status(400).json(response);
   }
@@ -122,9 +129,20 @@ router.post('/', requireAuth, (req, res) => {
     const id = nanoid();
     db.prepare(
       `INSERT INTO notes (id, user_id, session_id, title, content, pinned) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, authReq.userId, sessionId || null, title || 'Untitled', content || '', pinned ? 1 : 0);
+    ).run(
+      id,
+      authReq.userId,
+      sessionId || null,
+      title || 'Untitled',
+      content || '',
+      pinned ? 1 : 0
+    );
 
-    const note = db.prepare(`SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ?`).get(id) as Note;
+    const note = db
+      .prepare(
+        `SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ?`
+      )
+      .get(id) as Note;
 
     const response: ApiResponse<Note> = {
       success: true,
@@ -150,7 +168,10 @@ router.patch('/:id', requireAuth, (req, res) => {
   if (!parsed.success) {
     const response: ApiResponse<null> = {
       success: false,
-      error: { code: 'VALIDATION_ERROR', message: parsed.error.issues[0]?.message || 'Invalid request' },
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: parsed.error.issues[0]?.message || 'Invalid request',
+      },
     };
     return res.status(400).json(response);
   }
@@ -159,7 +180,9 @@ router.patch('/:id', requireAuth, (req, res) => {
   try {
     // Check ownership
     const existing = db
-      .prepare(`SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?`)
+      .prepare(
+        `SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?`
+      )
       .get(id, authReq.userId) as Note | undefined;
 
     if (!existing) {
@@ -202,7 +225,11 @@ router.patch('/:id', requireAuth, (req, res) => {
     values.push(id as string);
     db.prepare(`UPDATE notes SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-    const note = db.prepare(`SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ?`).get(id) as Note;
+    const note = db
+      .prepare(
+        `SELECT id, user_id, session_id, title, content, pinned, created_at, updated_at FROM notes WHERE id = ?`
+      )
+      .get(id) as Note;
 
     const response: ApiResponse<Note> = {
       success: true,

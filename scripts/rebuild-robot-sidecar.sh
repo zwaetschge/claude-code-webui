@@ -10,6 +10,7 @@ set -e
 
 WEBUI_DIR="/webui"
 COMPOSE_FILE="${WEBUI_DIR}/docker-compose.yml"
+OVERRIDE_FILE="${WEBUI_DIR}/docker-compose.override.yml"
 TRIGGER_FILE="${WEBUI_DIR}/data/rebuild-trigger.json"
 STATUS_FILE="${WEBUI_DIR}/data/rebuild-robot-status.json"
 REPORT_FILE="${WEBUI_DIR}/REBUILD_ROBOT_REPORT.md"
@@ -23,7 +24,22 @@ MAIN_SERVICE="claude-code-webui"
 COMPOSE_PROJECT="claude-code-webui"
 POLL_INTERVAL=5
 HEARTBEAT_INTERVAL=10
-ROBOT_VERSION="2.1-sidecar"
+ROBOT_VERSION="2.2-sidecar"
+
+# Compose `-f` flag set. The override file is gitignored and site-specific
+# (Traefik labels, Unraid absolute mounts, repair-bot sidecar, etc.). When
+# you pass `-f` explicitly, Compose disables auto-discovery of override.yml
+# — so we must list both files here, otherwise the rebuilt container comes
+# up with portable defaults (relative ./data, ./config, no Traefik routes).
+# Build the flag set lazily so a fresh self-host without an override still
+# works.
+compose_files_flags() {
+  if [ -f "$OVERRIDE_FILE" ]; then
+    printf -- '-f %s -f %s' "$COMPOSE_FILE" "$OVERRIDE_FILE"
+  else
+    printf -- '-f %s' "$COMPOSE_FILE"
+  fi
+}
 
 # Timestamp helper
 timestamp() {
@@ -95,17 +111,17 @@ write_report() {
 
 ### Phase 1: Build
 \`\`\`
-docker compose -f ${COMPOSE_FILE} -p ${COMPOSE_PROJECT} build ${MAIN_SERVICE}
+docker compose $(compose_files_flags) -p ${COMPOSE_PROJECT} build ${MAIN_SERVICE}
 \`\`\`
 
 ### Phase 2: Container Stop
 \`\`\`
-docker compose -f ${COMPOSE_FILE} -p ${COMPOSE_PROJECT} stop ${MAIN_SERVICE}
+docker compose $(compose_files_flags) -p ${COMPOSE_PROJECT} stop ${MAIN_SERVICE}
 \`\`\`
 
 ### Phase 3: Container Start
 \`\`\`
-docker compose -f ${COMPOSE_FILE} -p ${COMPOSE_PROJECT} up -d ${MAIN_SERVICE}
+docker compose $(compose_files_flags) -p ${COMPOSE_PROJECT} up -d ${MAIN_SERVICE}
 \`\`\`
 
 EOF
@@ -148,9 +164,10 @@ do_rebuild() {
   # Phase 1: Build (only main service)
   log_info "Phase 1: Building Docker image for ${MAIN_SERVICE}..."
 
-  _build_cmd="docker compose -f ${COMPOSE_FILE} -p ${COMPOSE_PROJECT} build ${MAIN_SERVICE}"
+  _compose_flags=$(compose_files_flags)
+  _build_cmd="docker compose ${_compose_flags} -p ${COMPOSE_PROJECT} build ${MAIN_SERVICE}"
   if [ "$_no_cache" = "true" ]; then
-    _build_cmd="docker compose -f ${COMPOSE_FILE} -p ${COMPOSE_PROJECT} build --no-cache ${MAIN_SERVICE}"
+    _build_cmd="docker compose ${_compose_flags} -p ${COMPOSE_PROJECT} build --no-cache ${MAIN_SERVICE}"
   fi
 
   if _build_output=$($_build_cmd 2>&1); then
@@ -163,41 +180,12 @@ do_rebuild() {
     return 1
   fi
 
-  # Phase 2: Handover + Stop main container
-  log_info "Phase 2: Handover und Stop ${MAIN_SERVICE}..."
-  write_status "stopping" "Handover wird vorbereitet..." "handover"
+  # Phase 2: Stop main container
+  log_info "Phase 2: Stop ${MAIN_SERVICE}..."
 
-  # 2a: Prepare shutdown via API (notify clients, get active session count)
-  _active_sessions=0
-  _handover_response=""
-  if _handover_response=$(wget -qO- --post-data='{"reason":"rebuild"}' \
-       --header="Content-Type: application/json" \
-       "http://${MAIN_SERVICE}:3001/api/handover/prepare-shutdown" 2>&1); then
-    _active_sessions=$(echo "$_handover_response" | grep -o '"activeSessions":[0-9]*' | grep -o '[0-9]*' || echo "0")
-    log_info "Handover bestätigt. Aktive Sessions: ${_active_sessions}"
-  else
-    log_warn "Handover-API nicht erreichbar (Container evtl. schon gestoppt). Fahre fort..."
-  fi
-
-  # 2b: Write handover file for main container to read on restart
-  cat > "${WEBUI_DIR}/data/container-handover.json" << HEOF
-{
-  "from": "repair-bot",
-  "to": "${MAIN_SERVICE}",
-  "reason": "rebuild",
-  "activeSessions": ${_active_sessions},
-  "timestamp": "$(iso_timestamp)",
-  "message": "Rebuild durch Repair-Bot. ${_active_sessions} aktive Session(s) unterbrochen."
-}
-HEOF
-  log_info "Handover-File geschrieben"
-
-  # 2c: Give clients time to see the shutdown warning
-  sleep 3
-
-  # 2d: Stop the container
   write_status "stopping" "Container wird gestoppt..." "stop"
-  if docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" stop "$MAIN_SERVICE" 2>&1; then
+  # shellcheck disable=SC2086
+  if docker compose ${_compose_flags} -p "$COMPOSE_PROJECT" stop "$MAIN_SERVICE" 2>&1; then
     log_success "Container gestoppt!"
   else
     log_warn "Container stoppen hatte Probleme, versuche fortzufahren..."
@@ -205,7 +193,8 @@ HEOF
 
   # Remove stopped container to avoid name conflicts on recreate
   log_info "Phase 2b: Removing stopped container..."
-  docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" rm -f "$MAIN_SERVICE" 2>&1 || true
+  # shellcheck disable=SC2086
+  docker compose ${_compose_flags} -p "$COMPOSE_PROJECT" rm -f "$MAIN_SERVICE" 2>&1 || true
 
   sleep 2
 
@@ -213,7 +202,8 @@ HEOF
   log_info "Phase 3: Starting ${MAIN_SERVICE} with new image..."
   write_status "starting" "Neuer Container wird gestartet..." "start"
 
-  if docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" up -d --no-deps "$MAIN_SERVICE" 2>&1; then
+  # shellcheck disable=SC2086
+  if docker compose ${_compose_flags} -p "$COMPOSE_PROJECT" up -d --no-deps "$MAIN_SERVICE" 2>&1; then
     log_success "Container gestartet!"
   else
     log_error "Container Start fehlgeschlagen!"

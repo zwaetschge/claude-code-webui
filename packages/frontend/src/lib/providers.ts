@@ -2,19 +2,22 @@ import type { CLIProvider as CLIProviderType } from '@claude-code-webui/shared';
 export type { CLIProvider } from '@claude-code-webui/shared';
 type CLIProvider = CLIProviderType;
 
-export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode';
+export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
 
 export const DEFAULT_UI_PROVIDER: UiProvider = 'plum';
 export const UI_PROVIDER_STORAGE_KEY = 'ui-provider';
 
-export const UI_PROVIDER_META: Record<UiProvider, {
-  id: UiProvider;
-  label: string;
-  productName: string;
-  tagline: string;
-  loginCta: string;
-  description: string;
-}> = {
+export const UI_PROVIDER_META: Record<
+  UiProvider,
+  {
+    id: UiProvider;
+    label: string;
+    productName: string;
+    tagline: string;
+    loginCta: string;
+    description: string;
+  }
+> = {
   plum: {
     id: 'plum',
     label: 'Plum',
@@ -47,45 +50,65 @@ export const UI_PROVIDER_META: Record<UiProvider, {
     loginCta: 'Continue with OpenCode',
     description: 'OpenCode CLI with 75+ LLM providers. Default: GLM 5.1.',
   },
+  vibe: {
+    id: 'vibe',
+    label: 'Vibe',
+    productName: 'Mistral Vibe',
+    tagline: 'Mistral',
+    loginCta: 'Continue with Mistral Vibe',
+    description: 'Mistral Vibe CLI with Devstral/Codestral coding models.',
+  },
 };
 
 export const CLI_PROVIDER_LABEL: Record<CLIProvider, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
   opencode: 'OpenCode',
+  vibe: 'Mistral Vibe',
 };
 
 export const CLI_PROVIDER_ICON: Record<CLIProvider, string> = {
   claude: 'C',
   codex: 'O',
   opencode: '⚡',
+  vibe: 'M',
 };
 
 export const CLI_PROVIDER_DEFAULT_MODEL: Record<CLIProvider, string> = {
   claude: 'sonnet',
-  codex: 'gpt-5.4',
+  codex: 'gpt-5.5',
   opencode: 'z-ai/glm-5.1',
+  vibe: 'mistral-vibe-cli-latest',
 };
 
-
-export const CLI_PROVIDER_LIMIT_LABELS: Record<CLIProvider, {
-  session: { title: string; subtitle?: string };
-  weeklyAll?: { title: string; subtitle?: string };
-  weeklySonnet?: { title: string; subtitle?: string };
-}> = {
+export const CLI_PROVIDER_LIMIT_LABELS: Record<
+  CLIProvider,
+  {
+    session: { title: string; subtitle?: string };
+    weeklyAll?: { title: string; subtitle?: string };
+    weeklySonnet?: { title: string; subtitle?: string };
+  }
+> = {
   claude: {
     session: { title: 'Session' },
     weeklyAll: { title: 'Weekly', subtitle: 'All' },
     weeklySonnet: { title: 'Weekly', subtitle: 'Sonnet' },
   },
   codex: {
-    session: { title: 'Session' },
-    weeklyAll: { title: 'Weekly', subtitle: 'All' },
-    weeklySonnet: { title: 'Weekly', subtitle: 'Sonnet' },
+    // Codex limits come from /backend-api/codex/usage:
+    //   primary_window  → 5h "session" budget
+    //   secondary_window → 7d weekly budget
+    // Codex has no per-model split (no Sonnet equivalent) — the sevenDaySonnet
+    // field is intentionally null and the third bar is hidden.
+    session: { title: '5h', subtitle: 'Session' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Total' },
   },
   opencode: {
     session: { title: 'Session' },
     weeklyAll: { title: 'Weekly', subtitle: 'All' },
+  },
+  vibe: {
+    session: { title: 'Session' },
   },
 };
 
@@ -93,13 +116,15 @@ const CLI_TO_UI: Record<CLIProvider, UiProvider> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  vibe: 'vibe',
 };
 
 const UI_TO_CLI: Record<UiProvider, CLIProvider> = {
-  plum: 'claude',
+  plum: 'codex',
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  vibe: 'vibe',
 };
 
 export function normalizeUiProvider(value?: string | null): UiProvider {
@@ -107,6 +132,7 @@ export function normalizeUiProvider(value?: string | null): UiProvider {
   if (key === 'plum') return 'plum';
   if (key === 'codex') return 'codex';
   if (key === 'opencode') return 'opencode';
+  if (key === 'vibe') return 'vibe';
   return 'plum';
 }
 
@@ -139,7 +165,13 @@ export function applyProviderClass(provider: UiProvider): void {
     return;
   }
   const root = document.documentElement;
-  root.classList.remove('provider-plum', 'provider-claude', 'provider-codex', 'provider-opencode');
+  root.classList.remove(
+    'provider-plum',
+    'provider-claude',
+    'provider-codex',
+    'provider-opencode',
+    'provider-vibe'
+  );
   root.classList.add(`provider-${provider}`);
   root.setAttribute('data-provider', provider);
 }

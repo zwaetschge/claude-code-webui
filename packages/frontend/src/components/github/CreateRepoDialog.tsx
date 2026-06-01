@@ -86,9 +86,7 @@ export function CreateRepoDialog({
             <Github className="h-5 w-5" />
             Create GitHub Repository
           </DialogTitle>
-          <DialogDescription>
-            Create a new repository on GitHub
-          </DialogDescription>
+          <DialogDescription>Create a new repository on GitHub</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -121,36 +119,22 @@ export function CreateRepoDialog({
               ) : (
                 <Globe className="h-4 w-4 text-muted-foreground" />
               )}
-              <Label htmlFor="private">
-                {isPrivate ? 'Private' : 'Public'}
-              </Label>
+              <Label htmlFor="private">{isPrivate ? 'Private' : 'Public'}</Label>
             </div>
-            <Switch
-              id="private"
-              checked={isPrivate}
-              onCheckedChange={setIsPrivate}
-            />
+            <Switch id="private" checked={isPrivate} onCheckedChange={setIsPrivate} />
           </div>
 
           {!workingDirectory && (
             <div className="flex items-center justify-between">
               <Label htmlFor="autoInit">Initialize with README</Label>
-              <Switch
-                id="autoInit"
-                checked={autoInit}
-                onCheckedChange={setAutoInit}
-              />
+              <Switch id="autoInit" checked={autoInit} onCheckedChange={setAutoInit} />
             </div>
           )}
 
           {workingDirectory && (
             <div className="flex items-center justify-between">
               <Label htmlFor="addRemote">Add as origin remote</Label>
-              <Switch
-                id="addRemote"
-                checked={addRemote}
-                onCheckedChange={setAddRemote}
-              />
+              <Switch id="addRemote" checked={addRemote} onCheckedChange={setAddRemote} />
             </div>
           )}
 

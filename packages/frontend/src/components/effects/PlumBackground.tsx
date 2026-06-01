@@ -39,9 +39,7 @@ export function PlumBackground({ className, enableCursorGlow = true }: PlumBackg
   }, [enableCursorGlow]);
 
   return (
-    <div
-      className={cn("fixed inset-0 overflow-hidden pointer-events-none", className)}
-    >
+    <div className={cn('fixed inset-0 overflow-hidden pointer-events-none', className)}>
       {/* Frosted glass base layer */}
       <div className="absolute inset-0 bg-background/80 backdrop-blur-[100px]" />
 
@@ -83,13 +81,14 @@ export function PlumBackground({ className, enableCursorGlow = true }: PlumBackg
       {enableCursorGlow && (
         <div
           className={cn(
-            "fixed rounded-full pointer-events-none z-50",
-            isMouseInside ? "opacity-100" : "opacity-0"
+            'fixed rounded-full pointer-events-none z-50',
+            isMouseInside ? 'opacity-100' : 'opacity-0'
           )}
           style={{
             width: '450px',
             height: '450px',
-            background: 'radial-gradient(circle, rgba(168, 85, 247, 0.35) 0%, rgba(139, 92, 246, 0.2) 40%, transparent 70%)',
+            background:
+              'radial-gradient(circle, rgba(168, 85, 247, 0.35) 0%, rgba(139, 92, 246, 0.2) 40%, transparent 70%)',
             filter: 'blur(80px)',
             left: mousePos.x - 225,
             top: mousePos.y - 225,

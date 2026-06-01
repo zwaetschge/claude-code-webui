@@ -1,9 +1,9 @@
 /** Container-to-container URL resolution for docker-network communication. */
 
-const CONTAINER_NAME = process.env.CONTAINER_NAME || "unknown";
+const CONTAINER_NAME = process.env.CONTAINER_NAME || 'unknown';
 
 const CONTAINER_URLS: Record<string, string> = {
-  "claude-code-webui": "http://claude-code-webui:3001",
+  'claude-code-webui': 'http://claude-code-webui:3001',
 };
 
 export function getCurrentContainerName(): string {

@@ -15,19 +15,32 @@ services:
     container_name: claude-code-webui
     restart: unless-stopped
     ports:
-      - "${WEBUI_PORT:-4545}:3001"
+      - '${WEBUI_PORT:-4545}:3001'
+    shm_size: '${WEBUI_SHM_SIZE:-1gb}'
     extra_hosts:
       # Lets the bundled MCP servers reach host-side services (e.g. android-app-creator on the host bridge)
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
     environment:
       - NODE_ENV=production
+      - TZ=${TZ:-Europe/Zurich}
+      - CODEX_WEBUI_SANDBOX_MODE=${CODEX_WEBUI_SANDBOX_MODE:-danger-full-access}
+      - CODEX_WEBUI_APPROVAL_POLICY=${CODEX_WEBUI_APPROVAL_POLICY:-never}
+      - CHROME_BIN=${CHROME_BIN:-/usr/local/bin/plum-chromium}
+      - CHROMIUM_BIN=${CHROMIUM_BIN:-/usr/local/bin/plum-chromium}
+      - CHROMIUM_PATH=${CHROMIUM_PATH:-/usr/local/bin/plum-chromium}
+      - BROWSER=${BROWSER:-/usr/local/bin/plum-chromium}
+      - PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-/usr/local/bin/plum-chromium}
+      - PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/local/bin/plum-chromium}
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-1}
+      - PUPPETEER_SKIP_DOWNLOAD=${PUPPETEER_SKIP_DOWNLOAD:-1}
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=${PUPPETEER_SKIP_CHROMIUM_DOWNLOAD:-1}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:4545}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:4545}
       - ALLOWED_BASE_PATHS=${ALLOWED_BASE_PATHS:-/workspace}
       - CONTAINER_NAME=claude-code-webui
       - PREVIEW_HOSTNAME=${PREVIEW_HOSTNAME:-}
-      - "SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}"
-      - "JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}"
+      - 'SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}'
+      - 'JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}'
       # Email allowlist — REQUIRED for any deployment exposed to the public internet.
       # Empty = no allowlist (only safe behind a private network or SSO proxy).
       - AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}
@@ -37,6 +50,10 @@ services:
       - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
       - CLI_PROVIDER_OPENCODE_MODELS=${CLI_PROVIDER_OPENCODE_MODELS:-}
       - CLI_PROVIDER_OPENCODE_DEFAULT_MODEL=${CLI_PROVIDER_OPENCODE_DEFAULT_MODEL:-z-ai/glm-5.1}
+      - CLI_PROVIDER_VIBE_MODELS=${CLI_PROVIDER_VIBE_MODELS:-}
+      - CLI_PROVIDER_VIBE_DEFAULT_MODEL=${CLI_PROVIDER_VIBE_DEFAULT_MODEL:-mistral-vibe-cli-latest}
+      # Mistral Vibe authenticates via MISTRAL_API_KEY. Leave empty to disable vibe.
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
       - OPENCODE_DEBUG_EVENTS=${OPENCODE_DEBUG_EVENTS:-0}
       # Optional OAuth providers — leave empty to disable
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
@@ -52,11 +69,12 @@ services:
       - ${CONFIG_DIR:-./config}/claude:/home/node/.claude
       - ${CONFIG_DIR:-./config}/codex:/home/node/.codex
       - ${CONFIG_DIR:-./config}/opencode:/home/node/.opencode
+      - ${CONFIG_DIR:-./config}/vibe:/home/node/.vibe
       - ${CONFIG_DIR:-./config}/npm-global:/home/node/.npm-global
       # Workspace path the running CLI can read/write. Defaults to ./workspace; mount your project here.
       - ${WORKSPACE_DIR:-./workspace}:/workspace
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/health']
       interval: 30s
       timeout: 5s
       retries: 3

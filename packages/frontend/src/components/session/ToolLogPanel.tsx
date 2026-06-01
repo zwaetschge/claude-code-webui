@@ -77,13 +77,23 @@ function getInputPreview(toolName: string, input: unknown): string {
   if (typeof input === 'string') return input;
   const obj = input as Record<string, unknown>;
   switch (toolName) {
-    case 'Bash': return String(obj.command || obj.description || '');
-    case 'Read': case 'Write': case 'Edit': return String(obj.file_path || '');
-    case 'Glob': case 'Grep': return String(obj.pattern || '');
-    case 'WebFetch': return String(obj.url || '');
-    case 'WebSearch': return String(obj.query || '');
-    case 'Task': return String(obj.description || obj.prompt || '');
-    default: return JSON.stringify(input).substring(0, 80);
+    case 'Bash':
+      return String(obj.command || obj.description || '');
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+      return String(obj.file_path || '');
+    case 'Glob':
+    case 'Grep':
+      return String(obj.pattern || '');
+    case 'WebFetch':
+      return String(obj.url || '');
+    case 'WebSearch':
+      return String(obj.query || '');
+    case 'Task':
+      return String(obj.description || obj.prompt || '');
+    default:
+      return JSON.stringify(input).substring(0, 80);
   }
 }
 
@@ -92,9 +102,7 @@ function ToolLogItem({ execution }: { execution: ToolExecution }) {
   const Icon = getToolIcon(execution.toolName);
   const preview = getInputPreview(execution.toolName, execution.input);
   const truncated = preview.length > 60 ? preview.substring(0, 60) + '...' : preview;
-  const duration = execution.completedAt
-    ? execution.completedAt - execution.timestamp
-    : null;
+  const duration = execution.completedAt ? execution.completedAt - execution.timestamp : null;
   const isRunning = execution.status === 'started';
   const hasDetails = execution.input || execution.result || execution.error;
 
@@ -109,12 +117,14 @@ function ToolLogItem({ execution }: { execution: ToolExecution }) {
         )}
       >
         {/* Status dot */}
-        <span className={cn(
-          'h-1.5 w-1.5 rounded-full shrink-0',
-          execution.status === 'completed' && 'bg-green-500',
-          execution.status === 'error' && 'bg-red-500',
-          isRunning && 'bg-blue-500 animate-pulse',
-        )} />
+        <span
+          className={cn(
+            'h-1.5 w-1.5 rounded-full shrink-0',
+            execution.status === 'completed' && 'bg-green-500',
+            execution.status === 'error' && 'bg-red-500',
+            isRunning && 'bg-blue-500 animate-pulse'
+          )}
+        />
 
         {/* Icon */}
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -133,42 +143,50 @@ function ToolLogItem({ execution }: { execution: ToolExecution }) {
         {isRunning ? (
           <LiveTimer startedAt={execution.timestamp} />
         ) : duration != null ? (
-          <span className={cn(
-            'text-[10px] font-mono tabular-nums shrink-0',
-            duration > 5000 ? 'text-amber-400' : 'text-muted-foreground'
-          )}>
+          <span
+            className={cn(
+              'text-[10px] font-mono tabular-nums shrink-0',
+              duration > 5000 ? 'text-amber-400' : 'text-muted-foreground'
+            )}
+          >
             {formatDuration(duration)}
           </span>
         ) : null}
 
         {/* Status icon */}
         {isRunning && <Loader2 className="h-3 w-3 text-blue-500 animate-spin shrink-0" />}
-        {execution.status === 'completed' && <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />}
+        {execution.status === 'completed' && (
+          <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+        )}
         {execution.status === 'error' && <XCircle className="h-3 w-3 text-red-500 shrink-0" />}
 
         {/* Expand chevron */}
-        {hasDetails && (
-          expanded
-            ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
-            : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
-        )}
+        {hasDetails &&
+          (expanded ? (
+            <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
+          ))}
       </button>
 
       {expanded && (
         <div className="px-3 pb-2 pl-8 space-y-1.5">
-          {execution.input != null && (() => {
-            const inputStr = typeof execution.input === 'string'
-              ? execution.input
-              : JSON.stringify(execution.input, null, 2);
-            return (
-              <pre className="text-[11px] font-mono bg-muted/50 rounded p-1.5 overflow-auto max-h-32 whitespace-pre-wrap break-all text-muted-foreground">
-                {inputStr}
-              </pre>
-            );
-          })()}
+          {execution.input != null &&
+            (() => {
+              const inputStr =
+                typeof execution.input === 'string'
+                  ? execution.input
+                  : JSON.stringify(execution.input, null, 2);
+              return (
+                <pre className="text-[11px] font-mono bg-muted/50 rounded p-1.5 overflow-auto max-h-32 whitespace-pre-wrap break-all text-muted-foreground">
+                  {inputStr}
+                </pre>
+              );
+            })()}
           {execution.result && (
             <pre className="text-[11px] font-mono bg-muted/50 rounded p-1.5 overflow-auto max-h-32 whitespace-pre-wrap break-all text-foreground">
-              {execution.result.substring(0, 500)}{execution.result.length > 500 ? '...' : ''}
+              {execution.result.substring(0, 500)}
+              {execution.result.length > 500 ? '...' : ''}
             </pre>
           )}
           {execution.error && (
@@ -185,27 +203,27 @@ function ToolLogItem({ execution }: { execution: ToolExecution }) {
 export function ToolLogPanel({ executions, className }: ToolLogPanelProps) {
   const [filter, setFilter] = useState<string>('all');
 
-  const filtered = filter === 'all'
-    ? executions
-    : executions.filter(e => {
-        const category = FILTER_CATEGORIES.find(c => c.key === filter);
-        return category && 'tools' in category
-          ? (category.tools as readonly string[]).includes(e.toolName)
-          : false;
-      });
+  const filtered =
+    filter === 'all'
+      ? executions
+      : executions.filter((e) => {
+          const category = FILTER_CATEGORIES.find((c) => c.key === filter);
+          return category && 'tools' in category
+            ? (category.tools as readonly string[]).includes(e.toolName)
+            : false;
+        });
 
-  const counts = FILTER_CATEGORIES.map(cat => ({
+  const counts = FILTER_CATEGORIES.map((cat) => ({
     key: cat.key,
-    count: cat.key === 'all'
-      ? executions.length
-      : executions.filter(e =>
-          'tools' in cat
-            ? (cat.tools as readonly string[]).includes(e.toolName)
-            : false
-        ).length,
+    count:
+      cat.key === 'all'
+        ? executions.length
+        : executions.filter((e) =>
+            'tools' in cat ? (cat.tools as readonly string[]).includes(e.toolName) : false
+          ).length,
   }));
 
-  const runningCount = executions.filter(e => e.status === 'started').length;
+  const runningCount = executions.filter((e) => e.status === 'started').length;
   const totalDuration = executions.reduce((sum, e) => {
     if (e.completedAt) return sum + (e.completedAt - e.timestamp);
     return sum;
@@ -218,11 +236,7 @@ export function ToolLogPanel({ executions, className }: ToolLogPanelProps) {
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-medium">
             Tools ({executions.length})
-            {runningCount > 0 && (
-              <span className="text-blue-400 ml-1">
-                {runningCount} running
-              </span>
-            )}
+            {runningCount > 0 && <span className="text-blue-400 ml-1">{runningCount} running</span>}
           </span>
           {totalDuration > 0 && (
             <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -247,7 +261,7 @@ export function ToolLogPanel({ executions, className }: ToolLogPanelProps) {
               )}
               disabled={count === 0}
             >
-              {FILTER_CATEGORIES.find(c => c.key === key)?.label} {count > 0 && count}
+              {FILTER_CATEGORIES.find((c) => c.key === key)?.label} {count > 0 && count}
             </button>
           ))}
         </div>
@@ -262,7 +276,10 @@ export function ToolLogPanel({ executions, className }: ToolLogPanelProps) {
         ) : (
           <div>
             {[...filtered].reverse().map((execution) => (
-              <ToolLogItem key={`${execution.toolId}-${execution.timestamp}`} execution={execution} />
+              <ToolLogItem
+                key={`${execution.toolId}-${execution.timestamp}`}
+                execution={execution}
+              />
             ))}
           </div>
         )}

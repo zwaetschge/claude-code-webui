@@ -11,7 +11,10 @@ interface BasicAuthState {
   basicAuthToken: string | null;
   isBasicAuthEnabled: boolean | null;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<{ success: boolean; token?: string; error?: string }>;
+  login: (
+    username: string,
+    password: string
+  ) => Promise<{ success: boolean; token?: string; error?: string }>;
   logout: () => void;
   checkBasicAuth: () => Promise<void>;
   checkBasicAuthStatus: () => Promise<void>;
@@ -28,10 +31,11 @@ export const useBasicAuthStore = create<BasicAuthState>()(
 
       login: async (username: string, password: string) => {
         try {
-          const response = await api.post<{ success: boolean; data?: { token: string }; error?: { message: string } }>(
-            '/api/basic-auth/login',
-            { username, password }
-          );
+          const response = await api.post<{
+            success: boolean;
+            data?: { token: string };
+            error?: { message: string };
+          }>('/api/basic-auth/login', { username, password });
 
           if (response.data.success && response.data.data?.token) {
             const token = response.data.data.token;
@@ -121,10 +125,7 @@ export const useBasicAuthStore = create<BasicAuthState>()(
               });
             });
           }
-          await Promise.all([
-            get().checkBasicAuthStatus(),
-            get().checkBasicAuth(),
-          ]);
+          await Promise.all([get().checkBasicAuthStatus(), get().checkBasicAuth()]);
         } finally {
           set({ isLoading: false });
         }

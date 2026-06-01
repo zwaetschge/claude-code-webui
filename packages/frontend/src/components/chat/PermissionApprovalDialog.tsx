@@ -20,6 +20,7 @@ import { UI_PROVIDER_META } from '@/lib/providers';
 interface PermissionApprovalDialogProps {
   permission: PendingPermission;
   onRespond: (action: PermissionAction, pattern?: string) => void;
+  providerLabel?: string;
 }
 
 // Get icon for tool name
@@ -83,12 +84,18 @@ function testPattern(pattern: string, testString: string): boolean {
   return testString === patternContent;
 }
 
-export function PermissionApprovalDialog({ permission, onRespond }: PermissionApprovalDialogProps) {
+export function PermissionApprovalDialog({
+  permission,
+  onRespond,
+  providerLabel: explicitProviderLabel,
+}: PermissionApprovalDialogProps) {
   const { uiProvider } = useProviderStore();
-  const providerLabel = UI_PROVIDER_META[uiProvider].label;
+  const providerLabel = explicitProviderLabel ?? UI_PROVIDER_META[uiProvider].label;
   const [showPatternEditor, setShowPatternEditor] = useState(false);
   const [pattern, setPattern] = useState(permission.suggestedPattern);
-  const [testValue, setTestValue] = useState(getToolPreview(permission.toolName, permission.toolInput));
+  const [testValue, setTestValue] = useState(
+    getToolPreview(permission.toolName, permission.toolInput)
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const Icon = getToolIcon(permission.toolName);

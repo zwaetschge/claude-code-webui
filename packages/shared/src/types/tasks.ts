@@ -1,14 +1,14 @@
 /** Inter-container task delegation types */
 
 export type DelegatedTaskStatus =
-  | "queued"
-  | "running"
-  | "awaiting_input"
-  | "completed"
-  | "error"
-  | "cancelled";
+  | 'queued'
+  | 'running'
+  | 'awaiting_input'
+  | 'completed'
+  | 'error'
+  | 'cancelled';
 
-export type DelegatedTaskType = "run-script" | (string & {});
+export type DelegatedTaskType = 'run-script' | (string & {});
 
 export interface DelegatedTaskInfo {
   taskId: string;
@@ -32,7 +32,7 @@ export interface DelegatedTaskSubmitRequest {
 
 export interface DelegatedTaskSubmitResponse {
   taskId: string;
-  status: "queued";
+  status: 'queued';
   createdAt: string;
 }
 
@@ -45,4 +45,3 @@ export interface DelegatedTaskDelegateRequest {
 export interface DelegatedTaskInputRequest {
   data: unknown;
 }
-

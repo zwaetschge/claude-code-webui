@@ -31,15 +31,19 @@ router.get('/', async (req: Request, res: Response) => {
   const db = getDatabase();
 
   try {
-    const agents = db.prepare(`
+    const agents = db
+      .prepare(
+        `
       SELECT id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color, enabled, created_at, updated_at
       FROM custom_agents
       WHERE user_id = ?
       ORDER BY created_at DESC
-    `).all(authReq.userId) as CustomAgent[];
+    `
+      )
+      .all(authReq.userId) as CustomAgent[];
 
     // Parse allowed_tools JSON for each agent
-    const parsedAgents = agents.map(agent => ({
+    const parsedAgents = agents.map((agent) => ({
       ...agent,
       allowedTools: safeJsonParse<string[]>(agent.allowed_tools, []),
       enabled: !!agent.enabled,
@@ -59,11 +63,15 @@ router.get('/:agentId', async (req: Request, res: Response) => {
   const { agentId } = req.params;
 
   try {
-    const agent = db.prepare(`
+    const agent = db
+      .prepare(
+        `
       SELECT id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color, enabled, created_at, updated_at
       FROM custom_agents
       WHERE id = ? AND user_id = ?
-    `).get(agentId, authReq.userId) as CustomAgent | undefined;
+    `
+      )
+      .get(agentId, authReq.userId) as CustomAgent | undefined;
 
     if (!agent) {
       return res.status(404).json({ success: false, error: { message: 'Agent not found' } });
@@ -91,7 +99,7 @@ router.post('/', async (req: Request, res: Response) => {
     name,
     description,
     systemPrompt,
-    model = 'claude-sonnet-4-20250514',
+    model = 'gpt-5.5',
     allowedTools = [],
     permissionMode = 'auto-accept',
     icon = 'bot',
@@ -108,10 +116,12 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     const agentId = randomUUID();
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO custom_agents (id, user_id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `
+    ).run(
       agentId,
       authReq.userId,
       name,
@@ -124,11 +134,15 @@ router.post('/', async (req: Request, res: Response) => {
       color
     );
 
-    const agent = db.prepare(`
+    const agent = db
+      .prepare(
+        `
       SELECT id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color, enabled, created_at, updated_at
       FROM custom_agents
       WHERE id = ?
-    `).get(agentId) as CustomAgent;
+    `
+      )
+      .get(agentId) as CustomAgent;
 
     res.json({
       success: true,
@@ -163,15 +177,16 @@ router.put('/:agentId', async (req: Request, res: Response) => {
 
   try {
     // Verify agent belongs to user
-    const existing = db.prepare(
-      'SELECT id FROM custom_agents WHERE id = ? AND user_id = ?'
-    ).get(agentId, authReq.userId);
+    const existing = db
+      .prepare('SELECT id FROM custom_agents WHERE id = ? AND user_id = ?')
+      .get(agentId, authReq.userId);
 
     if (!existing) {
       return res.status(404).json({ success: false, error: { message: 'Agent not found' } });
     }
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE custom_agents
       SET
         name = COALESCE(?, name),
@@ -185,7 +200,8 @@ router.put('/:agentId', async (req: Request, res: Response) => {
         enabled = COALESCE(?, enabled),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(
+    `
+    ).run(
       name,
       description !== undefined ? description : null,
       systemPrompt,
@@ -198,11 +214,15 @@ router.put('/:agentId', async (req: Request, res: Response) => {
       agentId
     );
 
-    const agent = db.prepare(`
+    const agent = db
+      .prepare(
+        `
       SELECT id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color, enabled, created_at, updated_at
       FROM custom_agents
       WHERE id = ?
-    `).get(agentId) as CustomAgent;
+    `
+      )
+      .get(agentId) as CustomAgent;
 
     res.json({
       success: true,
@@ -226,9 +246,9 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
 
   try {
     // Verify agent belongs to user
-    const existing = db.prepare(
-      'SELECT id FROM custom_agents WHERE id = ? AND user_id = ?'
-    ).get(agentId, authReq.userId);
+    const existing = db
+      .prepare('SELECT id FROM custom_agents WHERE id = ? AND user_id = ?')
+      .get(agentId, authReq.userId);
 
     if (!existing) {
       return res.status(404).json({ success: false, error: { message: 'Agent not found' } });
@@ -250,11 +270,15 @@ router.post('/:agentId/duplicate', async (req: Request, res: Response) => {
   const { agentId } = req.params;
 
   try {
-    const original = db.prepare(`
+    const original = db
+      .prepare(
+        `
       SELECT name, description, system_prompt, model, allowed_tools, permission_mode, icon, color
       FROM custom_agents
       WHERE id = ? AND user_id = ?
-    `).get(agentId, authReq.userId) as CustomAgent | undefined;
+    `
+      )
+      .get(agentId, authReq.userId) as CustomAgent | undefined;
 
     if (!original) {
       return res.status(404).json({ success: false, error: { message: 'Agent not found' } });
@@ -263,10 +287,12 @@ router.post('/:agentId/duplicate', async (req: Request, res: Response) => {
     const newId = randomUUID();
     const newName = `${original.name} (Copy)`;
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO custom_agents (id, user_id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `
+    ).run(
       newId,
       authReq.userId,
       newName,
@@ -279,11 +305,15 @@ router.post('/:agentId/duplicate', async (req: Request, res: Response) => {
       original.color
     );
 
-    const agent = db.prepare(`
+    const agent = db
+      .prepare(
+        `
       SELECT id, name, description, system_prompt, model, allowed_tools, permission_mode, icon, color, enabled, created_at, updated_at
       FROM custom_agents
       WHERE id = ?
-    `).get(newId) as CustomAgent;
+    `
+      )
+      .get(newId) as CustomAgent;
 
     res.json({
       success: true,
@@ -295,7 +325,9 @@ router.post('/:agentId/duplicate', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error duplicating custom agent:', error);
-    res.status(500).json({ success: false, error: { message: 'Failed to duplicate custom agent' } });
+    res
+      .status(500)
+      .json({ success: false, error: { message: 'Failed to duplicate custom agent' } });
   }
 });
 

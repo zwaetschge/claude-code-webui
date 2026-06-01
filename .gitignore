@@ -80,6 +80,7 @@ ROOT_OWNED_FIXES.md
 .tmp-backup-*/
 *.bak
 *.bak-*
+*.bak.*
 
 # Local UI mockups / scratch
 html templates/

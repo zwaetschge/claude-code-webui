@@ -11,33 +11,21 @@ export function ProviderLogo({ provider, className, alt }: ProviderLogoProps) {
   if (provider === 'plum') {
     const resolvedAlt = alt === undefined ? 'Plum' : alt;
     return (
-      <img
-        src="/logos/plum.png"
-        alt={resolvedAlt}
-        className={cn('object-contain', className)}
-      />
+      <img src="/logos/plum.png" alt={resolvedAlt} className={cn('object-contain', className)} />
     );
   }
 
   if (provider === 'claude') {
     const resolvedAlt = alt === undefined ? 'Claude' : alt;
     return (
-      <img
-        src="/claude-logo.png"
-        alt={resolvedAlt}
-        className={cn('object-contain', className)}
-      />
+      <img src="/claude-logo.png" alt={resolvedAlt} className={cn('object-contain', className)} />
     );
   }
 
   if (provider === 'codex') {
     const resolvedAlt = alt === undefined ? 'Codex' : alt;
     return (
-      <img
-        src="/logos/codex.webp"
-        alt={resolvedAlt}
-        className={cn('object-contain', className)}
-      />
+      <img src="/logos/codex.webp" alt={resolvedAlt} className={cn('object-contain', className)} />
     );
   }
 
@@ -52,22 +40,22 @@ export function ProviderLogo({ provider, className, alt }: ProviderLogoProps) {
     );
   }
 
+  if (provider === 'vibe') {
+    const resolvedAlt = alt === undefined ? 'Mistral Vibe' : alt;
+    return (
+      <img src="/logos/vibe.png" alt={resolvedAlt} className={cn('object-contain', className)} />
+    );
+  }
+
   return (
     <svg
       viewBox="0 0 64 64"
-      aria-hidden={!!alt ? undefined : true}
+      aria-hidden={alt ? undefined : true}
       role={alt ? 'img' : 'presentation'}
       className={className}
     >
       {alt ? <title>{alt}</title> : null}
-      <circle
-        cx="32"
-        cy="32"
-        r="22"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
+      <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" strokeWidth="4" />
       <path
         d="M20 34c4-10 20-10 24 0"
         fill="none"

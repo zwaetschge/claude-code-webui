@@ -20,6 +20,7 @@ interface AllowedDirectoriesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDirectoriesChanged?: () => void;
+  providerLabel?: string;
 }
 
 export function AllowedDirectoriesDialog({
@@ -27,11 +28,12 @@ export function AllowedDirectoriesDialog({
   open,
   onOpenChange,
   onDirectoriesChanged,
+  providerLabel: explicitProviderLabel,
 }: AllowedDirectoriesDialogProps) {
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const queryClient = useQueryClient();
   const { uiProvider } = useProviderStore();
-  const providerLabel = UI_PROVIDER_META[uiProvider].label;
+  const providerLabel = explicitProviderLabel ?? UI_PROVIDER_META[uiProvider].label;
 
   // Fetch current allowed directories
   const { data: directories, isLoading } = useQuery({
@@ -162,8 +164,8 @@ export function AllowedDirectoriesDialog({
             <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-600 dark:text-amber-400">
-                Granting directory access allows {providerLabel} to read and modify files in that directory.
-                Only grant access to directories you trust.
+                Granting directory access allows {providerLabel} to read and modify files in that
+                directory. Only grant access to directories you trust.
               </p>
             </div>
           </div>
@@ -185,23 +187,29 @@ interface DirectoryAccessPromptProps {
   message: string;
   sessionId: string;
   onAccessGranted?: () => void;
+  providerLabel?: string;
 }
 
-export function DirectoryAccessPrompt({ message, sessionId, onAccessGranted }: DirectoryAccessPromptProps) {
+export function DirectoryAccessPrompt({
+  message,
+  sessionId,
+  onAccessGranted,
+  providerLabel: explicitProviderLabel,
+}: DirectoryAccessPromptProps) {
   const [showDialog, setShowDialog] = useState(false);
   const [isGranting, setIsGranting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const { uiProvider } = useProviderStore();
-  const providerLabel = UI_PROVIDER_META[uiProvider].label;
+  const providerLabel = explicitProviderLabel ?? UI_PROVIDER_META[uiProvider].label;
 
   // Detect directory access request patterns
   const detectDirectoryRequest = (text: string): string | null => {
     // Common patterns Claude uses to request directory access
     const patterns = [
-      /(?:access|zugriff|read|lesen|permission).{0,50}(?:directory|verzeichnis|folder|ordner|path)\s+([\/\w\-\.\~]+)/i,
-      /(?:grant|gewähre?|allow|erlaube).{0,30}(?:access|zugriff).{0,30}([\/\w\-\.\~]+)/i,
-      /(?:need|brauche?|require|benötige?).{0,30}(?:access|zugriff).{0,30}([\/\w\-\.\~]+)/i,
-      /([\/\w\-\.\~]+).{0,30}(?:not accessible|nicht zugänglich|not allowed|nicht erlaubt)/i,
+      /(?:access|zugriff|read|lesen|permission).{0,50}(?:directory|verzeichnis|folder|ordner|path)\s+([/\w.~/-]+)/i,
+      /(?:grant|gewähre?|allow|erlaube).{0,30}(?:access|zugriff).{0,30}([/\w.~/-]+)/i,
+      /(?:need|brauche?|require|benötige?).{0,30}(?:access|zugriff).{0,30}([/\w.~/-]+)/i,
+      /([/\w.~/-]+).{0,30}(?:not accessible|nicht zugänglich|not allowed|nicht erlaubt)/i,
     ];
 
     for (const pattern of patterns) {
@@ -245,7 +253,8 @@ export function DirectoryAccessPrompt({ message, sessionId, onAccessGranted }: D
           <span className="font-medium">Directory Access Requested</span>
         </div>
         <p className="text-xs text-muted-foreground">
-          {providerLabel} is requesting access to: <code className="px-1 py-0.5 rounded bg-muted">{path}</code>
+          {providerLabel} is requesting access to:{' '}
+          <code className="px-1 py-0.5 rounded bg-muted">{path}</code>
         </p>
         <div className="flex gap-2">
           <Button
@@ -272,6 +281,7 @@ export function DirectoryAccessPrompt({ message, sessionId, onAccessGranted }: D
         sessionId={sessionId}
         open={showDialog}
         onOpenChange={setShowDialog}
+        providerLabel={providerLabel}
         onDirectoriesChanged={onAccessGranted}
       />
     </>

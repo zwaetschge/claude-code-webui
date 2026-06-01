@@ -42,20 +42,24 @@ interface SessionSettingsChipProps {
   reasoningOptions?: ReasoningOption[];
   onReasoningChange?: (value: string) => void;
   reasoningLabel?: string;
+  codexFastMode?: boolean;
 
   cliTools?: CliTool[];
   selectedCliTool?: string | null;
   onCliToolChange?: (id: string | null) => void;
 }
 
-const modeConfig: Record<SessionMode, {
-  label: string;
-  description: string;
-  icon: typeof Brain;
-  color: string;
-  bgColor: string;
-  ring: string;
-}> = {
+const modeConfig: Record<
+  SessionMode,
+  {
+    label: string;
+    description: string;
+    icon: typeof Brain;
+    color: string;
+    bgColor: string;
+    ring: string;
+  }
+> = {
   planning: {
     label: 'Plan',
     description: 'Plans but asks before executing',
@@ -90,9 +94,13 @@ const modeConfig: Record<SessionMode, {
   },
 };
 
-function shortModelLabel(value: string, labels: Record<string, string>, defaultModel?: string): string {
+function shortModelLabel(
+  value: string,
+  labels: Record<string, string>,
+  defaultModel?: string
+): string {
   if (value === '__default__') {
-    const label = defaultModel ? (labels[defaultModel] || defaultModel) : 'Default';
+    const label = defaultModel ? labels[defaultModel] || defaultModel : 'Default';
     return label.length > 16 ? label.slice(0, 14) + '…' : label;
   }
   const label = labels[value] || value;
@@ -114,6 +122,7 @@ export function SessionSettingsChip({
   reasoningOptions,
   onReasoningChange,
   reasoningLabel,
+  codexFastMode,
   cliTools,
   selectedCliTool,
   onCliToolChange,
@@ -124,9 +133,9 @@ export function SessionSettingsChip({
   const modelShort = shortModelLabel(modelValue, modelLabels, resolvedDefaultModel);
   const hasReasoning = !!reasoningOptions && reasoningOptions.length > 0 && !!onReasoningChange;
   const hasCliTools = !!cliTools && cliTools.length > 0 && !!onCliToolChange;
-  const activeCliTool = hasCliTools && selectedCliTool
-    ? cliTools!.find(t => t.id === selectedCliTool)
-    : null;
+  const fastModeActive = provider === 'codex' && codexFastMode;
+  const activeCliTool =
+    hasCliTools && selectedCliTool ? cliTools!.find((t) => t.id === selectedCliTool) : null;
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -140,7 +149,7 @@ export function SessionSettingsChip({
             current.color,
             open && `ring-2 ${current.ring}`
           )}
-          title={`${current.label} mode · ${CLI_PROVIDER_LABEL[provider]} · ${modelShort}`}
+          title={`${current.label} mode · ${CLI_PROVIDER_LABEL[provider]} · ${modelShort}${fastModeActive ? ' · Fast' : ''}`}
         >
           <ModeIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="font-medium hidden sm:inline">{current.label}</span>
@@ -151,13 +160,20 @@ export function SessionSettingsChip({
           <span className="text-[11px] font-mono opacity-90 hidden md:inline max-w-[100px] truncate">
             {modelShort}
           </span>
+          {fastModeActive && (
+            <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-300">
+              FAST
+            </span>
+          )}
           {activeCliTool && (
             <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
               <Wrench className="h-2.5 w-2.5" />
               <span className="hidden sm:inline">{activeCliTool.name}</span>
             </span>
           )}
-          <ChevronDown className={cn('h-3 w-3 transition-transform opacity-60', open && 'rotate-180')} />
+          <ChevronDown
+            className={cn('h-3 w-3 transition-transform opacity-60', open && 'rotate-180')}
+          />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="panel-dropdown w-72 max-h-[70vh] overflow-auto">
@@ -165,7 +181,7 @@ export function SessionSettingsChip({
         <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
           Mode
         </DropdownMenuLabel>
-        {(Object.entries(modeConfig) as [SessionMode, typeof modeConfig[SessionMode]][]).map(
+        {(Object.entries(modeConfig) as [SessionMode, (typeof modeConfig)[SessionMode]][]).map(
           ([key, config]) => {
             const Icon = config.icon;
             const active = mode === key;
@@ -207,7 +223,10 @@ export function SessionSettingsChip({
                   key={p.id}
                   disabled={!p.available}
                   onClick={() => onProviderChange(p.id)}
-                  className={cn('flex items-center gap-2.5 py-1.5 cursor-pointer', active && 'bg-muted/60')}
+                  className={cn(
+                    'flex items-center gap-2.5 py-1.5 cursor-pointer',
+                    active && 'bg-muted/60'
+                  )}
                 >
                   <span className="text-xs font-semibold w-4 text-center">
                     {CLI_PROVIDER_ICON[p.id] || p.name.slice(0, 1).toUpperCase()}
@@ -230,7 +249,10 @@ export function SessionSettingsChip({
         </DropdownMenuLabel>
         <DropdownMenuItem
           onClick={() => onModelChange('__default__')}
-          className={cn('flex items-center gap-2 py-1.5 cursor-pointer', modelValue === '__default__' && 'bg-muted/60')}
+          className={cn(
+            'flex items-center gap-2 py-1.5 cursor-pointer',
+            modelValue === '__default__' && 'bg-muted/60'
+          )}
         >
           <Sparkles className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="flex-1 text-xs">Default</span>
@@ -247,7 +269,10 @@ export function SessionSettingsChip({
             <DropdownMenuItem
               key={model}
               onClick={() => onModelChange(model)}
-              className={cn('flex items-center gap-2 py-1.5 cursor-pointer', active && 'bg-muted/60')}
+              className={cn(
+                'flex items-center gap-2 py-1.5 cursor-pointer',
+                active && 'bg-muted/60'
+              )}
             >
               <span className="w-3.5 shrink-0" />
               <span className="flex-1 text-xs truncate">{modelLabels[model] || model}</span>
@@ -270,11 +295,16 @@ export function SessionSettingsChip({
             </DropdownMenuLabel>
             <DropdownMenuItem
               onClick={() => onReasoningChange!('__default__')}
-              className={cn('flex items-center gap-2 py-1.5 cursor-pointer', reasoningValue === '__default__' && 'bg-muted/60')}
+              className={cn(
+                'flex items-center gap-2 py-1.5 cursor-pointer',
+                reasoningValue === '__default__' && 'bg-muted/60'
+              )}
             >
               <span className="w-3.5 shrink-0" />
               <span className="flex-1 text-xs">Default</span>
-              {reasoningValue === '__default__' && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+              {reasoningValue === '__default__' && (
+                <Check className="h-3.5 w-3.5 text-primary shrink-0" />
+              )}
             </DropdownMenuItem>
             {reasoningOptions!.map((option) => {
               const active = reasoningValue === option.value;
@@ -282,7 +312,10 @@ export function SessionSettingsChip({
                 <DropdownMenuItem
                   key={option.value}
                   onClick={() => onReasoningChange!(option.value)}
-                  className={cn('flex items-center gap-2 py-1.5 cursor-pointer', active && 'bg-muted/60')}
+                  className={cn(
+                    'flex items-center gap-2 py-1.5 cursor-pointer',
+                    active && 'bg-muted/60'
+                  )}
                 >
                   <span className="w-3.5 shrink-0" />
                   <span className="flex-1 text-xs">{option.label}</span>
@@ -302,7 +335,10 @@ export function SessionSettingsChip({
             </DropdownMenuLabel>
             <DropdownMenuItem
               onClick={() => onCliToolChange!(null)}
-              className={cn('flex items-center gap-2 py-1.5 cursor-pointer', !selectedCliTool && 'bg-muted/60')}
+              className={cn(
+                'flex items-center gap-2 py-1.5 cursor-pointer',
+                !selectedCliTool && 'bg-muted/60'
+              )}
             >
               <span className="w-3.5 shrink-0" />
               <span className="flex-1 text-xs italic text-muted-foreground">No tool</span>
@@ -314,7 +350,10 @@ export function SessionSettingsChip({
                 <DropdownMenuItem
                   key={tool.id}
                   onClick={() => onCliToolChange!(tool.id)}
-                  className={cn('flex items-center gap-2 py-1.5 cursor-pointer', active && 'bg-muted/60')}
+                  className={cn(
+                    'flex items-center gap-2 py-1.5 cursor-pointer',
+                    active && 'bg-muted/60'
+                  )}
                 >
                   <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <span className="flex-1 text-xs truncate">{tool.name}</span>

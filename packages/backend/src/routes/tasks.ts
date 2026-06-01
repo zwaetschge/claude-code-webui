@@ -1,9 +1,9 @@
-import { Router } from "express";
-import { z } from "zod";
-import { getTaskManager } from "../services/tasks";
-import { requireAuth, type AuthenticatedRequest } from "../middleware/auth";
-import { AppError } from "../middleware/errorHandler";
-import { resolveTargetUrl } from "../utils/containers";
+import { Router } from 'express';
+import { z } from 'zod';
+import { getTaskManager } from '../services/tasks';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
+import { AppError } from '../middleware/errorHandler';
+import { resolveTargetUrl } from '../utils/containers';
 
 const router = Router();
 
@@ -12,13 +12,13 @@ const router = Router();
 const submitSchema = z.object({
   taskType: z.string().min(1),
   params: z.record(z.unknown()).default({}),
-  requestedBy: z.string().default("internal"),
+  requestedBy: z.string().default('internal'),
 });
 
-router.post("/submit", (req, res) => {
+router.post('/submit', (req, res) => {
   const parsed = submitSchema.safeParse(req.body);
   if (!parsed.success) {
-    throw new AppError("Invalid input", 400, "VALIDATION_ERROR");
+    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
   }
 
   const tm = getTaskManager();
@@ -26,24 +26,24 @@ router.post("/submit", (req, res) => {
   res.json({ success: true, data: result });
 });
 
-router.get("/list", (_req, res) => {
+router.get('/list', (_req, res) => {
   const tm = getTaskManager();
   const tasks = tm.listTasks();
   res.json({ success: true, data: tasks });
 });
 
-router.get("/:id", (req, res) => {
+router.get('/:id', (req, res) => {
   const tm = getTaskManager();
   const task = tm.getTask(req.params.id!);
-  if (!task) throw new AppError("Task not found", 404, "NOT_FOUND");
+  if (!task) throw new AppError('Task not found', 404, 'NOT_FOUND');
   res.json({ success: true, data: task });
 });
 
-router.get("/:id/poll", async (req, res) => {
+router.get('/:id/poll', async (req, res) => {
   const tm = getTaskManager();
   const timeoutMs = Math.min(Number(req.query.timeout) || 30000, 60000);
   const task = await tm.pollTask(req.params.id!, timeoutMs);
-  if (!task) throw new AppError("Task not found", 404, "NOT_FOUND");
+  if (!task) throw new AppError('Task not found', 404, 'NOT_FOUND');
   res.json({ success: true, data: task });
 });
 
@@ -51,22 +51,22 @@ const inputSchema = z.object({
   data: z.unknown(),
 });
 
-router.post("/:id/input", (req, res) => {
+router.post('/:id/input', (req, res) => {
   const parsed = inputSchema.safeParse(req.body);
   if (!parsed.success) {
-    throw new AppError("Invalid input", 400, "VALIDATION_ERROR");
+    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
   }
 
   const tm = getTaskManager();
   const ok = tm.sendInput(req.params.id!, parsed.data.data);
-  if (!ok) throw new AppError("Task not accepting input", 400, "INVALID_STATE");
+  if (!ok) throw new AppError('Task not accepting input', 400, 'INVALID_STATE');
   res.json({ success: true });
 });
 
-router.post("/:id/cancel", (req, res) => {
+router.post('/:id/cancel', (req, res) => {
   const tm = getTaskManager();
   const ok = tm.cancelTask(req.params.id!);
-  if (!ok) throw new AppError("Task not found", 404, "NOT_FOUND");
+  if (!ok) throw new AppError('Task not found', 404, 'NOT_FOUND');
   res.json({ success: true });
 });
 
@@ -81,13 +81,13 @@ const delegateSchema = z.object({
 async function proxyToTarget(
   targetUrl: string,
   path: string,
-  method: "GET" | "POST",
+  method: 'GET' | 'POST',
   body?: unknown
 ): Promise<unknown> {
   const url = `${targetUrl}/api/tasks${path}`;
   const opts: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { 'Content-Type': 'application/json' },
   };
   if (body !== undefined) {
     opts.body = JSON.stringify(body);
@@ -95,30 +95,30 @@ async function proxyToTarget(
 
   const resp = await fetch(url, opts);
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "Unknown error");
+    const text = await resp.text().catch(() => 'Unknown error');
     throw new AppError(
       `Target responded with ${resp.status}: ${text}`,
       resp.status >= 500 ? 502 : resp.status,
-      "PROXY_ERROR"
+      'PROXY_ERROR'
     );
   }
   return resp.json();
 }
 
-router.post("/delegate", requireAuth, async (req, res) => {
+router.post('/delegate', requireAuth, async (req, res) => {
   const parsed = delegateSchema.safeParse(req.body);
   if (!parsed.success) {
-    throw new AppError("Invalid input", 400, "VALIDATION_ERROR");
+    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
   }
 
   const { taskType, params, target } = parsed.data;
   const targetUrl = resolveTargetUrl(target);
   if (!targetUrl) {
-    throw new AppError(`Unknown or self target: ${target}`, 400, "INVALID_TARGET");
+    throw new AppError(`Unknown or self target: ${target}`, 400, 'INVALID_TARGET');
   }
 
   const userId = (req as AuthenticatedRequest).userId;
-  const result = await proxyToTarget(targetUrl, "/submit", "POST", {
+  const result = await proxyToTarget(targetUrl, '/submit', 'POST', {
     taskType,
     params,
     requestedBy: userId,
@@ -127,54 +127,50 @@ router.post("/delegate", requireAuth, async (req, res) => {
   res.json(result);
 });
 
-router.get("/delegate/:id", requireAuth, async (req, res) => {
-  const target = (req.query.target as string) || "";
+router.get('/delegate/:id', requireAuth, async (req, res) => {
+  const target = (req.query.target as string) || '';
   const targetUrl = resolveTargetUrl(target);
   if (!targetUrl) {
-    throw new AppError(`Unknown or self target: ${target}`, 400, "INVALID_TARGET");
+    throw new AppError(`Unknown or self target: ${target}`, 400, 'INVALID_TARGET');
   }
 
-  const result = await proxyToTarget(targetUrl, `/${req.params.id}`, "GET");
+  const result = await proxyToTarget(targetUrl, `/${req.params.id}`, 'GET');
   res.json(result);
 });
 
-router.get("/delegate/:id/poll", requireAuth, async (req, res) => {
-  const target = (req.query.target as string) || "";
+router.get('/delegate/:id/poll', requireAuth, async (req, res) => {
+  const target = (req.query.target as string) || '';
   const targetUrl = resolveTargetUrl(target);
   if (!targetUrl) {
-    throw new AppError(`Unknown or self target: ${target}`, 400, "INVALID_TARGET");
+    throw new AppError(`Unknown or self target: ${target}`, 400, 'INVALID_TARGET');
   }
 
-  const timeout = req.query.timeout || "30000";
-  const result = await proxyToTarget(
-    targetUrl,
-    `/${req.params.id}/poll?timeout=${timeout}`,
-    "GET"
-  );
+  const timeout = req.query.timeout || '30000';
+  const result = await proxyToTarget(targetUrl, `/${req.params.id}/poll?timeout=${timeout}`, 'GET');
   res.json(result);
 });
 
-router.post("/delegate/:id/input", requireAuth, async (req, res) => {
-  const target = (req.query.target as string) || (req.body?.target as string) || "";
+router.post('/delegate/:id/input', requireAuth, async (req, res) => {
+  const target = (req.query.target as string) || (req.body?.target as string) || '';
   const targetUrl = resolveTargetUrl(target);
   if (!targetUrl) {
-    throw new AppError(`Unknown or self target: ${target}`, 400, "INVALID_TARGET");
+    throw new AppError(`Unknown or self target: ${target}`, 400, 'INVALID_TARGET');
   }
 
-  const result = await proxyToTarget(targetUrl, `/${req.params.id}/input`, "POST", {
+  const result = await proxyToTarget(targetUrl, `/${req.params.id}/input`, 'POST', {
     data: req.body?.data,
   });
   res.json(result);
 });
 
-router.post("/delegate/:id/cancel", requireAuth, async (req, res) => {
-  const target = (req.query.target as string) || (req.body?.target as string) || "";
+router.post('/delegate/:id/cancel', requireAuth, async (req, res) => {
+  const target = (req.query.target as string) || (req.body?.target as string) || '';
   const targetUrl = resolveTargetUrl(target);
   if (!targetUrl) {
-    throw new AppError(`Unknown or self target: ${target}`, 400, "INVALID_TARGET");
+    throw new AppError(`Unknown or self target: ${target}`, 400, 'INVALID_TARGET');
   }
 
-  const result = await proxyToTarget(targetUrl, `/${req.params.id}/cancel`, "POST");
+  const result = await proxyToTarget(targetUrl, `/${req.params.id}/cancel`, 'POST');
   res.json(result);
 });
 

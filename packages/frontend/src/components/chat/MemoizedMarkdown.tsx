@@ -9,7 +9,10 @@ interface MemoizedMarkdownProps {
   className?: string;
 }
 
-export const MemoizedMarkdown = memo(function MemoizedMarkdown({ content, className }: MemoizedMarkdownProps) {
+export const MemoizedMarkdown = memo(function MemoizedMarkdown({
+  content,
+  className,
+}: MemoizedMarkdownProps) {
   return (
     <div className={className}>
       <ReactMarkdown
@@ -21,18 +24,17 @@ export const MemoizedMarkdown = memo(function MemoizedMarkdown({ content, classN
               <table className="w-full border-collapse text-sm" {...props} />
             </div>
           ),
-          thead: ({ node: _n, ...props }) => (
-            <thead className="bg-foreground/5" {...props} />
-          ),
+          thead: ({ node: _n, ...props }) => <thead className="bg-foreground/5" {...props} />,
           th: ({ node: _n, ...props }) => (
-            <th className="px-3 py-2 text-left font-semibold border-b border-foreground/10" {...props} />
+            <th
+              className="px-3 py-2 text-left font-semibold border-b border-foreground/10"
+              {...props}
+            />
           ),
           td: ({ node: _n, ...props }) => (
             <td className="px-3 py-1.5 border-b border-foreground/5 align-top" {...props} />
           ),
-          tr: ({ node: _n, ...props }) => (
-            <tr className="even:bg-foreground/[0.02]" {...props} />
-          ),
+          tr: ({ node: _n, ...props }) => <tr className="even:bg-foreground/[0.02]" {...props} />,
           img: ({ node: _n, alt, src, ...props }) => (
             <a
               href={src ?? '#'}

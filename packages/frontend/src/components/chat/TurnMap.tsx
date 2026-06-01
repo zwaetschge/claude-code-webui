@@ -8,6 +8,7 @@ interface TurnMapProps {
   activeMessageId?: string | null;
   onJump?: (messageId: string) => void;
   onClose?: () => void;
+  assistantName?: string;
 }
 
 function preview(content: string, max = 100): string {
@@ -28,7 +29,13 @@ function formatHM(iso: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export const TurnMap = memo(function TurnMap({ messages, activeMessageId, onJump, onClose }: TurnMapProps) {
+export const TurnMap = memo(function TurnMap({
+  messages,
+  activeMessageId,
+  onJump,
+  onClose,
+  assistantName = 'Assistant',
+}: TurnMapProps) {
   // Filter out compact-boundary placeholders from the map
   const visible = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
 
@@ -68,10 +75,14 @@ export const TurnMap = memo(function TurnMap({ messages, activeMessageId, onJump
                 </div>
                 <div className="turn-map-text">
                   <div className={cn('role', !isUser && 'asst')}>
-                    {isUser ? 'Du' : 'Claude'}
-                    {formatHM(m.createdAt) && <span className="ml-1.5 opacity-60">· {formatHM(m.createdAt)}</span>}
+                    {isUser ? 'Du' : assistantName}
+                    {formatHM(m.createdAt) && (
+                      <span className="ml-1.5 opacity-60">· {formatHM(m.createdAt)}</span>
+                    )}
                   </div>
-                  <div className="preview">{preview(m.content) || <span className="opacity-50">(empty)</span>}</div>
+                  <div className="preview">
+                    {preview(m.content) || <span className="opacity-50">(empty)</span>}
+                  </div>
                 </div>
               </button>
             );

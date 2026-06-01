@@ -77,7 +77,7 @@ export async function tryDeviceAuth(): Promise<AuthResult> {
 export async function registerDevice(
   serverUrl: string,
   username: string,
-  password: string,
+  password: string
 ): Promise<AuthResult> {
   // Step 1: Basic auth login
   let loginToken: string;

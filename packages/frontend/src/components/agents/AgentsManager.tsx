@@ -88,15 +88,14 @@ const COLORS = [
 ];
 
 const MODELS = [
-  { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
-  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-  { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet' },
-  { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
-  { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku' },
-  { value: 'claude-3-opus', label: 'Claude 3 Opus' },
-  { value: 'claude-3-sonnet', label: 'Claude 3 Sonnet' },
-  { value: 'claude-3-haiku', label: 'Claude 3 Haiku' },
+  { value: 'gpt-5.5', label: 'GPT 5.5' },
+  { value: 'gpt-5.4', label: 'GPT 5.4' },
+  { value: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
+  { value: 'gpt-5.3-codex', label: 'GPT 5.3 Codex' },
+  { value: 'gpt-5.2', label: 'GPT 5.2' },
+  { value: 'claude-opus-4-5', label: 'Claude Opus 4.5 (Legacy)' },
+  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (Legacy)' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (Legacy)' },
 ];
 
 const PERMISSION_MODES = [
@@ -122,7 +121,7 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formSystemPrompt, setFormSystemPrompt] = useState('');
-  const [formModel, setFormModel] = useState('claude-sonnet-4-20250514');
+  const [formModel, setFormModel] = useState('gpt-5.5');
   const [formPermissionMode, setFormPermissionMode] = useState('auto-accept');
   const [formIcon, setFormIcon] = useState('bot');
   const [formColor, setFormColor] = useState('violet');
@@ -174,13 +173,30 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
       toast({ title: 'Agent created successfully' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to create agent', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to create agent',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
   // Update agent
   const updateMutation = useMutation({
-    mutationFn: async ({ id, ...data }: { id: string; name?: string; description?: string; systemPrompt?: string; model?: string; permissionMode?: string; icon?: string; color?: string; enabled?: boolean }) => {
+    mutationFn: async ({
+      id,
+      ...data
+    }: {
+      id: string;
+      name?: string;
+      description?: string;
+      systemPrompt?: string;
+      model?: string;
+      permissionMode?: string;
+      icon?: string;
+      color?: string;
+      enabled?: boolean;
+    }) => {
       const response = await api.put<ApiResponse<CustomAgent>>(`/api/agents/${id}`, data);
       return response.data;
     },
@@ -190,7 +206,11 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
       toast({ title: 'Agent updated successfully' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to update agent', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to update agent',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -206,7 +226,11 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
       toast({ title: 'Agent deleted' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to delete agent', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to delete agent',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -221,7 +245,11 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
       toast({ title: 'Agent duplicated' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to duplicate agent', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to duplicate agent',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -229,7 +257,7 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
     setFormName('');
     setFormDescription('');
     setFormSystemPrompt('');
-    setFormModel('claude-sonnet-4-20250514');
+    setFormModel('gpt-5.5');
     setFormPermissionMode('auto-accept');
     setFormIcon('bot');
     setFormColor('violet');
@@ -287,10 +315,12 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
     setShowCreateDialog(true);
   };
 
-  const filteredAgents = agents?.filter((agent) =>
-    agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  ) || [];
+  const filteredAgents =
+    agents?.filter(
+      (agent) =>
+        agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    ) || [];
 
   const getIcon = (iconName: string) => {
     const IconComponent = ICONS[iconName] || Bot;
@@ -298,7 +328,7 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
   };
 
   const getColorClass = (colorName: string) => {
-    return COLORS.find(c => c.value === colorName)?.class || 'bg-violet-500';
+    return COLORS.find((c) => c.value === colorName)?.class || 'bg-violet-500';
   };
 
   return (
@@ -367,13 +397,13 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
                   key={agent.id}
                   onClick={() => selectionMode && onAgentSelect?.(agent)}
                   className={cn(
-                    "group relative p-4 rounded-lg border bg-card transition-colors",
-                    selectionMode && "cursor-pointer hover:bg-muted/50",
-                    !agent.enabled && "opacity-60"
+                    'group relative p-4 rounded-lg border bg-card transition-colors',
+                    selectionMode && 'cursor-pointer hover:bg-muted/50',
+                    !agent.enabled && 'opacity-60'
                   )}
                 >
                   <div className="flex items-start gap-4">
-                    <div className={cn("shrink-0 p-2.5 rounded-lg", getColorClass(agent.color))}>
+                    <div className={cn('shrink-0 p-2.5 rounded-lg', getColorClass(agent.color))}>
                       <IconComponent className="h-5 w-5 text-white" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -391,8 +421,12 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
                         </p>
                       )}
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                        <span>{MODELS.find(m => m.value === agent.model)?.label || agent.model}</span>
-                        <span>{PERMISSION_MODES.find(m => m.value === agent.permission_mode)?.label}</span>
+                        <span>
+                          {MODELS.find((m) => m.value === agent.model)?.label || agent.model}
+                        </span>
+                        <span>
+                          {PERMISSION_MODES.find((m) => m.value === agent.permission_mode)?.label}
+                        </span>
                       </div>
                     </div>
 
@@ -465,8 +499,7 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
             <DialogDescription>
               {showEditDialog
                 ? 'Update your custom agent configuration'
-                : 'Create a new custom agent with a specialized system prompt'
-              }
+                : 'Create a new custom agent with a specialized system prompt'}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={showEditDialog ? handleUpdate : handleCreate} className="space-y-4">
@@ -573,7 +606,9 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
               <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-muted/50">
                 <div>
                   <span className="text-sm font-medium">Enabled</span>
-                  <p className="text-xs text-muted-foreground">Show this agent in selection lists</p>
+                  <p className="text-xs text-muted-foreground">
+                    Show this agent in selection lists
+                  </p>
                 </div>
                 <Switch
                   checked={showEditDialog.enabled}
@@ -605,7 +640,7 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
                   updateMutation.isPending
                 }
               >
-                {(createMutation.isPending || updateMutation.isPending) ? (
+                {createMutation.isPending || updateMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     {showEditDialog ? 'Saving...' : 'Creating...'}
@@ -685,7 +720,7 @@ export function AgentsManager({ className, onAgentSelect, selectionMode }: Agent
                   className="p-4 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
                 >
                   <div className="flex items-start gap-3">
-                    <div className={cn("shrink-0 p-2 rounded-lg", getColorClass(preset.color))}>
+                    <div className={cn('shrink-0 p-2 rounded-lg', getColorClass(preset.color))}>
                       <IconComponent className="h-4 w-4 text-white" />
                     </div>
                     <div>

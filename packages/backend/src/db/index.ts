@@ -154,7 +154,7 @@ function runMigrations(db: Database.Database): void {
       name TEXT NOT NULL,
       description TEXT,
       system_prompt TEXT NOT NULL,
-      model TEXT DEFAULT 'claude-sonnet-4-20250514',
+      model TEXT DEFAULT 'gpt-5.5',
       allowed_tools TEXT,
       permission_mode TEXT DEFAULT 'auto-accept',
       icon TEXT DEFAULT 'bot',
@@ -220,7 +220,7 @@ function runMigrations(db: Database.Database): void {
 
   // Migration: Add cli_provider column to sessions table
   try {
-    db.exec(`ALTER TABLE sessions ADD COLUMN cli_provider TEXT DEFAULT 'claude'`);
+    db.exec(`ALTER TABLE sessions ADD COLUMN cli_provider TEXT DEFAULT 'codex'`);
   } catch {
     // Column already exists, ignore error
   }
@@ -384,8 +384,12 @@ function runMigrations(db: Database.Database): void {
 
   // Migration: Move legacy single-credential basic_auth password into the matching user record
   try {
-    const legacyUsername = db.prepare("SELECT value FROM app_config WHERE key = 'basic_auth_username'").get() as { value: string } | undefined;
-    const legacyHash = db.prepare("SELECT value FROM app_config WHERE key = 'basic_auth_password'").get() as { value: string } | undefined;
+    const legacyUsername = db
+      .prepare("SELECT value FROM app_config WHERE key = 'basic_auth_username'")
+      .get() as { value: string } | undefined;
+    const legacyHash = db
+      .prepare("SELECT value FROM app_config WHERE key = 'basic_auth_password'")
+      .get() as { value: string } | undefined;
     if (legacyUsername?.value && legacyHash?.value) {
       db.prepare(
         "UPDATE users SET password_hash = ? WHERE name = ? AND (password_hash IS NULL OR password_hash = '')"
@@ -400,13 +404,19 @@ function runMigrations(db: Database.Database): void {
   // status: 'active' | 'suspended' — suspended blocks login and WS auth
   try {
     db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'`);
-  } catch { /* exists */ }
+  } catch {
+    /* exists */
+  }
   try {
     db.exec(`ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
-  } catch { /* exists */ }
+  } catch {
+    /* exists */
+  }
   try {
     db.exec(`ALTER TABLE users ADD COLUMN last_login_at DATETIME`);
-  } catch { /* exists */ }
+  } catch {
+    /* exists */
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`);
 
   // Audit log — records privileged admin actions and auth events. Append-only from app code.
@@ -431,13 +441,17 @@ function runMigrations(db: Database.Database): void {
   // if no admin exists yet. Runs on every start so a fresh deploy with an env change takes
   // effect without manual SQL.
   try {
-    const adminCount = db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin'`).get() as { c: number };
+    const adminCount = db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin'`).get() as {
+      c: number;
+    };
     const seedAdmin = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
 
     if (seedAdmin) {
       const promoted = db
-        .prepare(`UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP
-                  WHERE LOWER(email) = ? AND role != 'admin'`)
+        .prepare(
+          `UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP
+                  WHERE LOWER(email) = ? AND role != 'admin'`
+        )
         .run(seedAdmin);
       if (promoted.changes > 0) {
         console.log(`[DB] Promoted ${seedAdmin} to admin (SEED_ADMIN_EMAIL).`);
@@ -445,11 +459,13 @@ function runMigrations(db: Database.Database): void {
     } else if (adminCount.c === 0) {
       // No admin yet and no seed email — promote the earliest-created user so the system
       // always has a reachable admin.
-      const first = db.prepare(`SELECT id, email FROM users ORDER BY created_at ASC LIMIT 1`).get() as
-        | { id: string; email: string }
-        | undefined;
+      const first = db
+        .prepare(`SELECT id, email FROM users ORDER BY created_at ASC LIMIT 1`)
+        .get() as { id: string; email: string } | undefined;
       if (first) {
-        db.prepare(`UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(first.id);
+        db.prepare(
+          `UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).run(first.id);
         console.log(`[DB] No admin found — promoted ${first.email} (earliest user) to admin.`);
       }
     }
@@ -465,7 +481,9 @@ function runMigrations(db: Database.Database): void {
   const seedName = process.env.SEED_USER_NAME?.trim() || seedEmail?.split('@')[0];
   if (seedEmail && seedPassword && seedName) {
     try {
-      const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(seedEmail) as { id: string } | undefined;
+      const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(seedEmail) as
+        | { id: string }
+        | undefined;
       if (!existing) {
         const userId = nanoid();
         const passwordHash = bcrypt.hashSync(seedPassword, 10);
@@ -486,7 +504,9 @@ function runMigrations(db: Database.Database): void {
 }
 
 function initializeBasicAuth(db: Database.Database): void {
-  const existingUsername = db.prepare('SELECT value FROM app_config WHERE key = ?').get('basic_auth_username') as { value: string } | undefined;
+  const existingUsername = db
+    .prepare('SELECT value FROM app_config WHERE key = ?')
+    .get('basic_auth_username') as { value: string } | undefined;
 
   if (!existingUsername) {
     // Generate a secure random password on first run
@@ -494,9 +514,18 @@ function initializeBasicAuth(db: Database.Database): void {
     const randomPassword = crypto.randomBytes(16).toString('base64').slice(0, 20);
     const hashedPassword = bcrypt.hashSync(randomPassword, 10);
 
-    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_username', defaultUsername);
-    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_password', hashedPassword);
-    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run('basic_auth_enabled', 'true');
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run(
+      'basic_auth_username',
+      defaultUsername
+    );
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run(
+      'basic_auth_password',
+      hashedPassword
+    );
+    db.prepare('INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)').run(
+      'basic_auth_enabled',
+      'true'
+    );
 
     // Show the generated credentials (only on first run)
     console.log('');
@@ -522,13 +551,13 @@ function backfillEncryptOauthTokens(database: Database.Database): void {
 
   const rows = database
     .prepare(
-      "SELECT id, oauth_access_token, oauth_refresh_token FROM ai_providers WHERE oauth_access_token IS NOT NULL OR oauth_refresh_token IS NOT NULL"
+      'SELECT id, oauth_access_token, oauth_refresh_token FROM ai_providers WHERE oauth_access_token IS NOT NULL OR oauth_refresh_token IS NOT NULL'
     )
     .all() as Array<{
-      id: string;
-      oauth_access_token: string | null;
-      oauth_refresh_token: string | null;
-    }>;
+    id: string;
+    oauth_access_token: string | null;
+    oauth_refresh_token: string | null;
+  }>;
 
   const looksEncrypted = (value: string): boolean => {
     try {
@@ -573,17 +602,23 @@ function backfillEncryptOauthTokens(database: Database.Database): void {
 
 export function getAppConfig(key: string): string | null {
   const database = getDatabase();
-  const row = database.prepare('SELECT value FROM app_config WHERE key = ?').get(key) as { value: string } | undefined;
+  const row = database.prepare('SELECT value FROM app_config WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
   return row?.value ?? null;
 }
 
 export function setAppConfig(key: string, value: string): void {
   const database = getDatabase();
-  database.prepare(`
+  database
+    .prepare(
+      `
     INSERT INTO app_config (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
-  `).run(key, value, value);
+  `
+    )
+    .run(key, value, value);
 }
 
 export { db };

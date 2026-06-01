@@ -18,9 +18,7 @@ interface TouchState {
   currentY: number;
 }
 
-export function useSwipeGesture<T extends HTMLElement = HTMLElement>(
-  config: SwipeConfig
-) {
+export function useSwipeGesture<T extends HTMLElement = HTMLElement>(config: SwipeConfig) {
   const {
     onSwipeLeft,
     onSwipeRight,
@@ -82,10 +80,7 @@ export function useSwipeGesture<T extends HTMLElement = HTMLElement>(
 
     if (isHorizontal) {
       // Horizontal swipe
-      if (
-        Math.abs(deltaX) >= threshold &&
-        velocityX >= velocityThreshold
-      ) {
+      if (Math.abs(deltaX) >= threshold && velocityX >= velocityThreshold) {
         if (deltaX > 0) {
           onSwipeRight?.();
         } else {
@@ -94,10 +89,7 @@ export function useSwipeGesture<T extends HTMLElement = HTMLElement>(
       }
     } else {
       // Vertical swipe
-      if (
-        Math.abs(deltaY) >= threshold &&
-        velocityY >= velocityThreshold
-      ) {
+      if (Math.abs(deltaY) >= threshold && velocityY >= velocityThreshold) {
         if (deltaY > 0) {
           onSwipeDown?.();
         } else {

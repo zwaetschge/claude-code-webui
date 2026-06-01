@@ -5,8 +5,8 @@ export interface Command {
   description: string;
   arguments?: string[];
   scope: 'builtin' | 'user' | 'project';
-  content?: string;  // Template content for custom commands
-  projectPath?: string;  // For project-scoped commands
+  content?: string; // Template content for custom commands
+  projectPath?: string; // For project-scoped commands
 }
 
 export interface ParsedCommand {
@@ -47,6 +47,8 @@ export const BUILTIN_COMMANDS = [
   'model',
   'status',
   'cost',
+  'context',
+  'usage',
   'compact',
   'rename',
   'copy',
@@ -55,24 +57,29 @@ export const BUILTIN_COMMANDS = [
   'continue',
   'theme',
   'permissions',
+  'memory',
+  'mcp',
+  'hooks',
+  'skills',
+  'agents',
   'diff',
   'feedback',
   'bug',
   'doctor',
   'fast',
+  'features',
+  'imagegen',
+  'goal',
+  'subagents',
+  'web-search',
 ] as const;
 
-export type BuiltinCommandName = typeof BUILTIN_COMMANDS[number];
+export type BuiltinCommandName = (typeof BUILTIN_COMMANDS)[number];
 
 // Commands forwarded to Claude Code CLI (stream-json) as raw text
 // so Claude's own slash-command machinery handles them.
 export const CLI_FORWARDED_COMMANDS = [
   'btw',
-  'context',
-  'memory',
-  'mcp',
-  'hooks',
-  'skills',
   'debug',
   'effort',
   'plan',
@@ -87,12 +94,10 @@ export const CLI_FORWARDED_COMMANDS = [
   'loop',
   'proactive',
   'less-permission-prompts',
-  'usage',
   'insights',
   'stats',
   'schedule',
   'routines',
-  'agents',
 ] as const;
 
-export type CliForwardedCommandName = typeof CLI_FORWARDED_COMMANDS[number];
+export type CliForwardedCommandName = (typeof CLI_FORWARDED_COMMANDS)[number];

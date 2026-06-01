@@ -67,7 +67,9 @@ router.post('/login', rateLimiters.strict, async (req, res) => {
   const lookup = findUserForBasicAuth(username);
   if (!lookup) {
     bcrypt.compareSync(password, TIMING_SAFE_DUMMY_HASH);
-    auditFromRequest(req, 'auth.login.failure', { metadata: { method: 'basic', username, reason: 'user_not_found' } });
+    auditFromRequest(req, 'auth.login.failure', {
+      metadata: { method: 'basic', username, reason: 'user_not_found' },
+    });
     throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
   }
 
@@ -152,7 +154,9 @@ router.post('/logout', (_req, res) => {
 router.get('/credentials', requireAuth, (req, res) => {
   const userId = (req as unknown as { userId: string }).userId;
   const db = getDatabase();
-  const row = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string | null } | undefined;
+  const row = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as
+    | { name: string | null }
+    | undefined;
   const enabled = getAppConfig('basic_auth_enabled');
 
   res.json({
@@ -190,7 +194,10 @@ router.put('/credentials', requireAuth, (req, res) => {
   }
 
   if (newUsername) {
-    db.prepare('UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newUsername, userId);
+    db.prepare('UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+      newUsername,
+      userId
+    );
     // Keep legacy app_config in sync for the admin account so the single-credential initializer stays consistent
     if (getAppConfig('basic_auth_username') === userRow.name) {
       setAppConfig('basic_auth_username', newUsername);
@@ -199,13 +206,17 @@ router.put('/credentials', requireAuth, (req, res) => {
 
   if (newPassword) {
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
-    db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hashedPassword, userId);
+    db.prepare(
+      'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(hashedPassword, userId);
     if (getAppConfig('basic_auth_username') === (newUsername || userRow.name)) {
       setAppConfig('basic_auth_password', hashedPassword);
     }
   }
 
-  const updatedRow = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string | null } | undefined;
+  const updatedRow = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as
+    | { name: string | null }
+    | undefined;
 
   res.json({
     success: true,

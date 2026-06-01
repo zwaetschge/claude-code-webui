@@ -18,7 +18,10 @@ router.get('/users', (_req, res) => {
   const rows = db
     .prepare(
       `SELECT u.id, u.email, u.name, u.avatar_url as avatarUrl, u.provider, u.provider_id as providerId,
-              u.role, u.status, u.last_login_at as lastLoginAt, u.created_at as createdAt, u.updated_at as updatedAt,
+              u.role, u.status,
+              strftime('%Y-%m-%dT%H:%M:%fZ', u.last_login_at) as lastLoginAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', u.created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', u.updated_at) as updatedAt,
               (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) as sessionCount
        FROM users u
        ORDER BY u.created_at DESC`
@@ -32,7 +35,10 @@ router.get('/users/:id', (req, res) => {
   const user = db
     .prepare(
       `SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
-              role, status, last_login_at as lastLoginAt, created_at as createdAt, updated_at as updatedAt
+              role, status,
+              strftime('%Y-%m-%dT%H:%M:%fZ', last_login_at) as lastLoginAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
        FROM users WHERE id = ?`
     )
     .get(req.params.id);
@@ -73,9 +79,14 @@ router.patch('/users/:id', (req, res) => {
   }
 
   // Guard: never demote/suspend the last remaining admin.
-  if (current.role === 'admin' && (parsed.data.role === 'user' || parsed.data.status === 'suspended')) {
+  if (
+    current.role === 'admin' &&
+    (parsed.data.role === 'user' || parsed.data.status === 'suspended')
+  ) {
     const otherAdmins = db
-      .prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin' AND status = 'active' AND id != ?`)
+      .prepare(
+        `SELECT COUNT(*) as c FROM users WHERE role = 'admin' AND status = 'active' AND id != ?`
+      )
       .get(targetId) as { c: number };
     if (otherAdmins.c === 0) {
       throw new AppError('Cannot remove the last active admin', 400, 'LAST_ADMIN');
@@ -137,14 +148,16 @@ router.delete('/users/:id', (req, res) => {
   }
 
   const db = getDatabase();
-  const current = db
-    .prepare(`SELECT email, role FROM users WHERE id = ?`)
-    .get(targetId) as { email: string; role: string } | undefined;
+  const current = db.prepare(`SELECT email, role FROM users WHERE id = ?`).get(targetId) as
+    | { email: string; role: string }
+    | undefined;
   if (!current) throw new AppError('User not found', 404, 'NOT_FOUND');
 
   if (current.role === 'admin') {
     const otherAdmins = db
-      .prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin' AND status = 'active' AND id != ?`)
+      .prepare(
+        `SELECT COUNT(*) as c FROM users WHERE role = 'admin' AND status = 'active' AND id != ?`
+      )
       .get(targetId) as { c: number };
     if (otherAdmins.c === 0) {
       throw new AppError('Cannot delete the last active admin', 400, 'LAST_ADMIN');
@@ -194,7 +207,7 @@ router.get('/audit-log', (req, res) => {
       `SELECT a.id, a.actor_user_id as actorUserId, u.email as actorEmail, a.action,
               a.resource_type as resourceType, a.resource_id as resourceId,
               a.ip, a.user_agent as userAgent, a.metadata_json as metadataJson,
-              a.created_at as createdAt
+              strftime('%Y-%m-%dT%H:%M:%fZ', a.created_at) as createdAt
        FROM audit_log a
        LEFT JOIN users u ON u.id = a.actor_user_id
        ${whereSql}
@@ -202,21 +215,21 @@ router.get('/audit-log', (req, res) => {
        LIMIT ? OFFSET ?`
     )
     .all(...params, limit, offset) as Array<{
-      id: number;
-      actorUserId: string | null;
-      actorEmail: string | null;
-      action: string;
-      resourceType: string | null;
-      resourceId: string | null;
-      ip: string | null;
-      userAgent: string | null;
-      metadataJson: string | null;
-      createdAt: string;
-    }>;
+    id: number;
+    actorUserId: string | null;
+    actorEmail: string | null;
+    action: string;
+    resourceType: string | null;
+    resourceId: string | null;
+    ip: string | null;
+    userAgent: string | null;
+    metadataJson: string | null;
+    createdAt: string;
+  }>;
 
-  const total = (db
-    .prepare(`SELECT COUNT(*) as c FROM audit_log a ${whereSql}`)
-    .get(...params) as { c: number }).c;
+  const total = (
+    db.prepare(`SELECT COUNT(*) as c FROM audit_log a ${whereSql}`).get(...params) as { c: number }
+  ).c;
 
   const entries = rows.map((r) => ({
     ...r,
@@ -232,10 +245,16 @@ router.get('/audit-log', (req, res) => {
 router.get('/stats', (_req, res) => {
   const db = getDatabase();
   const userCount = (db.prepare(`SELECT COUNT(*) as c FROM users`).get() as { c: number }).c;
-  const adminCount = (db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin'`).get() as { c: number }).c;
-  const suspendedCount = (db.prepare(`SELECT COUNT(*) as c FROM users WHERE status = 'suspended'`).get() as { c: number }).c;
+  const adminCount = (
+    db.prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin'`).get() as { c: number }
+  ).c;
+  const suspendedCount = (
+    db.prepare(`SELECT COUNT(*) as c FROM users WHERE status = 'suspended'`).get() as { c: number }
+  ).c;
   const sessionCount = (db.prepare(`SELECT COUNT(*) as c FROM sessions`).get() as { c: number }).c;
-  const runningSessionCount = (db.prepare(`SELECT COUNT(*) as c FROM sessions WHERE status = 'running'`).get() as { c: number }).c;
+  const runningSessionCount = (
+    db.prepare(`SELECT COUNT(*) as c FROM sessions WHERE status = 'running'`).get() as { c: number }
+  ).c;
   const auditCount = (db.prepare(`SELECT COUNT(*) as c FROM audit_log`).get() as { c: number }).c;
 
   res.json({

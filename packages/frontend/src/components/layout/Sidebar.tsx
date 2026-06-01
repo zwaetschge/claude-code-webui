@@ -176,7 +176,12 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
       updateSession(id, { name: trimmed });
       toast({ title: 'Session renamed' });
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Rename failed';
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Rename failed';
       toast({ title: 'Rename failed', description: msg, variant: 'destructive' });
     } finally {
       cancelRename();
@@ -191,7 +196,12 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
       toast({ title: 'Session deleted' });
       if (activeId === id) navigate('/');
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Delete failed';
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Delete failed';
       toast({ title: 'Delete failed', description: msg, variant: 'destructive' });
     }
   };
@@ -201,7 +211,8 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
       await api.patch(`/api/sessions/${id}/star`, { starred: !currentlyStarred });
       updateSession(id, { starred: !currentlyStarred });
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed';
+      const msg =
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed';
       toast({ title: 'Failed to update star', description: msg, variant: 'destructive' });
     }
   };
@@ -211,7 +222,8 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
       await api.patch(`/api/sessions/${id}/category`, { categoryId });
       updateSession(id, { category: categoryId });
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed';
+      const msg =
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed';
       toast({ title: 'Failed to update category', description: msg, variant: 'destructive' });
     }
   };
@@ -362,7 +374,13 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              <Button variant="ghost" size="icon" className="h-6 w-6 rounded-lg" asChild title="New Session">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-lg"
+                asChild
+                title="New Session"
+              >
                 <Link to="/?new=true" onClick={handleLinkClick}>
                   <Plus className="h-3.5 w-3.5" />
                 </Link>
@@ -438,212 +456,215 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
           {/* Session list — scrollable, no slice */}
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="space-y-0.5 mt-1">
-              {filteredSessions.length === 0 ? (
-                !isCollapsed && (
-                  <div className="px-3 py-3 text-center">
-                    <p className="text-xs text-muted-foreground/70">
-                      {searchQuery
-                        ? 'No matches'
-                        : showStarredOnly
-                          ? 'No starred sessions'
-                          : categoryFilter
-                            ? 'No sessions in this category'
-                            : 'No sessions'}
-                    </p>
-                    {(showStarredOnly || categoryFilter || searchQuery) && (
-                      <Button
-                        variant="link"
-                        size="sm"
-                        className="text-xs mt-1 h-auto p-0"
-                        onClick={() => {
-                          setShowStarredOnly(false);
-                          setCategoryFilter(null);
-                          setSearchQuery('');
-                        }}
-                      >
-                        Clear filters
-                      </Button>
-                    )}
-                  </div>
-                )
-              ) : (
-                filteredSessions.map((session) => {
-                  const isActive = location.pathname === `/session/${session.id}`;
-                  const isEditing = editingId === session.id;
-                  const sessionCategory = session.category
-                    ? categories.find((c) => c.id === session.category)
-                    : null;
+              {filteredSessions.length === 0
+                ? !isCollapsed && (
+                    <div className="px-3 py-3 text-center">
+                      <p className="text-xs text-muted-foreground/70">
+                        {searchQuery
+                          ? 'No matches'
+                          : showStarredOnly
+                            ? 'No starred sessions'
+                            : categoryFilter
+                              ? 'No sessions in this category'
+                              : 'No sessions'}
+                      </p>
+                      {(showStarredOnly || categoryFilter || searchQuery) && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="text-xs mt-1 h-auto p-0"
+                          onClick={() => {
+                            setShowStarredOnly(false);
+                            setCategoryFilter(null);
+                            setSearchQuery('');
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      )}
+                    </div>
+                  )
+                : filteredSessions.map((session) => {
+                    const isActive = location.pathname === `/session/${session.id}`;
+                    const isEditing = editingId === session.id;
+                    const sessionCategory = session.category
+                      ? categories.find((c) => c.id === session.category)
+                      : null;
 
-                  if (isEditing && !isCollapsed) {
+                    if (isEditing && !isCollapsed) {
+                      return (
+                        <div
+                          key={session.id}
+                          className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-muted/40"
+                        >
+                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <Input
+                            autoFocus
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => handleRenameKey(e, session.id)}
+                            onBlur={() => commitRename(session.id)}
+                            className="h-6 px-1.5 text-xs"
+                          />
+                        </div>
+                      );
+                    }
+
                     return (
                       <div
                         key={session.id}
-                        className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-muted/40"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <Input
-                          autoFocus
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => handleRenameKey(e, session.id)}
-                          onBlur={() => commitRename(session.id)}
-                          className="h-6 px-1.5 text-xs"
-                        />
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div
-                      key={session.id}
-                      className={cn(
-                        'group/session relative flex items-center rounded-xl transition-all duration-200',
-                        isActive
-                          ? 'bg-primary/15 text-foreground font-medium shadow-[inset_2px_0_0_0_hsl(var(--primary))]'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                      )}
-                    >
-                      <Link
-                        to={`/session/${session.id}`}
-                        onClick={handleLinkClick}
-                        title={isCollapsed ? session.name : undefined}
                         className={cn(
-                          'flex flex-1 items-center gap-2.5 px-3 py-2 text-sm min-w-0',
-                          isCollapsed && 'justify-center px-2'
+                          'group/session relative flex items-center rounded-xl transition-all duration-200',
+                          isActive
+                            ? 'bg-primary/15 text-foreground font-medium shadow-[inset_2px_0_0_0_hsl(var(--primary))]'
+                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                         )}
                       >
-                        <div className="relative shrink-0">
-                          <MessageSquare className="h-3.5 w-3.5" />
-                          <div
-                            className={cn(
-                              'absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-card',
-                              session.status === 'running' && 'bg-green-500',
-                              session.status === 'stopped' && 'bg-gray-400',
-                              session.status === 'error' && 'bg-red-500'
-                            )}
-                          />
-                        </div>
-                        {!isCollapsed && (
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 truncate text-xs">
-                              {session.starred && (
-                                <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />
-                              )}
-                              {sessionCategory && (
-                                <span
-                                  className="h-2 w-2 rounded-full shrink-0"
-                                  style={{
-                                    backgroundColor:
-                                      COLOR_VALUES[sessionCategory.color] ?? sessionCategory.color,
-                                  }}
-                                  title={sessionCategory.name}
-                                />
-                              )}
-                              <span className="truncate font-medium">{session.name}</span>
-                              {session.cliProvider && (
-                                <span
-                                  className="inline-flex items-center rounded bg-muted/60 px-1 py-0.5 text-[9px] font-medium text-muted-foreground shrink-0"
-                                  title={CLI_PROVIDER_LABEL[session.cliProvider] || session.cliProvider}
-                                >
-                                  {CLI_PROVIDER_ICON[session.cliProvider] || ''}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1 text-[9px] opacity-50">
-                              <FolderOpen className="h-2 w-2" />
-                              <span className="truncate">
-                                {session.workingDirectory.split('/').pop()}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </Link>
-
-                      {!isCollapsed && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
+                        <Link
+                          to={`/session/${session.id}`}
+                          onClick={handleLinkClick}
+                          title={isCollapsed ? session.name : undefined}
+                          className={cn(
+                            'flex flex-1 items-center gap-2.5 px-3 py-2 text-sm min-w-0',
+                            isCollapsed && 'justify-center px-2'
+                          )}
+                        >
+                          <div className="relative shrink-0">
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            <div
                               className={cn(
-                                'mr-1 h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground transition-opacity',
-                                'opacity-0 group-hover/session:opacity-100 focus:opacity-100 hover:bg-muted-foreground/10',
-                                'data-[state=open]:opacity-100 data-[state=open]:bg-muted-foreground/10'
+                                'absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-card',
+                                session.status === 'running' && 'bg-green-500',
+                                session.status === 'stopped' && 'bg-gray-400',
+                                session.status === 'error' && 'bg-red-500'
                               )}
-                              onClick={(e) => e.stopPropagation()}
-                              title="Session options"
-                            >
-                              <MoreHorizontal className="h-3.5 w-3.5" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-52">
-                            <DropdownMenuItem
-                              onClick={() => startRename(session)}
-                              className="cursor-pointer"
-                            >
-                              <Pencil className="mr-2 h-3.5 w-3.5" />
-                              Rename
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleToggleStar(session.id, session.starred)}
-                              className="cursor-pointer"
-                            >
-                              <Star
-                                className={cn(
-                                  'mr-2 h-3.5 w-3.5',
-                                  session.starred && 'fill-amber-500 text-amber-500'
+                            />
+                          </div>
+                          {!isCollapsed && (
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 truncate text-xs">
+                                {session.starred && (
+                                  <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />
                                 )}
-                              />
-                              {session.starred ? 'Unstar' : 'Star'}
-                            </DropdownMenuItem>
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger className="cursor-pointer">
-                                <Folder className="mr-2 h-3.5 w-3.5" />
-                                Category
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="w-48">
-                                <DropdownMenuItem
-                                  onClick={() => handleAssignCategory(session.id, null)}
-                                  className="cursor-pointer"
-                                >
-                                  <span className="mr-2 h-2.5 w-2.5 rounded-full border border-muted-foreground/40" />
-                                  None
-                                  {!session.category && <span className="ml-auto text-primary">•</span>}
-                                </DropdownMenuItem>
-                                {categories.length > 0 && <DropdownMenuSeparator />}
-                                {categories.map((cat) => (
+                                {sessionCategory && (
+                                  <span
+                                    className="h-2 w-2 rounded-full shrink-0"
+                                    style={{
+                                      backgroundColor:
+                                        COLOR_VALUES[sessionCategory.color] ??
+                                        sessionCategory.color,
+                                    }}
+                                    title={sessionCategory.name}
+                                  />
+                                )}
+                                <span className="truncate font-medium">{session.name}</span>
+                                {session.cliProvider && (
+                                  <span
+                                    className="inline-flex items-center rounded bg-muted/60 px-1 py-0.5 text-[9px] font-medium text-muted-foreground shrink-0"
+                                    title={
+                                      CLI_PROVIDER_LABEL[session.cliProvider] || session.cliProvider
+                                    }
+                                  >
+                                    {CLI_PROVIDER_ICON[session.cliProvider] || ''}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 text-[9px] opacity-50">
+                                <FolderOpen className="h-2 w-2" />
+                                <span className="truncate">
+                                  {session.workingDirectory.split('/').pop()}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </Link>
+
+                        {!isCollapsed && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className={cn(
+                                  'mr-1 h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground transition-opacity',
+                                  'opacity-0 group-hover/session:opacity-100 focus:opacity-100 hover:bg-muted-foreground/10',
+                                  'data-[state=open]:opacity-100 data-[state=open]:bg-muted-foreground/10'
+                                )}
+                                onClick={(e) => e.stopPropagation()}
+                                title="Session options"
+                              >
+                                <MoreHorizontal className="h-3.5 w-3.5" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuItem
+                                onClick={() => startRename(session)}
+                                className="cursor-pointer"
+                              >
+                                <Pencil className="mr-2 h-3.5 w-3.5" />
+                                Rename
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleToggleStar(session.id, session.starred)}
+                                className="cursor-pointer"
+                              >
+                                <Star
+                                  className={cn(
+                                    'mr-2 h-3.5 w-3.5',
+                                    session.starred && 'fill-amber-500 text-amber-500'
+                                  )}
+                                />
+                                {session.starred ? 'Unstar' : 'Star'}
+                              </DropdownMenuItem>
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger className="cursor-pointer">
+                                  <Folder className="mr-2 h-3.5 w-3.5" />
+                                  Category
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="w-48">
                                   <DropdownMenuItem
-                                    key={cat.id}
-                                    onClick={() => handleAssignCategory(session.id, cat.id)}
+                                    onClick={() => handleAssignCategory(session.id, null)}
                                     className="cursor-pointer"
                                   >
-                                    <span
-                                      className="mr-2 h-2.5 w-2.5 rounded-full"
-                                      style={{
-                                        backgroundColor: COLOR_VALUES[cat.color] ?? cat.color,
-                                      }}
-                                    />
-                                    <span className="flex-1 truncate">{cat.name}</span>
-                                    {session.category === cat.id && (
+                                    <span className="mr-2 h-2.5 w-2.5 rounded-full border border-muted-foreground/40" />
+                                    None
+                                    {!session.category && (
                                       <span className="ml-auto text-primary">•</span>
                                     )}
                                   </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => handleDelete(session.id, session.name)}
-                              className="cursor-pointer text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
-                  );
-                })
-              )}
+                                  {categories.length > 0 && <DropdownMenuSeparator />}
+                                  {categories.map((cat) => (
+                                    <DropdownMenuItem
+                                      key={cat.id}
+                                      onClick={() => handleAssignCategory(session.id, cat.id)}
+                                      className="cursor-pointer"
+                                    >
+                                      <span
+                                        className="mr-2 h-2.5 w-2.5 rounded-full"
+                                        style={{
+                                          backgroundColor: COLOR_VALUES[cat.color] ?? cat.color,
+                                        }}
+                                      />
+                                      <span className="flex-1 truncate">{cat.name}</span>
+                                      {session.category === cat.id && (
+                                        <span className="ml-auto text-primary">•</span>
+                                      )}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(session.id, session.name)}
+                                className="cursor-pointer text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    );
+                  })}
             </div>
           </div>
         </div>
@@ -681,7 +702,11 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align={isCollapsed ? 'center' : 'end'} side="top" className="w-48">
               <DropdownMenuItem asChild>
-                <Link to="/settings" onClick={handleLinkClick} className="flex items-center cursor-pointer">
+                <Link
+                  to="/settings"
+                  onClick={handleLinkClick}
+                  className="flex items-center cursor-pointer"
+                >
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
                 </Link>

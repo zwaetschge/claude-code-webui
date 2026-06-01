@@ -36,9 +36,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 async function getExternalSkillsDirs(): Promise<string[]> {
-  const envDirs = parseDirList(
-    process.env.WEBUI_SKILLS_DIRS || process.env.CLAUDE_SKILLS_DIRS
-  );
+  const envDirs = parseDirList(process.env.WEBUI_SKILLS_DIRS || process.env.CLAUDE_SKILLS_DIRS);
   const candidates = [...envDirs, ...DEFAULT_EXTERNAL_SKILLS_DIRS];
   const unique = Array.from(new Set(candidates.map((dir) => path.resolve(dir))));
 

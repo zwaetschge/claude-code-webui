@@ -57,7 +57,10 @@ function writeProviders(userId: string, providers: OpenCodeProvider[]): void {
   if (row) {
     db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(json, userId);
   } else {
-    db.prepare('INSERT INTO user_settings (user_id, settings_json) VALUES (?, ?)').run(userId, json);
+    db.prepare('INSERT INTO user_settings (user_id, settings_json) VALUES (?, ?)').run(
+      userId,
+      json
+    );
   }
 }
 

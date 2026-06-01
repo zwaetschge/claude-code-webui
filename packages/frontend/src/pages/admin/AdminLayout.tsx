@@ -18,7 +18,9 @@ export function AdminLayout() {
           </div>
           <div>
             <h1 className="text-lg font-semibold tracking-tight">Admin Console</h1>
-            <p className="text-xs text-muted-foreground">Manage users, review activity, and monitor the system.</p>
+            <p className="text-xs text-muted-foreground">
+              Manage users, review activity, and monitor the system.
+            </p>
           </div>
         </div>
         <nav className="flex gap-1 px-4 pb-1">

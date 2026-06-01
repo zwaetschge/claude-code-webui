@@ -26,7 +26,7 @@ const updateCliProvidersSchema = z.object({
 router.get('/', requireAuth, async (_req, res) => {
   try {
     const availableProviders = await getAvailableProviders();
-    const availableIds = new Set(availableProviders.map(p => p.id));
+    const availableIds = new Set(availableProviders.map((p) => p.id));
 
     const labels = getModelDisplayLabels();
     const providers = Object.values(CLI_PROVIDERS).map((provider) => {
@@ -114,7 +114,11 @@ router.get('/:id/models', requireAuth, (req, res) => {
     return res.status(404).json(response);
   }
 
-  const response: ApiResponse<{ provider: string; models: string[]; defaultModel: string | undefined }> = {
+  const response: ApiResponse<{
+    provider: string;
+    models: string[];
+    defaultModel: string | undefined;
+  }> = {
     success: true,
     data: {
       provider: id!,
@@ -129,44 +133,55 @@ router.get('/:id/models', requireAuth, (req, res) => {
 // Admin-only: spawns `codex exec` (up to 30s, hits OpenAI API). Rate-limited to
 // 10/min per admin, with an in-flight lock in refreshCodexModelsCache so parallel
 // callers share one run.
-router.post('/refresh-models', requireAuth, requireAdmin, rateLimiters.strict, asyncHandler(async (_req, res) => {
-  resetDiscovery();
-  const codexRefreshed = await refreshCodexModelsCache();
+router.post(
+  '/refresh-models',
+  requireAuth,
+  requireAdmin,
+  rateLimiters.strict,
+  asyncHandler(async (_req, res) => {
+    resetDiscovery();
+    const codexRefreshed = await refreshCodexModelsCache();
 
-  const labels = getModelDisplayLabels();
-  const providers = Object.values(CLI_PROVIDERS).map((provider) => {
-    const models = getCliModels(provider.id);
-    const providerLabels: Record<string, string> = {};
-    for (const m of models) {
-      if (labels[m]) providerLabels[m] = labels[m];
-    }
-    return { id: provider.id, models, modelLabels: providerLabels };
-  });
+    const labels = getModelDisplayLabels();
+    const providers = Object.values(CLI_PROVIDERS).map((provider) => {
+      const models = getCliModels(provider.id);
+      const providerLabels: Record<string, string> = {};
+      for (const m of models) {
+        if (labels[m]) providerLabels[m] = labels[m];
+      }
+      return { id: provider.id, models, modelLabels: providerLabels };
+    });
 
-  const response: ApiResponse<{ providers: typeof providers; codexCacheRefreshed: boolean }> = {
-    success: true,
-    data: { providers, codexCacheRefreshed: codexRefreshed },
-  };
-  res.json(response);
-}));
+    const response: ApiResponse<{ providers: typeof providers; codexCacheRefreshed: boolean }> = {
+      success: true,
+      data: { providers, codexCacheRefreshed: codexRefreshed },
+    };
+    res.json(response);
+  })
+);
 
 // Admin-only: `npm install -g` spawns with a 5-minute timeout and a shared
 // in-flight lock, so any authed user could exhaust container resources or
 // stall concurrent updates. Restrict to admins.
-router.post('/update', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
-  const parsed = updateCliProvidersSchema.safeParse(req.body || {});
-  if (!parsed.success) {
-    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
-  }
+router.post(
+  '/update',
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const parsed = updateCliProvidersSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+    }
 
-  const providers: CLIProvider[] | undefined = parsed.data.providers?.length
-    ? [...parsed.data.providers]
-    : undefined;
-  const response: ApiResponse<CliProviderUpdateResponse> = {
-    success: true,
-    data: await runCliUpdates(providers),
-  };
-  res.json(response);
-}));
+    const providers: CLIProvider[] | undefined = parsed.data.providers?.length
+      ? [...parsed.data.providers]
+      : undefined;
+    const response: ApiResponse<CliProviderUpdateResponse> = {
+      success: true,
+      data: await runCliUpdates(providers),
+    };
+    res.json(response);
+  })
+);
 
 export default router;

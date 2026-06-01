@@ -1,8 +1,15 @@
 import { readdir, readFile, stat } from 'fs/promises';
 import { join, basename, resolve, isAbsolute, sep } from 'path';
 import { homedir } from 'os';
-import type { Command, ParsedCommand, CommandExecutionResult, BuiltinCommandName } from '@claude-code-webui/shared';
+import type {
+  Command,
+  ParsedCommand,
+  CommandExecutionResult,
+  BuiltinCommandName,
+  CLIProvider,
+} from '@claude-code-webui/shared';
 import { CLI_FORWARDED_COMMANDS } from '@claude-code-webui/shared';
+import { listCodexFeatures } from '../utils/codexCli';
 
 // Built-in command definitions (native WebUI handlers)
 const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 'scope'>> = {
@@ -34,8 +41,16 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
     description: 'Show current token usage and cost',
     arguments: [],
   },
+  context: {
+    description: 'Show current context usage',
+    arguments: [],
+  },
+  usage: {
+    description: 'Show current token usage and provider limits',
+    arguments: [],
+  },
   compact: {
-    description: 'Toggle compact mode',
+    description: 'Compact provider context when supported',
     arguments: [],
   },
   rename: {
@@ -66,6 +81,26 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
     description: 'Open permissions settings',
     arguments: [],
   },
+  memory: {
+    description: 'Open memory and instruction files',
+    arguments: [],
+  },
+  mcp: {
+    description: 'Show MCP server guidance for the active provider',
+    arguments: [],
+  },
+  hooks: {
+    description: 'Show permission hook status',
+    arguments: [],
+  },
+  skills: {
+    description: 'List shared skills available to sessions',
+    arguments: [],
+  },
+  agents: {
+    description: 'List shared agents available to sessions',
+    arguments: [],
+  },
   diff: {
     description: 'Show uncommitted git diff',
     arguments: [],
@@ -83,19 +118,34 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
     arguments: [],
   },
   fast: {
-    description: 'Toggle fast mode on or off',
-    arguments: ['on|off'],
+    description: 'Toggle Codex fast service tier on or off',
+    arguments: ['on|off|status'],
+  },
+  features: {
+    description: 'List Codex feature flags',
+    arguments: [],
+  },
+  imagegen: {
+    description: 'Run Codex image generation via $imagegen',
+    arguments: ['prompt'],
+  },
+  goal: {
+    description: 'Set, view, pause, resume, or clear a Codex task goal',
+    arguments: ['objective|pause|resume|clear'],
+  },
+  subagents: {
+    description: 'Show Codex subagent workflow guidance',
+    arguments: [],
+  },
+  'web-search': {
+    description: 'Show Codex web-search mode guidance',
+    arguments: [],
   },
 };
 
 // CLI-forwarded command descriptions (for /help listing and autocomplete)
 const CLI_FORWARDED_DESCRIPTIONS: Record<string, string> = {
   btw: 'Ask a quick side question without adding to the conversation',
-  context: 'Visualize current context usage',
-  memory: 'Edit CLAUDE.md memory files',
-  mcp: 'Manage MCP server connections',
-  hooks: 'View hook configurations',
-  skills: 'List available skills',
   debug: 'Enable debug logging and troubleshoot',
   effort: 'Set the model effort level (low|medium|high|xhigh|max|auto)',
   plan: 'Enter plan mode',
@@ -110,12 +160,17 @@ const CLI_FORWARDED_DESCRIPTIONS: Record<string, string> = {
   loop: 'Run a prompt repeatedly on an interval',
   proactive: 'Alias for /loop',
   'less-permission-prompts': 'Add allowlist to reduce permission prompts',
-  usage: 'Show plan usage limits',
   insights: 'Generate session analysis report',
   stats: 'Visualize daily usage and streaks',
   schedule: 'Create, update, list, or run routines',
   routines: 'Alias for /schedule',
-  agents: 'Manage agent configurations',
+};
+
+const PROVIDER_LABELS: Record<CLIProvider, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  vibe: 'Mistral Vibe',
 };
 
 export class CommandService {
@@ -161,11 +216,44 @@ export class CommandService {
     // Add project commands if projectPath provided
     if (projectPath) {
       const projectCommandsDir = join(projectPath, '.claude', 'commands');
-      const projectCommands = await this.loadCommandsFromDir(projectCommandsDir, 'project', projectPath);
+      const projectCommands = await this.loadCommandsFromDir(
+        projectCommandsDir,
+        'project',
+        projectPath
+      );
       commands.push(...projectCommands);
     }
 
     return commands;
+  }
+
+  private async listMarkdownBasenames(dir: string): Promise<string[]> {
+    try {
+      const stats = await stat(dir);
+      if (!stats.isDirectory()) return [];
+      const files = await readdir(dir);
+      return files
+        .filter((file) => file.endsWith('.md') && !file.endsWith('.md.disabled'))
+        .map((file) => basename(file, '.md'))
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
+  }
+
+  private async listSkillNames(): Promise<string[]> {
+    const skillsDir = join(homedir(), '.claude', 'skills');
+    try {
+      const stats = await stat(skillsDir);
+      if (!stats.isDirectory()) return [];
+      const entries = await readdir(skillsDir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory() && !entry.name.endsWith('.disabled'))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
   }
 
   // Load commands from a directory
@@ -181,7 +269,7 @@ export class CommandService {
       if (!stats.isDirectory()) return commands;
 
       const files = await readdir(dir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const mdFiles = files.filter((f) => f.endsWith('.md'));
 
       for (const file of mdFiles) {
         const content = await readFile(join(dir, file), 'utf-8');
@@ -214,7 +302,8 @@ export class CommandService {
       const templateContent = frontmatterMatch[2].trim();
 
       // Simple YAML parsing for our use case
-      const description = this.extractYamlValue(yamlContent, 'description') ?? `Custom command: ${name}`;
+      const description =
+        this.extractYamlValue(yamlContent, 'description') ?? `Custom command: ${name}`;
       const argsStr = this.extractYamlValue(yamlContent, 'arguments');
       const args = argsStr ? this.parseYamlArray(argsStr) : [];
 
@@ -249,7 +338,7 @@ export class CommandService {
   private parseYamlArray(str: string): string[] {
     const match = str.match(/^\[(.+)\]$/);
     if (!match || !match[1]) return [];
-    return match[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
+    return match[1].split(',').map((s) => s.trim().replace(/^["']|["']$/g, ''));
   }
 
   // Execute a command
@@ -259,7 +348,17 @@ export class CommandService {
       projectPath?: string;
       sessionId?: string;
       currentModel?: string;
-      usage?: { inputTokens: number; outputTokens: number; cost: number };
+      provider?: CLIProvider;
+      usage?: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheCreationTokens?: number;
+        totalTokens?: number;
+        contextWindow?: number;
+        contextUsedPercent?: number;
+        cost: number;
+      };
     }
   ): Promise<CommandExecutionResult> {
     // Check built-in commands first (WebUI-native handlers)
@@ -269,6 +368,21 @@ export class CommandService {
 
     // Check CLI-forwarded commands (Claude Code CLI handles these natively)
     if ((CLI_FORWARDED_COMMANDS as readonly string[]).includes(parsed.name)) {
+      const provider = context.provider || 'codex';
+      if (provider === 'codex' && parsed.name === 'review') {
+        const rawCommand = `/${parsed.name}${parsed.rawArgs ? ' ' + parsed.rawArgs : ''}`;
+        return {
+          success: true,
+          action: 'forward_to_cli',
+          response: rawCommand,
+        };
+      }
+      if (provider !== 'claude') {
+        return {
+          success: false,
+          error: `/${parsed.name} is a Claude Code native command and is not available in ${PROVIDER_LABELS[provider]}. Use a WebUI command or ask ${PROVIDER_LABELS[provider]} in plain language.`,
+        };
+      }
       const rawCommand = `/${parsed.name}${parsed.rawArgs ? ' ' + parsed.rawArgs : ''}`;
       return {
         success: true,
@@ -279,7 +393,7 @@ export class CommandService {
 
     // Load available commands (user/project custom commands)
     const commands = await this.getAvailableCommands(context.projectPath);
-    const command = commands.find(c => c.name === parsed.name && c.scope !== 'builtin');
+    const command = commands.find((c) => c.name === parsed.name && c.scope !== 'builtin');
 
     if (!command || !command.content) {
       return {
@@ -306,33 +420,242 @@ export class CommandService {
       projectPath?: string;
       sessionId?: string;
       currentModel?: string;
-      usage?: { inputTokens: number; outputTokens: number; cost: number };
+      provider?: CLIProvider;
+      usage?: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheCreationTokens?: number;
+        totalTokens?: number;
+        contextWindow?: number;
+        contextUsedPercent?: number;
+        cost: number;
+      };
     }
   ): Promise<CommandExecutionResult> {
     switch (name) {
       case 'help': {
         const commands = await this.getAvailableCommands(context.projectPath);
+        const provider = context.provider || 'codex';
+        const providerLabel = PROVIDER_LABELS[provider];
         const builtinList = commands
-          .filter(c => c.scope === 'builtin')
-          .map(c => `/${c.name} — ${c.description}`)
+          .filter((c) => c.scope === 'builtin')
+          .map((c) => `/${c.name} — ${c.description}`)
           .join('\n');
-        const cliList = Object.entries(CLI_FORWARDED_DESCRIPTIONS)
-          .map(([name, desc]) => `/${name} — ${desc}`)
-          .join('\n');
+        const cliList =
+          provider === 'claude'
+            ? Object.entries(CLI_FORWARDED_DESCRIPTIONS)
+                .map(([name, desc]) => `/${name} — ${desc}`)
+                .join('\n')
+            : '';
         const customList = commands
-          .filter(c => c.scope !== 'builtin')
-          .map(c => `/${c.name} — ${c.description} [${c.scope}]`)
+          .filter((c) => c.scope !== 'builtin')
+          .map((c) => `/${c.name} — ${c.description} [${c.scope}]`)
           .join('\n');
-        const sections = [
-          `**Built-in commands (WebUI):**\n${builtinList}`,
-          `**Claude Code commands:**\n${cliList}`,
-        ];
+        const sections = [`**Built-in commands (WebUI, ${providerLabel}):**\n${builtinList}`];
+        if (cliList) {
+          sections.push(`**Claude Code native commands:**\n${cliList}`);
+        }
         if (customList) sections.push(`**Custom commands:**\n${customList}`);
         return {
           success: true,
           response: `Available commands:\n\n${sections.join('\n\n')}`,
         };
       }
+
+      case 'skills': {
+        const skills = await this.listSkillNames();
+        return {
+          success: true,
+          response: skills.length
+            ? `Available skills:\n${skills.map((skill) => `- ${skill}`).join('\n')}`
+            : 'No shared skills found.',
+        };
+      }
+
+      case 'features': {
+        if (context.provider !== 'codex') {
+          return {
+            success: true,
+            response: 'Codex feature flags only apply when the active provider is Codex.',
+          };
+        }
+        const features = await listCodexFeatures();
+        const stable = features.filter((feature) => feature.stage === 'stable');
+        const experimental = features.filter((feature) => feature.stage !== 'stable');
+        const render = (items: typeof features) =>
+          items
+            .slice(0, 40)
+            .map(
+              (feature) => `- ${feature.enabled ? 'on' : 'off'} ${feature.name} (${feature.stage})`
+            )
+            .join('\n');
+        return {
+          success: true,
+          response: [
+            '**Codex feature flags**',
+            '',
+            stable.length ? `Stable:\n${render(stable)}` : null,
+            experimental.length ? `Other:\n${render(experimental)}` : null,
+            '',
+            'Change flags from Settings → General → Codex CLI.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        };
+      }
+
+      case 'imagegen': {
+        const prompt = parsed.rawArgs.trim();
+        if (context.provider !== 'codex') {
+          return {
+            success: false,
+            error:
+              '/imagegen is a Codex shortcut. Switch this session to Codex or ask the active provider to use the ComfyUI image tools.',
+          };
+        }
+        if (!prompt) {
+          return {
+            success: false,
+            error: 'Usage: /imagegen <prompt>',
+          };
+        }
+        return {
+          success: true,
+          action: 'send_message',
+          response: `$imagegen ${prompt}`,
+        };
+      }
+
+      case 'goal': {
+        if (context.provider !== 'codex') {
+          const provider = context.provider || 'codex';
+          return {
+            success: false,
+            error: `/goal is a Codex native command and is not available in ${PROVIDER_LABELS[provider]}. Switch this session to Codex to use durable task goals.`,
+          };
+        }
+
+        const rawArgs = parsed.rawArgs.trim();
+        if (rawArgs.length > 4000) {
+          return {
+            success: false,
+            error:
+              '/goal objectives must be at most 4,000 characters. Put longer instructions in a file and point the goal at that file.',
+          };
+        }
+
+        return {
+          success: true,
+          action: 'forward_to_cli',
+          response: rawArgs ? `/goal ${rawArgs}` : '/goal',
+        };
+      }
+
+      case 'subagents':
+        return {
+          success: true,
+          response:
+            context.provider === 'codex'
+              ? 'Codex subagents are available when you explicitly ask for parallel agents in your prompt. Example: "Use two subagents: one to inspect backend routes and one to inspect frontend state, then merge the findings."'
+              : 'Subagent behavior is provider-specific. Switch this session to Codex for Codex subagent workflows.',
+        };
+
+      case 'web-search':
+        return {
+          success: true,
+          action: 'open_settings',
+          response:
+            context.provider === 'codex'
+              ? 'Opening Codex settings. Web search can be set to Auto, Cached, Live, or Disabled.'
+              : 'Opening settings. Codex web search applies to Codex sessions only.',
+          data: { tab: 'general' },
+        };
+
+      case 'agents': {
+        const agents = await this.listMarkdownBasenames(join(homedir(), '.claude', 'agents'));
+        return {
+          success: true,
+          response: agents.length
+            ? `Available agents:\n${agents.map((agent) => `- ${agent}`).join('\n')}`
+            : 'No shared agents found.',
+        };
+      }
+
+      case 'mcp':
+        return {
+          success: true,
+          response: [
+            `MCP servers are loaded for ${PROVIDER_LABELS[context.provider || 'codex']} at session start.`,
+            'Manage server definitions in Settings or `~/.claude/settings.json`; Codex mirrors them into `~/.codex/config.toml` during backend startup.',
+            'Start a fresh chat after changing MCP config.',
+          ].join('\n'),
+        };
+
+      case 'memory':
+        return {
+          success: true,
+          action: 'open_settings',
+          response: 'Opening memory and instruction settings.',
+          data: { tab: 'agents' },
+        };
+
+      case 'hooks':
+        return {
+          success: true,
+          response:
+            context.provider === 'claude'
+              ? 'Claude permission hooks are managed by the WebUI permission prompt bridge.'
+              : 'Codex does not use Claude hook files. WebUI maps session modes to Codex sandbox and approval settings at process spawn.',
+        };
+
+      case 'context':
+        if (context.usage) {
+          return {
+            success: true,
+            response: [
+              'Context Usage:',
+              `  Used: ${(context.usage.totalTokens ?? context.usage.inputTokens).toLocaleString()} tokens`,
+              context.usage.contextWindow
+                ? `  Window: ${context.usage.contextWindow.toLocaleString()} tokens`
+                : null,
+              context.usage.contextUsedPercent !== undefined
+                ? `  Percent: ${context.usage.contextUsedPercent}%`
+                : null,
+              `  Model: ${context.currentModel || 'gpt-5.5'}`,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          };
+        }
+        return {
+          success: true,
+          response: 'No context usage data available for this session yet.',
+        };
+
+      case 'usage':
+        if (context.usage) {
+          return {
+            success: true,
+            response: [
+              'Token Usage:',
+              `  Input: ${context.usage.inputTokens.toLocaleString()} tokens`,
+              context.usage.cacheReadTokens
+                ? `  Cache read: ${context.usage.cacheReadTokens.toLocaleString()} tokens`
+                : null,
+              `  Output: ${context.usage.outputTokens.toLocaleString()} tokens`,
+              `  Cost: $${context.usage.cost.toFixed(4)}`,
+              '',
+              'Provider rate limits are shown in the context popover.',
+            ]
+              .filter((line) => line !== null)
+              .join('\n'),
+          };
+        }
+        return {
+          success: true,
+          response: 'No usage data available for this session yet.',
+        };
 
       case 'clear':
         return {
@@ -376,7 +699,10 @@ export class CommandService {
         return {
           success: true,
           action: 'copy_response',
-          response: n > 1 ? `Copying ${n}th-latest response to clipboard.` : 'Copying last response to clipboard.',
+          response:
+            n > 1
+              ? `Copying ${n}th-latest response to clipboard.`
+              : 'Copying last response to clipboard.',
           data: { n: Number.isFinite(n) && n > 0 ? n : 1 },
         };
       }
@@ -440,18 +766,53 @@ export class CommandService {
         };
 
       case 'fast': {
+        const provider = context.provider || 'codex';
+
+        if (provider !== 'codex') {
+          return {
+            success: false,
+            error: `/fast is only available for Codex sessions in WebUI. ${PROVIDER_LABELS[provider]} does not expose Codex service tiers.`,
+          };
+        }
+
         const mode = parsed.args[0]?.toLowerCase();
-        const explicit = mode === 'on' ? true : mode === 'off' ? false : undefined;
+        const statusOnly = mode === 'status' || mode === 'state';
+        const explicit =
+          mode === 'on' ||
+          mode === 'enable' ||
+          mode === 'enabled' ||
+          mode === 'true' ||
+          mode === '1'
+            ? true
+            : mode === 'off' ||
+                mode === 'disable' ||
+                mode === 'disabled' ||
+                mode === 'false' ||
+                mode === '0'
+              ? false
+              : undefined;
+
+        if (mode && !statusOnly && explicit === undefined) {
+          return {
+            success: false,
+            error: 'Usage: /fast, /fast on, /fast off, or /fast status.',
+          };
+        }
+
         return {
           success: true,
           action: 'toggle_fast',
-          response:
-            explicit === true
+          response: statusOnly
+            ? 'Checking fast mode.'
+            : explicit === true
               ? 'Enabling fast mode.'
               : explicit === false
                 ? 'Disabling fast mode.'
                 : 'Toggling fast mode.',
-          data: explicit === undefined ? {} : { enabled: explicit },
+          data: {
+            ...(statusOnly ? { statusOnly: true } : {}),
+            ...(explicit === undefined ? {} : { enabled: explicit }),
+          },
         };
       }
 
@@ -459,7 +820,7 @@ export class CommandService {
         if (parsed.args.length === 0) {
           return {
             success: true,
-            response: `Current model: ${context.currentModel || 'claude-sonnet-4-20250514'}`,
+            response: `Current model: ${context.currentModel || 'gpt-5.5'}`,
           };
         }
         return {
@@ -474,7 +835,7 @@ export class CommandService {
           success: true,
           response: [
             `Session: ${context.sessionId || 'N/A'}`,
-            `Model: ${context.currentModel || 'claude-sonnet-4-20250514'}`,
+            `Model: ${context.currentModel || 'gpt-5.5'}`,
             `Project: ${context.projectPath || 'None'}`,
           ].join('\n'),
         };
@@ -497,6 +858,14 @@ export class CommandService {
         };
 
       case 'compact':
+        if (context.provider === 'codex') {
+          const rawArgs = parsed.rawArgs.trim();
+          return {
+            success: true,
+            action: 'forward_to_cli',
+            response: rawArgs ? `/compact ${rawArgs}` : '/compact',
+          };
+        }
         return {
           success: true,
           action: 'clear',

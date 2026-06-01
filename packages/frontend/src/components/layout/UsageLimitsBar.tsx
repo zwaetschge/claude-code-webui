@@ -27,17 +27,17 @@ function getGradientColor(percent: number): string {
   // Green to yellow (0-50%)
   if (p <= 50) {
     const ratio = p / 50;
-    const r = Math.round(34 + (234 - 34) * ratio);   // 34 → 234
+    const r = Math.round(34 + (234 - 34) * ratio); // 34 → 234
     const g = Math.round(197 + (179 - 197) * ratio); // 197 → 179
-    const b = Math.round(94 + (8 - 94) * ratio);     // 94 → 8
+    const b = Math.round(94 + (8 - 94) * ratio); // 94 → 8
     return `rgb(${r}, ${g}, ${b})`;
   }
 
   // Yellow to red (50-100%)
   const ratio = (p - 50) / 50;
-  const r = Math.round(234 + (239 - 234) * ratio);  // 234 → 239
-  const g = Math.round(179 - 179 * ratio);           // 179 → 0
-  const b = Math.round(8 + (68 - 8) * ratio);        // 8 → 68
+  const r = Math.round(234 + (239 - 234) * ratio); // 234 → 239
+  const g = Math.round(179 - 179 * ratio); // 179 → 0
+  const b = Math.round(8 + (68 - 8) * ratio); // 8 → 68
   return `rgb(${r}, ${g}, ${b})`;
 }
 
@@ -50,7 +50,7 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const provider = activeSession?.cliProvider || 'claude';
-  const limitsSupported = provider === 'claude' || provider === 'codex' || provider === 'opencode';
+  const limitsSupported = provider === 'claude' || provider === 'codex';
 
   // Context usage from the active session
   const currentUsage = activeSessionId ? usage[activeSessionId] : undefined;
@@ -69,35 +69,45 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
     enabled: !!activeSessionId && limitsSupported,
   });
 
-  if (!activeSessionId || !limitsSupported || !usageLimits) {
+  if (!activeSessionId || (!usageLimits && !currentUsage)) {
     return null;
   }
 
   const labels = CLI_PROVIDER_LIMIT_LABELS[provider];
 
-  const limits = [
-    usageLimits.fiveHour && {
-      key: 'session',
-      label: labels.session.title,
-      sublabel: labels.session.subtitle,
-      value: usageLimits.fiveHour.utilization,
-      resetsAt: usageLimits.fiveHour.resetsAt,
-    },
-    usageLimits.sevenDay && labels.weeklyAll && {
-      key: 'weekly',
-      label: labels.weeklyAll.title,
-      sublabel: labels.weeklyAll.subtitle,
-      value: usageLimits.sevenDay.utilization,
-      resetsAt: usageLimits.sevenDay.resetsAt,
-    },
-    usageLimits.sevenDaySonnet && labels.weeklySonnet && {
-      key: 'sonnet',
-      label: labels.weeklySonnet.title,
-      sublabel: labels.weeklySonnet.subtitle,
-      value: usageLimits.sevenDaySonnet.utilization,
-      resetsAt: usageLimits.sevenDaySonnet.resetsAt,
-    },
-  ].filter(Boolean) as Array<{ key: string; label: string; sublabel?: string; value: number; resetsAt?: string | null }>;
+  const limits = usageLimits
+    ? ([
+        usageLimits.fiveHour && {
+          key: 'session',
+          label: labels.session.title,
+          sublabel: labels.session.subtitle,
+          value: usageLimits.fiveHour.utilization,
+          resetsAt: usageLimits.fiveHour.resetsAt,
+        },
+        usageLimits.sevenDay &&
+          labels.weeklyAll && {
+            key: 'weekly',
+            label: labels.weeklyAll.title,
+            sublabel: labels.weeklyAll.subtitle,
+            value: usageLimits.sevenDay.utilization,
+            resetsAt: usageLimits.sevenDay.resetsAt,
+          },
+        usageLimits.sevenDaySonnet &&
+          labels.weeklySonnet && {
+            key: 'sonnet',
+            label: labels.weeklySonnet.title,
+            sublabel: labels.weeklySonnet.subtitle,
+            value: usageLimits.sevenDaySonnet.utilization,
+            resetsAt: usageLimits.sevenDaySonnet.resetsAt,
+          },
+      ].filter(Boolean) as Array<{
+        key: string;
+        label: string;
+        sublabel?: string;
+        value: number;
+        resetsAt?: string | null;
+      }>)
+    : [];
 
   // Show nothing if no session
   if (!activeSessionId) {
@@ -110,9 +120,10 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
     {
       key: 'context',
       label: 'Context',
-      sublabel: currentUsage?.totalTokens && currentUsage?.contextWindow
-        ? `${formatTokens(currentUsage.totalTokens)} / ${formatTokens(currentUsage.contextWindow)}`
-        : undefined,
+      sublabel:
+        currentUsage?.totalTokens && currentUsage?.contextWindow
+          ? `${formatTokens(currentUsage.totalTokens)} / ${formatTokens(currentUsage.contextWindow)}`
+          : undefined,
       value: contextPercent,
       resetsAt: null as string | null,
     },
@@ -121,10 +132,7 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
   return (
     <div className={cn('w-full h-5 flex gap-px bg-muted/30', className)}>
       {allBars.map((bar) => (
-        <div
-          key={bar.key}
-          className="relative flex-1 group overflow-hidden"
-        >
+        <div key={bar.key} className="relative flex-1 group overflow-hidden">
           {/* Background track */}
           <div className="absolute inset-0 bg-muted/40" />
 
@@ -156,7 +164,9 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
               {bar.sublabel && <span className="text-muted-foreground"> ({bar.sublabel})</span>}
               <span className="ml-1.5 font-semibold">{bar.value}%</span>
               {bar.resetsAt && (
-                <span className="ml-1.5 text-muted-foreground">resets {formatResetAbsolute(bar.resetsAt)}</span>
+                <span className="ml-1.5 text-muted-foreground">
+                  resets {formatResetAbsolute(bar.resetsAt)}
+                </span>
               )}
             </div>
           </div>

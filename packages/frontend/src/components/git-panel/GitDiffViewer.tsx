@@ -20,9 +20,7 @@ export function GitDiffViewer({ workingDirectory, file, staged }: GitDiffViewerP
         file,
         staged: staged.toString(),
       });
-      const response = await api.get<ApiResponse<GitFileDiff>>(
-        `/api/git/diff-file?${params}`
-      );
+      const response = await api.get<ApiResponse<GitFileDiff>>(`/api/git/diff-file?${params}`);
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
@@ -40,9 +38,7 @@ export function GitDiffViewer({ workingDirectory, file, staged }: GitDiffViewerP
 
   if (!diff || !diff.diff) {
     return (
-      <div className="text-center py-4 text-sm text-muted-foreground">
-        No changes to display
-      </div>
+      <div className="text-center py-4 text-sm text-muted-foreground">No changes to display</div>
     );
   }
 
@@ -93,15 +89,16 @@ export function GitDiffViewer({ workingDirectory, file, staged }: GitDiffViewerP
               bgClass = 'bg-red-500/10';
             } else if (line.startsWith('diff --git')) {
               lineClass = 'text-blue-400 font-bold';
-            } else if (line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file')) {
+            } else if (
+              line.startsWith('index ') ||
+              line.startsWith('new file') ||
+              line.startsWith('deleted file')
+            ) {
               lineClass = 'text-muted-foreground/60';
             }
 
             return (
-              <div
-                key={index}
-                className={cn('px-2 -mx-2', bgClass)}
-              >
+              <div key={index} className={cn('px-2 -mx-2', bgClass)}>
                 <span className={lineClass}>{line || ' '}</span>
               </div>
             );

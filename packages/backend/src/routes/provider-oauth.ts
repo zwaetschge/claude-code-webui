@@ -9,7 +9,10 @@ import type { ApiResponse } from '@claude-code-webui/shared';
 const router = Router();
 
 // OAuth state storage (in production, use Redis or similar)
-const oauthStates = new Map<string, { userId: string; providerType: string; providerId?: string; redirectUrl: string }>();
+const oauthStates = new Map<
+  string,
+  { userId: string; providerType: string; providerId?: string; redirectUrl: string }
+>();
 
 // Clean up old states periodically
 setInterval(() => {
@@ -24,13 +27,16 @@ setInterval(() => {
 }, 60 * 1000);
 
 // Supported OAuth providers and their configurations
-const OAUTH_CONFIGS: Record<string, {
-  authUrl: string;
-  tokenUrl: string;
-  scopes: string[];
-  clientIdEnv: string;
-  clientSecretEnv: string;
-}> = {
+const OAUTH_CONFIGS: Record<
+  string,
+  {
+    authUrl: string;
+    tokenUrl: string;
+    scopes: string[];
+    clientIdEnv: string;
+    clientSecretEnv: string;
+  }
+> = {
   google: {
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
@@ -54,12 +60,16 @@ router.get('/oauth/:providerType/url', requireAuth, (req, res) => {
   if (!oauthConfig) {
     const response: ApiResponse<null> = {
       success: false,
-      error: { code: 'UNSUPPORTED_PROVIDER', message: `OAuth not supported for provider type: ${providerType}` },
+      error: {
+        code: 'UNSUPPORTED_PROVIDER',
+        message: `OAuth not supported for provider type: ${providerType}`,
+      },
     };
     return res.status(400).json(response);
   }
 
-  const clientId = providerType === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
+  const clientId =
+    providerType === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
   if (!clientId) {
     const response: ApiResponse<null> = {
       success: false,
@@ -120,8 +130,12 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
 
   try {
     // Exchange code for tokens
-    const clientId = providerType === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
-    const clientSecret = providerType === 'google' ? config.google.clientSecret : process.env[oauthConfig.clientSecretEnv];
+    const clientId =
+      providerType === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
+    const clientSecret =
+      providerType === 'google'
+        ? config.google.clientSecret
+        : process.env[oauthConfig.clientSecretEnv];
     const callbackUrl = `${config.frontendUrl.replace(/\/$/, '')}/api/providers/oauth/${providerType}/callback`;
 
     const tokenResponse = await fetch(oauthConfig.tokenUrl, {
@@ -142,7 +156,7 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
       return res.redirect('/settings?tab=providers&error=token_exchange_failed');
     }
 
-    const tokens = await tokenResponse.json() as {
+    const tokens = (await tokenResponse.json()) as {
       access_token: string;
       refresh_token?: string;
       expires_in?: number;
@@ -160,7 +174,8 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
 
     if (stateData.providerId) {
       // Update existing provider with OAuth tokens
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE ai_providers SET
           oauth_access_token = ?,
           oauth_refresh_token = ?,
@@ -168,22 +183,20 @@ router.get('/oauth/:providerType/callback', async (req, res) => {
           auth_method = 'oauth',
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND user_id = ?
-      `).run(
-        encryptedAccess,
-        encryptedRefresh,
-        expiresAt,
-        stateData.providerId,
-        stateData.userId
-      );
+      `
+      ).run(encryptedAccess, encryptedRefresh, expiresAt, stateData.providerId, stateData.userId);
     } else {
       // Create new provider with OAuth tokens
       const id = nanoid();
-      const providerName = providerType === 'google' ? 'Google Gemini (OAuth)' : `${providerType} (OAuth)`;
+      const providerName =
+        providerType === 'google' ? 'Google Gemini (OAuth)' : `${providerType} (OAuth)`;
 
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO ai_providers (id, user_id, name, type, auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at)
         VALUES (?, ?, ?, ?, 'oauth', ?, ?, ?)
-      `).run(
+      `
+      ).run(
         id,
         stateData.userId,
         providerName,
@@ -208,13 +221,19 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const provider = db.prepare(`
+    const provider = db
+      .prepare(
+        `
       SELECT id, type, oauth_refresh_token FROM ai_providers WHERE id = ? AND user_id = ?
-    `).get(id, authReq.userId) as {
-      id: string;
-      type: string;
-      oauth_refresh_token: string | null;
-    } | undefined;
+    `
+      )
+      .get(id, authReq.userId) as
+      | {
+          id: string;
+          type: string;
+          oauth_refresh_token: string | null;
+        }
+      | undefined;
 
     if (!provider) {
       const response: ApiResponse<null> = {
@@ -242,8 +261,12 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
       return res.status(400).json(response);
     }
 
-    const clientId = provider.type === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
-    const clientSecret = provider.type === 'google' ? config.google.clientSecret : process.env[oauthConfig.clientSecretEnv];
+    const clientId =
+      provider.type === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
+    const clientSecret =
+      provider.type === 'google'
+        ? config.google.clientSecret
+        : process.env[oauthConfig.clientSecretEnv];
 
     const tokenResponse = await fetch(oauthConfig.tokenUrl, {
       method: 'POST',
@@ -264,7 +287,7 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
       return res.status(400).json(response);
     }
 
-    const tokens = await tokenResponse.json() as {
+    const tokens = (await tokenResponse.json()) as {
       access_token: string;
       expires_in?: number;
     };
@@ -273,13 +296,15 @@ router.post('/:id/refresh-token', requireAuth, async (req, res) => {
       ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
       : null;
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE ai_providers SET
         oauth_access_token = ?,
         oauth_expires_at = ?,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(safeEncrypt(tokens.access_token), expiresAt, id);
+    `
+    ).run(safeEncrypt(tokens.access_token), expiresAt, id);
 
     const response: ApiResponse<{ success: boolean }> = {
       success: true,
@@ -300,8 +325,12 @@ router.get('/oauth/available', requireAuth, (_req, res) => {
   const available: Record<string, boolean> = {};
 
   for (const [providerType, oauthConfig] of Object.entries(OAUTH_CONFIGS)) {
-    const clientId = providerType === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
-    const clientSecret = providerType === 'google' ? config.google.clientSecret : process.env[oauthConfig.clientSecretEnv];
+    const clientId =
+      providerType === 'google' ? config.google.clientId : process.env[oauthConfig.clientIdEnv];
+    const clientSecret =
+      providerType === 'google'
+        ? config.google.clientSecret
+        : process.env[oauthConfig.clientSecretEnv];
     available[providerType] = !!(clientId && clientSecret);
   }
 

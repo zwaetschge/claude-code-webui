@@ -1,10 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
 
 interface RateLimitConfig {
-  name: string;           // Stable limiter identifier used as the bucket key
-  windowMs: number;       // Time window in milliseconds
-  maxRequests: number;    // Max requests per window
-  message?: string;       // Error message
+  name: string; // Stable limiter identifier used as the bucket key
+  windowMs: number; // Time window in milliseconds
+  maxRequests: number; // Max requests per window
+  message?: string; // Error message
 }
 
 interface RateLimitEntry {
@@ -47,7 +47,12 @@ function getClientId(req: Request): string {
  * `/api/sessions/def` get independent buckets, which is never what we want.
  */
 export function createRateLimiter(config: RateLimitConfig) {
-  const { name, windowMs, maxRequests, message = 'Too many requests, please try again later' } = config;
+  const {
+    name,
+    windowMs,
+    maxRequests,
+    message = 'Too many requests, please try again later',
+  } = config;
 
   return (req: Request, res: Response, next: NextFunction) => {
     const clientId = getClientId(req);

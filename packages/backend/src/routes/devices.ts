@@ -30,9 +30,9 @@ router.post('/register', requireAuth, (req, res) => {
   const db = getDatabase();
 
   // Check if fingerprint already registered
-  const existing = db.prepare(
-    'SELECT id FROM trusted_devices WHERE fingerprint_hash = ?'
-  ).get(fingerprintHash) as { id: string } | undefined;
+  const existing = db
+    .prepare('SELECT id FROM trusted_devices WHERE fingerprint_hash = ?')
+    .get(fingerprintHash) as { id: string } | undefined;
 
   if (existing) {
     // Update existing device
@@ -73,21 +73,25 @@ router.post('/auth', (req, res) => {
   const { fingerprintHash } = parsed.data;
   const db = getDatabase();
 
-  const device = db.prepare(
-    `SELECT td.id, td.user_id, td.device_name, u.name as user_name
+  const device = db
+    .prepare(
+      `SELECT td.id, td.user_id, td.device_name, u.name as user_name
      FROM trusted_devices td
      JOIN users u ON td.user_id = u.id
      WHERE td.fingerprint_hash = ?`
-  ).get(fingerprintHash) as { id: string; user_id: string; device_name: string; user_name: string } | undefined;
+    )
+    .get(fingerprintHash) as
+    | { id: string; user_id: string; device_name: string; user_name: string }
+    | undefined;
 
   if (!device) {
     throw new AppError('Unknown device', 401, 'DEVICE_NOT_FOUND');
   }
 
   // Update last seen
-  db.prepare(
-    'UPDATE trusted_devices SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?'
-  ).run(device.id);
+  db.prepare('UPDATE trusted_devices SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+    device.id
+  );
 
   const token = generateUserToken(device.user_id, { basicAuth: true, expiresIn: '90d' });
 
@@ -107,9 +111,11 @@ router.get('/', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
-  const devices = db.prepare(
-    'SELECT id, device_name, platform, last_seen_at, created_at FROM trusted_devices WHERE user_id = ? ORDER BY last_seen_at DESC'
-  ).all(userId);
+  const devices = db
+    .prepare(
+      'SELECT id, device_name, platform, last_seen_at, created_at FROM trusted_devices WHERE user_id = ? ORDER BY last_seen_at DESC'
+    )
+    .all(userId);
 
   res.json({
     success: true,
@@ -123,9 +129,9 @@ router.delete('/:id', requireAuth, (req, res) => {
   const deviceId = req.params.id;
   const db = getDatabase();
 
-  const result = db.prepare(
-    'DELETE FROM trusted_devices WHERE id = ? AND user_id = ?'
-  ).run(deviceId, userId);
+  const result = db
+    .prepare('DELETE FROM trusted_devices WHERE id = ? AND user_id = ?')
+    .run(deviceId, userId);
 
   if (result.changes === 0) {
     throw new AppError('Device not found', 404, 'DEVICE_NOT_FOUND');

@@ -1,7 +1,9 @@
 import type { CLIProvider } from './session';
 
 export type Theme = 'dark' | 'light' | 'system';
-export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode';
+export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
+export type CodexWebSearchMode = 'auto' | 'cached' | 'live' | 'disabled';
+export type CodexServiceTier = 'fast';
 
 export interface UserSettings {
   userId: string;
@@ -14,6 +16,8 @@ export interface UserSettings {
   cliProviderModels?: Partial<Record<CLIProvider, string>>;
   cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
   cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
+  cliProviderServiceTiers?: Partial<Record<CLIProvider, CodexServiceTier>>;
+  codexWebSearch?: CodexWebSearchMode;
 }
 
 export interface UpdateSettingsInput {
@@ -26,6 +30,8 @@ export interface UpdateSettingsInput {
   cliProviderModels?: Partial<Record<CLIProvider, string>>;
   cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
   cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
+  cliProviderServiceTiers?: Partial<Record<CLIProvider, CodexServiceTier>>;
+  codexWebSearch?: CodexWebSearchMode;
 }
 
 export interface ClaudeSettings {

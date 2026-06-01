@@ -20,14 +20,18 @@ const SheetContext = React.createContext<{
 }>({ open: false, onOpenChange: () => {} });
 
 export function Sheet({ open, onOpenChange, children }: SheetProps) {
-  return (
-    <SheetContext.Provider value={{ open, onOpenChange }}>
-      {children}
-    </SheetContext.Provider>
-  );
+  return <SheetContext.Provider value={{ open, onOpenChange }}>{children}</SheetContext.Provider>;
 }
 
-export function SheetTrigger({ children, asChild, className }: { children: React.ReactNode; asChild?: boolean; className?: string }) {
+export function SheetTrigger({
+  children,
+  asChild,
+  className,
+}: {
+  children: React.ReactNode;
+  asChild?: boolean;
+  className?: string;
+}) {
   const { onOpenChange } = React.useContext(SheetContext);
 
   if (asChild && React.isValidElement(children)) {
@@ -69,8 +73,10 @@ export function SheetContent({ children, className, side = 'left' }: SheetConten
       {/* Sheet */}
       <div
         className={cn(
-          "fixed z-50 bg-background shadow-xl transition-transform duration-300 ease-in-out",
-          side === 'left' ? "inset-y-0 left-0 h-full w-3/4 max-w-xs border-r animate-in slide-in-from-left" : "inset-y-0 right-0 h-full w-3/4 max-w-xs border-l animate-in slide-in-from-right",
+          'fixed z-50 bg-background shadow-xl transition-transform duration-300 ease-in-out',
+          side === 'left'
+            ? 'inset-y-0 left-0 h-full w-3/4 max-w-xs border-r animate-in slide-in-from-left'
+            : 'inset-y-0 right-0 h-full w-3/4 max-w-xs border-l animate-in slide-in-from-right',
           className
         )}
       >

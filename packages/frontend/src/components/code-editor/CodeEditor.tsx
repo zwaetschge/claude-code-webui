@@ -12,37 +12,37 @@ interface CodeEditorProps {
   readOnly?: boolean;
 }
 
-export function CodeEditor({
-  path,
-  value,
-  onChange,
-  onSave,
-  readOnly = false,
-}: CodeEditorProps) {
+export function CodeEditor({ path, value, onChange, onSave, readOnly = false }: CodeEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const language = getLanguageFromPath(path);
 
-  const handleMount: OnMount = useCallback((editor) => {
-    editorRef.current = editor;
+  const handleMount: OnMount = useCallback(
+    (editor) => {
+      editorRef.current = editor;
 
-    // Add Ctrl+S save shortcut
-    editor.addCommand(
-      // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KeyS
-      2048 | 49, // CtrlCmd + S
-      () => {
-        onSave?.();
+      // Add Ctrl+S save shortcut
+      editor.addCommand(
+        // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KeyS
+        2048 | 49, // CtrlCmd + S
+        () => {
+          onSave?.();
+        }
+      );
+
+      // Focus the editor
+      editor.focus();
+    },
+    [onSave]
+  );
+
+  const handleChange: OnChange = useCallback(
+    (value) => {
+      if (value !== undefined) {
+        onChange?.(value);
       }
-    );
-
-    // Focus the editor
-    editor.focus();
-  }, [onSave]);
-
-  const handleChange: OnChange = useCallback((value) => {
-    if (value !== undefined) {
-      onChange?.(value);
-    }
-  }, [onChange]);
+    },
+    [onChange]
+  );
 
   return (
     <Editor

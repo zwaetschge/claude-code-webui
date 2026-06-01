@@ -65,10 +65,13 @@ router.post('/authenticate', requireAuth, async (_req, res) => {
   try {
     // Run claude with --dangerously-skip-permissions to trigger OAuth flow
     // The CLI will output a URL that needs to be opened in a browser
-    const { stdout, stderr } = await execAsync('claude auth login 2>&1 || claude --dangerously-skip-permissions 2>&1', {
-      timeout: 10000,
-      env: { ...process.env, CLAUDE_CODE_HEADLESS: '1' },
-    });
+    const { stdout, stderr } = await execAsync(
+      'claude auth login 2>&1 || claude --dangerously-skip-permissions 2>&1',
+      {
+        timeout: 10000,
+        env: { ...process.env, CLAUDE_CODE_HEADLESS: '1' },
+      }
+    );
 
     const output = stdout || stderr;
 
@@ -87,7 +90,8 @@ router.post('/authenticate', requireAuth, async (_req, res) => {
       res.json({
         success: true,
         data: {
-          message: output.trim() || 'Authentication process started. Check if already authenticated.',
+          message:
+            output.trim() || 'Authentication process started. Check if already authenticated.',
         },
       });
     }

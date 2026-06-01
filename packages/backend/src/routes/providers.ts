@@ -47,9 +47,29 @@ interface AIProviderResponse {
 // Default models for each provider
 const DEFAULT_MODELS: Record<ProviderType, string[]> = {
   openai: ['o3', 'o3-mini', 'gpt-4.5', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o1-pro'],
-  anthropic: ['claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001', 'claude-opus-4-1-20250805', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
-  google: ['gemini-3-pro', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
-  openrouter: ['openai/o3', 'openai/gpt-4.5', 'anthropic/claude-sonnet-4.5', 'google/gemini-2.5-pro', 'meta-llama/llama-3.3-70b'],
+  anthropic: [
+    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-5-20250929',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-4-1-20250805',
+    'claude-sonnet-4-20250514',
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+  ],
+  google: [
+    'gemini-3-pro',
+    'gemini-3-flash',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+  ],
+  openrouter: [
+    'openai/o3',
+    'openai/gpt-4.5',
+    'anthropic/claude-sonnet-4.5',
+    'google/gemini-2.5-pro',
+    'meta-llama/llama-3.3-70b',
+  ],
   ollama: ['llama3.3', 'llama3.2', 'qwen2.5-coder', 'codellama', 'mistral', 'mixtral'],
   custom: [],
 };
@@ -89,10 +109,12 @@ router.get('/', requireAuth, (req, res) => {
 
   try {
     const providers = db
-      .prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+      .prepare(
+        `SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
        auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
        created_at, updated_at
-  FROM ai_providers WHERE user_id = ? ORDER BY name ASC`)
+  FROM ai_providers WHERE user_id = ? ORDER BY name ASC`
+      )
       .all(authReq.userId) as AIProvider[];
 
     const response: ApiResponse<AIProviderResponse[]> = {
@@ -112,7 +134,7 @@ router.get('/', requireAuth, (req, res) => {
 // Get available provider types and their default models
 router.get('/types', requireAuth, (_req, res) => {
   const types = Object.keys(DEFAULT_MODELS) as ProviderType[];
-  const data = types.map(type => ({
+  const data = types.map((type) => ({
     id: type,
     name: type.charAt(0).toUpperCase() + type.slice(1),
     baseUrl: DEFAULT_BASE_URLS[type],
@@ -160,10 +182,14 @@ router.post('/', requireAuth, (req, res) => {
       defaultModel || null
     );
 
-    const provider = db.prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+    const provider = db
+      .prepare(
+        `SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
        auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
        created_at, updated_at
-  FROM ai_providers WHERE id = ?`).get(id) as AIProvider;
+  FROM ai_providers WHERE id = ?`
+      )
+      .get(id) as AIProvider;
 
     const response: ApiResponse<AIProviderResponse> = {
       success: true,
@@ -189,10 +215,12 @@ router.patch('/:id', requireAuth, (req, res) => {
   try {
     // Check ownership
     const existing = db
-      .prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+      .prepare(
+        `SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
        auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
        created_at, updated_at
-  FROM ai_providers WHERE id = ? AND user_id = ?`)
+  FROM ai_providers WHERE id = ? AND user_id = ?`
+      )
       .get(id, authReq.userId) as AIProvider | undefined;
 
     if (!existing) {
@@ -235,10 +263,14 @@ router.patch('/:id', requireAuth, (req, res) => {
     values.push(id as string);
     db.prepare(`UPDATE ai_providers SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-    const provider = db.prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+    const provider = db
+      .prepare(
+        `SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
        auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
        created_at, updated_at
-  FROM ai_providers WHERE id = ?`).get(id) as AIProvider;
+  FROM ai_providers WHERE id = ?`
+      )
+      .get(id) as AIProvider;
 
     const response: ApiResponse<AIProviderResponse> = {
       success: true,
@@ -295,10 +327,12 @@ router.post('/:id/test', requireAuth, async (req, res) => {
 
   try {
     const provider = db
-      .prepare(`SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
+      .prepare(
+        `SELECT id, user_id, name, type, api_key_encrypted, base_url, models, default_model, enabled,
        auth_method, oauth_access_token, oauth_refresh_token, oauth_expires_at,
        created_at, updated_at
-  FROM ai_providers WHERE id = ? AND user_id = ?`)
+  FROM ai_providers WHERE id = ? AND user_id = ?`
+      )
       .get(id, authReq.userId) as AIProvider | undefined;
 
     if (!provider) {
@@ -316,9 +350,8 @@ router.post('/:id/test', requireAuth, async (req, res) => {
       // Decrypt API key / OAuth token for testing
       const apiKey = safeDecrypt(provider.api_key_encrypted);
       const oauthAccessToken = safeDecrypt(provider.oauth_access_token);
-      const authToken = provider.auth_method === 'oauth' && oauthAccessToken
-        ? oauthAccessToken
-        : apiKey;
+      const authToken =
+        provider.auth_method === 'oauth' && oauthAccessToken ? oauthAccessToken : apiKey;
 
       switch (provider.type) {
         case 'openai': {
@@ -328,9 +361,12 @@ router.post('/:id/test', requireAuth, async (req, res) => {
             break;
           }
           const response = await fetch(`${baseUrl}/models`, {
-            headers: { 'Authorization': `Bearer ${authToken}` },
+            headers: { Authorization: `Bearer ${authToken}` },
           });
-          testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
+          testResult = {
+            success: response.ok,
+            message: response.ok ? 'Connected successfully' : 'Failed to connect',
+          };
           break;
         }
         case 'google': {
@@ -338,13 +374,19 @@ router.post('/:id/test', requireAuth, async (req, res) => {
           if (provider.auth_method === 'oauth' && oauthAccessToken) {
             const baseUrl = provider.base_url || DEFAULT_BASE_URLS.google;
             const response = await fetch(`${baseUrl}/models`, {
-              headers: { 'Authorization': `Bearer ${oauthAccessToken}` },
+              headers: { Authorization: `Bearer ${oauthAccessToken}` },
             });
-            testResult = { success: response.ok, message: response.ok ? 'Connected via OAuth' : 'OAuth token may have expired' };
+            testResult = {
+              success: response.ok,
+              message: response.ok ? 'Connected via OAuth' : 'OAuth token may have expired',
+            };
           } else if (apiKey) {
             const baseUrl = provider.base_url || DEFAULT_BASE_URLS.google;
             const response = await fetch(`${baseUrl}/models?key=${apiKey}`);
-            testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
+            testResult = {
+              success: response.ok,
+              message: response.ok ? 'Connected successfully' : 'Failed to connect',
+            };
           } else {
             testResult = { success: false, message: 'No API key or OAuth token configured' };
           }
@@ -352,14 +394,23 @@ router.post('/:id/test', requireAuth, async (req, res) => {
         }
         case 'ollama': {
           const response = await fetch(`${provider.base_url || DEFAULT_BASE_URLS.ollama}/api/tags`);
-          testResult = { success: response.ok, message: response.ok ? 'Connected successfully' : 'Failed to connect' };
+          testResult = {
+            success: response.ok,
+            message: response.ok ? 'Connected successfully' : 'Failed to connect',
+          };
           break;
         }
         default:
-          testResult = { success: true, message: 'Provider configured (no connection test available)' };
+          testResult = {
+            success: true,
+            message: 'Provider configured (no connection test available)',
+          };
       }
     } catch (error) {
-      testResult = { success: false, message: error instanceof Error ? error.message : 'Connection failed' };
+      testResult = {
+        success: false,
+        message: error instanceof Error ? error.message : 'Connection failed',
+      };
     }
 
     const response: ApiResponse<typeof testResult> = {

@@ -73,7 +73,9 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
   const { data: checkpoints, isLoading } = useQuery({
     queryKey: ['checkpoints', sessionId],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<Checkpoint[]>>(`/api/checkpoints/sessions/${sessionId}`);
+      const response = await api.get<ApiResponse<Checkpoint[]>>(
+        `/api/checkpoints/sessions/${sessionId}`
+      );
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
@@ -99,7 +101,11 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
       toast({ title: 'Checkpoint created', description: 'Session state saved successfully' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to create checkpoint', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to create checkpoint',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -121,13 +127,25 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
       onRestore?.();
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to restore checkpoint', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to restore checkpoint',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
   // Update checkpoint mutation
   const updateMutation = useMutation({
-    mutationFn: async ({ id, name, description }: { id: string; name: string; description: string }) => {
+    mutationFn: async ({
+      id,
+      name,
+      description,
+    }: {
+      id: string;
+      name: string;
+      description: string;
+    }) => {
       const response = await api.put<ApiResponse<Checkpoint>>(`/api/checkpoints/${id}`, {
         name,
         description: description || undefined,
@@ -140,7 +158,11 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
       toast({ title: 'Checkpoint updated' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to update checkpoint', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to update checkpoint',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -156,7 +178,11 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
       toast({ title: 'Checkpoint deleted' });
     },
     onError: (error: Error) => {
-      toast({ title: 'Failed to delete checkpoint', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Failed to delete checkpoint',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -319,9 +345,7 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
               <Save className="h-5 w-5" />
               Create Checkpoint
             </DialogTitle>
-            <DialogDescription>
-              Save the current session state to restore later
-            </DialogDescription>
+            <DialogDescription>Save the current session state to restore later</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-2">
@@ -348,14 +372,13 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
               />
             </div>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setShowCreateDialog(false)}
-              >
+              <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!newCheckpointName.trim() || createMutation.isPending}>
+              <Button
+                type="submit"
+                disabled={!newCheckpointName.trim() || createMutation.isPending}
+              >
                 {createMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -379,15 +402,17 @@ export function CheckpointsPanel({ sessionId, className, onRestore }: Checkpoint
               Restore Checkpoint
             </DialogTitle>
             <DialogDescription>
-              This will replace your current session messages with the checkpoint state.
-              This action cannot be undone.
+              This will replace your current session messages with the checkpoint state. This action
+              cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
             <div className="p-3 rounded-lg bg-muted/50 border">
               <p className="font-medium">{showRestoreDialog?.name}</p>
               {showRestoreDialog?.description && (
-                <p className="text-sm text-muted-foreground mt-1">{showRestoreDialog.description}</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {showRestoreDialog.description}
+                </p>
               )}
               <p className="text-xs text-muted-foreground mt-2">
                 {showRestoreDialog?.message_count} messages will be restored

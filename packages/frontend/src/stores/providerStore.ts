@@ -1,5 +1,10 @@
 import { create } from 'zustand';
-import { applyProviderClass, getStoredUiProvider, setStoredUiProvider, type UiProvider } from '@/lib/providers';
+import {
+  applyProviderClass,
+  getStoredUiProvider,
+  setStoredUiProvider,
+  type UiProvider,
+} from '@/lib/providers';
 
 interface ProviderState {
   uiProvider: UiProvider;

@@ -19,7 +19,9 @@ export function ClaudeCallbackPage() {
 
     if (error) {
       setStatus('error');
-      setErrorMessage(searchParams.get('error_description') || 'Authentication was cancelled or failed.');
+      setErrorMessage(
+        searchParams.get('error_description') || 'Authentication was cancelled or failed.'
+      );
       return;
     }
 
@@ -71,12 +73,8 @@ export function ClaudeCallbackPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-4">
-          {status === 'loading' && (
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          )}
-          {status === 'success' && (
-            <CheckCircle className="h-12 w-12 text-green-500" />
-          )}
+          {status === 'loading' && <Loader2 className="h-12 w-12 animate-spin text-primary" />}
+          {status === 'success' && <CheckCircle className="h-12 w-12 text-green-500" />}
           {status === 'error' && (
             <>
               <AlertCircle className="h-12 w-12 text-destructive" />

@@ -20,12 +20,29 @@ export function MobileBottomNav({
   changesCount = 0,
   todosCount = 0,
 }: MobileBottomNavProps) {
-  const navItems: { id: MobileView; icon: React.ElementType; label: string; badge?: number; show?: boolean }[] = [
+  const navItems: {
+    id: MobileView;
+    icon: React.ElementType;
+    label: string;
+    badge?: number;
+    show?: boolean;
+  }[] = [
     { id: 'chat', icon: MessageSquare, label: 'Chat' },
     { id: 'files', icon: FolderTree, label: 'Files' },
-    { id: 'git', icon: GitBranch, label: 'Git', badge: changesCount > 0 ? changesCount : undefined },
+    {
+      id: 'git',
+      icon: GitBranch,
+      label: 'Git',
+      badge: changesCount > 0 ? changesCount : undefined,
+    },
     { id: 'editor', icon: Code2, label: 'Editor', show: hasOpenFiles },
-    { id: 'todos', icon: ListTodo, label: 'Todos', badge: todosCount > 0 ? todosCount : undefined, show: hasTodos },
+    {
+      id: 'todos',
+      icon: ListTodo,
+      label: 'Todos',
+      badge: todosCount > 0 ? todosCount : undefined,
+      show: hasTodos,
+    },
   ];
 
   const visibleItems = navItems.filter((item) => item.show !== false);

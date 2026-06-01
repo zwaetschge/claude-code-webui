@@ -203,9 +203,14 @@ export function ProvidersSettings() {
       };
 
       if (editingProvider) {
-        const response = await api.patch<ApiProviderResponse>(`/api/providers/${editingProvider.id}`, data);
+        const response = await api.patch<ApiProviderResponse>(
+          `/api/providers/${editingProvider.id}`,
+          data
+        );
         if (response.data.success && response.data.data) {
-          setProviders(providers.map((p) => (p.id === editingProvider.id ? response.data.data! : p)));
+          setProviders(
+            providers.map((p) => (p.id === editingProvider.id ? response.data.data! : p))
+          );
         }
       } else {
         const response = await api.post<ApiProviderResponse>('/api/providers', data);
@@ -330,7 +335,7 @@ export function ProvidersSettings() {
           </Card>
         ) : (
           providers.map((provider) => {
-            const providerType = providerTypes.find(t => t.id === provider.type);
+            const providerType = providerTypes.find((t) => t.id === provider.type);
             const supportsOAuth = providerType?.supportsOAuth && oauthAvailable[provider.type];
 
             return (
@@ -338,7 +343,9 @@ export function ProvidersSettings() {
                 <CardHeader className="py-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="text-2xl">{PROVIDER_ICONS[provider.type] || '\u2699\ufe0f'}</span>
+                      <span className="text-2xl">
+                        {PROVIDER_ICONS[provider.type] || '\u2699\ufe0f'}
+                      </span>
                       <div>
                         <CardTitle className="text-base flex items-center gap-2">
                           {provider.name}
@@ -350,7 +357,9 @@ export function ProvidersSettings() {
                           )}
                         </CardTitle>
                         <CardDescription className="text-xs flex items-center gap-2">
-                          <span>{provider.type} - {provider.default_model || 'No default model'}</span>
+                          <span>
+                            {provider.type} - {provider.default_model || 'No default model'}
+                          </span>
                           {provider.auth_method === 'oauth' && provider.oauth_expires_at && (
                             <span className="text-muted-foreground">
                               Expires: {new Date(provider.oauth_expires_at).toLocaleDateString()}
@@ -361,8 +370,8 @@ export function ProvidersSettings() {
                     </div>
                     <div className="flex items-center gap-2">
                       {/* OAuth buttons for providers that support it */}
-                      {supportsOAuth && (
-                        provider.auth_method === 'oauth' && provider.has_oauth_token ? (
+                      {supportsOAuth &&
+                        (provider.auth_method === 'oauth' && provider.has_oauth_token ? (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -390,8 +399,7 @@ export function ProvidersSettings() {
                               <LogIn className="h-4 w-4" />
                             )}
                           </Button>
-                        )
-                      )}
+                        ))}
                       <Button
                         variant="ghost"
                         size="sm"
@@ -452,9 +460,7 @@ export function ProvidersSettings() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editingProvider ? 'Edit Provider' : 'Add Provider'}</DialogTitle>
-            <DialogDescription>
-              Configure your AI provider settings
-            </DialogDescription>
+            <DialogDescription>Configure your AI provider settings</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -497,7 +503,9 @@ export function ProvidersSettings() {
                   type={showApiKey ? 'text' : 'password'}
                   value={formData.apiKey}
                   onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-                  placeholder={editingProvider ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : 'sk-...'}
+                  placeholder={
+                    editingProvider ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : 'sk-...'
+                  }
                   className="pr-10"
                 />
                 <Button
@@ -518,34 +526,35 @@ export function ProvidersSettings() {
             </div>
 
             {/* OAuth option for supported providers */}
-            {providerTypes.find(t => t.id === formData.type)?.supportsOAuth && oauthAvailable[formData.type] && (
-              <div className="border rounded-lg p-4 bg-muted/50">
-                <div className="flex items-center gap-2 mb-2">
-                  <ShieldCheck className="h-4 w-4 text-primary" />
-                  <Label className="font-medium">Or connect with OAuth</Label>
+            {providerTypes.find((t) => t.id === formData.type)?.supportsOAuth &&
+              oauthAvailable[formData.type] && (
+                <div className="border rounded-lg p-4 bg-muted/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    <Label className="font-medium">Or connect with OAuth</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Use your existing Google account to access Gemini API without an API key.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      setDialogOpen(false);
+                      startOAuth(formData.type, editingProvider?.id);
+                    }}
+                    disabled={oauthLoading === formData.type}
+                  >
+                    {oauthLoading === formData.type ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <LogIn className="h-4 w-4 mr-2" />
+                    )}
+                    Connect with Google
+                  </Button>
                 </div>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Use your existing Google account to access Gemini API without an API key.
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => {
-                    setDialogOpen(false);
-                    startOAuth(formData.type, editingProvider?.id);
-                  }}
-                  disabled={oauthLoading === formData.type}
-                >
-                  {oauthLoading === formData.type ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <LogIn className="h-4 w-4 mr-2" />
-                  )}
-                  Connect with Google
-                </Button>
-              </div>
-            )}
+              )}
 
             <div>
               <Label>Base URL</Label>
@@ -582,9 +591,7 @@ export function ProvidersSettings() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={saveProvider}>
-              {editingProvider ? 'Save' : 'Add'}
-            </Button>
+            <Button onClick={saveProvider}>{editingProvider ? 'Save' : 'Add'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

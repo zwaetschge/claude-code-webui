@@ -1,14 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  X,
-  Bot,
-  Wand2,
-  Save,
-  Trash2,
-  AlertTriangle,
-  Loader2,
-} from 'lucide-react';
+import { X, Bot, Wand2, Save, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/services/api';
@@ -44,7 +36,15 @@ interface EditorProps {
   onSaved?: () => void;
 }
 
-export function AgentSkillEditor({ type, mode, initialData, editName, configProvider, onClose, onSaved }: EditorProps) {
+export function AgentSkillEditor({
+  type,
+  mode,
+  initialData,
+  editName,
+  configProvider,
+  onClose,
+  onSaved,
+}: EditorProps) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isAgent = type === 'agent';
@@ -61,15 +61,17 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
       const endpoint = isAgent
         ? `/api/claude-config/agent/${editName}`
         : `/api/claude-config/skill/${editName}`;
-      const response = await api.get<ApiResponse<{
-        name: string;
-        description: string;
-        tools?: string[];
-        allowedTools?: string[];
-        model?: string;
-        prompt?: string;
-        content?: string;
-      }>>(withProvider(endpoint));
+      const response = await api.get<
+        ApiResponse<{
+          name: string;
+          description: string;
+          tools?: string[];
+          allowedTools?: string[];
+          model?: string;
+          prompt?: string;
+          content?: string;
+        }>
+      >(withProvider(endpoint));
       return response.data.data;
     },
     enabled: mode === 'edit' && !!editName,
@@ -78,13 +80,15 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
   const [formData, setFormData] = useState({
     name: initialData?.name || '',
     description: initialData?.description || '',
-    tools: type === 'agent'
-      ? ((initialData as AgentData)?.tools?.join(', ') || '')
-      : ((initialData as SkillData)?.allowedTools?.join(', ') || ''),
+    tools:
+      type === 'agent'
+        ? (initialData as AgentData)?.tools?.join(', ') || ''
+        : (initialData as SkillData)?.allowedTools?.join(', ') || '',
     model: initialData?.model || '',
-    content: type === 'agent'
-      ? ((initialData as AgentData)?.prompt || '')
-      : ((initialData as SkillData)?.content || ''),
+    content:
+      type === 'agent'
+        ? (initialData as AgentData)?.prompt || ''
+        : (initialData as SkillData)?.content || '',
   });
 
   // Update form when fetched data arrives
@@ -94,10 +98,10 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
         name: fetchedData.name || '',
         description: fetchedData.description || '',
         tools: isAgent
-          ? (fetchedData.tools?.join(', ') || '')
-          : (fetchedData.allowedTools?.join(', ') || ''),
+          ? fetchedData.tools?.join(', ') || ''
+          : fetchedData.allowedTools?.join(', ') || '',
         model: fetchedData.model || '',
-        content: isAgent ? (fetchedData.prompt || '') : (fetchedData.content || ''),
+        content: isAgent ? fetchedData.prompt || '' : fetchedData.content || '',
       });
     }
   }, [fetchedData, isAgent]);
@@ -113,14 +117,24 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
         ? {
             name: formData.name,
             description: formData.description,
-            tools: formData.tools ? formData.tools.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+            tools: formData.tools
+              ? formData.tools
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : undefined,
             model: formData.model || undefined,
             prompt: formData.content,
           }
         : {
             name: formData.name,
             description: formData.description,
-            allowedTools: formData.tools ? formData.tools.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+            allowedTools: formData.tools
+              ? formData.tools
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : undefined,
             model: formData.model || undefined,
             content: formData.content,
           };
@@ -128,7 +142,9 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey] });
+      queryClient.invalidateQueries({
+        queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey],
+      });
       toast({ title: `${isAgent ? 'Agent' : 'Skill'} created successfully` });
       onSaved?.();
       onClose();
@@ -148,14 +164,24 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
         ? {
             name: formData.name,
             description: formData.description,
-            tools: formData.tools ? formData.tools.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+            tools: formData.tools
+              ? formData.tools
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : undefined,
             model: formData.model || undefined,
             prompt: formData.content,
           }
         : {
             name: formData.name,
             description: formData.description,
-            allowedTools: formData.tools ? formData.tools.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+            allowedTools: formData.tools
+              ? formData.tools
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : undefined,
             model: formData.model || undefined,
             content: formData.content,
           };
@@ -163,7 +189,9 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey] });
+      queryClient.invalidateQueries({
+        queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey],
+      });
       toast({ title: `${isAgent ? 'Agent' : 'Skill'} updated successfully` });
       onSaved?.();
       onClose();
@@ -183,7 +211,9 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey] });
+      queryClient.invalidateQueries({
+        queryKey: [isAgent ? 'claude-agents' : 'claude-skills', providerKey],
+      });
       toast({ title: `${isAgent ? 'Agent' : 'Skill'} deleted` });
       onSaved?.();
       onClose();
@@ -202,7 +232,8 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
     }
   };
 
-  const isPending = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
+  const isPending =
+    createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -210,8 +241,8 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
       <div className="relative w-full max-w-2xl max-h-[90vh] bg-card rounded-2xl border shadow-2xl overflow-hidden animate-scale-in flex flex-col">
         {/* Header */}
         <div className="flex items-center gap-3 p-5 border-b bg-muted/30">
-          <div className={cn("p-2.5 rounded-xl", bgColorClass)}>
-            <Icon className={cn("h-5 w-5", colorClass)} />
+          <div className={cn('p-2.5 rounded-xl', bgColorClass)}>
+            <Icon className={cn('h-5 w-5', colorClass)} />
           </div>
           <div className="flex-1">
             <h2 className="text-lg font-semibold">
@@ -236,86 +267,86 @@ export function AgentSkillEditor({ type, mode, initialData, editName, configProv
               <span className="ml-2 text-sm text-muted-foreground">Loading content...</span>
             </div>
           ) : (
-          <div className="p-5 space-y-5">
-            {/* Name */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Name *</label>
-              <Input
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder={isAgent ? "my-custom-agent" : "my-custom-skill"}
-                required
-                className="h-11"
-              />
-              <p className="text-xs text-muted-foreground">
-                Used as the identifier. Use lowercase with hyphens.
-              </p>
-            </div>
+            <div className="p-5 space-y-5">
+              {/* Name */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Name *</label>
+                <Input
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder={isAgent ? 'my-custom-agent' : 'my-custom-skill'}
+                  required
+                  className="h-11"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used as the identifier. Use lowercase with hyphens.
+                </p>
+              </div>
 
-            {/* Description */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
-              <Input
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="A brief description of what this does..."
-                className="h-11"
-              />
-            </div>
+              {/* Description */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Description</label>
+                <Input
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="A brief description of what this does..."
+                  className="h-11"
+                />
+              </div>
 
-            {/* Tools */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                {isAgent ? 'Tools' : 'Allowed Tools'}
-              </label>
-              <Input
-                value={formData.tools}
-                onChange={(e) => setFormData({ ...formData, tools: e.target.value })}
-                placeholder="Read, Write, Bash, Glob"
-                className="h-11"
-              />
-              <p className="text-xs text-muted-foreground">
-                Comma-separated list of tools this {type} can use.
-              </p>
-            </div>
+              {/* Tools */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{isAgent ? 'Tools' : 'Allowed Tools'}</label>
+                <Input
+                  value={formData.tools}
+                  onChange={(e) => setFormData({ ...formData, tools: e.target.value })}
+                  placeholder="Read, Write, Bash, Glob"
+                  className="h-11"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Comma-separated list of tools this {type} can use.
+                </p>
+              </div>
 
-            {/* Model */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Model (optional)</label>
-              <select
-                value={formData.model}
-                onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                className="flex h-11 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">Default (inherit from parent)</option>
-                <option value="opus">Claude Opus</option>
-                <option value="sonnet">Claude Sonnet</option>
-                <option value="haiku">Claude Haiku</option>
-              </select>
-            </div>
+              {/* Model */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Model (optional)</label>
+                <select
+                  value={formData.model}
+                  onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                  className="flex h-11 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Default (inherit from parent)</option>
+                  <option value="opus">Claude Opus</option>
+                  <option value="sonnet">Claude Sonnet</option>
+                  <option value="haiku">Claude Haiku</option>
+                </select>
+              </div>
 
-            {/* Content/Prompt */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">
-                {isAgent ? 'System Prompt' : 'Skill Content'} *
-              </label>
-              <textarea
-                value={formData.content}
-                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                placeholder={isAgent
-                  ? "You are a specialized agent that..."
-                  : "This skill provides the ability to..."}
-                required
-                rows={10}
-                className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono"
-              />
-              <p className="text-xs text-muted-foreground">
-                {isAgent
-                  ? 'The system prompt that defines this agent\'s behavior and capabilities.'
-                  : 'The markdown content that describes this skill\'s purpose and usage.'}
-              </p>
+              {/* Content/Prompt */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {isAgent ? 'System Prompt' : 'Skill Content'} *
+                </label>
+                <textarea
+                  value={formData.content}
+                  onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                  placeholder={
+                    isAgent
+                      ? 'You are a specialized agent that...'
+                      : 'This skill provides the ability to...'
+                  }
+                  required
+                  rows={10}
+                  className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {isAgent
+                    ? "The system prompt that defines this agent's behavior and capabilities."
+                    : "The markdown content that describes this skill's purpose and usage."}
+                </p>
+              </div>
             </div>
-          </div>
           )}
         </form>
 

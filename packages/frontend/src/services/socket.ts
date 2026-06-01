@@ -45,7 +45,6 @@ class SocketService {
       this.subscribedSessions.forEach((sessionId) => {
         this.socket?.emit('session:subscribe', sessionId);
       });
-
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -58,7 +57,8 @@ class SocketService {
     });
 
     this.socket.on('session:message', (message) => {
-      const { addMessageIfNotExists, clearStreamingContent, setActivity } = useSessionStore.getState();
+      const { addMessageIfNotExists, clearStreamingContent, setActivity } =
+        useSessionStore.getState();
       // Use addMessageIfNotExists to prevent duplicates when reconnecting
       addMessageIfNotExists(message.sessionId, message);
       clearStreamingContent(message.sessionId);
@@ -86,11 +86,13 @@ class SocketService {
         this.activeSessions.add(data.sessionId);
         const existing = activity[data.sessionId];
         const now = Date.now();
-        const message = data.message ?? (existing?.type === 'thinking' ? existing.message : undefined);
+        const message =
+          data.message ?? (existing?.type === 'thinking' ? existing.message : undefined);
         const startedAt = existing?.type === 'thinking' ? (existing.startedAt ?? now) : now;
-        const messageStartedAt = message && message !== existing?.message
-          ? now
-          : (existing?.messageStartedAt ?? (message ? now : undefined));
+        const messageStartedAt =
+          message && message !== existing?.message
+            ? now
+            : (existing?.messageStartedAt ?? (message ? now : undefined));
         setActivity(data.sessionId, { type: 'thinking', message, startedAt, messageStartedAt });
       } else {
         // Claude stopped thinking - check if task is complete
@@ -99,11 +101,17 @@ class SocketService {
           this.activeSessions.delete(data.sessionId);
           // Delay notification slightly to allow for permission requests or streaming
           setTimeout(() => {
-            const { permissionRequests, pendingPermissions, streamingContent } = useSessionStore.getState();
-            const hasPermissionRequest = !!permissionRequests[data.sessionId] || !!pendingPermissions[data.sessionId];
+            const { permissionRequests, pendingPermissions, streamingContent } =
+              useSessionStore.getState();
+            const hasPermissionRequest =
+              !!permissionRequests[data.sessionId] || !!pendingPermissions[data.sessionId];
             const hasStreaming = !!streamingContent[data.sessionId];
             // Only notify if no pending permission request and no streaming
-            if (!hasPermissionRequest && !hasStreaming && !this.activeSessions.has(data.sessionId)) {
+            if (
+              !hasPermissionRequest &&
+              !hasStreaming &&
+              !this.activeSessions.has(data.sessionId)
+            ) {
               notificationService.notifyTaskComplete(data.sessionId);
             }
           }, 500);
@@ -120,19 +128,23 @@ class SocketService {
         this.activeSessions.add(data.sessionId);
       }
 
-      // Store tool execution for display
+      // Store tool execution for display. Prefer the backend-supplied
+      // timestamp so this entry sorts correctly against assistant messages,
+      // which carry backend clock timestamps via `createdAt`. Falling back
+      // to Date.now() only matters for old backends without the field.
+      const beTs = typeof data.timestamp === 'number' ? data.timestamp : Date.now();
       if (data.status === 'started') {
         store.addToolExecution(data.sessionId, {
           toolId: data.toolId || generateId(),
           toolName: data.toolName,
           status: 'started',
           input: data.input,
-          timestamp: Date.now(),
+          timestamp: beTs,
         });
       } else if (data.toolId) {
         store.updateToolExecution(data.sessionId, data.toolId, {
           status: data.status,
-          completedAt: Date.now(),
+          completedAt: beTs,
           input: data.input,
           result: data.result,
           error: data.error,
@@ -183,7 +195,9 @@ class SocketService {
     });
 
     this.socket.on('session:reconnected', (data) => {
-      console.log(`[SOCKET] session:reconnected received: ${data.bufferedMessages.length} messages, isRunning=${data.isRunning}`);
+      console.log(
+        `[SOCKET] session:reconnected received: ${data.bufferedMessages.length} messages, isRunning=${data.isRunning}`
+      );
       this.replayBufferedMessages(data.sessionId, data.bufferedMessages);
 
       // Update session status based on isRunning
@@ -223,21 +237,32 @@ class SocketService {
       this.modeListeners.forEach((listener) => listener(data));
     });
 
+    this.socket.on('session:queue', (data) => {
+      useSessionStore.getState().setQueueState(data.sessionId, data);
+    });
+
     this.socket.on('session:permission_request', (data) => {
       // Handle both legacy (denials) and new (hooks-based) permission request formats
       if ('denials' in data && data.denials) {
         // Legacy format with denials
-        console.log(`[SOCKET] session:permission_request (legacy) received:`, data.denials.map(d => d.tool_name).join(', '));
+        console.log(
+          `[SOCKET] session:permission_request (legacy) received:`,
+          data.denials.map((d) => d.tool_name).join(', ')
+        );
         useSessionStore.getState().setPermissionRequest(data.sessionId, {
           denials: data.denials,
           originalMessage: data.originalMessage,
         });
         // Send notification for permission request
-        const toolNames = data.denials.map(d => d.tool_name);
+        const toolNames = data.denials.map((d) => d.tool_name);
         notificationService.notifyPermissionRequest(data.sessionId, toolNames);
       } else if ('requestId' in data) {
         // New hooks-based format
-        console.log(`[SOCKET] session:permission_request (hooks) received:`, data.toolName, data.description);
+        console.log(
+          `[SOCKET] session:permission_request (hooks) received:`,
+          data.toolName,
+          data.description
+        );
         useSessionStore.getState().setPendingPermission(data.sessionId, data);
         // Send notification
         notificationService.notifyPermissionRequest(data.sessionId, [data.toolName]);
@@ -255,7 +280,7 @@ class SocketService {
   private replayBufferedMessages(sessionId: string, messages: BufferedMessage[]): void {
     const store = useSessionStore.getState();
     const existingMessages = store.messages[sessionId] || [];
-    const existingMessageIds = new Set(existingMessages.map(m => m.id));
+    const existingMessageIds = new Set(existingMessages.map((m) => m.id));
 
     for (const msg of messages) {
       switch (msg.type) {
@@ -265,7 +290,14 @@ class SocketService {
           break;
         }
         case 'message': {
-          const data = msg.data as { id: string; sessionId: string; role: 'user' | 'assistant' | 'system'; content: string; createdAt: string; images?: { path: string; filename: string }[] };
+          const data = msg.data as {
+            id: string;
+            sessionId: string;
+            role: 'user' | 'assistant' | 'system';
+            content: string;
+            createdAt: string;
+            images?: { path: string; filename: string }[];
+          };
           // Skip if message already exists (deduplication)
           if (existingMessageIds.has(data.id)) {
             console.log(`[SOCKET] Skipping duplicate message ${data.id}`);
@@ -291,7 +323,14 @@ class SocketService {
           break;
         }
         case 'tool_use': {
-          const data = msg.data as { toolName: string; status: 'started' | 'completed' | 'error'; toolId?: string; input?: unknown; result?: string; error?: string };
+          const data = msg.data as {
+            toolName: string;
+            status: 'started' | 'completed' | 'error';
+            toolId?: string;
+            input?: unknown;
+            result?: string;
+            error?: string;
+          };
 
           // Add tool execution to store (using original timestamp from buffered message)
           if (data.status === 'started') {
@@ -320,7 +359,13 @@ class SocketService {
           break;
         }
         case 'todos': {
-          const data = msg.data as { todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }> };
+          const data = msg.data as {
+            todos: Array<{
+              content: string;
+              status: 'pending' | 'in_progress' | 'completed';
+              activeForm?: string;
+            }>;
+          };
           store.setTodos(sessionId, data.todos);
           break;
         }
@@ -330,7 +375,11 @@ class SocketService {
           break;
         }
         case 'agent': {
-          const data = msg.data as { agentType: string; description?: string; status: 'started' | 'completed' | 'error' };
+          const data = msg.data as {
+            agentType: string;
+            description?: string;
+            status: 'started' | 'completed' | 'error';
+          };
           if (data.status === 'started') {
             store.setActiveAgent(sessionId, {
               agentType: data.agentType,
@@ -385,11 +434,17 @@ class SocketService {
     this.socket?.emit('session:unsubscribe', sessionId);
   }
 
-  sendMessage(sessionId: string, message: string, images?: { data: string; mimeType: string }[]): void {
+  sendMessage(
+    sessionId: string,
+    message: string,
+    images?: { data: string; mimeType: string }[]
+  ): void {
     // clientMessageId lets the server dedupe if the socket reconnects and we retry:
     // a single logical send keeps the same id regardless of transport hiccups.
     const clientMessageId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    console.log(`sendMessage: sessionId=${sessionId}, message="${message}", socket=${!!this.socket}, connected=${this.socket?.connected}`);
+    console.log(
+      `sendMessage: sessionId=${sessionId}, message="${message}", socket=${!!this.socket}, connected=${this.socket?.connected}`
+    );
     this.socket?.emit('session:send', { sessionId, message, images, clientMessageId });
   }
 
@@ -399,11 +454,7 @@ class SocketService {
     this.socket?.emit('session:input', { sessionId, input });
   }
 
-  async sendMessageWithFiles(
-    sessionId: string,
-    message: string,
-    files: File[]
-  ): Promise<void> {
+  async sendMessageWithFiles(sessionId: string, message: string, files: File[]): Promise<void> {
     // Convert files to base64
     const attachments = await Promise.all(
       files.map(async (file) => {
@@ -517,7 +568,6 @@ class SocketService {
   getSocket(): TypedSocket | null {
     return this.socket;
   }
-
 }
 
 export const socketService = new SocketService();

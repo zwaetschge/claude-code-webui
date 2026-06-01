@@ -78,10 +78,12 @@ export function NotificationBanner() {
   }
 
   return (
-    <div className={cn(
-      "flex items-center gap-3 px-4 py-2 bg-primary/10 border-b border-primary/20",
-      "animate-fade-in"
-    )}>
+    <div
+      className={cn(
+        'flex items-center gap-3 px-4 py-2 bg-primary/10 border-b border-primary/20',
+        'animate-fade-in'
+      )}
+    >
       <Bell className="h-5 w-5 text-primary shrink-0" />
       <p className="text-sm flex-1">
         Enable notifications to get alerts when {providerLabel} needs your input or finishes a task

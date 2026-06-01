@@ -1,5 +1,14 @@
 import { create } from 'zustand';
-import type { Session, Message, SessionStatus, UsageData, ToolExecution, PermissionDenial, PendingPermission } from '@claude-code-webui/shared';
+import type {
+  Session,
+  Message,
+  SessionStatus,
+  UsageData,
+  ToolExecution,
+  PermissionDenial,
+  PendingPermission,
+  SessionQueueData,
+} from '@claude-code-webui/shared';
 
 // --- Streaming content buffer ---
 // Accumulates content chunks and flushes to Zustand at ~30fps via RAF
@@ -102,6 +111,7 @@ interface SessionState {
   usage: Record<string, UsageData>;
   generatedImages: Record<string, GeneratedImage[]>;
   toolExecutions: Record<string, ToolExecution[]>;
+  queueState: Record<string, SessionQueueData | null>;
 
   // Permission request state (legacy)
   permissionRequests: Record<string, PermissionRequest | null>;
@@ -143,6 +153,7 @@ interface SessionState {
   addToolExecution: (sessionId: string, execution: ToolExecution) => void;
   updateToolExecution: (sessionId: string, toolId: string, update: Partial<ToolExecution>) => void;
   clearToolExecutions: (sessionId: string) => void;
+  setQueueState: (sessionId: string, queue: SessionQueueData | null) => void;
 
   // Permission request actions (legacy)
   setPermissionRequest: (sessionId: string, request: PermissionRequest | null) => void;
@@ -179,6 +190,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   usage: {},
   generatedImages: {},
   toolExecutions: {},
+  queueState: {},
   permissionRequests: {},
   pendingPermissions: {},
   fileTreeOpen: {},
@@ -336,6 +348,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       },
     })),
 
+  setQueueState: (sessionId, queue) =>
+    set((state) => ({
+      queueState: {
+        ...state.queueState,
+        [sessionId]: queue,
+      },
+    })),
+
   // Permission request actions (legacy)
   setPermissionRequest: (sessionId, request) =>
     set((state) => ({
@@ -387,10 +407,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return {
         openFiles: {
           ...state.openFiles,
-          [sessionId]: [
-            ...files,
-            { path, content, isDirty: false, originalContent: content },
-          ],
+          [sessionId]: [...files, { path, content, isDirty: false, originalContent: content }],
         },
         activeFileTab: { ...state.activeFileTab, [sessionId]: path },
       };
@@ -430,9 +447,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         openFiles: {
           ...state.openFiles,
           [sessionId]: files.map((f) =>
-            f.path === path
-              ? { ...f, content, isDirty: content !== f.originalContent }
-              : f
+            f.path === path ? { ...f, content, isDirty: content !== f.originalContent } : f
           ),
         },
       };
@@ -445,9 +460,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         openFiles: {
           ...state.openFiles,
           [sessionId]: files.map((f) =>
-            f.path === path
-              ? { ...f, isDirty: false, originalContent: f.content }
-              : f
+            f.path === path ? { ...f, isDirty: false, originalContent: f.content } : f
           ),
         },
       };

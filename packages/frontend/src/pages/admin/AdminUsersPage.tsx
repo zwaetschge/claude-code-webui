@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Shield, ShieldOff, UserCheck, UserX, Key, Trash2, Mail, Clock } from 'lucide-react';
+import {
+  MoreHorizontal,
+  Shield,
+  ShieldOff,
+  UserCheck,
+  UserX,
+  Key,
+  Trash2,
+  Mail,
+  Clock,
+} from 'lucide-react';
 import type { UserRole, UserStatus } from '@claude-code-webui/shared';
 import { api, ApiError } from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -81,8 +91,10 @@ export function AdminUsersPage() {
   };
 
   const updateUser = useMutation({
-    mutationFn: (args: { id: string; patch: Partial<Pick<AdminUser, 'role' | 'status'>> & { password?: string } }) =>
-      api.patch(`/api/admin/users/${args.id}`, args.patch),
+    mutationFn: (args: {
+      id: string;
+      patch: Partial<Pick<AdminUser, 'role' | 'status'>> & { password?: string };
+    }) => api.patch(`/api/admin/users/${args.id}`, args.patch),
     onSuccess: () => {
       invalidate();
       toast({ title: 'User updated' });
@@ -181,7 +193,9 @@ export function AdminUsersPage() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 truncate font-medium">
                               {user.name || user.email}
-                              {isSelf && <span className="text-[10px] text-muted-foreground">(you)</span>}
+                              {isSelf && (
+                                <span className="text-[10px] text-muted-foreground">(you)</span>
+                              )}
                             </div>
                             <div className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                               <Mail className="h-3 w-3" />
@@ -236,14 +250,18 @@ export function AdminUsersPage() {
                             {user.status === 'active' ? (
                               <DropdownMenuItem
                                 disabled={isSelf}
-                                onClick={() => updateUser.mutate({ id: user.id, patch: { status: 'suspended' } })}
+                                onClick={() =>
+                                  updateUser.mutate({ id: user.id, patch: { status: 'suspended' } })
+                                }
                               >
                                 <UserX className="mr-2 h-4 w-4" />
                                 Suspend
                               </DropdownMenuItem>
                             ) : (
                               <DropdownMenuItem
-                                onClick={() => updateUser.mutate({ id: user.id, patch: { status: 'active' } })}
+                                onClick={() =>
+                                  updateUser.mutate({ id: user.id, patch: { status: 'active' } })
+                                }
                               >
                                 <UserCheck className="mr-2 h-4 w-4" />
                                 Reactivate
@@ -252,14 +270,18 @@ export function AdminUsersPage() {
                             {user.role === 'admin' ? (
                               <DropdownMenuItem
                                 disabled={isSelf}
-                                onClick={() => updateUser.mutate({ id: user.id, patch: { role: 'user' } })}
+                                onClick={() =>
+                                  updateUser.mutate({ id: user.id, patch: { role: 'user' } })
+                                }
                               >
                                 <ShieldOff className="mr-2 h-4 w-4" />
                                 Demote to user
                               </DropdownMenuItem>
                             ) : (
                               <DropdownMenuItem
-                                onClick={() => updateUser.mutate({ id: user.id, patch: { role: 'admin' } })}
+                                onClick={() =>
+                                  updateUser.mutate({ id: user.id, patch: { role: 'admin' } })
+                                }
                               >
                                 <Shield className="mr-2 h-4 w-4" />
                                 Promote to admin
@@ -303,7 +325,8 @@ export function AdminUsersPage() {
           <DialogHeader>
             <DialogTitle>Reset password</DialogTitle>
             <DialogDescription>
-              Set a new password for <span className="font-medium">{passwordTarget?.email}</span>. They must use it on their next login.
+              Set a new password for <span className="font-medium">{passwordTarget?.email}</span>.
+              They must use it on their next login.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -345,7 +368,8 @@ export function AdminUsersPage() {
           <DialogHeader>
             <DialogTitle>Delete user</DialogTitle>
             <DialogDescription>
-              Permanently delete <span className="font-medium">{deleteTarget?.email}</span>? Their sessions and data will be removed. This cannot be undone.
+              Permanently delete <span className="font-medium">{deleteTarget?.email}</span>? Their
+              sessions and data will be removed. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

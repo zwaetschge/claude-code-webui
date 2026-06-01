@@ -78,6 +78,35 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
     }
   }, [workingDirectory]);
 
+  const saveContent = useCallback(
+    async (nextContent: string) => {
+      setSaving(true);
+      setError(null);
+
+      try {
+        const filePath = `${workingDirectory}/AGENTS.md`;
+        const response = await api.post<FileWriteResponse>('/api/files/write', {
+          path: filePath,
+          content: nextContent,
+        });
+
+        if (response.data.success) {
+          setOriginalContent(nextContent);
+          setFileExists(true);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        } else {
+          setError('Failed to save file');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save file');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [workingDirectory]
+  );
+
   useEffect(() => {
     if (workingDirectory) {
       loadContent();
@@ -87,35 +116,9 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
   // Auto-save
   useEffect(() => {
     if (debouncedContent && debouncedContent !== originalContent && fileExists) {
-      saveContent();
+      saveContent(debouncedContent);
     }
-  }, [debouncedContent]);
-
-  const saveContent = async () => {
-    setSaving(true);
-    setError(null);
-
-    try {
-      const filePath = `${workingDirectory}/AGENTS.md`;
-      const response = await api.post<FileWriteResponse>('/api/files/write', {
-        path: filePath,
-        content: content,
-      });
-
-      if (response.data.success) {
-        setOriginalContent(content);
-        setFileExists(true);
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      } else {
-        setError('Failed to save file');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save file');
-    } finally {
-      setSaving(false);
-    }
-  };
+  }, [debouncedContent, fileExists, originalContent, saveContent]);
 
   const createFile = async () => {
     setSaving(true);
@@ -193,23 +196,12 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
             </Button>
           </div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={loadContent}
-            disabled={loading}
-            title="Reload"
-          >
+          <Button variant="ghost" size="sm" onClick={loadContent} disabled={loading} title="Reload">
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
           </Button>
 
           {!fileExists ? (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={createFile}
-              disabled={saving}
-            >
+            <Button variant="default" size="sm" onClick={createFile} disabled={saving}>
               {saving ? (
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
               ) : (
@@ -221,7 +213,7 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
             <Button
               variant="default"
               size="sm"
-              onClick={saveContent}
+              onClick={() => saveContent(content)}
               disabled={saving || !hasChanges}
             >
               {saving ? (
@@ -258,7 +250,9 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
               <div className={cn('flex-1 min-w-0', viewMode === 'split' && 'border-r')}>
                 <Textarea
                   value={content}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setContent(e.target.value)
+                  }
                   placeholder="# AGENTS.md
 
 Define your agent instructions here..."

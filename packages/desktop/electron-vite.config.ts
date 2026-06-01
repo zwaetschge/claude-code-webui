@@ -17,10 +17,4 @@ export default defineConfig({
       },
     },
   },
-  renderer: {
-    // We don't use a local renderer — the app loads the remote WebUI URL
-    build: {
-      outDir: 'dist/renderer',
-    },
-  },
 });

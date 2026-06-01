@@ -16,7 +16,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { Session, ApiResponse, DiscoveredProject, CLIProvider } from '@claude-code-webui/shared';
+import type {
+  Session,
+  ApiResponse,
+  DiscoveredProject,
+  CLIProvider,
+} from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface DiscoveredProjectsProps {
@@ -40,14 +45,23 @@ function formatRelativeTime(dateString: string): string {
   return date.toLocaleDateString();
 }
 
-export function DiscoveredProjects({ cliProvider, defaultExpanded = false, className }: DiscoveredProjectsProps) {
+export function DiscoveredProjects({
+  cliProvider,
+  defaultExpanded = false,
+  className,
+}: DiscoveredProjectsProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
 
   // Fetch discovered projects
-  const { data: projects, isLoading, refetch, isRefetching } = useQuery({
+  const {
+    data: projects,
+    isLoading,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ['discovered-projects'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<DiscoveredProject[]>>('/api/projects');
@@ -85,7 +99,7 @@ export function DiscoveredProjects({ cliProvider, defaultExpanded = false, class
   });
 
   const toggleProject = (projectId: string) => {
-    setExpandedProjects(prev => {
+    setExpandedProjects((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(projectId)) {
         newSet.delete(projectId);
@@ -158,10 +172,12 @@ export function DiscoveredProjects({ cliProvider, defaultExpanded = false, class
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <FolderOpen className={cn(
-                        'h-4 w-4 shrink-0',
-                        project.hasSession ? 'text-amber-500' : 'text-muted-foreground'
-                      )} />
+                      <FolderOpen
+                        className={cn(
+                          'h-4 w-4 shrink-0',
+                          project.hasSession ? 'text-amber-500' : 'text-muted-foreground'
+                        )}
+                      />
                       <span className="font-medium truncate">{project.name}</span>
                       {!project.hasSession && (
                         <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">
@@ -170,9 +186,7 @@ export function DiscoveredProjects({ cliProvider, defaultExpanded = false, class
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground truncate mb-2">
-                      {project.path}
-                    </p>
+                    <p className="text-xs text-muted-foreground truncate mb-2">{project.path}</p>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />

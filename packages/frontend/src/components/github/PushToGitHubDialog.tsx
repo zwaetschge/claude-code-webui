@@ -131,9 +131,7 @@ export function PushToGitHubDialog({
               <Github className="h-5 w-5" />
               Push to GitHub
             </DialogTitle>
-            <DialogDescription>
-              Push your changes to GitHub
-            </DialogDescription>
+            <DialogDescription>Push your changes to GitHub</DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -151,11 +149,7 @@ export function PushToGitHubDialog({
                   >
                     Add Remote
                   </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => setShowCreateRepo(true)}
-                  >
+                  <Button type="button" size="sm" onClick={() => setShowCreateRepo(true)}>
                     <Plus className="h-4 w-4 mr-1" />
                     Create Repo
                   </Button>

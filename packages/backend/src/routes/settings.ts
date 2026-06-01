@@ -5,7 +5,14 @@ import { getAppConfig, getDatabase, setAppConfig } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { safeEncrypt, safeDecrypt } from '../utils/encryption';
 import { safeJsonParse } from '../utils/json';
-import type { UserSettings, Theme, UiProvider, CLIProvider } from '@claude-code-webui/shared';
+import type {
+  UserSettings,
+  Theme,
+  UiProvider,
+  CLIProvider,
+  CodexWebSearchMode,
+  CodexServiceTier,
+} from '@claude-code-webui/shared';
 
 const router = Router();
 
@@ -14,35 +21,64 @@ const updateSettingsSchema = z.object({
   defaultWorkingDir: z.string().nullable().optional(),
   allowedTools: z.array(z.string()).optional(),
   customSystemPrompt: z.string().nullable().optional(),
-  uiProvider: z.enum(['plum', 'claude', 'codex', 'opencode']).optional(),
-  defaultCliProvider: z.enum(['claude', 'codex', 'opencode']).optional(),
-  cliProviderModels: z.object({
-    claude: z.string().optional(),
-    codex: z.string().optional(),
-    opencode: z.string().optional(),
-  }).partial().optional(),
-  cliProviderModelLists: z.object({
-    claude: z.array(z.string()).optional(),
-    codex: z.array(z.string()).optional(),
-    opencode: z.array(z.string()).optional(),
-  }).partial().optional(),
-  cliProviderReasoning: z.object({
-    claude: z.string().optional(),
-    codex: z.string().optional(),
-    opencode: z.string().optional(),
-  }).partial().optional(),
+  uiProvider: z.enum(['plum', 'claude', 'codex', 'opencode', 'vibe']).optional(),
+  defaultCliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']).optional(),
+  cliProviderModels: z
+    .object({
+      claude: z.string().optional(),
+      codex: z.string().optional(),
+      opencode: z.string().optional(),
+      vibe: z.string().optional(),
+    })
+    .partial()
+    .optional(),
+  cliProviderModelLists: z
+    .object({
+      claude: z.array(z.string()).optional(),
+      codex: z.array(z.string()).optional(),
+      opencode: z.array(z.string()).optional(),
+      vibe: z.array(z.string()).optional(),
+    })
+    .partial()
+    .optional(),
+  cliProviderReasoning: z
+    .object({
+      claude: z.string().optional(),
+      codex: z.string().optional(),
+      opencode: z.string().optional(),
+      vibe: z.string().optional(),
+    })
+    .partial()
+    .optional(),
+  cliProviderServiceTiers: z
+    .object({
+      codex: z.enum(['fast']).optional(),
+    })
+    .partial()
+    .optional(),
+  codexWebSearch: z.enum(['auto', 'cached', 'live', 'disabled']).optional(),
 });
 
 function parseUiProvider(value: unknown): UiProvider {
-  return value === 'plum' || value === 'claude' || value === 'codex' || value === 'opencode'
+  return value === 'plum' ||
+    value === 'claude' ||
+    value === 'codex' ||
+    value === 'opencode' ||
+    value === 'vibe'
     ? value
     : 'plum';
 }
 
 function parseCliProvider(value: unknown): CLIProvider {
-  return value === 'claude' || value === 'codex' || value === 'opencode'
+  return value === 'claude' || value === 'codex' || value === 'opencode' || value === 'vibe'
     ? value
-    : 'claude';
+    : 'codex';
+}
+
+function parseCodexWebSearch(value: unknown): CodexWebSearchMode {
+  return value === 'cached' || value === 'live' || value === 'disabled' || value === 'auto'
+    ? value
+    : 'auto';
 }
 
 function parseCliProviderModels(value: unknown): Partial<Record<CLIProvider, string>> | undefined {
@@ -52,7 +88,7 @@ function parseCliProviderModels(value: unknown): Partial<Record<CLIProvider, str
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, string>> = {};
 
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode'];
+  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
   for (const provider of providers) {
     const model = raw[provider];
     if (typeof model === 'string' && model.trim()) {
@@ -63,14 +99,16 @@ function parseCliProviderModels(value: unknown): Partial<Record<CLIProvider, str
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
-function parseCliProviderModelLists(value: unknown): Partial<Record<CLIProvider, string[]>> | undefined {
+function parseCliProviderModelLists(
+  value: unknown
+): Partial<Record<CLIProvider, string[]>> | undefined {
   if (!value || typeof value !== 'object') {
     return undefined;
   }
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, string[]>> = {};
 
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode'];
+  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
   for (const provider of providers) {
     const models = raw[provider];
     if (Array.isArray(models)) {
@@ -86,7 +124,17 @@ function parseCliProviderModelLists(value: unknown): Partial<Record<CLIProvider,
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
-const VALID_REASONING_LEVELS = new Set(['low', 'medium', 'high', 'extra_high', 'max']);
+const VALID_REASONING_LEVELS = new Set([
+  'off',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'extra_high',
+  'xhigh',
+  'max',
+]);
 
 function normalizeReasoningLevel(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -105,19 +153,42 @@ function normalizeReasoningLevel(value: unknown): string | undefined {
   return VALID_REASONING_LEVELS.has(normalized) ? normalized : undefined;
 }
 
-function parseCliProviderReasoning(value: unknown): Partial<Record<CLIProvider, string>> | undefined {
+function parseCliProviderReasoning(
+  value: unknown
+): Partial<Record<CLIProvider, string>> | undefined {
   if (!value || typeof value !== 'object') {
     return undefined;
   }
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, string>> = {};
 
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode'];
+  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
   for (const provider of providers) {
     const level = normalizeReasoningLevel(raw[provider]);
     if (level) {
       parsed[provider] = level;
     }
+  }
+
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
+function normalizeCodexServiceTier(value: unknown): CodexServiceTier | undefined {
+  return value === 'fast' ? 'fast' : undefined;
+}
+
+function parseCliProviderServiceTiers(
+  value: unknown
+): Partial<Record<CLIProvider, CodexServiceTier>> | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const parsed: Partial<Record<CLIProvider, CodexServiceTier>> = {};
+  const codexTier = normalizeCodexServiceTier(raw.codex);
+  if (codexTier) {
+    parsed.codex = codexTier;
   }
 
   return Object.keys(parsed).length > 0 ? parsed : undefined;
@@ -135,7 +206,16 @@ router.get('/', requireAuth, (req, res) => {
               settings_json as settingsJson
        FROM user_settings WHERE user_id = ?`
     )
-    .get(userId) as { userId: string; theme: Theme; defaultWorkingDir: string | null; allowedTools: string; customSystemPrompt: string | null; settingsJson?: string | null } | undefined;
+    .get(userId) as
+    | {
+        userId: string;
+        theme: Theme;
+        defaultWorkingDir: string | null;
+        allowedTools: string;
+        customSystemPrompt: string | null;
+        settingsJson?: string | null;
+      }
+    | undefined;
 
   if (!settings) {
     // Create default settings
@@ -160,6 +240,10 @@ router.get('/', requireAuth, (req, res) => {
   const cliProviderModels = parseCliProviderModels(settingsJson.cliProviderModels);
   const cliProviderModelLists = parseCliProviderModelLists(settingsJson.cliProviderModelLists);
   const cliProviderReasoning = parseCliProviderReasoning(settingsJson.cliProviderReasoning);
+  const cliProviderServiceTiers = parseCliProviderServiceTiers(
+    settingsJson.cliProviderServiceTiers
+  );
+  const codexWebSearch = parseCodexWebSearch(settingsJson.codexWebSearch);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -172,6 +256,8 @@ router.get('/', requireAuth, (req, res) => {
     cliProviderModels,
     cliProviderModelLists,
     cliProviderReasoning,
+    cliProviderServiceTiers,
+    codexWebSearch,
   };
 
   res.json({ success: true, data: userSettings });
@@ -187,7 +273,19 @@ router.put('/', requireAuth, (req, res) => {
   }
 
   const db = getDatabase();
-  const { theme, defaultWorkingDir, allowedTools, customSystemPrompt, uiProvider, defaultCliProvider, cliProviderModels, cliProviderModelLists, cliProviderReasoning } = parsed.data;
+  const {
+    theme,
+    defaultWorkingDir,
+    allowedTools,
+    customSystemPrompt,
+    uiProvider,
+    defaultCliProvider,
+    cliProviderModels,
+    cliProviderModelLists,
+    cliProviderReasoning,
+    cliProviderServiceTiers,
+    codexWebSearch,
+  } = parsed.data;
 
   const updates: string[] = [];
   const values: unknown[] = [];
@@ -208,10 +306,18 @@ router.put('/', requireAuth, (req, res) => {
     updates.push('custom_system_prompt = ?');
     values.push(customSystemPrompt);
   }
-  if (uiProvider !== undefined || defaultCliProvider !== undefined || cliProviderModels !== undefined || cliProviderModelLists !== undefined || cliProviderReasoning !== undefined) {
-    const existing = db.prepare(
-      'SELECT settings_json FROM user_settings WHERE user_id = ?'
-    ).get(userId) as { settings_json: string | null } | undefined;
+  if (
+    uiProvider !== undefined ||
+    defaultCliProvider !== undefined ||
+    cliProviderModels !== undefined ||
+    cliProviderModelLists !== undefined ||
+    cliProviderReasoning !== undefined ||
+    cliProviderServiceTiers !== undefined ||
+    codexWebSearch !== undefined
+  ) {
+    const existing = db
+      .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+      .get(userId) as { settings_json: string | null } | undefined;
 
     const settingsJson = safeJsonParse<Record<string, unknown>>(existing?.settings_json, {});
     if (uiProvider !== undefined) {
@@ -244,6 +350,17 @@ router.put('/', requireAuth, (req, res) => {
         delete settingsJson.cliProviderReasoning;
       }
     }
+    if (cliProviderServiceTiers !== undefined) {
+      const normalized = parseCliProviderServiceTiers(cliProviderServiceTiers) || {};
+      if (Object.keys(normalized).length > 0) {
+        settingsJson.cliProviderServiceTiers = normalized;
+      } else {
+        delete settingsJson.cliProviderServiceTiers;
+      }
+    }
+    if (codexWebSearch !== undefined) {
+      settingsJson.codexWebSearch = parseCodexWebSearch(codexWebSearch);
+    }
     updates.push('settings_json = ?');
     values.push(JSON.stringify(settingsJson));
   }
@@ -261,14 +378,27 @@ router.put('/', requireAuth, (req, res) => {
               settings_json as settingsJson
        FROM user_settings WHERE user_id = ?`
     )
-    .get(userId) as { userId: string; theme: Theme; defaultWorkingDir: string | null; allowedTools: string; customSystemPrompt: string | null; settingsJson?: string | null };
+    .get(userId) as {
+    userId: string;
+    theme: Theme;
+    defaultWorkingDir: string | null;
+    allowedTools: string;
+    customSystemPrompt: string | null;
+    settingsJson?: string | null;
+  };
 
   const updatedJson = safeJsonParse<Record<string, unknown>>(settings.settingsJson, {});
   const updatedUiProvider = parseUiProvider(updatedJson.uiProvider);
   const updatedDefaultCliProvider = parseCliProvider(updatedJson.defaultCliProvider);
   const updatedCliProviderModels = parseCliProviderModels(updatedJson.cliProviderModels);
-  const updatedCliProviderModelLists = parseCliProviderModelLists(updatedJson.cliProviderModelLists);
+  const updatedCliProviderModelLists = parseCliProviderModelLists(
+    updatedJson.cliProviderModelLists
+  );
   const updatedCliProviderReasoning = parseCliProviderReasoning(updatedJson.cliProviderReasoning);
+  const updatedCliProviderServiceTiers = parseCliProviderServiceTiers(
+    updatedJson.cliProviderServiceTiers
+  );
+  const updatedCodexWebSearch = parseCodexWebSearch(updatedJson.codexWebSearch);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -281,6 +411,8 @@ router.put('/', requireAuth, (req, res) => {
     cliProviderModels: updatedCliProviderModels,
     cliProviderModelLists: updatedCliProviderModelLists,
     cliProviderReasoning: updatedCliProviderReasoning,
+    cliProviderServiceTiers: updatedCliProviderServiceTiers,
+    codexWebSearch: updatedCodexWebSearch,
   };
 
   res.json({ success: true, data: userSettings });
@@ -297,10 +429,9 @@ router.put('/api-key', requireAuth, (req, res) => {
 
   // Encrypt the API key before storing
   const db = getDatabase();
-  db.prepare('UPDATE users SET api_key_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    safeEncrypt(apiKey),
-    userId
-  );
+  db.prepare(
+    'UPDATE users SET api_key_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(safeEncrypt(apiKey), userId);
 
   res.json({ success: true });
 });
@@ -310,9 +441,9 @@ router.delete('/api-key', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
-  db.prepare('UPDATE users SET api_key_encrypted = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    userId
-  );
+  db.prepare(
+    'UPDATE users SET api_key_encrypted = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(userId);
 
   res.json({ success: true });
 });
@@ -322,9 +453,9 @@ router.get('/github-token', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
-  const settings = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const settings = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   if (settings?.settings_json) {
     try {
@@ -334,8 +465,8 @@ router.get('/github-token', requireAuth, (req, res) => {
           success: true,
           data: {
             hasToken: true,
-            tokenPreview: `${parsed.githubToken.substring(0, 8)}...${parsed.githubToken.slice(-4)}`
-          }
+            tokenPreview: `${parsed.githubToken.substring(0, 8)}...${parsed.githubToken.slice(-4)}`,
+          },
         });
         return;
       }
@@ -364,9 +495,9 @@ router.put('/github-token', requireAuth, (req, res) => {
   const db = getDatabase();
 
   // Get existing settings_json
-  const existing = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const existing = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   let settingsObj: Record<string, unknown> = {};
   if (existing?.settings_json) {
@@ -380,16 +511,17 @@ router.put('/github-token', requireAuth, (req, res) => {
   // Encrypt the token before storing
   settingsObj.githubToken = safeEncrypt(token);
 
-  db.prepare(
-    'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
-  ).run(JSON.stringify(settingsObj), userId);
+  db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(
+    JSON.stringify(settingsObj),
+    userId
+  );
 
   res.json({
     success: true,
     data: {
       hasToken: true,
-      tokenPreview: `${token.substring(0, 8)}...${token.slice(-4)}`
-    }
+      tokenPreview: `${token.substring(0, 8)}...${token.slice(-4)}`,
+    },
   });
 });
 
@@ -399,18 +531,19 @@ router.delete('/github-token', requireAuth, (req, res) => {
   const db = getDatabase();
 
   // Get existing settings_json
-  const existing = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const existing = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   if (existing?.settings_json) {
     try {
       const settingsObj = JSON.parse(existing.settings_json);
       delete settingsObj.githubToken;
 
-      db.prepare(
-        'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
-      ).run(JSON.stringify(settingsObj), userId);
+      db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(
+        JSON.stringify(settingsObj),
+        userId
+      );
     } catch {
       // Invalid JSON, just continue
     }
@@ -423,9 +556,9 @@ router.delete('/github-token', requireAuth, (req, res) => {
 export function getGitHubTokenForUser(userId: string): string | null {
   const db = getDatabase();
 
-  const settings = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const settings = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   if (settings?.settings_json) {
     const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});
@@ -442,28 +575,41 @@ export function getGitHubTokenForUser(userId: string): string | null {
 router.get('/mistral-key', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
+  const envKey = process.env.MISTRAL_API_KEY || '';
 
-  const settings = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const settings = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   if (settings?.settings_json) {
     const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});
     const encryptedKey = parsed.mistralApiKey;
     if (typeof encryptedKey === 'string') {
       const apiKey = safeDecrypt(encryptedKey);
-      res.json({
-        success: true,
-        data: {
-          hasKey: !!apiKey,
-          keyPreview: apiKey ? `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}` : null
-        }
-      });
-      return;
+      if (apiKey) {
+        res.json({
+          success: true,
+          data: {
+            hasKey: true,
+            keyPreview: `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`,
+            source: 'user' as const,
+            envFallback: !!envKey,
+          },
+        });
+        return;
+      }
     }
   }
 
-  res.json({ success: true, data: { hasKey: false, keyPreview: null } });
+  res.json({
+    success: true,
+    data: {
+      hasKey: !!envKey,
+      keyPreview: envKey ? `${envKey.substring(0, 8)}...${envKey.slice(-4)}` : null,
+      source: envKey ? ('env' as const) : ('none' as const),
+      envFallback: !!envKey,
+    },
+  });
 });
 
 // Set Mistral API key
@@ -478,25 +624,26 @@ router.put('/mistral-key', requireAuth, (req, res) => {
   const db = getDatabase();
 
   // Get existing settings_json
-  const existing = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const existing = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   const settingsObj = safeJsonParse<Record<string, unknown>>(existing?.settings_json, {});
 
   // Encrypt the API key before storing
   settingsObj.mistralApiKey = safeEncrypt(apiKey);
 
-  db.prepare(
-    'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
-  ).run(JSON.stringify(settingsObj), userId);
+  db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(
+    JSON.stringify(settingsObj),
+    userId
+  );
 
   res.json({
     success: true,
     data: {
       hasKey: true,
-      keyPreview: `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`
-    }
+      keyPreview: `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`,
+    },
   });
 });
 
@@ -506,17 +653,18 @@ router.delete('/mistral-key', requireAuth, (req, res) => {
   const db = getDatabase();
 
   // Get existing settings_json
-  const existing = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const existing = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   if (existing?.settings_json) {
     const settingsObj = safeJsonParse<Record<string, unknown>>(existing.settings_json, {});
     delete settingsObj.mistralApiKey;
 
-    db.prepare(
-      'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
-    ).run(JSON.stringify(settingsObj), userId);
+    db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(
+      JSON.stringify(settingsObj),
+      userId
+    );
   }
 
   res.json({ success: true });
@@ -526,9 +674,9 @@ router.delete('/mistral-key', requireAuth, (req, res) => {
 export function getMistralApiKeyForUser(userId: string): string | null {
   const db = getDatabase();
 
-  const settings = db.prepare(
-    'SELECT settings_json FROM user_settings WHERE user_id = ?'
-  ).get(userId) as { settings_json: string | null } | undefined;
+  const settings = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
 
   if (settings?.settings_json) {
     const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});

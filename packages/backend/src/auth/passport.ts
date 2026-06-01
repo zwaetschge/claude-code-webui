@@ -44,10 +44,7 @@ function isEmailAllowed(email: string): boolean {
   return config.auth.allowedEmails.includes(email.trim().toLowerCase());
 }
 
-function findOrCreateUser(
-  provider: 'github' | 'google',
-  profile: OAuthProfile
-): User {
+function findOrCreateUser(provider: 'github' | 'google', profile: OAuthProfile): User {
   const db = getDatabase();
   const profileEmail = profile.emails?.[0]?.value;
   // Use a provider-namespaced synthetic email when the profile has none, so we never
@@ -78,11 +75,7 @@ function findOrCreateUser(
           avatar_url = ?,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ?`
-      ).run(
-        profile.displayName || null,
-        profile.photos?.[0]?.value || null,
-        existingUser.id
-      );
+      ).run(profile.displayName || null, profile.photos?.[0]?.value || null, existingUser.id);
     } else {
       db.prepare(
         `UPDATE users SET
@@ -109,9 +102,9 @@ function findOrCreateUser(
   // New signup: fail closed if the email already belongs to a different provider.
   // Silent auto-linking would allow a hostile OAuth provider that returns a victim's
   // email to take over the account.
-  const emailOwner = db
-    .prepare(`SELECT id, provider FROM users WHERE email = ?`)
-    .get(email) as { id: string; provider: string } | undefined;
+  const emailOwner = db.prepare(`SELECT id, provider FROM users WHERE email = ?`).get(email) as
+    | { id: string; provider: string }
+    | undefined;
 
   if (emailOwner) {
     throw new OAuthEmailCollisionError(email, emailOwner.provider, provider);
@@ -170,9 +163,7 @@ export function setupPassport(): void {
   passport.deserializeUser((id: string, done) => {
     try {
       const db = getDatabase();
-      const user = db
-        .prepare(`SELECT ${USER_PUBLIC_COLUMNS} FROM users WHERE id = ?`)
-        .get(id);
+      const user = db.prepare(`SELECT ${USER_PUBLIC_COLUMNS} FROM users WHERE id = ?`).get(id);
       done(null, user || null);
     } catch (err) {
       done(err, null);

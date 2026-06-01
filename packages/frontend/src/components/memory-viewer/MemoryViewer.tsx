@@ -65,6 +65,33 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
   const debouncedContent = useDebounce(content, 1000);
   const hasChanges = content !== originalContent;
 
+  // Load file content
+  const loadFileContent = useCallback(
+    async (file: MemoryFile) => {
+      setLoadingContent(true);
+      setError(null);
+      setSelectedFile(file);
+
+      try {
+        const response = await api.get<MemoryContentResponse>(
+          `/api/memories/content?path=${encodeURIComponent(file.path)}&workingDirectory=${encodeURIComponent(workingDirectory)}`
+        );
+
+        if (response.data.success && response.data.data) {
+          setContent(response.data.data.content);
+          setOriginalContent(response.data.data.content);
+        }
+      } catch {
+        setError('Failed to load file');
+        setContent('');
+        setOriginalContent('');
+      } finally {
+        setLoadingContent(false);
+      }
+    },
+    [workingDirectory]
+  );
+
   // Load file list
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -79,7 +106,7 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
         setFiles(response.data.data.files);
         // Auto-select MEMORY.md if nothing selected
         if (!selectedFile && response.data.data.files.length > 0) {
-          const memoryMd = response.data.data.files.find(f => f.name === 'MEMORY.md');
+          const memoryMd = response.data.data.files.find((f) => f.name === 'MEMORY.md');
           if (memoryMd) {
             loadFileContent(memoryMd);
           }
@@ -90,31 +117,7 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
     } finally {
       setLoading(false);
     }
-  }, [workingDirectory]);
-
-  // Load file content
-  const loadFileContent = async (file: MemoryFile) => {
-    setLoadingContent(true);
-    setError(null);
-    setSelectedFile(file);
-
-    try {
-      const response = await api.get<MemoryContentResponse>(
-        `/api/memories/content?path=${encodeURIComponent(file.path)}&workingDirectory=${encodeURIComponent(workingDirectory)}`
-      );
-
-      if (response.data.success && response.data.data) {
-        setContent(response.data.data.content);
-        setOriginalContent(response.data.data.content);
-      }
-    } catch {
-      setError('Failed to load file');
-      setContent('');
-      setOriginalContent('');
-    } finally {
-      setLoadingContent(false);
-    }
-  };
+  }, [loadFileContent, selectedFile, workingDirectory]);
 
   useEffect(() => {
     if (workingDirectory) {
@@ -122,39 +125,42 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
     }
   }, [workingDirectory, loadFiles]);
 
+  const saveContent = useCallback(
+    async (nextContent: string) => {
+      if (!selectedFile) return;
+
+      setSaving(true);
+      setError(null);
+
+      try {
+        const response = await api.put<MemoryWriteResponse>('/api/memories/content', {
+          path: selectedFile.path,
+          content: nextContent,
+          workingDirectory,
+        });
+
+        if (response.data.success) {
+          setOriginalContent(nextContent);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        } else {
+          setError('Failed to save file');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to save file');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [selectedFile, workingDirectory]
+  );
+
   // Auto-save
   useEffect(() => {
     if (selectedFile && debouncedContent && debouncedContent !== originalContent) {
-      saveContent();
+      saveContent(debouncedContent);
     }
-  }, [debouncedContent]);
-
-  const saveContent = async () => {
-    if (!selectedFile) return;
-
-    setSaving(true);
-    setError(null);
-
-    try {
-      const response = await api.put<MemoryWriteResponse>('/api/memories/content', {
-        path: selectedFile.path,
-        content: content,
-        workingDirectory,
-      });
-
-      if (response.data.success) {
-        setOriginalContent(content);
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      } else {
-        setError('Failed to save file');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save file');
-    } finally {
-      setSaving(false);
-    }
-  };
+  }, [debouncedContent, originalContent, saveContent, selectedFile]);
 
   const createFile = async () => {
     if (!newFileName.trim()) return;
@@ -235,13 +241,7 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
             >
               <Plus className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={loadFiles}
-              disabled={loading}
-              title="Reload"
-            >
+            <Button variant="ghost" size="sm" onClick={loadFiles} disabled={loading} title="Reload">
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             </Button>
           </div>
@@ -264,7 +264,10 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
               onChange={(e) => setNewFileName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') createFile();
-                if (e.key === 'Escape') { setShowNewFileInput(false); setNewFileName(''); }
+                if (e.key === 'Escape') {
+                  setShowNewFileInput(false);
+                  setNewFileName('');
+                }
               }}
               placeholder="filename.md"
               className="flex-1 text-sm bg-background border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
@@ -299,10 +302,12 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
                     'hover:bg-muted/70 transition-colors group'
                   )}
                 >
-                  <FileText className={cn(
-                    'h-4 w-4 shrink-0',
-                    file.name === 'MEMORY.md' ? 'text-purple-500' : 'text-muted-foreground'
-                  )} />
+                  <FileText
+                    className={cn(
+                      'h-4 w-4 shrink-0',
+                      file.name === 'MEMORY.md' ? 'text-purple-500' : 'text-muted-foreground'
+                    )}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="truncate font-medium">
                       {file.name}
@@ -357,10 +362,12 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <FileText className={cn(
-            'h-4 w-4',
-            selectedFile.name === 'MEMORY.md' ? 'text-purple-500' : 'text-muted-foreground'
-          )} />
+          <FileText
+            className={cn(
+              'h-4 w-4',
+              selectedFile.name === 'MEMORY.md' ? 'text-purple-500' : 'text-muted-foreground'
+            )}
+          />
           <h3 className="font-medium text-sm truncate">{selectedFile.name}</h3>
           {hasChanges && (
             <span className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 px-2 py-0.5 rounded">
@@ -403,7 +410,7 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
           <Button
             variant="default"
             size="sm"
-            onClick={saveContent}
+            onClick={() => saveContent(content)}
             disabled={saving || !hasChanges}
           >
             {saving ? (
@@ -439,7 +446,9 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
               <div className={cn('flex-1 min-w-0', viewMode === 'split' && 'border-r')}>
                 <Textarea
                   value={content}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setContent(e.target.value)
+                  }
                   placeholder="Write your memory notes here..."
                   className="h-full w-full resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0"
                 />

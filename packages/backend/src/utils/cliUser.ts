@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import type { User } from '@claude-code-webui/shared';
 import { getDatabase } from '../db';
 
-const CLI_LOCAL_PROVIDERS = ['cli', 'claude', 'codex', 'opencode'] as const;
+const CLI_LOCAL_PROVIDERS = ['cli', 'claude', 'codex', 'opencode', 'vibe'] as const;
 const CLI_LOCAL_PROVIDER_ID = 'local-cli';
 
 interface UserRow {
@@ -27,13 +27,15 @@ export function findUserForBasicAuth(usernameOrEmail: string): AuthLookupResult 
   const lookup = usernameOrEmail.trim();
   if (!lookup) return null;
 
-  const row = db.prepare(
-    `SELECT id, email, name, avatar_url, provider, provider_id, password_hash, created_at, updated_at
+  const row = db
+    .prepare(
+      `SELECT id, email, name, avatar_url, provider, provider_id, password_hash, created_at, updated_at
      FROM users
      WHERE (LOWER(email) = LOWER(?) OR LOWER(name) = LOWER(?))
        AND password_hash IS NOT NULL AND password_hash <> ''
      LIMIT 1`
-  ).get(lookup, lookup) as UserRow | undefined;
+    )
+    .get(lookup, lookup) as UserRow | undefined;
 
   if (!row) return null;
 
@@ -55,11 +57,14 @@ export function findUserForBasicAuth(usernameOrEmail: string): AuthLookupResult 
 export function upsertSharedCliUser(email: string, name: string): User {
   const db = getDatabase();
 
-  const existingUsers = db.prepare(
-    `SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
-            created_at as createdAt, updated_at as updatedAt
+  const existingUsers = db
+    .prepare(
+      `SELECT id, email, name, avatar_url as avatarUrl, provider, provider_id as providerId,
+            strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+            strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
      FROM users WHERE provider_id = ? AND provider IN (${CLI_LOCAL_PROVIDERS.map(() => '?').join(',')})`
-  ).all(CLI_LOCAL_PROVIDER_ID, ...CLI_LOCAL_PROVIDERS) as User[];
+    )
+    .all(CLI_LOCAL_PROVIDER_ID, ...CLI_LOCAL_PROVIDERS) as User[];
 
   let user = existingUsers.find((candidate) => candidate.provider === 'cli') || existingUsers[0];
 
@@ -86,8 +91,12 @@ export function upsertSharedCliUser(email: string, name: string): User {
       updatedAt: new Date().toISOString(),
     } as User;
   } else {
-    db.prepare('UPDATE users SET email = ?, name = ?, provider = ? WHERE id = ?')
-      .run(email, name, 'cli', user.id);
+    db.prepare('UPDATE users SET email = ?, name = ?, provider = ? WHERE id = ?').run(
+      email,
+      name,
+      'cli',
+      user.id
+    );
     user.email = email;
     user.name = name;
     user.provider = 'cli';

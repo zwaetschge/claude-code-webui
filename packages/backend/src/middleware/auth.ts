@@ -11,9 +11,9 @@ export interface AuthenticatedRequest extends Request {
 function getUserRoleStatus(userId: string): { role: string; status: string } | null {
   try {
     const db = getDatabase();
-    const row = db
-      .prepare(`SELECT role, status FROM users WHERE id = ?`)
-      .get(userId) as { role: string; status: string } | undefined;
+    const row = db.prepare(`SELECT role, status FROM users WHERE id = ?`).get(userId) as
+      | { role: string; status: string }
+      | undefined;
     return row ?? null;
   } catch {
     return null;

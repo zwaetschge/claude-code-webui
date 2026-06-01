@@ -54,10 +54,17 @@ function parsePortCookie(cookieHeader: string | undefined): number | null {
 }
 
 function errorPage(title: string, detail: string): string {
-  const esc = (s: string) => s.replace(/[&<>"']/g, (c) => {
-    const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-    return map[c] || c;
-  });
+  const esc = (s: string) =>
+    s.replace(/[&<>"']/g, (c) => {
+      const map: Record<string, string> = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      };
+      return map[c] || c;
+    });
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>body{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0a;color:#e5e5e5;margin:0;padding:2rem;display:flex;align-items:center;justify-content:center;min-height:100vh}
 .card{max-width:520px;padding:2rem;border:1px solid #262626;border-radius:12px;background:#111}
@@ -78,7 +85,12 @@ function handleInit(req: IncomingMessage, res: ServerResponse): void {
 
   if (!isPortAllowed(port)) {
     res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(errorPage('Invalid port', `Port must be an integer between 1024 and 65535, not equal to ${config.port}.`));
+    res.end(
+      errorPage(
+        'Invalid port',
+        `Port must be an integer between 1024 and 65535, not equal to ${config.port}.`
+      )
+    );
     return;
   }
 
@@ -91,7 +103,9 @@ function handleInit(req: IncomingMessage, res: ServerResponse): void {
     'SameSite=Lax',
     config.isProduction ? 'Secure' : '',
     `Max-Age=${60 * 60 * 8}`, // 8 hours
-  ].filter(Boolean).join('; ');
+  ]
+    .filter(Boolean)
+    .join('; ');
 
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
@@ -108,7 +122,9 @@ function handleClear(_req: IncomingMessage, res: ServerResponse): void {
     'SameSite=Lax',
     config.isProduction ? 'Secure' : '',
     'Max-Age=0',
-  ].filter(Boolean).join('; ');
+  ]
+    .filter(Boolean)
+    .join('; ');
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Set-Cookie': cookie,
@@ -137,9 +153,12 @@ export function previewVhostMiddleware(req: Request, res: Response, next: NextFu
 
   const port = parsePortCookie(req.headers.cookie);
   if (!port) {
-    res.status(412)
+    res
+      .status(412)
       .type('html')
-      .send(errorPage('No preview port selected', 'The preview session cookie is missing or invalid.'));
+      .send(
+        errorPage('No preview port selected', 'The preview session cookie is missing or invalid.')
+      );
     return;
   }
 

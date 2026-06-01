@@ -38,32 +38,35 @@ export function MessageSearch({ sessionId, onResultClick, className }: MessageSe
 
   const debouncedQuery = useDebounce(query, 300);
 
-  const search = useCallback(async (searchQuery: string) => {
-    if (searchQuery.length < 2) {
-      setResults([]);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ q: searchQuery, limit: '20' });
-      const endpoint = sessionId
-        ? `/api/sessions/${sessionId}/messages/search?${params}`
-        : `/api/sessions/messages/search?${params}`;
-
-      const response = await api.get<ApiSearchResponse>(endpoint);
-
-      if (response.data.success && response.data.data) {
-        setResults(response.data.data);
-        setSelectedIndex(0);
+  const search = useCallback(
+    async (searchQuery: string) => {
+      if (searchQuery.length < 2) {
+        setResults([]);
+        return;
       }
-    } catch (error) {
-      console.error('Search failed:', error);
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
+
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ q: searchQuery, limit: '20' });
+        const endpoint = sessionId
+          ? `/api/sessions/${sessionId}/messages/search?${params}`
+          : `/api/sessions/messages/search?${params}`;
+
+        const response = await api.get<ApiSearchResponse>(endpoint);
+
+        if (response.data.success && response.data.data) {
+          setResults(response.data.data);
+          setSelectedIndex(0);
+        }
+      } catch (error) {
+        console.error('Search failed:', error);
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [sessionId]
+  );
 
   useEffect(() => {
     search(debouncedQuery);
@@ -123,7 +126,9 @@ export function MessageSearch({ sessionId, onResultClick, className }: MessageSe
     if (queryIndex >= 0) {
       const start = Math.max(0, queryIndex - 50);
       const end = Math.min(content.length, queryIndex + query.length + 100);
-      return (start > 0 ? '...' : '') + content.slice(start, end) + (end < content.length ? '...' : '');
+      return (
+        (start > 0 ? '...' : '') + content.slice(start, end) + (end < content.length ? '...' : '')
+      );
     }
 
     return content.slice(0, maxLength) + '...';
@@ -184,9 +189,7 @@ export function MessageSearch({ sessionId, onResultClick, className }: MessageSe
                     key={result.id}
                     className={cn(
                       'w-full text-left p-3 rounded-md transition-colors',
-                      selectedIndex === index
-                        ? 'bg-accent'
-                        : 'hover:bg-muted'
+                      selectedIndex === index ? 'bg-accent' : 'hover:bg-muted'
                     )}
                     onClick={() => handleResultClick(result)}
                     onMouseEnter={() => setSelectedIndex(index)}
@@ -203,9 +206,7 @@ export function MessageSearch({ sessionId, onResultClick, className }: MessageSe
                         {result.role}
                       </span>
                       {result.sessionName && (
-                        <span className="text-xs text-muted-foreground">
-                          {result.sessionName}
-                        </span>
+                        <span className="text-xs text-muted-foreground">{result.sessionName}</span>
                       )}
                     </div>
                     <p className="text-sm line-clamp-2">

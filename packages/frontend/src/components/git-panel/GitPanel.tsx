@@ -20,17 +20,16 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
 import { PushToGitHubDialog } from '@/components/github';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { GitStatus } from './GitStatus';
 import { GitCommit } from './GitCommit';
 import { GitHistory } from './GitHistory';
 import { GitDiffViewer } from './GitDiffViewer';
-import type { ApiResponse, GitStatus as GitStatusType, GitBranch as GitBranchType } from '@claude-code-webui/shared';
+import type {
+  ApiResponse,
+  GitStatus as GitStatusType,
+  GitBranch as GitBranchType,
+} from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface GitPanelProps {
@@ -49,7 +48,12 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
   const queryClient = useQueryClient();
 
   // Fetch git status to check if this is a git repo
-  const { data: status, isLoading: statusLoading, refetch, isRefetching } = useQuery({
+  const {
+    data: status,
+    isLoading: statusLoading,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ['git-status', workingDirectory],
     queryFn: async () => {
       const response = await api.get<ApiResponse<GitStatusType>>(
@@ -101,9 +105,9 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
   const { data: remoteStatus } = useQuery({
     queryKey: ['git-remote-status', workingDirectory],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<{ branch: string; tracking: string | null; ahead: number; behind: number }>>(
-        `/api/git/remote-status?path=${encodeURIComponent(workingDirectory)}`
-      );
+      const response = await api.get<
+        ApiResponse<{ branch: string; tracking: string | null; ahead: number; behind: number }>
+      >(`/api/git/remote-status?path=${encodeURIComponent(workingDirectory)}`);
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
@@ -117,7 +121,9 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
   // Pull mutation
   const pullMutation = useMutation({
     mutationFn: async () => {
-      const response = await api.post<ApiResponse<{ files: string[]; insertions: number; deletions: number }>>('/api/git/pull', {
+      const response = await api.post<
+        ApiResponse<{ files: string[]; insertions: number; deletions: number }>
+      >('/api/git/pull', {
         path: workingDirectory,
       });
       return response.data;
@@ -160,11 +166,14 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
   // Create branch mutation
   const createBranchMutation = useMutation({
     mutationFn: async (name: string) => {
-      const response = await api.post<ApiResponse<{ branch: string; checkedOut: boolean }>>('/api/git/branch/create', {
-        path: workingDirectory,
-        name,
-        checkout: true,
-      });
+      const response = await api.post<ApiResponse<{ branch: string; checkedOut: boolean }>>(
+        '/api/git/branch/create',
+        {
+          path: workingDirectory,
+          name,
+          checkout: true,
+        }
+      );
       return response.data;
     },
     onSuccess: (data) => {
@@ -180,7 +189,11 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
       }
     },
     onError: (error: Error) => {
-      toast({ title: 'Branch creation failed', description: error.message, variant: 'destructive' });
+      toast({
+        title: 'Branch creation failed',
+        description: error.message,
+        variant: 'destructive',
+      });
     },
   });
 
@@ -237,13 +250,19 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
             {remoteStatus?.tracking && (
               <div className="flex items-center gap-1">
                 {remoteStatus.ahead > 0 && (
-                  <span className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-500" title={`${remoteStatus.ahead} commits ahead`}>
+                  <span
+                    className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-500"
+                    title={`${remoteStatus.ahead} commits ahead`}
+                  >
                     <ArrowUp className="h-3 w-3" />
                     {remoteStatus.ahead}
                   </span>
                 )}
                 {remoteStatus.behind > 0 && (
-                  <span className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500" title={`${remoteStatus.behind} commits behind`}>
+                  <span
+                    className="flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500"
+                    title={`${remoteStatus.behind} commits behind`}
+                  >
                     <ArrowDown className="h-3 w-3" />
                     {remoteStatus.behind}
                   </span>
@@ -361,17 +380,10 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
         ) : (
           <div className="h-full overflow-auto p-2">
             {activeTab === 'changes' && (
-              <GitStatus
-                workingDirectory={workingDirectory}
-                onFileSelect={handleFileSelect}
-              />
+              <GitStatus workingDirectory={workingDirectory} onFileSelect={handleFileSelect} />
             )}
-            {activeTab === 'commit' && (
-              <GitCommit workingDirectory={workingDirectory} />
-            )}
-            {activeTab === 'history' && (
-              <GitHistory workingDirectory={workingDirectory} />
-            )}
+            {activeTab === 'commit' && <GitCommit workingDirectory={workingDirectory} />}
+            {activeTab === 'history' && <GitHistory workingDirectory={workingDirectory} />}
           </div>
         )}
       </div>
@@ -413,11 +425,7 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
               </p>
             </div>
             <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setShowNewBranchDialog(false)}
-              >
+              <Button type="button" variant="outline" onClick={() => setShowNewBranchDialog(false)}>
                 Cancel
               </Button>
               <Button

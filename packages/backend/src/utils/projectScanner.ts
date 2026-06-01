@@ -52,7 +52,19 @@ async function readFirstLine(filePath: string): Promise<string | null> {
 }
 
 async function detectKeyDirectories(projectPath: string): Promise<string[]> {
-  const candidates = ['src', 'lib', 'app', 'pages', 'components', 'packages', 'tests', 'test', 'scripts', 'public', 'api'];
+  const candidates = [
+    'src',
+    'lib',
+    'app',
+    'pages',
+    'components',
+    'packages',
+    'tests',
+    'test',
+    'scripts',
+    'public',
+    'api',
+  ];
   const found: string[] = [];
   for (const dir of candidates) {
     if (await fileExists(path.join(projectPath, dir))) {
@@ -146,7 +158,11 @@ export async function scanProject(projectPath: string): Promise<ProjectInfo> {
     }
 
     // UI/Styling
-    if (allDeps['tailwindcss'] || (await fileExists(path.join(projectPath, 'tailwind.config.js'))) || (await fileExists(path.join(projectPath, 'tailwind.config.ts')))) {
+    if (
+      allDeps['tailwindcss'] ||
+      (await fileExists(path.join(projectPath, 'tailwind.config.js'))) ||
+      (await fileExists(path.join(projectPath, 'tailwind.config.ts')))
+    ) {
       info.techStack.push('Tailwind CSS');
     }
 
@@ -170,7 +186,10 @@ export async function scanProject(projectPath: string): Promise<ProjectInfo> {
     // Monorepo
     if (await fileExists(path.join(projectPath, 'pnpm-workspace.yaml'))) {
       info.monorepo = true;
-    } else if (pkg.scripts && Object.values(pkg.scripts).some((s) => s.includes('lerna') || s.includes('turbo'))) {
+    } else if (
+      pkg.scripts &&
+      Object.values(pkg.scripts).some((s) => s.includes('lerna') || s.includes('turbo'))
+    ) {
       info.monorepo = true;
     }
   }
@@ -185,10 +204,21 @@ export async function scanProject(projectPath: string): Promise<ProjectInfo> {
       if (nameMatch?.[1]) info.name = nameMatch[1];
       const descMatch = content.match(/^description\s*=\s*"([^"]+)"/m);
       if (descMatch?.[1] && !info.description) info.description = descMatch[1];
-      if (content.includes('fastapi')) { info.framework = 'FastAPI'; info.techStack.push('FastAPI'); }
-      if (content.includes('django')) { info.framework = 'Django'; info.techStack.push('Django'); }
-      if (content.includes('flask')) { info.framework = 'Flask'; info.techStack.push('Flask'); }
-    } catch { /* ignore */ }
+      if (content.includes('fastapi')) {
+        info.framework = 'FastAPI';
+        info.techStack.push('FastAPI');
+      }
+      if (content.includes('django')) {
+        info.framework = 'Django';
+        info.techStack.push('Django');
+      }
+      if (content.includes('flask')) {
+        info.framework = 'Flask';
+        info.techStack.push('Flask');
+      }
+    } catch {
+      /* ignore */
+    }
   } else if (await fileExists(path.join(projectPath, 'requirements.txt'))) {
     info.techStack.push('Python');
     info.packageManager = info.packageManager || 'pip';
@@ -213,7 +243,10 @@ export async function scanProject(projectPath: string): Promise<ProjectInfo> {
   if (await fileExists(path.join(projectPath, 'Dockerfile'))) {
     info.techStack.push('Docker');
   }
-  if (await fileExists(path.join(projectPath, 'docker-compose.yml')) || await fileExists(path.join(projectPath, 'docker-compose.yaml'))) {
+  if (
+    (await fileExists(path.join(projectPath, 'docker-compose.yml'))) ||
+    (await fileExists(path.join(projectPath, 'docker-compose.yaml')))
+  ) {
     info.techStack.push('Docker Compose');
   }
 

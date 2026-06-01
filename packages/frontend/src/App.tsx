@@ -9,18 +9,40 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Toaster } from '@/components/ui/toaster';
 
 // Lazy load pages for code splitting
-const BasicLoginPage = lazy(() => import('@/pages/BasicLoginPage').then(m => ({ default: m.BasicLoginPage })));
-const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
-const AuthCallbackPage = lazy(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
-const ClaudeCallbackPage = lazy(() => import('@/pages/ClaudeCallbackPage').then(m => ({ default: m.ClaudeCallbackPage })));
-const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
-const SessionPage = lazy(() => import('@/pages/SessionPage').then(m => ({ default: m.SessionPage })));
-const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
-const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
-const AdminLayout = lazy(() => import('@/pages/admin/AdminLayout').then(m => ({ default: m.AdminLayout })));
-const AdminOverviewPage = lazy(() => import('@/pages/admin/AdminOverviewPage').then(m => ({ default: m.AdminOverviewPage })));
-const AdminUsersPage = lazy(() => import('@/pages/admin/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
-const AdminAuditLogPage = lazy(() => import('@/pages/admin/AdminAuditLogPage').then(m => ({ default: m.AdminAuditLogPage })));
+const BasicLoginPage = lazy(() =>
+  import('@/pages/BasicLoginPage').then((m) => ({ default: m.BasicLoginPage }))
+);
+const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
+const AuthCallbackPage = lazy(() =>
+  import('@/pages/AuthCallbackPage').then((m) => ({ default: m.AuthCallbackPage }))
+);
+const ClaudeCallbackPage = lazy(() =>
+  import('@/pages/ClaudeCallbackPage').then((m) => ({ default: m.ClaudeCallbackPage }))
+);
+const DashboardPage = lazy(() =>
+  import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
+);
+const SessionPage = lazy(() =>
+  import('@/pages/SessionPage').then((m) => ({ default: m.SessionPage }))
+);
+const SettingsPage = lazy(() =>
+  import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
+const AnalyticsPage = lazy(() =>
+  import('@/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
+);
+const AdminLayout = lazy(() =>
+  import('@/pages/admin/AdminLayout').then((m) => ({ default: m.AdminLayout }))
+);
+const AdminOverviewPage = lazy(() =>
+  import('@/pages/admin/AdminOverviewPage').then((m) => ({ default: m.AdminOverviewPage }))
+);
+const AdminUsersPage = lazy(() =>
+  import('@/pages/admin/AdminUsersPage').then((m) => ({ default: m.AdminUsersPage }))
+);
+const AdminAuditLogPage = lazy(() =>
+  import('@/pages/admin/AdminAuditLogPage').then((m) => ({ default: m.AdminAuditLogPage }))
+);
 
 // Loading fallback component
 function PageLoader() {
@@ -62,7 +84,11 @@ function BasicAuthRoute({ children }: { children: React.ReactNode }) {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuthStore();
-  const { isBasicAuthenticated, isBasicAuthEnabled, isLoading: isBasicLoading } = useBasicAuthStore();
+  const {
+    isBasicAuthenticated,
+    isBasicAuthEnabled,
+    isLoading: isBasicLoading,
+  } = useBasicAuthStore();
   const location = useLocation();
 
   // Initialize socket connection when authenticated
@@ -105,44 +131,44 @@ export default function App() {
       <ErrorBoundary>
         <Suspense fallback={<PageLoader />}>
           <Routes>
-          <Route path="/login" element={<BasicLoginPage />} />
-          <Route path="/basic-login" element={<Navigate to="/login" replace />} />
-          <Route
-            path="/connect"
-            element={
-              <BasicAuthRoute>
-                <LoginPage />
-              </BasicAuthRoute>
-            }
-          />
-          <Route path="/auth/callback" element={<AuthCallbackPage />} />
-          <Route path="/auth/claude/callback" element={<ClaudeCallbackPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<DashboardPage />} />
-            <Route path="session/:id" element={<SessionPage />} />
-            <Route path="analytics" element={<AnalyticsPage />} />
-            <Route path="settings" element={<SettingsPage />} />
+            <Route path="/login" element={<BasicLoginPage />} />
+            <Route path="/basic-login" element={<Navigate to="/login" replace />} />
             <Route
-              path="admin"
+              path="/connect"
               element={
-                <AdminRoute>
-                  <AdminLayout />
-                </AdminRoute>
+                <BasicAuthRoute>
+                  <LoginPage />
+                </BasicAuthRoute>
+              }
+            />
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
+            <Route path="/auth/claude/callback" element={<ClaudeCallbackPage />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
               }
             >
-              <Route index element={<AdminOverviewPage />} />
-              <Route path="users" element={<AdminUsersPage />} />
-              <Route path="audit-log" element={<AdminAuditLogPage />} />
+              <Route index element={<DashboardPage />} />
+              <Route path="session/:id" element={<SessionPage />} />
+              <Route path="analytics" element={<AnalyticsPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route
+                path="admin"
+                element={
+                  <AdminRoute>
+                    <AdminLayout />
+                  </AdminRoute>
+                }
+              >
+                <Route index element={<AdminOverviewPage />} />
+                <Route path="users" element={<AdminUsersPage />} />
+                <Route path="audit-log" element={<AdminAuditLogPage />} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
+          </Routes>
         </Suspense>
       </ErrorBoundary>
       <Toaster />

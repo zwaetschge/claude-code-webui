@@ -1,5 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Shield, ShieldAlert, CheckCircle2, XCircle, AlertTriangle, Sparkles, Bot } from 'lucide-react';
+import {
+  Shield,
+  ShieldAlert,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Sparkles,
+  Bot,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -13,11 +21,12 @@ import 'katex/dist/katex.min.css';
 interface StreamingContentProps {
   content: string;
   onResponse?: (response: string) => void;
+  provider?: UiProvider;
+  providerLabel?: string;
 }
 
 // Strip ANSI escape codes for clean text
 function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
   return text.replace(/\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[\?[0-9;]*[a-zA-Z]/g, '');
 }
 
@@ -39,7 +48,9 @@ function parseClaudeOutput(content: string): {
   const cleanContent = stripAnsi(content);
 
   // Check for trust prompt FIRST (highest priority - needs user action)
-  const trustMatch = cleanContent.match(/Do you trust the files in this folder\?[\s\S]*?(\/[^\s\n]+)/);
+  const trustMatch = cleanContent.match(
+    /Do you trust the files in this folder\?[\s\S]*?(\/[^\s\n]+)/
+  );
   if (trustMatch && trustMatch[1]) {
     return { type: 'trust', path: trustMatch[1] };
   }
@@ -47,7 +58,9 @@ function parseClaudeOutput(content: string): {
   // Check for selection prompts EARLY (they need user interaction)
   // Look for "Enter to select" footer which indicates a selection dialog
   if (cleanContent.includes('Enter to select') || cleanContent.includes('Tab/Arrow keys')) {
-    const optionMatches = cleanContent.matchAll(/(?:❯\s*)?(\d+)\.\s*([^\n]+?)(?:\s+[A-Z][^\n]*)?$/gm);
+    const optionMatches = cleanContent.matchAll(
+      /(?:❯\s*)?(\d+)\.\s*([^\n]+?)(?:\s+[A-Z][^\n]*)?$/gm
+    );
     const options: { number: string; label: string; selected: boolean }[] = [];
 
     for (const match of optionMatches) {
@@ -66,12 +79,13 @@ function parseClaudeOutput(content: string): {
 
     if (options.length >= 2) {
       // Find the question/title
-      const lines = cleanContent.split('\n').filter(l => l.trim());
-      const titleLine = lines.find(l =>
-        l.includes('?') &&
-        !l.match(/^\s*❯?\s*\d+\./) &&
-        !l.includes('for shortcuts') &&
-        !l.includes('Enter to select')
+      const lines = cleanContent.split('\n').filter((l) => l.trim());
+      const titleLine = lines.find(
+        (l) =>
+          l.includes('?') &&
+          !l.match(/^\s*❯?\s*\d+\./) &&
+          !l.includes('for shortcuts') &&
+          !l.includes('Enter to select')
       );
 
       return { type: 'selection', title: titleLine?.trim() || 'Select an option', options };
@@ -87,16 +101,17 @@ function parseClaudeOutput(content: string): {
     // Clean up the message - remove repeated status lines
     const cleanMessage = planMessage
       .split('\n')
-      .filter(l =>
-        !l.includes('Ideating') &&
-        !l.includes('Cooking') &&
-        !l.includes('? for shortcuts') &&
-        !l.includes('esc to interrupt') &&
-        !l.includes('plan mode on') &&
-        !l.match(/^[✶✻✽·✢*]\s*$/) &&
-        !l.match(/^─+$/) &&
-        !l.match(/^>\s*$/) &&
-        l.trim()
+      .filter(
+        (l) =>
+          !l.includes('Ideating') &&
+          !l.includes('Cooking') &&
+          !l.includes('? for shortcuts') &&
+          !l.includes('esc to interrupt') &&
+          !l.includes('plan mode on') &&
+          !l.match(/^[✶✻✽·✢*]\s*$/) &&
+          !l.match(/^─+$/) &&
+          !l.match(/^>\s*$/) &&
+          l.trim()
       )
       .join('\n')
       .replace(/Claude is now exploring[\s\S]*?approval\.\s*/i, '')
@@ -118,7 +133,9 @@ function parseClaudeOutput(content: string): {
 
   // Check for Claude's actual response (starts with ● or similar bullet)
   // This takes priority over thinking state and welcome screen
-  const responseMatch = cleanContent.match(/[●○◉◎]\s*([\s\S]*?)(?:(?:\n\s*>\s*$|\n\s*[✶✻✽·✢*]\s|\n\s*\? for shortcuts|\n\s*Hatching)[\s\S]*$|$)/);
+  const responseMatch = cleanContent.match(
+    /[●○◉◎]\s*([\s\S]*?)(?:(?:\n\s*>\s*$|\n\s*[✶✻✽·✢*]\s|\n\s*\? for shortcuts|\n\s*Hatching)[\s\S]*$|$)/
+  );
   if (responseMatch && responseMatch[1]) {
     const message = responseMatch[1]
       .trim()
@@ -137,15 +154,16 @@ function parseClaudeOutput(content: string): {
 
   // Check for general text content that doesn't match other patterns
   // This catches responses that don't start with bullets
-  const lines = cleanContent.split('\n').filter(l => l.trim());
+  const lines = cleanContent.split('\n').filter((l) => l.trim());
   const textContent = lines
-    .filter(l =>
-      !l.includes('Cooking') &&
-      !l.includes('Hatching') &&
-      !l.includes('? for shortcuts') &&
-      !l.match(/^[✶✻✽·✢*]\s/) &&
-      !l.match(/^>\s*$/) &&
-      !l.includes('esc to interrupt')
+    .filter(
+      (l) =>
+        !l.includes('Cooking') &&
+        !l.includes('Hatching') &&
+        !l.includes('? for shortcuts') &&
+        !l.match(/^[✶✻✽·✢*]\s/) &&
+        !l.match(/^>\s*$/) &&
+        !l.includes('esc to interrupt')
     )
     .join('\n')
     .trim();
@@ -178,13 +196,15 @@ function parseClaudeOutput(content: string): {
     }
 
     if (options.length >= 2 && options.length <= 5) {
-      const lines = cleanContent.split('\n').filter(l => l.trim());
-      const title = lines.find(l =>
-        l.includes('?') &&
-        !l.match(/^\d+\./) &&
-        !l.includes('❯') &&
-        !l.includes('for shortcuts')
-      ) || '';
+      const lines = cleanContent.split('\n').filter((l) => l.trim());
+      const title =
+        lines.find(
+          (l) =>
+            l.includes('?') &&
+            !l.match(/^\d+\./) &&
+            !l.includes('❯') &&
+            !l.includes('for shortcuts')
+        ) || '';
 
       return { type: 'selection', title: title.trim(), options };
     }
@@ -235,7 +255,7 @@ function parseClaudeOutput(content: string): {
         version: versionMatch?.[1] || '',
         model: modelMatch?.[0]?.trim() || 'Claude',
         workingDir: dirMatch?.[0] || '',
-      }
+      },
     };
   }
 
@@ -281,8 +301,8 @@ function TrustDialog({
         <div className="flex items-start gap-2 text-sm text-muted-foreground">
           <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
           <p>
-            {providerName} may read, write, or execute files in this directory.
-            Only trust folders from known sources.
+            {providerName} may read, write, or execute files in this directory. Only trust folders
+            from known sources.
           </p>
         </div>
 
@@ -434,16 +454,20 @@ function ThinkingIndicator({
         <span className="text-sm font-medium">
           {isIdeating ? `${providerLabel} is ideating...` : `${providerLabel} is thinking...`}
         </span>
-        {thinkingTime && (
-          <span className="text-xs text-muted-foreground">{thinkingTime}</span>
-        )}
+        {thinkingTime && <span className="text-xs text-muted-foreground">{thinkingTime}</span>}
       </div>
     </div>
   );
 }
 
 // Plan mode indicator
-function PlanModeIndicator({ message, providerLabel }: { message?: string; providerLabel: string }) {
+function PlanModeIndicator({
+  message,
+  providerLabel,
+}: {
+  message?: string;
+  providerLabel: string;
+}) {
   const sanitizedMessage = message?.replace(/Claude/gi, providerLabel);
   return (
     <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 overflow-hidden border-2 border-blue-500/30 bg-gradient-to-br from-blue-500/5 to-transparent">
@@ -470,13 +494,7 @@ function PlanModeIndicator({ message, providerLabel }: { message?: string; provi
 
 // Claude response with markdown and LaTeX support — renders streaming partial
 // text; trailing per-provider cursor (Template B) signals live streaming.
-function ClaudeResponse({
-  message,
-  provider,
-}: {
-  message: string;
-  provider: UiProvider;
-}) {
+function ClaudeResponse({ message, provider }: { message: string; provider: UiProvider }) {
   return (
     <div className="flex gap-3">
       <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
@@ -493,10 +511,16 @@ function ClaudeResponse({
   );
 }
 
-export function StreamingContent({ content, onResponse }: StreamingContentProps) {
+export function StreamingContent({
+  content,
+  onResponse,
+  provider,
+  providerLabel: explicitProviderLabel,
+}: StreamingContentProps) {
   const { uiProvider } = useProviderStore();
-  const providerLabel = UI_PROVIDER_META[uiProvider].label;
-  const providerName = UI_PROVIDER_META[uiProvider].productName;
+  const resolvedProvider = provider ?? uiProvider;
+  const providerLabel = explicitProviderLabel ?? UI_PROVIDER_META[resolvedProvider].label;
+  const providerName = UI_PROVIDER_META[resolvedProvider].productName;
   const parsed = useMemo(() => {
     const clean = stripAnsi(content);
     const result = parseClaudeOutput(content);
@@ -517,11 +541,7 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
 
   if (parsed.type === 'selection') {
     return (
-      <SelectionDialog
-        title={parsed.title!}
-        options={parsed.options!}
-        onResponse={onResponse}
-      />
+      <SelectionDialog title={parsed.title!} options={parsed.options!} onResponse={onResponse} />
     );
   }
 
@@ -531,15 +551,17 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
 
   if (parsed.type === 'thinking') {
     return (
-      <Card className={cn(
-        "max-w-[80%] p-0 bg-card border overflow-hidden",
-        parsed.isIdeating && "border-blue-500/30"
-      )}>
+      <Card
+        className={cn(
+          'max-w-[80%] p-0 bg-card border overflow-hidden',
+          parsed.isIdeating && 'border-blue-500/30'
+        )}
+      >
         <ThinkingIndicator
           thinkingTime={parsed.thinkingTime}
           isIdeating={parsed.isIdeating}
           providerLabel={providerLabel}
-          provider={uiProvider}
+          provider={resolvedProvider}
         />
       </Card>
     );
@@ -548,13 +570,13 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
   if (parsed.type === 'response' && parsed.message) {
     return (
       <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-3 sm:p-4 bg-card border">
-        <ClaudeResponse message={parsed.message} provider={uiProvider} />
+        <ClaudeResponse message={parsed.message} provider={resolvedProvider} />
         {parsed.thinkingTime && (
           <div className="mt-3 pt-3 border-t flex items-center gap-2">
             <ThinkingIndicator
               thinkingTime={parsed.thinkingTime}
               providerLabel={providerLabel}
-              provider={uiProvider}
+              provider={resolvedProvider}
             />
           </div>
         )}
@@ -565,7 +587,7 @@ export function StreamingContent({ content, onResponse }: StreamingContentProps)
   // Empty or unrecognized - show minimal loading state
   return (
     <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 bg-card border overflow-hidden">
-      <ThinkingIndicator providerLabel={providerLabel} provider={uiProvider} />
+      <ThinkingIndicator providerLabel={providerLabel} provider={resolvedProvider} />
     </Card>
   );
 }

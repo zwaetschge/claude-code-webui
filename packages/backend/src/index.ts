@@ -17,9 +17,13 @@ import { initDatabase } from './db';
 import { setupPassport } from './auth/passport';
 import { setupWebSocket } from './websocket';
 import { errorHandler, requestIdMiddleware } from './middleware/errorHandler';
-import { previewVhostMiddleware, handlePreviewUpgrade, previewVhostEnabled } from './middleware/preview-vhost';
+import {
+  previewVhostMiddleware,
+  handlePreviewUpgrade,
+  previewVhostEnabled,
+} from './middleware/preview-vhost';
 import { ensureCliPath } from './utils/cliPaths';
-import { syncOpencodeAgents } from './utils/providerLinks';
+import { syncProviderLinks } from './utils/providerLinks';
 import type { CLIProvider } from '@claude-code-webui/shared';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from './services/cli-updates.js';
 
@@ -49,12 +53,14 @@ import providersRoutes from './routes/providers';
 import providerOAuthRoutes from './routes/provider-oauth';
 import cliProvidersRoutes from './routes/cli-providers';
 import cliLoginRoutes from './routes/cli-login';
+import codexRoutes from './routes/codex';
 import opencodeRoutes from './routes/opencode';
 import memoriesRoutes from './routes/memories';
 import taskRoutes from './routes/tasks';
 import devicesRoutes from './routes/devices';
 import previewRoutes from './routes/preview';
 import adminRoutes from './routes/admin';
+import comfyuiRoutes from './routes/comfyui';
 import { initTaskManager } from './services/tasks';
 
 function parseBooleanEnv(value?: string): boolean {
@@ -77,9 +83,7 @@ function logUpdateSummary(results: { provider: CLIProvider; status: string }[]):
     console.log('[CLI UPDATE] No results returned.');
     return;
   }
-  const summary = results
-    .map((result) => `${result.provider}:${result.status}`)
-    .join(', ');
+  const summary = results.map((result) => `${result.provider}:${result.status}`).join(', ');
   console.log(`[CLI UPDATE] ${summary}`);
 }
 
@@ -88,7 +92,12 @@ function installProcessGuards(): void {
   // (ClaudeProcessManager, task runners, etc.) crashes the server silently.
   process.on('unhandledRejection', (reason, promise) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
-    console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', err.stack || err.message);
+    console.error(
+      '[CRITICAL] Unhandled Rejection at:',
+      promise,
+      'reason:',
+      err.stack || err.message
+    );
   });
 
   process.on('uncaughtException', (err, origin) => {
@@ -147,7 +156,7 @@ async function main() {
   // Initialize database
   initDatabase();
   ensureCliPath();
-  syncOpencodeAgents();
+  syncProviderLinks();
 
   const app = express();
 
@@ -177,36 +186,39 @@ async function main() {
 
   // Middleware
   app.use(requestIdMiddleware);
-  app.use(helmet({
-    // The Vite build emits no inline scripts, so `script-src 'self'` is a strict
-    // policy without needing per-request nonce injection. Style injection from
-    // Radix UI and the inline <style> block in index.html requires
-    // 'unsafe-inline' on style-src — style-based attacks have a much smaller
-    // blast radius than script-based ones, so this tradeoff is acceptable.
-    contentSecurityPolicy: {
-      useDefaults: false,
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-        // Socket.IO upgrades same-origin XHR to WebSocket. Browsers differ on
-        // whether 'self' implicitly covers ws:/wss:, so we list both explicitly.
-        connectSrc: ["'self'", 'ws:', 'wss:'],
-        fontSrc: ["'self'", 'data:'],
-        frameSrc: ["'self'"],
-        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-        formAction: ["'self'"],
-        frameAncestors: ["'none'"],
+  app.use(
+    helmet({
+      // The Vite build emits no inline scripts, so `script-src 'self'` is a strict
+      // policy without needing per-request nonce injection. Style injection from
+      // Radix UI and the inline <style> block in index.html requires
+      // 'unsafe-inline' on style-src — style-based attacks have a much smaller
+      // blast radius than script-based ones, so this tradeoff is acceptable.
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          // Socket.IO upgrades same-origin XHR to WebSocket. Browsers differ on
+          // whether 'self' implicitly covers ws:/wss:, so we list both explicitly.
+          connectSrc: ["'self'", 'ws:', 'wss:'],
+          fontSrc: ["'self'", 'data:'],
+          frameSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: ["'none'"],
+        },
       },
-    },
-    crossOriginOpenerPolicy: false,
-    originAgentCluster: false,
-  }));
+      crossOriginOpenerPolicy: false,
+      originAgentCluster: false,
+    })
+  );
   app.use((req, res, next) => {
     const host = (req.hostname || '').toLowerCase();
-    const isTrustedOrigin = req.secure || host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    const isTrustedOrigin =
+      req.secure || host === 'localhost' || host === '127.0.0.1' || host === '::1';
     if (!isTrustedOrigin) {
       res.removeHeader('Cross-Origin-Opener-Policy');
       res.removeHeader('Origin-Agent-Cluster');
@@ -286,12 +298,14 @@ async function main() {
   app.use('/api/providers', providerOAuthRoutes);
   app.use('/api/cli-providers', cliProvidersRoutes);
   app.use('/api/cli-login', cliLoginRoutes);
+  app.use('/api/codex', codexRoutes);
   app.use('/api/opencode', opencodeRoutes);
   app.use('/api/memories', memoriesRoutes);
   app.use('/api/tasks', taskRoutes);
   app.use('/api/devices', devicesRoutes);
   app.use('/api/preview', previewRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/comfyui', comfyuiRoutes);
 
   const logosDir = process.env.LOGOS_DIR || path.join(process.cwd(), 'logos');
   if (fs.existsSync(logosDir)) {
@@ -302,20 +316,24 @@ async function main() {
   // tags in chat bubbles work (Authorization headers aren't sent with images).
   // Filenames are UUIDs, but we still require a session to avoid leaking generated
   // content to unauthenticated users on the same origin.
-  const generatedDir = process.env.COMFYUI_OUTPUT_DIR
-    || path.join(process.cwd(), 'packages/backend/data/generated');
+  const generatedDir =
+    process.env.COMFYUI_OUTPUT_DIR || path.join(process.cwd(), 'packages/backend/data/generated');
   if (!fs.existsSync(generatedDir)) {
     fs.mkdirSync(generatedDir, { recursive: true });
   }
-  app.use('/generated', (req, res, next) => {
-    if (req.isAuthenticated && req.isAuthenticated()) return next();
-    res.status(401).send('unauthorized');
-  }, express.static(generatedDir, {
-    fallthrough: false,
-    maxAge: '1h',
-    index: false,
-    dotfiles: 'deny',
-  }));
+  app.use(
+    '/generated',
+    (req, res, next) => {
+      if (req.isAuthenticated && req.isAuthenticated()) return next();
+      res.status(401).send('unauthorized');
+    },
+    express.static(generatedDir, {
+      fallthrough: false,
+      maxAge: '1h',
+      index: false,
+      dotfiles: 'deny',
+    })
+  );
 
   // Serve frontend static files in production
   if (config.isProduction) {
@@ -324,19 +342,32 @@ async function main() {
 
     // Backend auth routes that should NOT be handled by SPA
     const backendAuthRoutes = [
-      '/auth/github', '/auth/google', '/auth/claude', '/auth/codex', '/auth/dev',
-      '/auth/dev-login', '/auth/me', '/auth/logout', '/auth/providers'
+      '/auth/github',
+      '/auth/google',
+      '/auth/claude',
+      '/auth/codex',
+      '/auth/dev',
+      '/auth/dev-login',
+      '/auth/me',
+      '/auth/logout',
+      '/auth/providers',
     ];
 
-    const staticAssetPrefixes = ['/assets/', '/claude-logo.png', '/favicon.svg', '/manifest.json', '/sw.js'];
+    const staticAssetPrefixes = [
+      '/assets/',
+      '/claude-logo.png',
+      '/favicon.svg',
+      '/manifest.json',
+      '/sw.js',
+    ];
 
     // Handle SPA routing - serve index.html for all non-API routes
     app.get('*', (req, res, next) => {
       // Skip API routes and backend auth routes
       if (
         req.path.startsWith('/api') ||
-        backendAuthRoutes.some(r => req.path.startsWith(r)) ||
-        staticAssetPrefixes.some(prefix => req.path.startsWith(prefix))
+        backendAuthRoutes.some((r) => req.path.startsWith(r)) ||
+        staticAssetPrefixes.some((prefix) => req.path.startsWith(prefix))
       ) {
         return next();
       }
@@ -354,6 +385,14 @@ async function main() {
   });
 
   registerGracefulShutdown(httpServer, io);
+
+  // Bootstrap Codex CLI config — generates ~/.codex/config.toml with WebUI defaults
+  // and mirrors MCP servers from ~/.claude/settings.json so Codex sessions get the
+  // same tool surface. Idempotent; runs once per boot. Best-effort, errors logged.
+  void import('./utils/codexConfigSync')
+    .then(({ syncCodexConfig }) => syncCodexConfig())
+    .then((status) => console.log(`[codex-config] ${status}`))
+    .catch((err) => console.warn('[codex-config] sync skipped:', err));
 
   const autoUpdateEnabled = parseBooleanEnv(process.env.CLI_AUTO_UPDATE);
   const intervalHours = Number(process.env.CLI_AUTO_UPDATE_INTERVAL_HOURS || 0);

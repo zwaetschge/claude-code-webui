@@ -37,9 +37,10 @@ export function CloneRepoDialog({
   const { data: reposData, isLoading: reposLoading } = useQuery({
     queryKey: ['github-repos'],
     queryFn: async () => {
-      const { data } = await api.get<{ success: boolean; data: { repos: GitHubRepo[]; hasMore: boolean } }>(
-        '/api/github/repos?per_page=50'
-      );
+      const { data } = await api.get<{
+        success: boolean;
+        data: { repos: GitHubRepo[]; hasMore: boolean };
+      }>('/api/github/repos?per_page=50');
       return data.data;
     },
     enabled: open,
@@ -47,11 +48,14 @@ export function CloneRepoDialog({
 
   const cloneMutation = useMutation({
     mutationFn: async () => {
-      const { data } = await api.post<{ success: boolean; data: { path: string } }>('/api/github/clone', {
-        url,
-        targetDir,
-        branch: branch || undefined,
-      });
+      const { data } = await api.post<{ success: boolean; data: { path: string } }>(
+        '/api/github/clone',
+        {
+          url,
+          targetDir,
+          branch: branch || undefined,
+        }
+      );
       return data.data;
     },
     onSuccess: (data) => {
@@ -95,9 +99,7 @@ export function CloneRepoDialog({
             <Github className="h-5 w-5" />
             Clone Repository
           </DialogTitle>
-          <DialogDescription>
-            Clone a repository from GitHub
-          </DialogDescription>
+          <DialogDescription>Clone a repository from GitHub</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">

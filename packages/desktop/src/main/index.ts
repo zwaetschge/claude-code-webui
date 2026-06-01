@@ -53,17 +53,20 @@ app.on('activate', () => {
 
 function setupIpcHandlers(): void {
   // Register device (called from setup page)
-  ipcMain.handle('register-device', async (_event, serverUrl: string, username: string, password: string) => {
-    const result = await registerDevice(serverUrl, username, password);
+  ipcMain.handle(
+    'register-device',
+    async (_event, serverUrl: string, username: string, password: string) => {
+      const result = await registerDevice(serverUrl, username, password);
 
-    if (result.success && result.token && result.serverUrl) {
-      // Close setup, open app
-      closeSetupWindow();
-      createAppWindow(result.serverUrl, result.token);
+      if (result.success && result.token && result.serverUrl) {
+        // Close setup, open app
+        closeSetupWindow();
+        createAppWindow(result.serverUrl, result.token);
+      }
+
+      return result;
     }
-
-    return result;
-  });
+  );
 
   // Get device info
   ipcMain.handle('get-device-info', () => {
@@ -84,7 +87,11 @@ function setupIpcHandlers(): void {
   ipcMain.on('window-maximize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) {
-      win.isMaximized() ? win.unmaximize() : win.maximize();
+      if (win.isMaximized()) {
+        win.unmaximize();
+      } else {
+        win.maximize();
+      }
     }
   });
 
@@ -166,7 +173,11 @@ function setupTray(): void {
   tray.on('click', () => {
     const win = getAppWindow();
     if (win) {
-      win.isVisible() ? win.hide() : win.show();
+      if (win.isVisible()) {
+        win.hide();
+      } else {
+        win.show();
+      }
     }
   });
 }

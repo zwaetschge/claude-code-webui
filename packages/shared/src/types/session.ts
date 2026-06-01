@@ -1,6 +1,6 @@
 export type SessionStatus = 'running' | 'stopped' | 'error';
 
-export type CLIProvider = 'claude' | 'codex' | 'opencode';
+export type CLIProvider = 'claude' | 'codex' | 'opencode' | 'vibe';
 
 export interface Session {
   id: string;

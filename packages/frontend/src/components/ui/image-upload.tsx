@@ -33,49 +33,60 @@ export function ImageUpload({
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const attachmentsRef = useRef(attachments);
 
   const maxSizeBytes = maxSizeMB * 1024 * 1024;
 
-  const validateAndAddImages = useCallback((files: File[]) => {
-    setError(null);
-    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
 
-    if (imageFiles.length === 0) {
-      setError('Please select image files only');
-      return;
-    }
+  const validateAndAddImages = useCallback(
+    (files: File[]) => {
+      setError(null);
+      const imageFiles = files.filter((file) => file.type.startsWith('image/'));
 
-    const remaining = maxImages - attachments.length;
-    if (remaining <= 0) {
-      setError(`Maximum ${maxImages} images allowed`);
-      return;
-    }
+      if (imageFiles.length === 0) {
+        setError('Please select image files only');
+        return;
+      }
 
-    const filesToAdd = imageFiles.slice(0, remaining);
-    const oversizedFiles = filesToAdd.filter(f => f.size > maxSizeBytes);
+      const remaining = maxImages - attachments.length;
+      if (remaining <= 0) {
+        setError(`Maximum ${maxImages} images allowed`);
+        return;
+      }
 
-    if (oversizedFiles.length > 0) {
-      setError(`Some files exceed ${maxSizeMB}MB limit`);
-      return;
-    }
+      const filesToAdd = imageFiles.slice(0, remaining);
+      const oversizedFiles = filesToAdd.filter((f) => f.size > maxSizeBytes);
 
-    const newAttachments: ImageAttachment[] = filesToAdd.map(file => ({
-      id: generateId(),
-      file,
-      preview: URL.createObjectURL(file),
-      type: 'image' as const,
-    }));
+      if (oversizedFiles.length > 0) {
+        setError(`Some files exceed ${maxSizeMB}MB limit`);
+        return;
+      }
 
-    onAttachmentsChange([...attachments, ...newAttachments]);
-  }, [attachments, maxImages, maxSizeBytes, maxSizeMB, onAttachmentsChange]);
+      const newAttachments: ImageAttachment[] = filesToAdd.map((file) => ({
+        id: generateId(),
+        file,
+        preview: URL.createObjectURL(file),
+        type: 'image' as const,
+      }));
 
-  const removeAttachment = useCallback((id: string) => {
-    const attachment = attachments.find(a => a.id === id);
-    if (attachment) {
-      URL.revokeObjectURL(attachment.preview);
-    }
-    onAttachmentsChange(attachments.filter(a => a.id !== id));
-  }, [attachments, onAttachmentsChange]);
+      onAttachmentsChange([...attachments, ...newAttachments]);
+    },
+    [attachments, maxImages, maxSizeBytes, maxSizeMB, onAttachmentsChange]
+  );
+
+  const removeAttachment = useCallback(
+    (id: string) => {
+      const attachment = attachments.find((a) => a.id === id);
+      if (attachment) {
+        URL.revokeObjectURL(attachment.preview);
+      }
+      onAttachmentsChange(attachments.filter((a) => a.id !== id));
+    },
+    [attachments, onAttachmentsChange]
+  );
 
   // Handle paste
   useEffect(() => {
@@ -83,13 +94,11 @@ export function ImageUpload({
       const items = e.clipboardData?.items;
       if (!items) return;
 
-      const imageItems = Array.from(items).filter(item => item.type.startsWith('image/'));
+      const imageItems = Array.from(items).filter((item) => item.type.startsWith('image/'));
       if (imageItems.length === 0) return;
 
       e.preventDefault();
-      const files = imageItems
-        .map(item => item.getAsFile())
-        .filter((f): f is File => f !== null);
+      const files = imageItems.map((item) => item.getAsFile()).filter((f): f is File => f !== null);
 
       validateAndAddImages(files);
     };
@@ -118,20 +127,26 @@ export function ImageUpload({
     e.stopPropagation();
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
 
-    const files = Array.from(e.dataTransfer.files);
-    validateAndAddImages(files);
-  }, [validateAndAddImages]);
+      const files = Array.from(e.dataTransfer.files);
+      validateAndAddImages(files);
+    },
+    [validateAndAddImages]
+  );
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    validateAndAddImages(files);
-    e.target.value = '';
-  }, [validateAndAddImages]);
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      validateAndAddImages(files);
+      e.target.value = '';
+    },
+    [validateAndAddImages]
+  );
 
   const openFilePicker = () => {
     fileInputRef.current?.click();
@@ -140,7 +155,7 @@ export function ImageUpload({
   // Clean up object URLs on unmount
   useEffect(() => {
     return () => {
-      attachments.forEach(a => URL.revokeObjectURL(a.preview));
+      attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.preview));
     };
   }, []);
 
@@ -160,10 +175,7 @@ export function ImageUpload({
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 p-2 rounded-lg bg-muted/50 border">
           {attachments.map((attachment) => (
-            <div
-              key={attachment.id}
-              className="relative group animate-scale-in"
-            >
+            <div key={attachment.id} className="relative group animate-scale-in">
               <img
                 src={attachment.preview}
                 alt="Attachment"
@@ -225,9 +237,7 @@ export function ImageUpload({
       )}
 
       {/* Error message */}
-      {error && (
-        <p className="text-xs text-destructive animate-fade-in">{error}</p>
-      )}
+      {error && <p className="text-xs text-destructive animate-fade-in">{error}</p>}
     </div>
   );
 }
@@ -243,9 +253,9 @@ export function ImageUploadButton({ attachments, onAttachmentsChange }: ImageUpl
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
 
-    const newAttachments: ImageAttachment[] = imageFiles.map(file => ({
+    const newAttachments: ImageAttachment[] = imageFiles.map((file) => ({
       id: generateId(),
       file,
       preview: URL.createObjectURL(file),

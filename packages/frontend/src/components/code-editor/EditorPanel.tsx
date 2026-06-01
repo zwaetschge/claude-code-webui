@@ -14,14 +14,8 @@ interface EditorPanelProps {
 }
 
 export function EditorPanel({ sessionId }: EditorPanelProps) {
-  const {
-    openFiles,
-    activeFileTab,
-    updateFileContent,
-    closeFile,
-    setActiveTab,
-    markFileSaved,
-  } = useSessionStore();
+  const { openFiles, activeFileTab, updateFileContent, closeFile, setActiveTab, markFileSaved } =
+    useSessionStore();
 
   const files = openFiles[sessionId] || [];
   const activeTab = activeFileTab[sessionId];
@@ -93,17 +87,11 @@ export function EditorPanel({ sessionId }: EditorPanelProps) {
                   : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
               )}
             >
-              <FileIcon
-                filename={fileName}
-                isDirectory={false}
-                className="h-3.5 w-3.5 shrink-0"
-              />
+              <FileIcon filename={fileName} isDirectory={false} className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate max-w-32">{fileName}</span>
 
               {/* Dirty indicator */}
-              {file.isDirty && (
-                <Circle className="h-2 w-2 fill-current text-amber-500 shrink-0" />
-              )}
+              {file.isDirty && <Circle className="h-2 w-2 fill-current text-amber-500 shrink-0" />}
 
               {/* Close button */}
               <button

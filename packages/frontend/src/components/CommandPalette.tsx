@@ -42,10 +42,7 @@ export function CommandPalette() {
   const activeSession = activeSessionId ? sessions.find((s) => s.id === activeSessionId) : null;
 
   // Top 10 most recent sessions
-  const recentSessions = useMemo(
-    () => sessions.slice(0, 10),
-    [sessions]
-  );
+  const recentSessions = useMemo(() => sessions.slice(0, 10), [sessions]);
 
   // Global hotkey Cmd/Ctrl+K
   useEffect(() => {

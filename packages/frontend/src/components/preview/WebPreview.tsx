@@ -107,11 +107,14 @@ export function WebPreview({ className }: WebPreviewProps) {
     };
   }, []);
 
-  const activate = useCallback((port: number) => {
-    if (!config?.enabled || !config.hostname) return;
-    setActivePort(port);
-    setIframeKey((k) => k + 1);
-  }, [config]);
+  const activate = useCallback(
+    (port: number) => {
+      if (!config?.enabled || !config.hostname) return;
+      setActivePort(port);
+      setIframeKey((k) => k + 1);
+    },
+    [config]
+  );
 
   const refresh = useCallback(() => {
     setIframeKey((k) => k + 1);
@@ -135,10 +138,13 @@ export function WebPreview({ className }: WebPreviewProps) {
     setIsAdding(false);
   }, [newPort, newName]);
 
-  const removePort = useCallback((port: number) => {
-    setPorts((prev) => prev.filter((p) => p.port !== port));
-    if (activePort === port) setActivePort(null);
-  }, [activePort]);
+  const removePort = useCallback(
+    (port: number) => {
+      setPorts((prev) => prev.filter((p) => p.port !== port));
+      if (activePort === port) setActivePort(null);
+    },
+    [activePort]
+  );
 
   const iframeSrc = useMemo(() => {
     if (!config?.hostname || activePort === null) return null;
@@ -149,7 +155,9 @@ export function WebPreview({ className }: WebPreviewProps) {
   }, [config, activePort]);
 
   if (configError) {
-    return <PreviewError title="Preview service unreachable" body={configError} className={className} />;
+    return (
+      <PreviewError title="Preview service unreachable" body={configError} className={className} />
+    );
   }
 
   if (!config) {
@@ -167,7 +175,9 @@ export function WebPreview({ className }: WebPreviewProps) {
   }
 
   return (
-    <div className={cn('flex h-full flex-col bg-card overflow-hidden rounded-lg border', className)}>
+    <div
+      className={cn('flex h-full flex-col bg-card overflow-hidden rounded-lg border', className)}
+    >
       <div className="shrink-0 flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
         <Globe className="h-4 w-4 text-muted-foreground" />
         <div className="flex-1 min-w-0 text-sm font-mono truncate text-muted-foreground">
@@ -200,7 +210,9 @@ export function WebPreview({ className }: WebPreviewProps) {
       <div className="flex flex-1 min-h-0">
         <aside className="shrink-0 w-56 border-r bg-muted/20 flex flex-col">
           <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ports</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Ports
+            </span>
             <Button
               variant="ghost"
               size="icon"
@@ -243,7 +255,12 @@ export function WebPreview({ className }: WebPreviewProps) {
                 }}
               />
               <div className="flex gap-1">
-                <Button size="sm" className="h-7 flex-1" onClick={addPort} disabled={!newPort.trim()}>
+                <Button
+                  size="sm"
+                  className="h-7 flex-1"
+                  onClick={addPort}
+                  disabled={!newPort.trim()}
+                >
                   Add
                 </Button>
                 <Button
@@ -271,16 +288,21 @@ export function WebPreview({ className }: WebPreviewProps) {
                   <div
                     className={cn(
                       'group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm cursor-pointer transition-colors',
-                      isActive
-                        ? 'bg-primary/15 text-primary'
-                        : 'hover:bg-muted/60 text-foreground',
+                      isActive ? 'bg-primary/15 text-primary' : 'hover:bg-muted/60 text-foreground'
                     )}
                     onClick={() => activate(p.port)}
                   >
-                    <Icon className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                    <Icon
+                      className={cn(
+                        'h-4 w-4 shrink-0',
+                        isActive ? 'text-primary' : 'text-muted-foreground'
+                      )}
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate">{p.name}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground truncate">:{p.port}</div>
+                      <div className="text-[10px] font-mono text-muted-foreground truncate">
+                        :{p.port}
+                      </div>
                     </div>
                     {isActive ? (
                       <Play className="h-3 w-3 text-primary shrink-0" />
@@ -324,7 +346,9 @@ export function WebPreview({ className }: WebPreviewProps) {
             <div className="h-full w-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
               <Globe className="h-10 w-10 opacity-40" />
               <p className="text-sm">Pick a port on the left to preview the running dev server.</p>
-              <p className="text-xs">Served over <code className="font-mono">{config.hostname}</code> with Authelia SSO.</p>
+              <p className="text-xs">
+                Served over <code className="font-mono">{config.hostname}</code> with Authelia SSO.
+              </p>
             </div>
           )}
         </main>
@@ -335,13 +359,26 @@ export function WebPreview({ className }: WebPreviewProps) {
 
 function PreviewLoading({ className }: { className?: string }) {
   return (
-    <div className={cn('flex h-full items-center justify-center text-muted-foreground text-sm', className)}>
+    <div
+      className={cn(
+        'flex h-full items-center justify-center text-muted-foreground text-sm',
+        className
+      )}
+    >
       Loading preview…
     </div>
   );
 }
 
-function PreviewError({ title, body, className }: { title: string; body: string; className?: string }) {
+function PreviewError({
+  title,
+  body,
+  className,
+}: {
+  title: string;
+  body: string;
+  className?: string;
+}) {
   return (
     <div className={cn('flex h-full items-center justify-center p-6', className)}>
       <div className="max-w-md rounded-lg border bg-card p-6 text-center">

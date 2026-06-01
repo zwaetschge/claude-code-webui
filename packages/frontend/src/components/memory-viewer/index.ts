@@ -1,1 +1,1 @@
-export { MemoryViewer } from "./MemoryViewer";
+export { MemoryViewer } from './MemoryViewer';

@@ -139,7 +139,10 @@ function matchBashPrefix(command: string, prefix: string): boolean {
   if (BASH_SUBSTITUTION_REGEX.test(command)) {
     return false;
   }
-  const segments = command.split(BASH_CHAIN_REGEX).map((s) => s.trim()).filter(Boolean);
+  const segments = command
+    .split(BASH_CHAIN_REGEX)
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (segments.length === 0) {
     return false;
   }
@@ -371,7 +374,9 @@ async function main(): Promise<void> {
   const sessionMode = (process.env.WEBUI_SESSION_MODE || '').toLowerCase();
   const configHome = resolveConfigHome();
 
-  log(`Starting permission hook - sessionId: ${sessionId}, backendUrl: ${backendUrl}, projectPath: ${projectPath}, mode: ${sessionMode || 'unknown'}`);
+  log(
+    `Starting permission hook - sessionId: ${sessionId}, backendUrl: ${backendUrl}, projectPath: ${projectPath}, mode: ${sessionMode || 'unknown'}`
+  );
 
   if (!sessionId) {
     // No session ID means we're not running in WebUI context
@@ -470,13 +475,10 @@ async function main(): Promise<void> {
 
     // Long-poll for user response (max 55 seconds to stay under 60s hook timeout)
     log(`Long-polling ${backendUrl}/api/permissions/response/${requestId}`);
-    const pollResult = await makeRequest(
-      `${backendUrl}/api/permissions/response/${requestId}`,
-      {
-        method: 'GET',
-        timeout: 55000,
-      }
-    );
+    const pollResult = await makeRequest(`${backendUrl}/api/permissions/response/${requestId}`, {
+      method: 'GET',
+      timeout: 55000,
+    });
     log(`Poll result: ${JSON.stringify(pollResult)}`);
 
     if (pollResult.approved) {

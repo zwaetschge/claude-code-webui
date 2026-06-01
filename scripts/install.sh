@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# install.sh — interactive installer for Claude Code WebUI.
+# install.sh — interactive installer for Plum Code WebUI.
 #
 # Walks the operator through: prereq check → .env generation → docker build →
-# container start → health check → optional `claude /login` for first-time
-# Claude OAuth so the wrapper has a working CLI on first launch.
+# container start → health check → optional `codex login` for first-time
+# Codex auth so the wrapper has a working primary CLI on first launch.
+# Other providers (OpenCode, Vibe, Claude) can be logged in later from the UI.
 #
 # Re-runnable: existing .env values are kept unless --reset is passed.
 
@@ -24,7 +25,7 @@ Usage: $0 [--reset] [--skip-login] [--non-interactive]
 
 Options:
   --reset             Overwrite an existing .env from scratch instead of keeping current values
-  --skip-login        Don't prompt for the interactive Claude /login at the end
+  --skip-login        Don't prompt for the interactive codex login at the end
   --non-interactive   Take all defaults; fail if a required value (FRONTEND_URL, allowlist email) isn't already set
 USAGE
 }
@@ -125,6 +126,40 @@ CORS_ORIGINS_DEFAULT="$(get_existing CORS_ALLOWED_ORIGINS)"
 CORS_ORIGINS_DEFAULT="${CORS_ORIGINS_DEFAULT:-${FRONTEND_URL}}"
 prompt CORS_ALLOWED_ORIGINS "Comma-separated CORS origins" "$CORS_ORIGINS_DEFAULT"
 
+TZ_DEFAULT="$(get_existing TZ)"
+TZ_DEFAULT="${TZ_DEFAULT:-$(cat /etc/timezone 2>/dev/null || true)}"
+TZ_DEFAULT="${TZ_DEFAULT:-Europe/Zurich}"
+prompt TZ "IANA timezone for backend/CLI jobs" "$TZ_DEFAULT"
+
+WEBUI_SHM_SIZE="$(get_existing WEBUI_SHM_SIZE)"
+WEBUI_SHM_SIZE="${WEBUI_SHM_SIZE:-1gb}"
+
+CODEX_WEBUI_SANDBOX_MODE="$(get_existing CODEX_WEBUI_SANDBOX_MODE)"
+CODEX_WEBUI_SANDBOX_MODE="${CODEX_WEBUI_SANDBOX_MODE:-danger-full-access}"
+
+CODEX_WEBUI_APPROVAL_POLICY="$(get_existing CODEX_WEBUI_APPROVAL_POLICY)"
+CODEX_WEBUI_APPROVAL_POLICY="${CODEX_WEBUI_APPROVAL_POLICY:-never}"
+
+CHROMIUM_WRAPPER_DEFAULT=/usr/local/bin/plum-chromium
+CHROME_BIN="$(get_existing CHROME_BIN)"
+CHROME_BIN="${CHROME_BIN:-$CHROMIUM_WRAPPER_DEFAULT}"
+CHROMIUM_BIN="$(get_existing CHROMIUM_BIN)"
+CHROMIUM_BIN="${CHROMIUM_BIN:-$CHROMIUM_WRAPPER_DEFAULT}"
+CHROMIUM_PATH="$(get_existing CHROMIUM_PATH)"
+CHROMIUM_PATH="${CHROMIUM_PATH:-$CHROMIUM_WRAPPER_DEFAULT}"
+BROWSER="$(get_existing BROWSER)"
+BROWSER="${BROWSER:-$CHROMIUM_WRAPPER_DEFAULT}"
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(get_existing PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH)"
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-$CHROMIUM_WRAPPER_DEFAULT}"
+PUPPETEER_EXECUTABLE_PATH="$(get_existing PUPPETEER_EXECUTABLE_PATH)"
+PUPPETEER_EXECUTABLE_PATH="${PUPPETEER_EXECUTABLE_PATH:-$CHROMIUM_WRAPPER_DEFAULT}"
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD="$(get_existing PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD)"
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD="${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-1}"
+PUPPETEER_SKIP_DOWNLOAD="$(get_existing PUPPETEER_SKIP_DOWNLOAD)"
+PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-1}"
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD="$(get_existing PUPPETEER_SKIP_CHROMIUM_DOWNLOAD)"
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD="${PUPPETEER_SKIP_CHROMIUM_DOWNLOAD:-1}"
+
 ALLOWED_EMAILS_DEFAULT="$(get_existing AUTH_ALLOWED_EMAILS)"
 if [[ -z "$ALLOWED_EMAILS_DEFAULT" ]]; then
   warn "AUTH_ALLOWED_EMAILS is empty — leaving it that way means anyone with valid OAuth can sign in."
@@ -177,6 +212,19 @@ cat > "$ENV_FILE" <<ENV
 WEBUI_PORT=${WEBUI_PORT}
 FRONTEND_URL=${FRONTEND_URL}
 CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
+TZ=${TZ}
+WEBUI_SHM_SIZE=${WEBUI_SHM_SIZE}
+CODEX_WEBUI_SANDBOX_MODE=${CODEX_WEBUI_SANDBOX_MODE}
+CODEX_WEBUI_APPROVAL_POLICY=${CODEX_WEBUI_APPROVAL_POLICY}
+CHROME_BIN=${CHROME_BIN}
+CHROMIUM_BIN=${CHROMIUM_BIN}
+CHROMIUM_PATH=${CHROMIUM_PATH}
+BROWSER=${BROWSER}
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}
+PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH}
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD}
+PUPPETEER_SKIP_DOWNLOAD=${PUPPETEER_SKIP_DOWNLOAD}
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=${PUPPETEER_SKIP_CHROMIUM_DOWNLOAD}
 AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS}
 SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL}
 
@@ -204,8 +252,14 @@ mkdir -p \
   "${CONFIG_DIR}/claude" \
   "${CONFIG_DIR}/codex" \
   "${CONFIG_DIR}/opencode" \
+  "${CONFIG_DIR}/vibe" \
   "${CONFIG_DIR}/npm-global" \
   "${WORKSPACE_DIR}"
+# In-container node user is uid 1000 — ensure it can write to the config dirs.
+# Best-effort chown; fails harmlessly on hosts where the current user can't sudo.
+chown -R 1000:1000 "${CONFIG_DIR}" "${DATA_DIR}" 2>/dev/null || \
+  sudo chown -R 1000:1000 "${CONFIG_DIR}" "${DATA_DIR}" 2>/dev/null || \
+  true
 ok "Directories ready"
 
 # --- build & start --------------------------------------------------------
@@ -238,23 +292,28 @@ else
   ok "WebUI is healthy at ${FRONTEND_URL}"
 fi
 
-# --- claude /login --------------------------------------------------------
+# --- codex login (primary provider) ---------------------------------------
 if [[ "$SKIP_LOGIN" == "0" && "$NON_INTERACTIVE" == "0" ]]; then
-  step "Claude CLI first-time login"
+  step "Codex CLI first-time login (primary provider)"
   cat <<NOTE
-The Claude CLI inside the container needs to be linked to your Anthropic
-account once. This will open the interactive Claude TUI in your terminal —
-type \`/login\` and follow the OAuth prompts. Press Ctrl+D / Ctrl+C to exit
-when you're done.
+Codex is the default provider in the WebUI. The CLI inside the container needs
+to be linked to your OpenAI account once. This will run \`codex login\` in your
+terminal — follow the OAuth prompts.
+
+Other providers (OpenCode, Mistral Vibe, Claude) can be authenticated later
+from the WebUI Settings page, or from the container shell:
+  docker exec -it claude-code-webui opencode auth login
+  docker exec -it claude-code-webui vibe login
+  docker exec -it claude-code-webui claude   # then type /login
 
 NOTE
-  printf 'Run claude /login now? [Y/n]: '
+  printf 'Run codex login now? [Y/n]: '
   IFS= read -r run_login || run_login=""
   case "${run_login,,}" in
-    n|no) warn "Skipped — run \`docker exec -it claude-code-webui claude\` later and type /login" ;;
+    n|no) warn "Skipped — run \`docker exec -it claude-code-webui codex login\` later" ;;
     *)
-      if ! docker exec -it claude-code-webui claude 2>/dev/null; then
-        warn "Couldn't attach to claude CLI. Try manually: docker exec -it claude-code-webui claude"
+      if ! docker exec -it claude-code-webui codex login 2>/dev/null; then
+        warn "Couldn't attach to codex CLI. Try manually: docker exec -it claude-code-webui codex login"
       fi
       ;;
   esac
@@ -263,18 +322,22 @@ fi
 # --- summary --------------------------------------------------------------
 step "Done"
 cat <<SUMMARY
-${c_bold}Claude Code WebUI is up.${c_reset}
+${c_bold}Plum Code WebUI is up.${c_reset}
 
   URL:            ${c_green}${FRONTEND_URL}${c_reset}
   Container:      claude-code-webui (port ${WEBUI_PORT})
   Allowed emails: ${AUTH_ALLOWED_EMAILS:-<none — open signup>}
   Admin seed:     ${SEED_ADMIN_EMAIL:-<unset>}
 
+Default CLI provider: ${c_bold}codex${c_reset} (Anthropic restricting claude -p; codex is the new primary)
+
 Useful commands:
   docker compose logs -f claude-code-webui
   docker compose restart claude-code-webui
-  docker exec -it claude-code-webui claude          # interactive Claude CLI
-  docker exec -it claude-code-webui codex           # interactive Codex CLI
+  docker exec -it claude-code-webui codex           # primary: Codex CLI
+  docker exec -it claude-code-webui opencode        # OpenCode CLI (75+ LLMs)
+  docker exec -it claude-code-webui vibe            # Mistral Vibe CLI
+  docker exec -it claude-code-webui claude          # legacy: Claude CLI
 
 To re-run the installer (preserves existing .env): ./scripts/install.sh
 To start over from scratch:                       ./scripts/install.sh --reset

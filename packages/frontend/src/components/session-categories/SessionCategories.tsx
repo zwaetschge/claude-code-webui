@@ -1,13 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Folder,
-  Plus,
-  Trash2,
-  Edit2,
-  Check,
-  X,
-  Palette,
-} from 'lucide-react';
+import { Folder, Plus, Trash2, Edit2, Check, X, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -118,7 +110,9 @@ export function SessionCategories({
     if (!name.trim()) return;
 
     try {
-      const response = await api.patch<ApiCategoryResponse>(`/api/categories/${id}`, { name: name.trim() });
+      const response = await api.patch<ApiCategoryResponse>(`/api/categories/${id}`, {
+        name: name.trim(),
+      });
       if (response.data.success && response.data.data) {
         setCategories(categories.map((c) => (c.id === id ? response.data.data! : c)));
       }
@@ -193,9 +187,7 @@ export function SessionCategories({
               key={category.id}
               className={cn(
                 'group flex items-center gap-1 px-2 py-1.5 rounded-md transition-colors',
-                selectedCategory === category.id
-                  ? 'bg-primary/10'
-                  : 'hover:bg-muted'
+                selectedCategory === category.id ? 'bg-primary/10' : 'hover:bg-muted'
               )}
             >
               {editingId === category.id ? (
@@ -299,9 +291,7 @@ export function SessionCategories({
           ))}
 
           {categories.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-4">
-              No categories yet
-            </p>
+            <p className="text-xs text-muted-foreground text-center py-4">No categories yet</p>
           )}
         </div>
       </ScrollArea>
@@ -335,9 +325,7 @@ export function SessionCategories({
                     key={color.name}
                     className={cn(
                       'h-8 w-8 rounded-full border-2 transition-transform hover:scale-110',
-                      newColor === color.name
-                        ? 'border-foreground'
-                        : 'border-transparent'
+                      newColor === color.name ? 'border-foreground' : 'border-transparent'
                     )}
                     style={{ backgroundColor: color.value }}
                     onClick={() => setNewColor(color.name)}

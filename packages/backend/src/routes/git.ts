@@ -27,640 +27,701 @@ function getGit(repoPath: string): SimpleGit {
 }
 
 // Get git status
-router.get('/status', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
+router.get(
+  '/status',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const status = await git.status();
-
-    const gitStatus: GitStatus = {
-      branch: status.current || 'HEAD',
-      isClean: status.isClean(),
-      staged: status.staged,
-      unstaged: status.modified,
-      untracked: status.not_added,
-    };
-
-    res.json({ success: true, data: gitStatus });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      const status = await git.status();
+
+      const gitStatus: GitStatus = {
+        branch: status.current || 'HEAD',
+        isClean: status.isClean(),
+        staged: status.staged,
+        unstaged: status.modified,
+        untracked: status.not_added,
+      };
+
+      res.json({ success: true, data: gitStatus });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Get branches
-router.get('/branches', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
+router.get(
+  '/branches',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const branchSummary = await git.branch(['-a']);
-
-    const branches: GitBranch[] = Object.entries(branchSummary.branches).map(([name, info]) => ({
-      name,
-      isCurrent: info.current,
-      isRemote: name.startsWith('remotes/'),
-    }));
-
-    res.json({ success: true, data: branches });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      const branchSummary = await git.branch(['-a']);
+
+      const branches: GitBranch[] = Object.entries(branchSummary.branches).map(([name, info]) => ({
+        name,
+        isCurrent: info.current,
+        isRemote: name.startsWith('remotes/'),
+      }));
+
+      res.json({ success: true, data: branches });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Get remotes
-router.get('/remotes', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
+router.get(
+  '/remotes',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const remotes = await git.getRemotes(true);
-
-    const result = remotes.map((remote) => ({
-      name: remote.name,
-      url: remote.refs.push || remote.refs.fetch || '',
-    }));
-
-    res.json({ success: true, data: result });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      const remotes = await git.getRemotes(true);
+
+      const result = remotes.map((remote) => ({
+        name: remote.name,
+        url: remote.refs.push || remote.refs.fetch || '',
+      }));
+
+      res.json({ success: true, data: result });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Get commit log
-router.get('/log', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const limit = parseInt(req.query.limit as string) || 10;
+router.get(
+  '/log',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const limit = parseInt(req.query.limit as string) || 10;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const log = await git.log({ maxCount: limit });
-
-    const commits: GitCommit[] = log.all.map((commit) => ({
-      hash: commit.hash,
-      shortHash: commit.hash.substring(0, 7),
-      message: commit.message,
-      author: commit.author_name,
-      date: commit.date,
-    }));
-
-    res.json({ success: true, data: commits });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      const log = await git.log({ maxCount: limit });
+
+      const commits: GitCommit[] = log.all.map((commit) => ({
+        hash: commit.hash,
+        shortHash: commit.hash.substring(0, 7),
+        message: commit.message,
+        author: commit.author_name,
+        date: commit.date,
+      }));
+
+      res.json({ success: true, data: commits });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Checkout branch
-router.post('/checkout', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, branch } = req.body;
+router.post(
+  '/checkout',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, branch } = req.body;
 
-  if (!repoPath || !branch) {
-    throw new AppError('Path and branch are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    await git.checkout(branch);
-
-    res.json({ success: true, data: { branch } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath || !branch) {
+      throw new AppError('Path and branch are required', 400, 'MISSING_PARAMS');
     }
-    if ((err as Error).message.includes('did not match')) {
-      throw new AppError('Branch not found', 404, 'BRANCH_NOT_FOUND');
+
+    try {
+      const git = getGit(repoPath);
+      await git.checkout(branch);
+
+      res.json({ success: true, data: { branch } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      if ((err as Error).message.includes('did not match')) {
+        throw new AppError('Branch not found', 404, 'BRANCH_NOT_FOUND');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Get diff
-router.get('/diff', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const file = req.query.file as string | undefined;
+router.get(
+  '/diff',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const file = req.query.file as string | undefined;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const diff = file ? await git.diff([file]) : await git.diff();
-
-    res.json({ success: true, data: { diff } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      const diff = file ? await git.diff([file]) : await git.diff();
+
+      res.json({ success: true, data: { diff } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Get staged diff
-router.get('/diff-staged', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const file = req.query.file as string | undefined;
+router.get(
+  '/diff-staged',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const file = req.query.file as string | undefined;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const diffArgs = ['--cached'];
-    if (file) {
-      diffArgs.push(file);
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    const diff = await git.diff(diffArgs);
 
-    res.json({ success: true, data: { diff } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    try {
+      const git = getGit(repoPath);
+      const diffArgs = ['--cached'];
+      if (file) {
+        diffArgs.push(file);
+      }
+      const diff = await git.diff(diffArgs);
+
+      res.json({ success: true, data: { diff } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Get file diff with details
-router.get('/diff-file', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const file = req.query.file as string;
-  const staged = req.query.staged === 'true';
+router.get(
+  '/diff-file',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const file = req.query.file as string;
+    const staged = req.query.staged === 'true';
 
-  if (!repoPath || !file) {
-    throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
-  }
+    if (!repoPath || !file) {
+      throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
+    }
 
-  try {
-    const git = getGit(repoPath);
-    const diffArgs = staged ? ['--cached', file] : [file];
-    const diff = await git.diff(diffArgs);
+    try {
+      const git = getGit(repoPath);
+      const diffArgs = staged ? ['--cached', file] : [file];
+      const diff = await git.diff(diffArgs);
 
-    // Parse diff to count additions and deletions
-    const lines = diff.split('\n');
-    let additions = 0;
-    let deletions = 0;
+      // Parse diff to count additions and deletions
+      const lines = diff.split('\n');
+      let additions = 0;
+      let deletions = 0;
 
-    for (const line of lines) {
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        additions++;
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        deletions++;
+      for (const line of lines) {
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          additions++;
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          deletions++;
+        }
       }
-    }
 
-    res.json({
-      success: true,
-      data: {
-        file,
-        diff,
-        additions,
-        deletions,
-        staged,
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      res.json({
+        success: true,
+        data: {
+          file,
+          diff,
+          additions,
+          deletions,
+          staged,
+        },
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Stage files
-router.post('/stage', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, files } = req.body;
+router.post(
+  '/stage',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, files } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    if (files && Array.isArray(files) && files.length > 0) {
-      // Stage specific files
-      await git.add(files);
-    } else {
-      // Stage all changes
-      await git.add('.');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    // Return updated status
-    const status = await git.status();
+    try {
+      const git = getGit(repoPath);
 
-    res.json({
-      success: true,
-      data: {
-        staged: status.staged,
-        unstaged: status.modified,
-        untracked: status.not_added,
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      if (files && Array.isArray(files) && files.length > 0) {
+        // Stage specific files
+        await git.add(files);
+      } else {
+        // Stage all changes
+        await git.add('.');
+      }
+
+      // Return updated status
+      const status = await git.status();
+
+      res.json({
+        success: true,
+        data: {
+          staged: status.staged,
+          unstaged: status.modified,
+          untracked: status.not_added,
+        },
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Unstage files
-router.post('/unstage', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, files } = req.body;
+router.post(
+  '/unstage',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, files } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    if (files && Array.isArray(files) && files.length > 0) {
-      // Unstage specific files
-      await git.reset(['HEAD', '--', ...files]);
-    } else {
-      // Unstage all
-      await git.reset(['HEAD']);
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    // Return updated status
-    const status = await git.status();
+    try {
+      const git = getGit(repoPath);
 
-    res.json({
-      success: true,
-      data: {
-        staged: status.staged,
-        unstaged: status.modified,
-        untracked: status.not_added,
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      if (files && Array.isArray(files) && files.length > 0) {
+        // Unstage specific files
+        await git.reset(['HEAD', '--', ...files]);
+      } else {
+        // Unstage all
+        await git.reset(['HEAD']);
+      }
+
+      // Return updated status
+      const status = await git.status();
+
+      res.json({
+        success: true,
+        data: {
+          staged: status.staged,
+          unstaged: status.modified,
+          untracked: status.not_added,
+        },
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Create commit
-router.post('/commit', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, message } = req.body;
+router.post(
+  '/commit',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, message } = req.body;
 
-  if (!repoPath || !message) {
-    throw new AppError('Path and message are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Check if there are staged changes
-    const status = await git.status();
-    if (status.staged.length === 0) {
-      throw new AppError('No changes staged for commit', 400, 'NO_STAGED_CHANGES');
+    if (!repoPath || !message) {
+      throw new AppError('Path and message are required', 400, 'MISSING_PARAMS');
     }
 
-    // Create the commit
-    const result = await git.commit(message);
+    try {
+      const git = getGit(repoPath);
 
-    res.json({
-      success: true,
-      data: {
-        hash: result.commit,
-        summary: {
-          changes: result.summary.changes,
-          insertions: result.summary.insertions,
-          deletions: result.summary.deletions,
+      // Check if there are staged changes
+      const status = await git.status();
+      if (status.staged.length === 0) {
+        throw new AppError('No changes staged for commit', 400, 'NO_STAGED_CHANGES');
+      }
+
+      // Create the commit
+      const result = await git.commit(message);
+
+      res.json({
+        success: true,
+        data: {
+          hash: result.commit,
+          summary: {
+            changes: result.summary.changes,
+            insertions: result.summary.insertions,
+            deletions: result.summary.deletions,
+          },
         },
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Discard changes to a file
-router.post('/discard', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, file } = req.body;
+router.post(
+  '/discard',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, file } = req.body;
 
-  if (!repoPath || !file) {
-    throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    await git.checkout(['--', file]);
-
-    res.json({ success: true });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath || !file) {
+      throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      await git.checkout(['--', file]);
+
+      res.json({ success: true });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Create new branch
-router.post('/branch/create', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, name, checkout } = req.body;
+router.post(
+  '/branch/create',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, name, checkout } = req.body;
 
-  if (!repoPath || !name) {
-    throw new AppError('Path and branch name are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Create branch
-    await git.branch([name]);
-
-    // Checkout if requested
-    if (checkout) {
-      await git.checkout(name);
+    if (!repoPath || !name) {
+      throw new AppError('Path and branch name are required', 400, 'MISSING_PARAMS');
     }
 
-    res.json({ success: true, data: { branch: name, checkedOut: !!checkout } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    try {
+      const git = getGit(repoPath);
+
+      // Create branch
+      await git.branch([name]);
+
+      // Checkout if requested
+      if (checkout) {
+        await git.checkout(name);
+      }
+
+      res.json({ success: true, data: { branch: name, checkedOut: !!checkout } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      if ((err as Error).message.includes('already exists')) {
+        throw new AppError('Branch already exists', 400, 'BRANCH_EXISTS');
+      }
+      throw err;
     }
-    if ((err as Error).message.includes('already exists')) {
-      throw new AppError('Branch already exists', 400, 'BRANCH_EXISTS');
-    }
-    throw err;
-  }
-}));
+  })
+);
 
 // Delete branch
-router.post('/branch/delete', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, name, force } = req.body;
+router.post(
+  '/branch/delete',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, name, force } = req.body;
 
-  if (!repoPath || !name) {
-    throw new AppError('Path and branch name are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Delete branch (force if requested)
-    await git.branch([force ? '-D' : '-d', name]);
-
-    res.json({ success: true });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath || !name) {
+      throw new AppError('Path and branch name are required', 400, 'MISSING_PARAMS');
     }
-    if ((err as Error).message.includes('not fully merged')) {
-      throw new AppError('Branch is not fully merged. Use force to delete anyway.', 400, 'BRANCH_NOT_MERGED');
+
+    try {
+      const git = getGit(repoPath);
+
+      // Delete branch (force if requested)
+      await git.branch([force ? '-D' : '-d', name]);
+
+      res.json({ success: true });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      if ((err as Error).message.includes('not fully merged')) {
+        throw new AppError(
+          'Branch is not fully merged. Use force to delete anyway.',
+          400,
+          'BRANCH_NOT_MERGED'
+        );
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Pull from remote
-router.post('/pull', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, remote, branch } = req.body;
+router.post(
+  '/pull',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, remote, branch } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    const pullOptions: string[] = [];
-    if (remote) pullOptions.push(remote);
-    if (branch) pullOptions.push(branch);
-
-    const result = await git.pull(pullOptions);
-
-    res.json({
-      success: true,
-      data: {
-        files: result.files,
-        insertions: result.insertions,
-        deletions: result.deletions,
-        summary: result.summary,
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+
+      const pullOptions: string[] = [];
+      if (remote) pullOptions.push(remote);
+      if (branch) pullOptions.push(branch);
+
+      const result = await git.pull(pullOptions);
+
+      res.json({
+        success: true,
+        data: {
+          files: result.files,
+          insertions: result.insertions,
+          deletions: result.deletions,
+          summary: result.summary,
+        },
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Fetch from remote
-router.post('/fetch', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, remote, prune } = req.body;
+router.post(
+  '/fetch',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, remote, prune } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    const fetchOptions: string[] = [];
-    if (prune) fetchOptions.push('--prune');
-    if (remote) fetchOptions.push(remote);
-
-    await git.fetch(fetchOptions);
-
-    res.json({ success: true });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+
+      const fetchOptions: string[] = [];
+      if (prune) fetchOptions.push('--prune');
+      if (remote) fetchOptions.push(remote);
+
+      await git.fetch(fetchOptions);
+
+      res.json({ success: true });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Get remote tracking status (ahead/behind)
-router.get('/remote-status', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
+router.get(
+  '/remote-status',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Get current branch
-    const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-
-    // Get tracking branch
-    let tracking: string | null = null;
-    try {
-      tracking = (await git.raw(['rev-parse', '--abbrev-ref', `${currentBranch}@{upstream}`])).trim();
-    } catch {
-      // No upstream configured
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    if (!tracking) {
+    try {
+      const git = getGit(repoPath);
+
+      // Get current branch
+      const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+
+      // Get tracking branch
+      let tracking: string | null = null;
+      try {
+        tracking = (
+          await git.raw(['rev-parse', '--abbrev-ref', `${currentBranch}@{upstream}`])
+        ).trim();
+      } catch {
+        // No upstream configured
+      }
+
+      if (!tracking) {
+        res.json({
+          success: true,
+          data: {
+            branch: currentBranch,
+            tracking: null,
+            ahead: 0,
+            behind: 0,
+          },
+        });
+        return;
+      }
+
+      // Get ahead/behind counts
+      const revList = await git.raw([
+        'rev-list',
+        '--left-right',
+        '--count',
+        `${currentBranch}...${tracking}`,
+      ]);
+      const [ahead, behind] = revList.trim().split('\t').map(Number);
+
       res.json({
         success: true,
         data: {
           branch: currentBranch,
-          tracking: null,
-          ahead: 0,
-          behind: 0,
+          tracking,
+          ahead: ahead || 0,
+          behind: behind || 0,
         },
       });
-      return;
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-
-    // Get ahead/behind counts
-    const revList = await git.raw(['rev-list', '--left-right', '--count', `${currentBranch}...${tracking}`]);
-    const [ahead, behind] = revList.trim().split('\t').map(Number);
-
-    res.json({
-      success: true,
-      data: {
-        branch: currentBranch,
-        tracking,
-        ahead: ahead || 0,
-        behind: behind || 0,
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
-    }
-    throw err;
-  }
-}));
+  })
+);
 
 // Get commit diff
-router.get('/commit-diff', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const hash = req.query.hash as string;
+router.get(
+  '/commit-diff',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const hash = req.query.hash as string;
 
-  if (!repoPath || !hash) {
-    throw new AppError('Path and commit hash are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Get diff for this commit compared to its parent
-    const diff = await git.diff([`${hash}^`, hash]);
-
-    // Get commit details
-    const log = await git.log({ from: hash, to: hash, maxCount: 1 });
-    const commit = log.all[0];
-
-    // Parse file changes from diff
-    const fileChanges: Array<{
-      file: string;
-      additions: number;
-      deletions: number;
-      status: 'added' | 'modified' | 'deleted';
-    }> = [];
-
-    // Parse the diff to extract file info
-    const diffLines = diff.split('\n');
-    let currentFile = '';
-    let additions = 0;
-    let deletions = 0;
-
-    for (const line of diffLines) {
-      if (line.startsWith('diff --git')) {
-        // Save previous file if exists
-        if (currentFile) {
-          fileChanges.push({
-            file: currentFile,
-            additions,
-            deletions,
-            status: 'modified',
-          });
-        }
-        // Extract new file name
-        const match = line.match(/diff --git a\/.+ b\/(.+)/);
-        currentFile = match && match[1] ? match[1] : '';
-        additions = 0;
-        deletions = 0;
-      } else if (line.startsWith('+') && !line.startsWith('+++')) {
-        additions++;
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        deletions++;
-      } else if (line.startsWith('new file mode')) {
-        // Mark as added
-        if (currentFile && fileChanges.length === 0 || fileChanges[fileChanges.length - 1]?.file !== currentFile) {
-          // Will be set when we push
-        }
-      } else if (line.startsWith('deleted file mode')) {
-        // Mark as deleted
-      }
+    if (!repoPath || !hash) {
+      throw new AppError('Path and commit hash are required', 400, 'MISSING_PARAMS');
     }
 
-    // Push last file
-    if (currentFile) {
-      fileChanges.push({
-        file: currentFile,
-        additions,
-        deletions,
-        status: 'modified',
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        hash,
-        message: commit?.message || '',
-        author: commit?.author_name || '',
-        date: commit?.date || '',
-        diff,
-        files: fileChanges,
-        totalAdditions: fileChanges.reduce((sum, f) => sum + f.additions, 0),
-        totalDeletions: fileChanges.reduce((sum, f) => sum + f.deletions, 0),
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
-    }
-    // Handle first commit (no parent)
-    if ((err as Error).message.includes('unknown revision')) {
+    try {
       const git = getGit(repoPath);
-      const diff = await git.diff(['--root', hash]);
+
+      // Get diff for this commit compared to its parent
+      const diff = await git.diff([`${hash}^`, hash]);
+
+      // Get commit details
       const log = await git.log({ from: hash, to: hash, maxCount: 1 });
       const commit = log.all[0];
+
+      // Parse file changes from diff
+      const fileChanges: Array<{
+        file: string;
+        additions: number;
+        deletions: number;
+        status: 'added' | 'modified' | 'deleted';
+      }> = [];
+
+      // Parse the diff to extract file info
+      const diffLines = diff.split('\n');
+      let currentFile = '';
+      let additions = 0;
+      let deletions = 0;
+
+      for (const line of diffLines) {
+        if (line.startsWith('diff --git')) {
+          // Save previous file if exists
+          if (currentFile) {
+            fileChanges.push({
+              file: currentFile,
+              additions,
+              deletions,
+              status: 'modified',
+            });
+          }
+          // Extract new file name
+          const match = line.match(/diff --git a\/.+ b\/(.+)/);
+          currentFile = match && match[1] ? match[1] : '';
+          additions = 0;
+          deletions = 0;
+        } else if (line.startsWith('+') && !line.startsWith('+++')) {
+          additions++;
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          deletions++;
+        } else if (line.startsWith('new file mode')) {
+          // Mark as added
+          if (
+            (currentFile && fileChanges.length === 0) ||
+            fileChanges[fileChanges.length - 1]?.file !== currentFile
+          ) {
+            // Will be set when we push
+          }
+        } else if (line.startsWith('deleted file mode')) {
+          // Mark as deleted
+        }
+      }
+
+      // Push last file
+      if (currentFile) {
+        fileChanges.push({
+          file: currentFile,
+          additions,
+          deletions,
+          status: 'modified',
+        });
+      }
 
       res.json({
         success: true,
@@ -670,364 +731,399 @@ router.get('/commit-diff', requireAuth, asyncHandler(async (req, res) => {
           author: commit?.author_name || '',
           date: commit?.date || '',
           diff,
-          files: [],
-          totalAdditions: 0,
-          totalDeletions: 0,
+          files: fileChanges,
+          totalAdditions: fileChanges.reduce((sum, f) => sum + f.additions, 0),
+          totalDeletions: fileChanges.reduce((sum, f) => sum + f.deletions, 0),
         },
       });
-      return;
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      // Handle first commit (no parent)
+      if ((err as Error).message.includes('unknown revision')) {
+        const git = getGit(repoPath);
+        const diff = await git.diff(['--root', hash]);
+        const log = await git.log({ from: hash, to: hash, maxCount: 1 });
+        const commit = log.all[0];
+
+        res.json({
+          success: true,
+          data: {
+            hash,
+            message: commit?.message || '',
+            author: commit?.author_name || '',
+            date: commit?.date || '',
+            diff,
+            files: [],
+            totalAdditions: 0,
+            totalDeletions: 0,
+          },
+        });
+        return;
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Get file content at specific commit
-router.get('/file-at-commit', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const hash = req.query.hash as string;
-  const file = req.query.file as string;
+router.get(
+  '/file-at-commit',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const hash = req.query.hash as string;
+    const file = req.query.file as string;
 
-  if (!repoPath || !hash || !file) {
-    throw new AppError('Path, commit hash, and file are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const content = await git.show([`${hash}:${file}`]);
-
-    res.json({ success: true, data: { content } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath || !hash || !file) {
+      throw new AppError('Path, commit hash, and file are required', 400, 'MISSING_PARAMS');
     }
-    if ((err as Error).message.includes('does not exist')) {
-      res.json({ success: true, data: { content: '' } });
-      return;
+
+    try {
+      const git = getGit(repoPath);
+      const content = await git.show([`${hash}:${file}`]);
+
+      res.json({ success: true, data: { content } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      if ((err as Error).message.includes('does not exist')) {
+        res.json({ success: true, data: { content: '' } });
+        return;
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Compare two commits/refs
-router.get('/compare', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const base = req.query.base as string;
-  const head = req.query.head as string;
+router.get(
+  '/compare',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const base = req.query.base as string;
+    const head = req.query.head as string;
 
-  if (!repoPath || !base || !head) {
-    throw new AppError('Path, base, and head refs are required', 400, 'MISSING_PARAMS');
-  }
+    if (!repoPath || !base || !head) {
+      throw new AppError('Path, base, and head refs are required', 400, 'MISSING_PARAMS');
+    }
 
-  try {
-    const git = getGit(repoPath);
-    const diff = await git.diff([base, head]);
+    try {
+      const git = getGit(repoPath);
+      const diff = await git.diff([base, head]);
 
-    // Get commit info for both refs
-    const baseLog = await git.log({ from: base, to: base, maxCount: 1 });
-    const headLog = await git.log({ from: head, to: head, maxCount: 1 });
+      // Get commit info for both refs
+      const baseLog = await git.log({ from: base, to: base, maxCount: 1 });
+      const headLog = await git.log({ from: head, to: head, maxCount: 1 });
 
-    // Parse additions/deletions
-    const diffLines = diff.split('\n');
-    let additions = 0;
-    let deletions = 0;
+      // Parse additions/deletions
+      const diffLines = diff.split('\n');
+      let additions = 0;
+      let deletions = 0;
 
-    for (const line of diffLines) {
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        additions++;
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        deletions++;
+      for (const line of diffLines) {
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          additions++;
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          deletions++;
+        }
       }
-    }
 
-    res.json({
-      success: true,
-      data: {
-        base: {
-          ref: base,
-          commit: baseLog.all[0] || null,
+      res.json({
+        success: true,
+        data: {
+          base: {
+            ref: base,
+            commit: baseLog.all[0] || null,
+          },
+          head: {
+            ref: head,
+            commit: headLog.all[0] || null,
+          },
+          diff,
+          additions,
+          deletions,
         },
-        head: {
-          ref: head,
-          commit: headLog.all[0] || null,
-        },
-        diff,
-        additions,
-        deletions,
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Restore file from a specific commit (undo changes)
-router.post('/restore', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, file, commit } = req.body;
+router.post(
+  '/restore',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, file, commit } = req.body;
 
-  if (!repoPath || !file) {
-    throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    if (commit) {
-      // Restore from specific commit
-      await git.checkout([commit, '--', file]);
-    } else {
-      // Restore from HEAD (discard all changes including staged)
-      await git.checkout(['HEAD', '--', file]);
+    if (!repoPath || !file) {
+      throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
     }
 
-    res.json({ success: true, data: { restored: file, from: commit || 'HEAD' } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    try {
+      const git = getGit(repoPath);
+
+      if (commit) {
+        // Restore from specific commit
+        await git.checkout([commit, '--', file]);
+      } else {
+        // Restore from HEAD (discard all changes including staged)
+        await git.checkout(['HEAD', '--', file]);
+      }
+
+      res.json({ success: true, data: { restored: file, from: commit || 'HEAD' } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      if ((err as Error).message.includes('did not match')) {
+        throw new AppError('File not found in specified commit', 404, 'FILE_NOT_FOUND');
+      }
+      throw err;
     }
-    if ((err as Error).message.includes('did not match')) {
-      throw new AppError('File not found in specified commit', 404, 'FILE_NOT_FOUND');
-    }
-    throw err;
-  }
-}));
+  })
+);
 
 // Discard all unstaged changes
-router.post('/discard-all', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, includeUntracked } = req.body;
+router.post(
+  '/discard-all',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, includeUntracked } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Discard all tracked file changes
-    await git.checkout(['--', '.']);
-
-    // Optionally remove untracked files
-    if (includeUntracked) {
-      await git.clean('f', ['-d']);
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    const status = await git.status();
+    try {
+      const git = getGit(repoPath);
 
-    res.json({
-      success: true,
-      data: {
-        isClean: status.isClean(),
-        remaining: {
-          staged: status.staged,
-          unstaged: status.modified,
-          untracked: status.not_added,
+      // Discard all tracked file changes
+      await git.checkout(['--', '.']);
+
+      // Optionally remove untracked files
+      if (includeUntracked) {
+        await git.clean('f', ['-d']);
+      }
+
+      const status = await git.status();
+
+      res.json({
+        success: true,
+        data: {
+          isClean: status.isClean(),
+          remaining: {
+            staged: status.staged,
+            unstaged: status.modified,
+            untracked: status.not_added,
+          },
         },
-      },
-    });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Get file history (commits that modified the file)
-router.get('/file-history', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
-  const file = req.query.file as string;
-  const limit = parseInt(req.query.limit as string) || 20;
+router.get(
+  '/file-history',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
+    const file = req.query.file as string;
+    const limit = parseInt(req.query.limit as string) || 20;
 
-  if (!repoPath || !file) {
-    throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    const log = await git.log({
-      maxCount: limit,
-      file,
-    });
-
-    const commits = log.all.map((commit) => ({
-      hash: commit.hash,
-      shortHash: commit.hash.substring(0, 7),
-      message: commit.message,
-      author: commit.author_name,
-      date: commit.date,
-    }));
-
-    res.json({ success: true, data: commits });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath || !file) {
+      throw new AppError('Path and file are required', 400, 'MISSING_PARAMS');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+
+      const log = await git.log({
+        maxCount: limit,
+        file,
+      });
+
+      const commits = log.all.map((commit) => ({
+        hash: commit.hash,
+        shortHash: commit.hash.substring(0, 7),
+        message: commit.message,
+        author: commit.author_name,
+        date: commit.date,
+      }));
+
+      res.json({ success: true, data: commits });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Stash changes
-router.post('/stash', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, message, includeUntracked } = req.body;
+router.post(
+  '/stash',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, message, includeUntracked } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    const stashArgs = ['push'];
-    if (message) {
-      stashArgs.push('-m', message);
-    }
-    if (includeUntracked) {
-      stashArgs.push('-u');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    await git.stash(stashArgs);
+    try {
+      const git = getGit(repoPath);
 
-    res.json({ success: true, data: { message: message || 'Changes stashed' } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      const stashArgs = ['push'];
+      if (message) {
+        stashArgs.push('-m', message);
+      }
+      if (includeUntracked) {
+        stashArgs.push('-u');
+      }
+
+      await git.stash(stashArgs);
+
+      res.json({ success: true, data: { message: message || 'Changes stashed' } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // List stashes
-router.get('/stash/list', requireAuth, asyncHandler(async (req, res) => {
-  const repoPath = req.query.path as string;
+router.get(
+  '/stash/list',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const repoPath = req.query.path as string;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-    const stashList = await git.stashList();
-
-    const stashes = stashList.all.map((stash, index) => ({
-      index,
-      hash: stash.hash,
-      message: stash.message,
-      date: stash.date,
-    }));
-
-    res.json({ success: true, data: stashes });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
-    throw err;
-  }
-}));
+
+    try {
+      const git = getGit(repoPath);
+      const stashList = await git.stashList();
+
+      const stashes = stashList.all.map((stash, index) => ({
+        index,
+        hash: stash.hash,
+        message: stash.message,
+        date: stash.date,
+      }));
+
+      res.json({ success: true, data: stashes });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
+    }
+  })
+);
 
 // Apply or pop stash
-router.post('/stash/apply', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath, index, pop } = req.body;
+router.post(
+  '/stash/apply',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, index, pop } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    const stashRef = index !== undefined ? `stash@{${index}}` : undefined;
-    const args = stashRef ? [stashRef] : [];
-
-    if (pop) {
-      await git.stash(['pop', ...args]);
-    } else {
-      await git.stash(['apply', ...args]);
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    res.json({ success: true, data: { applied: stashRef || 'stash@{0}', popped: !!pop } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+    try {
+      const git = getGit(repoPath);
+
+      const stashRef = index !== undefined ? `stash@{${index}}` : undefined;
+      const args = stashRef ? [stashRef] : [];
+
+      if (pop) {
+        await git.stash(['pop', ...args]);
+      } else {
+        await git.stash(['apply', ...args]);
+      }
+
+      res.json({ success: true, data: { applied: stashRef || 'stash@{0}', popped: !!pop } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 // Generate commit message using AI
-router.post('/generate-commit-message', requireAuth, asyncHandler(async (req, res) => {
-  const { path: repoPath } = req.body;
+router.post(
+  '/generate-commit-message',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath } = req.body;
 
-  if (!repoPath) {
-    throw new AppError('Path is required', 400, 'MISSING_PATH');
-  }
-
-  try {
-    const git = getGit(repoPath);
-
-    // Get staged diff
-    const diff = await git.diff(['--cached']);
-
-    if (!diff.trim()) {
-      throw new AppError('No staged changes to generate message for', 400, 'NO_STAGED_CHANGES');
+    if (!repoPath) {
+      throw new AppError('Path is required', 400, 'MISSING_PATH');
     }
 
-    // Limit diff size to avoid token limits
-    const maxDiffLength = 8000;
-    const truncatedDiff = diff.length > maxDiffLength
-      ? diff.substring(0, maxDiffLength) + '\n\n... (diff truncated)'
-      : diff;
+    try {
+      const git = getGit(repoPath);
 
-    // Use Claude CLI to generate commit message
-    const { spawn } = await import('child_process');
+      // Get staged diff
+      const diff = await git.diff(['--cached']);
 
-    const prompt = `Based on this git diff, generate a concise commit message following conventional commits format (feat:, fix:, docs:, refactor:, etc.). Only output the commit message, nothing else. Keep it under 72 characters for the first line. If needed, add a blank line and bullet points for details.
+      if (!diff.trim()) {
+        throw new AppError('No staged changes to generate message for', 400, 'NO_STAGED_CHANGES');
+      }
+
+      // Limit diff size to avoid token limits
+      const maxDiffLength = 8000;
+      const truncatedDiff =
+        diff.length > maxDiffLength
+          ? diff.substring(0, maxDiffLength) + '\n\n... (diff truncated)'
+          : diff;
+
+      const prompt = `Based on this git diff, generate a concise commit message following conventional commits format (feat:, fix:, docs:, refactor:, etc.). Only output the commit message, nothing else. Keep it under 72 characters for the first line. If needed, add a blank line and bullet points for details.
 
 Diff:
 ${truncatedDiff}`;
 
-    const claudeProcess = spawn('claude', ['--print', '-p', prompt], {
-      env: { ...process.env },
-    });
+      const { runAdminLLM } = await import('../utils/adminLLM');
+      const { text } = await runAdminLLM(prompt, { cwd: repoPath, timeoutMs: 60_000 });
 
-    let output = '';
-    let error = '';
+      // Strip markdown fences if the model wrapped its output.
+      const commitMessage = text
+        .replace(/^```\w*\n?/gm, '')
+        .replace(/```$/gm, '')
+        .trim();
 
-    claudeProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    claudeProcess.stderr.on('data', (data) => {
-      error += data.toString();
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      claudeProcess.on('close', (code) => {
-        if (code !== 0 && !output.trim()) {
-          reject(new Error(error || `Claude exited with code ${code}`));
-        } else {
-          resolve();
-        }
-      });
-      claudeProcess.on('error', reject);
-    });
-
-    // Clean up the output
-    const commitMessage = output.trim()
-      // Remove markdown code blocks if present
-      .replace(/^```\w*\n?/gm, '')
-      .replace(/```$/gm, '')
-      .trim();
-
-    res.json({ success: true, data: { message: commitMessage } });
-  } catch (err) {
-    if ((err as Error).message.includes('not a git repository')) {
-      throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      res.json({ success: true, data: { message: commitMessage } });
+    } catch (err) {
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw err;
     }
-    throw err;
-  }
-}));
+  })
+);
 
 export default router;

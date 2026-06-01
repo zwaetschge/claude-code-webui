@@ -12,15 +12,20 @@ interface PermissionRequestCardProps {
   denials: PermissionDenial[];
   originalMessage: string;
   className?: string;
+  providerLabel?: string;
 }
 
 // Get display info for a tool
-function getToolDisplay(toolName: string): { icon: typeof Terminal; label: string; description: string } {
+function getToolDisplay(toolName: string): {
+  icon: typeof Terminal;
+  label: string;
+  description: string;
+} {
   const tools: Record<string, { icon: typeof Terminal; label: string; description: string }> = {
-    'Bash': { icon: Terminal, label: 'Terminal', description: 'Execute shell commands' },
-    'Write': { icon: FileText, label: 'Write File', description: 'Create or overwrite files' },
-    'Edit': { icon: Edit3, label: 'Edit File', description: 'Modify file contents' },
-    'WebFetch': { icon: Globe, label: 'Web Fetch', description: 'Fetch content from URLs' },
+    Bash: { icon: Terminal, label: 'Terminal', description: 'Execute shell commands' },
+    Write: { icon: FileText, label: 'Write File', description: 'Create or overwrite files' },
+    Edit: { icon: Edit3, label: 'Edit File', description: 'Modify file contents' },
+    WebFetch: { icon: Globe, label: 'Web Fetch', description: 'Fetch content from URLs' },
   };
   return tools[toolName] || { icon: Shield, label: toolName, description: 'Tool access' };
 }
@@ -45,11 +50,12 @@ export function PermissionRequestCard({
   denials,
   originalMessage,
   className,
+  providerLabel: explicitProviderLabel,
 }: PermissionRequestCardProps) {
   const { uiProvider } = useProviderStore();
-  const providerLabel = UI_PROVIDER_META[uiProvider].label;
+  const providerLabel = explicitProviderLabel ?? UI_PROVIDER_META[uiProvider].label;
   const handleApprove = () => {
-    const toolNames = denials.map(d => d.tool_name);
+    const toolNames = denials.map((d) => d.tool_name);
     socketService.approvePermission(sessionId, toolNames, originalMessage);
   };
 
@@ -58,13 +64,10 @@ export function PermissionRequestCard({
   };
 
   // Group denials by tool name for cleaner display
-  const uniqueTools = [...new Set(denials.map(d => d.tool_name))];
+  const uniqueTools = [...new Set(denials.map((d) => d.tool_name))];
 
   return (
-    <Card className={cn(
-      "p-4 bg-amber-500/10 border-amber-500/30 animate-fade-in",
-      className
-    )}>
+    <Card className={cn('p-4 bg-amber-500/10 border-amber-500/30 animate-fade-in', className)}>
       <div className="space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3">
@@ -107,12 +110,7 @@ export function PermissionRequestCard({
 
         {/* Action buttons */}
         <div className="flex gap-2 justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleDeny}
-            className="gap-1.5"
-          >
+          <Button variant="outline" size="sm" onClick={handleDeny} className="gap-1.5">
             <X className="h-4 w-4" />
             Deny
           </Button>

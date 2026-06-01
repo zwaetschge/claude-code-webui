@@ -251,38 +251,43 @@ router.post('/:id/execute', requireAuth, async (req, res) => {
     // Build full command with prompt as argument
     const fullCommand = `${tool.command} ${JSON.stringify(prompt)}`;
 
-    const result = await new Promise<{ output: string; exitCode: number | null }>((resolve, reject) => {
-      // Use PTY for proper terminal emulation (required by tools like Codex)
-      const proc = pty.spawn('bash', ['-c', fullCommand], {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 30,
-        cwd,
-        env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' } as Record<string, string>,
-      });
-
-      let output = '';
-
-      proc.onData((data: string) => {
-        output += data;
-      });
-
-      // Timeout handling
-      const timeout = setTimeout(() => {
-        proc.kill();
-        reject(new Error(`Command timed out after ${tool.timeoutSeconds} seconds`));
-      }, tool.timeoutSeconds * 1000);
-
-      proc.onExit(({ exitCode }) => {
-        clearTimeout(timeout);
-        // Strip ANSI escape codes for cleaner output
-        const cleanOutput = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
-        resolve({
-          output: cleanOutput,
-          exitCode,
+    const result = await new Promise<{ output: string; exitCode: number | null }>(
+      (resolve, reject) => {
+        // Use PTY for proper terminal emulation (required by tools like Codex)
+        const proc = pty.spawn('bash', ['-c', fullCommand], {
+          name: 'xterm-256color',
+          cols: 120,
+          rows: 30,
+          cwd,
+          env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' } as Record<
+            string,
+            string
+          >,
         });
-      });
-    });
+
+        let output = '';
+
+        proc.onData((data: string) => {
+          output += data;
+        });
+
+        // Timeout handling
+        const timeout = setTimeout(() => {
+          proc.kill();
+          reject(new Error(`Command timed out after ${tool.timeoutSeconds} seconds`));
+        }, tool.timeoutSeconds * 1000);
+
+        proc.onExit(({ exitCode }) => {
+          clearTimeout(timeout);
+          // Strip ANSI escape codes for cleaner output
+          const cleanOutput = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+          resolve({
+            output: cleanOutput,
+            exitCode,
+          });
+        });
+      }
+    );
 
     execution.output = result.output;
     execution.exitCode = result.exitCode;
@@ -305,7 +310,8 @@ router.post('/:id/execute', requireAuth, async (req, res) => {
   } catch (error) {
     execution.output = error instanceof Error ? error.message : 'Unknown error';
     execution.completedAt = new Date().toISOString();
-    execution.status = error instanceof Error && error.message.includes('timed out') ? 'timeout' : 'error';
+    execution.status =
+      error instanceof Error && error.message.includes('timed out') ? 'timeout' : 'error';
 
     // Save error message if sessionId provided
     if (sessionId) {

@@ -104,12 +104,13 @@ interface UsageLimitsResponse {
   error?: { code: string; message: string };
 }
 
-const USAGE_PROVIDERS: CLIProvider[] = ['claude', 'codex', 'opencode'];
+const USAGE_PROVIDERS: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
 
 const USAGE_PROVIDER_COLORS: Record<CLIProvider, string> = {
   claude: '#f97316',
   codex: '#22c55e',
   opencode: '#3b82f6',
+  vibe: '#fa520f',
 };
 
 const PERIODS = [
@@ -137,9 +138,10 @@ const TOKEN_COLORS = {
 const PROVIDER_FALLBACK_COLOR = '#94a3b8';
 
 const PROVIDER_COLORS: Record<string, string> = {
-  Claude: '#f97316',
   Codex: '#22c55e',
   OpenCode: '#3b82f6',
+  Vibe: '#fa520f',
+  Claude: '#f97316',
   Other: PROVIDER_FALLBACK_COLOR,
 };
 
@@ -175,14 +177,26 @@ function formatCurrency(amount: number): string {
 function getProviderLabel(model?: string): string {
   const value = (model || '').toLowerCase();
   if (!value) return 'Other';
-  if (value.includes('gpt') || value.includes('codex')) return 'Codex';
-  if (value.includes('claude')) return 'Claude';
+  // Codex CLI models: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.2
+  if (value.startsWith('gpt-') || value.includes('codex')) return 'Codex';
+  // Claude CLI: claude-opus-*, claude-sonnet-*, claude-haiku-*, raw aliases (opus/sonnet/haiku)
+  if (value.startsWith('claude') || value === 'opus' || value === 'sonnet' || value === 'haiku') {
+    return 'Claude';
+  }
+  // Mistral Vibe: mistral-vibe-cli-*, devstral-*
+  if (value.startsWith('mistral-') || value.startsWith('devstral-')) return 'Vibe';
+  // OpenCode passes provider/model identifiers (e.g. z-ai/glm-*, openai/gpt-4o,
+  // anthropic/claude-sonnet-*, deepseek/*, google/gemini-*). Detect by the slash.
+  if (value.includes('/')) return 'OpenCode';
   if (value.includes('opencode')) return 'OpenCode';
   return 'Other';
 }
 
 function getProviderKey(provider: string): string {
-  const normalized = provider.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const normalized = provider
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
   return `provider_${normalized || 'other'}`;
 }
 
@@ -222,18 +236,28 @@ function csvEscape(value: string | number | null | undefined): string {
 }
 
 function buildTimelineCsv(rows: TimelineData[]): string {
-  const header = ['date', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'total_tokens', 'cost', 'requests'];
+  const header = [
+    'date',
+    'input_tokens',
+    'output_tokens',
+    'cache_read_tokens',
+    'total_tokens',
+    'cost',
+    'requests',
+  ];
   const lines = [header.join(',')];
   for (const row of rows) {
-    lines.push([
-      csvEscape(row.date),
-      row.input_tokens,
-      row.output_tokens,
-      row.cache_read_tokens,
-      row.total_tokens,
-      row.cost,
-      row.requests,
-    ].join(','));
+    lines.push(
+      [
+        csvEscape(row.date),
+        row.input_tokens,
+        row.output_tokens,
+        row.cache_read_tokens,
+        row.total_tokens,
+        row.cost,
+        row.requests,
+      ].join(',')
+    );
   }
   return lines.join('\n');
 }
@@ -255,7 +279,9 @@ export function AnalyticsPage() {
   } = useQuery({
     queryKey: ['analytics-summary', period],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<AnalyticsSummary>>(`/api/analytics/summary?period=${period}`);
+      const response = await api.get<ApiResponse<AnalyticsSummary>>(
+        `/api/analytics/summary?period=${period}`
+      );
       return response.data.data;
     },
   });
@@ -300,15 +326,17 @@ export function AnalyticsPage() {
 
   const isLoading = summaryLoading || timelineLoading;
   const hasError = summaryError || timelineError;
-  const errorMessage = summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
+  const errorMessage =
+    summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
   const totalTokens = summary?.totals.totalTokens || 0;
   const totalCost = summary?.totals.totalCost || 0;
   const totalRequests = summary?.totals.totalRequests || 0;
   const avgCost = totalRequests > 0 ? totalCost / totalRequests : 0;
   const avgTokens = totalRequests > 0 ? totalTokens / totalRequests : 0;
-  const cacheHitRate = summary && summary.totals.totalTokens > 0
-    ? Math.round((summary.totals.cacheReadTokens / summary.totals.totalTokens) * 100)
-    : 0;
+  const cacheHitRate =
+    summary && summary.totals.totalTokens > 0
+      ? Math.round((summary.totals.cacheReadTokens / summary.totals.totalTokens) * 100)
+      : 0;
 
   const handlePeriodChange = useCallback((next: string) => {
     setPeriod(next);
@@ -325,7 +353,11 @@ export function AnalyticsPage() {
       timeline: timeline ?? [],
     };
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    triggerDownload(JSON.stringify(payload, null, 2), `analytics-${period}-${stamp}.json`, 'application/json');
+    triggerDownload(
+      JSON.stringify(payload, null, 2),
+      `analytics-${period}-${stamp}.json`,
+      'application/json'
+    );
   }, [summary, timeline, period, tzOffset]);
 
   const exportCsv = useCallback(() => {
@@ -337,11 +369,31 @@ export function AnalyticsPage() {
   const tokenBreakdown = useMemo(() => {
     if (!summary) return [];
     return [
-      { key: 'input', label: 'Input', value: summary.totals.inputTokens, color: TOKEN_COLORS.input },
-      { key: 'output', label: 'Output', value: summary.totals.outputTokens, color: TOKEN_COLORS.output },
-      { key: 'cacheRead', label: 'Cache Read', value: summary.totals.cacheReadTokens, color: TOKEN_COLORS.cacheRead },
-      { key: 'cacheCreate', label: 'Cache Create', value: summary.totals.cacheCreationTokens, color: TOKEN_COLORS.cacheCreate },
-    ].filter(item => item.value > 0);
+      {
+        key: 'input',
+        label: 'Input',
+        value: summary.totals.inputTokens,
+        color: TOKEN_COLORS.input,
+      },
+      {
+        key: 'output',
+        label: 'Output',
+        value: summary.totals.outputTokens,
+        color: TOKEN_COLORS.output,
+      },
+      {
+        key: 'cacheRead',
+        label: 'Cache Read',
+        value: summary.totals.cacheReadTokens,
+        color: TOKEN_COLORS.cacheRead,
+      },
+      {
+        key: 'cacheCreate',
+        label: 'Cache Create',
+        value: summary.totals.cacheCreationTokens,
+        color: TOKEN_COLORS.cacheCreate,
+      },
+    ].filter((item) => item.value > 0);
   }, [summary]);
 
   const providerSummary = useMemo<ProviderStats[]>(() => {
@@ -460,7 +512,8 @@ export function AnalyticsPage() {
             All providers. One ledger.
           </h1>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Aggregated usage across every connected service, rolled into a single spend and volume view.
+            Aggregated usage across every connected service, rolled into a single spend and volume
+            view.
           </p>
           <div className="flex flex-wrap gap-2">
             {providerSummary.length === 0 ? (
@@ -575,7 +628,10 @@ export function AnalyticsPage() {
                 const providerName = CLI_PROVIDER_LABEL[provider];
 
                 return (
-                  <div key={provider} className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+                  <div
+                    key={provider}
+                    className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4"
+                  >
                     <div className="flex items-center gap-3">
                       <ProviderLogo provider={provider} className="h-6 w-6" />
                       <div>
@@ -593,7 +649,9 @@ export function AnalyticsPage() {
                               <Clock className="h-3 w-3" />
                               {labels.session.title}
                               {labels.session.subtitle && (
-                                <span className="text-muted-foreground/60">({labels.session.subtitle})</span>
+                                <span className="text-muted-foreground/60">
+                                  ({labels.session.subtitle})
+                                </span>
                               )}
                             </span>
                             <span className="font-medium">{data.fiveHour.utilization}%</span>
@@ -618,7 +676,9 @@ export function AnalyticsPage() {
                               <Calendar className="h-3 w-3" />
                               {labels.weeklyAll.title}
                               {labels.weeklyAll.subtitle && (
-                                <span className="text-muted-foreground/60">({labels.weeklyAll.subtitle})</span>
+                                <span className="text-muted-foreground/60">
+                                  ({labels.weeklyAll.subtitle})
+                                </span>
                               )}
                             </span>
                             <span className="font-medium">{data.sevenDay.utilization}%</span>
@@ -628,7 +688,10 @@ export function AnalyticsPage() {
                               className="h-full rounded-full transition-all duration-500"
                               style={{
                                 width: `${Math.min(100, data.sevenDay.utilization)}%`,
-                                backgroundColor: data.sevenDay.utilization > 80 ? '#ef4444' : withAlpha(color, 'cc'),
+                                backgroundColor:
+                                  data.sevenDay.utilization > 80
+                                    ? '#ef4444'
+                                    : withAlpha(color, 'cc'),
                               }}
                             />
                           </div>
@@ -643,7 +706,9 @@ export function AnalyticsPage() {
                               <Zap className="h-3 w-3" />
                               {labels.weeklySonnet.title}
                               {labels.weeklySonnet.subtitle && (
-                                <span className="text-muted-foreground/60">({labels.weeklySonnet.subtitle})</span>
+                                <span className="text-muted-foreground/60">
+                                  ({labels.weeklySonnet.subtitle})
+                                </span>
                               )}
                             </span>
                             <span className="font-medium">{data.sevenDaySonnet.utilization}%</span>
@@ -653,7 +718,10 @@ export function AnalyticsPage() {
                               className="h-full rounded-full transition-all duration-500"
                               style={{
                                 width: `${Math.min(100, data.sevenDaySonnet.utilization)}%`,
-                                backgroundColor: data.sevenDaySonnet.utilization > 80 ? '#ef4444' : withAlpha(color, '99'),
+                                backgroundColor:
+                                  data.sevenDaySonnet.utilization > 80
+                                    ? '#ef4444'
+                                    : withAlpha(color, '99'),
                               }}
                             />
                           </div>
@@ -671,7 +739,9 @@ export function AnalyticsPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total Tokens</CardTitle>
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Total Tokens
+            </CardTitle>
             <Cpu className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -679,14 +749,17 @@ export function AnalyticsPage() {
               {isLoading ? '...' : formatNumber(totalTokens)}
             </div>
             <p className="text-xs text-muted-foreground">
-              {formatNumber(summary?.totals.inputTokens || 0)} in · {formatNumber(summary?.totals.outputTokens || 0)} out
+              {formatNumber(summary?.totals.inputTokens || 0)} in ·{' '}
+              {formatNumber(summary?.totals.outputTokens || 0)} out
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total Cost</CardTitle>
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Total Cost
+            </CardTitle>
             <Coins className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -701,7 +774,9 @@ export function AnalyticsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Requests</CardTitle>
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Requests
+            </CardTitle>
             <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -716,13 +791,13 @@ export function AnalyticsPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cache Efficiency</CardTitle>
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Cache Efficiency
+            </CardTitle>
             <Database className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold">
-              {isLoading ? '...' : `${cacheHitRate}%`}
-            </div>
+            <div className="text-2xl font-semibold">{isLoading ? '...' : `${cacheHitRate}%`}</div>
             <p className="text-xs text-muted-foreground">
               {formatNumber(summary?.totals.cacheReadTokens || 0)} cache hits
             </p>
@@ -735,7 +810,9 @@ export function AnalyticsPage() {
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <CardTitle className="text-lg">Usage Over Time</CardTitle>
-              <CardDescription>Unified volume across every provider in the selected window.</CardDescription>
+              <CardDescription>
+                Unified volume across every provider in the selected window.
+              </CardDescription>
             </div>
             <div role="radiogroup" aria-label="Chart metric" className="flex flex-wrap gap-2">
               {CHART_METRICS.map((metric, idx) => (
@@ -753,13 +830,15 @@ export function AnalyticsPage() {
                       if (next) setChartMetric(next.value);
                     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
                       e.preventDefault();
-                      const prev = CHART_METRICS[(idx - 1 + CHART_METRICS.length) % CHART_METRICS.length];
+                      const prev =
+                        CHART_METRICS[(idx - 1 + CHART_METRICS.length) % CHART_METRICS.length];
                       if (prev) setChartMetric(prev.value);
                     }
                   }}
                   className={cn(
                     'ui-pill ui-pill-subtle transition-colors',
-                    chartMetric === metric.value && 'bg-foreground text-background border-transparent'
+                    chartMetric === metric.value &&
+                      'bg-foreground text-background border-transparent'
                   )}
                 >
                   {metric.label}
@@ -802,7 +881,11 @@ export function AnalyticsPage() {
                           <div className="bg-popover border border-border/70 rounded-lg p-3 shadow-sm">
                             <p className="font-medium mb-2">{label}</p>
                             {payload.map((entry) => (
-                              <p key={entry.dataKey} className="text-sm" style={{ color: entry.color }}>
+                              <p
+                                key={entry.dataKey}
+                                className="text-sm"
+                                style={{ color: entry.color }}
+                              >
                                 {entry.name}: {formatChartValue(chartMetric, entry.value as number)}
                               </p>
                             ))}
@@ -810,17 +893,20 @@ export function AnalyticsPage() {
                         );
                       }}
                     />
-                    <Legend
-                      wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
-                      iconType="circle"
-                    />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
                     {chartSeries.map((series) => (
                       <Area
                         key={series.key}
                         type="monotone"
                         dataKey={series.key}
                         name={series.label}
-                        stackId={providerSeries.length > 0 ? '1' : chartMetric === 'tokens' ? '1' : undefined}
+                        stackId={
+                          providerSeries.length > 0
+                            ? '1'
+                            : chartMetric === 'tokens'
+                              ? '1'
+                              : undefined
+                        }
                         stroke={series.color}
                         fill={series.color}
                         fillOpacity={series.fillOpacity}
@@ -860,7 +946,10 @@ export function AnalyticsPage() {
                   {tokenBreakdown.map((segment) => (
                     <div key={segment.key} className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: segment.color }} />
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: segment.color }}
+                        />
                         <span className="text-muted-foreground">{segment.label}</span>
                       </div>
                       <span className="font-medium">{formatNumber(segment.value)}</span>
@@ -893,7 +982,10 @@ export function AnalyticsPage() {
                     <div key={provider.provider} className="space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: color }}
+                          />
                           <span className="text-sm font-medium">{provider.provider}</span>
                           <span
                             className="ui-pill ui-pill-subtle text-foreground"
@@ -972,7 +1064,10 @@ export function AnalyticsPage() {
                               backgroundColor: withAlpha(color, '14'),
                             }}
                           >
-                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: color }}
+                            />
                             {provider}
                           </span>
                           <span>{formatNumber(model.total_tokens)} tokens</span>
@@ -1021,7 +1116,9 @@ export function AnalyticsPage() {
                         {index + 1}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{session.session_name || 'Unnamed Session'}</p>
+                        <p className="text-sm font-medium truncate">
+                          {session.session_name || 'Unnamed Session'}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {formatNumber(session.total_tokens)} tokens · {session.requests} req
                         </p>

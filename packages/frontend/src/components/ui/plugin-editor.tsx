@@ -1,13 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  X,
-  Puzzle,
-  Save,
-  Trash2,
-  AlertTriangle,
-  Loader2,
-} from 'lucide-react';
+import { X, Puzzle, Save, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/services/api';
@@ -34,7 +27,14 @@ interface EditorProps {
   onSaved?: () => void;
 }
 
-export function PluginEditor({ mode, initialData, editName, configProvider, onClose, onSaved }: EditorProps) {
+export function PluginEditor({
+  mode,
+  initialData,
+  editName,
+  configProvider,
+  onClose,
+  onSaved,
+}: EditorProps) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const providerKey = configProvider || 'default';
@@ -48,14 +48,16 @@ export function PluginEditor({ mode, initialData, editName, configProvider, onCl
     queryKey: ['claude-plugin-detail', providerKey, editName],
     queryFn: async () => {
       const endpoint = `/api/claude-config/plugin/${editName}`;
-      const response = await api.get<ApiResponse<{
-        name: string;
-        description: string;
-        version: string;
-        author?: string;
-        category?: string;
-        content?: string;
-      }>>(withProvider(endpoint));
+      const response = await api.get<
+        ApiResponse<{
+          name: string;
+          description: string;
+          version: string;
+          author?: string;
+          category?: string;
+          content?: string;
+        }>
+      >(withProvider(endpoint));
       return response.data.data;
     },
     enabled: mode === 'edit' && !!editName,
@@ -163,7 +165,8 @@ export function PluginEditor({ mode, initialData, editName, configProvider, onCl
     }
   };
 
-  const isPending = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
+  const isPending =
+    createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -195,90 +198,90 @@ export function PluginEditor({ mode, initialData, editName, configProvider, onCl
               <span className="ml-2 text-sm text-muted-foreground">Loading content...</span>
             </div>
           ) : (
-          <div className="p-5 space-y-5">
-            {/* Name */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Name *</label>
-              <Input
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="my-custom-plugin"
-                required
-                className="h-11"
-              />
-              <p className="text-xs text-muted-foreground">
-                Used as the identifier. Use lowercase with hyphens.
-              </p>
-            </div>
-
-            {/* Description */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
-              <Input
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="A brief description of what this plugin does..."
-                className="h-11"
-              />
-            </div>
-
-            {/* Version and Author */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="p-5 space-y-5">
+              {/* Name */}
               <div className="space-y-2">
-                <label className="text-sm font-medium">Version</label>
+                <label className="text-sm font-medium">Name *</label>
                 <Input
-                  value={formData.version}
-                  onChange={(e) => setFormData({ ...formData, version: e.target.value })}
-                  placeholder="1.0.0"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="my-custom-plugin"
+                  required
+                  className="h-11"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used as the identifier. Use lowercase with hyphens.
+                </p>
+              </div>
+
+              {/* Description */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Description</label>
+                <Input
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="A brief description of what this plugin does..."
                   className="h-11"
                 />
               </div>
+
+              {/* Version and Author */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Version</label>
+                  <Input
+                    value={formData.version}
+                    onChange={(e) => setFormData({ ...formData, version: e.target.value })}
+                    placeholder="1.0.0"
+                    className="h-11"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Author</label>
+                  <Input
+                    value={formData.author}
+                    onChange={(e) => setFormData({ ...formData, author: e.target.value })}
+                    placeholder="Your Name"
+                    className="h-11"
+                  />
+                </div>
+              </div>
+
+              {/* Category */}
               <div className="space-y-2">
-                <label className="text-sm font-medium">Author</label>
-                <Input
-                  value={formData.author}
-                  onChange={(e) => setFormData({ ...formData, author: e.target.value })}
-                  placeholder="Your Name"
-                  className="h-11"
+                <label className="text-sm font-medium">Category</label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="flex h-11 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Select a category...</option>
+                  <option value="productivity">Productivity</option>
+                  <option value="development">Development</option>
+                  <option value="writing">Writing</option>
+                  <option value="analysis">Analysis</option>
+                  <option value="automation">Automation</option>
+                  <option value="integration">Integration</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              {/* Content */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Plugin Content *</label>
+                <textarea
+                  value={formData.content}
+                  onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                  placeholder="# Plugin Documentation&#10;&#10;This plugin provides...&#10;&#10;## Usage&#10;&#10;..."
+                  required
+                  rows={12}
+                  className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono"
                 />
+                <p className="text-xs text-muted-foreground">
+                  The markdown content that defines this plugin's behavior and documentation.
+                </p>
               </div>
             </div>
-
-            {/* Category */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Category</label>
-              <select
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                className="flex h-11 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">Select a category...</option>
-                <option value="productivity">Productivity</option>
-                <option value="development">Development</option>
-                <option value="writing">Writing</option>
-                <option value="analysis">Analysis</option>
-                <option value="automation">Automation</option>
-                <option value="integration">Integration</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-
-            {/* Content */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Plugin Content *</label>
-              <textarea
-                value={formData.content}
-                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                placeholder="# Plugin Documentation&#10;&#10;This plugin provides...&#10;&#10;## Usage&#10;&#10;..."
-                required
-                rows={12}
-                className="flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono"
-              />
-              <p className="text-xs text-muted-foreground">
-                The markdown content that defines this plugin's behavior and documentation.
-              </p>
-            </div>
-          </div>
           )}
         </form>
 
@@ -330,7 +333,7 @@ export function PluginEditor({ mode, initialData, editName, configProvider, onCl
               type="submit"
               onClick={handleSubmit}
               disabled={!formData.name || !formData.content || isPending}
-              className={cn("gap-2", "bg-violet-600 hover:bg-violet-700")}
+              className={cn('gap-2', 'bg-violet-600 hover:bg-violet-700')}
             >
               <Save className="h-4 w-4" />
               {isPending ? 'Saving...' : mode === 'create' ? 'Create' : 'Save Changes'}

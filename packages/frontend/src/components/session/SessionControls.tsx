@@ -1,14 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Brain,
-  CheckCircle,
-  Hand,
-  Zap,
-  ChevronDown,
-  Activity,
-} from 'lucide-react';
+import { Brain, CheckCircle, Hand, Zap, ChevronDown, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { api } from '@/services/api';
@@ -38,13 +31,16 @@ interface UsageLimitsResponse {
   data: UsageLimitData | null;
 }
 
-const modeConfig: Record<SessionMode, {
-  label: string;
-  description: string;
-  icon: typeof Brain;
-  color: string;
-  bgColor: string;
-}> = {
+const modeConfig: Record<
+  SessionMode,
+  {
+    label: string;
+    description: string;
+    icon: typeof Brain;
+    color: string;
+    bgColor: string;
+  }
+> = {
   planning: {
     label: 'Plan Mode',
     description: 'Plans but asks before executing',
@@ -98,48 +94,45 @@ function ModeDropdown({
     }
   }, [isOpen]);
 
-  const dropdown = isOpen ? createPortal(
-    <>
-      <div
-        className="fixed inset-0 z-[100]"
-        onClick={() => setIsOpen(false)}
-      />
-      <div
-        className="glass-panel fixed z-[101] w-56 rounded-xl border-foreground/10 overflow-hidden animate-scale-in"
-        style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
-      >
-        {(Object.entries(modeConfig) as [SessionMode, typeof modeConfig[SessionMode]][]).map(
-          ([key, config]) => {
-            const ModeIcon = config.icon;
-            return (
-              <button
-                key={key}
-                onClick={() => {
-                  onModeChange(key);
-                  setIsOpen(false);
-                }}
-                className={cn(
-                  'flex items-start gap-3 w-full p-3 text-left transition-colors hover:bg-muted/50',
-                  mode === key && 'bg-muted'
-                )}
-              >
-                <ModeIcon className={cn('h-4 w-4 mt-0.5 shrink-0', config.color)} />
-                <div>
-                  <div className={cn('text-sm font-medium', mode === key && config.color)}>
-                    {config.label}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {config.description}
-                  </div>
-                </div>
-              </button>
-            );
-          }
-        )}
-      </div>
-    </>,
-    document.body
-  ) : null;
+  const dropdown = isOpen
+    ? createPortal(
+        <>
+          <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
+          <div
+            className="glass-panel fixed z-[101] w-56 rounded-xl border-foreground/10 overflow-hidden animate-scale-in"
+            style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
+          >
+            {(Object.entries(modeConfig) as [SessionMode, (typeof modeConfig)[SessionMode]][]).map(
+              ([key, config]) => {
+                const ModeIcon = config.icon;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      onModeChange(key);
+                      setIsOpen(false);
+                    }}
+                    className={cn(
+                      'flex items-start gap-3 w-full p-3 text-left transition-colors hover:bg-muted/50',
+                      mode === key && 'bg-muted'
+                    )}
+                  >
+                    <ModeIcon className={cn('h-4 w-4 mt-0.5 shrink-0', config.color)} />
+                    <div>
+                      <div className={cn('text-sm font-medium', mode === key && config.color)}>
+                        {config.label}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{config.description}</div>
+                    </div>
+                  </button>
+                );
+              }
+            )}
+          </div>
+        </>,
+        document.body
+      )
+    : null;
 
   return (
     <div className="relative">
@@ -241,7 +234,13 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
 
   // Build limit bars for popover
   const labels = CLI_PROVIDER_LIMIT_LABELS[provider];
-  const limitBars: Array<{ key: string; label: string; sublabel?: string; value: number; resetsAt: string | null }> = [];
+  const limitBars: Array<{
+    key: string;
+    label: string;
+    sublabel?: string;
+    value: number;
+    resetsAt: string | null;
+  }> = [];
   if (usageLimits) {
     if (usageLimits.fiveHour) {
       limitBars.push({
@@ -285,110 +284,120 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
     }
   }, [isOpen]);
 
-  const popover = isOpen ? createPortal(
-    <>
-      <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
-      <div
-        className="glass-panel fixed z-[101] w-[280px] rounded-xl border-foreground/10 p-3 animate-scale-in"
-        style={{ top: position.top, left: position.left }}
-      >
-        <div className="space-y-3">
-          {/* Usage Limits */}
-          {limitBars.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Usage Limits</div>
-              {limitBars.map((bar) => (
-                <div key={bar.key}>
-                  <div className="flex justify-between text-xs mb-0.5">
-                    <span className="text-muted-foreground">
-                      {bar.label}{bar.sublabel ? ` ${bar.sublabel}` : ''}
-                    </span>
-                    <span className="font-mono font-medium" style={{ color: getGradientColor(bar.value) }}>
-                      {bar.value}%
-                    </span>
+  const popover = isOpen
+    ? createPortal(
+        <>
+          <div className="fixed inset-0 z-[100]" onClick={() => setIsOpen(false)} />
+          <div
+            className="glass-panel fixed z-[101] w-[280px] rounded-xl border-foreground/10 p-3 animate-scale-in"
+            style={{ top: position.top, left: position.left }}
+          >
+            <div className="space-y-3">
+              {/* Usage Limits */}
+              {limitBars.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                    Usage Limits
                   </div>
-                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${Math.min(bar.value, 100)}%`,
-                        backgroundColor: getGradientColor(bar.value),
-                      }}
-                    />
-                  </div>
-                  {bar.resetsAt && (
-                    <div
-                      className="text-[10px] text-muted-foreground mt-0.5"
-                      title={`Resets ${formatResetAbsolute(bar.resetsAt)}`}
-                    >
-                      Resets {formatResetDelta(bar.resetsAt)}
+                  {limitBars.map((bar) => (
+                    <div key={bar.key}>
+                      <div className="flex justify-between text-xs mb-0.5">
+                        <span className="text-muted-foreground">
+                          {bar.label}
+                          {bar.sublabel ? ` ${bar.sublabel}` : ''}
+                        </span>
+                        <span
+                          className="font-mono font-medium"
+                          style={{ color: getGradientColor(bar.value) }}
+                        >
+                          {bar.value}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${Math.min(bar.value, 100)}%`,
+                            backgroundColor: getGradientColor(bar.value),
+                          }}
+                        />
+                      </div>
+                      {bar.resetsAt && (
+                        <div
+                          className="text-[10px] text-muted-foreground mt-0.5"
+                          title={`Resets ${formatResetAbsolute(bar.resetsAt)}`}
+                        >
+                          Resets {formatResetDelta(bar.resetsAt)}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
+                  <div className="border-t border-border/50" />
                 </div>
-              ))}
-              <div className="border-t border-border/50" />
-            </div>
-          )}
+              )}
 
-          {/* Context Bar */}
-          <div>
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-muted-foreground">Context Window</span>
-              <span className="font-mono font-medium" style={{ color }}>{percent.toFixed(0)}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-muted overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }}
-              />
-            </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">
-              {formatTokens(usage.totalTokens)} / {formatTokens(usage.contextWindow)}
+              {/* Context Bar */}
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-muted-foreground">Context Window</span>
+                  <span className="font-mono font-medium" style={{ color }}>
+                    {percent.toFixed(0)}%
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }}
+                  />
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  {formatTokens(usage.totalTokens)} / {formatTokens(usage.contextWindow)}
+                </div>
+              </div>
+
+              {/* Token Breakdown */}
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Input</span>
+                  <span className="font-mono">{formatTokens(usage.inputTokens)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Output</span>
+                  <span className="font-mono">{formatTokens(usage.outputTokens)}</span>
+                </div>
+                {usage.cacheReadTokens > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cache Read</span>
+                    <span className="font-mono">{formatTokens(usage.cacheReadTokens)}</span>
+                  </div>
+                )}
+                {usage.cacheCreationTokens > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cache Write</span>
+                    <span className="font-mono">{formatTokens(usage.cacheCreationTokens)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Cost + Model */}
+              <div className="pt-2 border-t border-border/50 space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Cost</span>
+                  <span className="font-mono">{formatCost(usage.totalCostUsd)}</span>
+                </div>
+                {usage.model && usage.model !== 'unknown' && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Model</span>
+                    <span className="font-mono truncate ml-2">{usage.model}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-
-          {/* Token Breakdown */}
-          <div className="space-y-1.5 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Input</span>
-              <span className="font-mono">{formatTokens(usage.inputTokens)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Output</span>
-              <span className="font-mono">{formatTokens(usage.outputTokens)}</span>
-            </div>
-            {usage.cacheReadTokens > 0 && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Cache Read</span>
-                <span className="font-mono">{formatTokens(usage.cacheReadTokens)}</span>
-              </div>
-            )}
-            {usage.cacheCreationTokens > 0 && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Cache Write</span>
-                <span className="font-mono">{formatTokens(usage.cacheCreationTokens)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Cost + Model */}
-          <div className="pt-2 border-t border-border/50 space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Cost</span>
-              <span className="font-mono">{formatCost(usage.totalCostUsd)}</span>
-            </div>
-            {usage.model && usage.model !== 'unknown' && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Model</span>
-                <span className="font-mono truncate ml-2">{usage.model}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </>,
-    document.body
-  ) : null;
+        </>,
+        document.body
+      )
+    : null;
 
   return (
     <>
@@ -417,12 +426,7 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
   );
 }
 
-export function SessionControls({
-  mode,
-  onModeChange,
-  usage,
-}: SessionControlsProps) {
-
+export function SessionControls({ mode, onModeChange, usage }: SessionControlsProps) {
   return (
     <div className="flex items-center gap-3 flex-wrap overflow-visible">
       {/* Mode Toggle */}
@@ -435,8 +439,6 @@ export function SessionControls({
           <ContextPopover usage={usage} />
         </>
       )}
-
-
     </div>
   );
 }

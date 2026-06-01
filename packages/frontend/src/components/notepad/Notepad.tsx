@@ -1,22 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  StickyNote,
-  Plus,
-  Trash2,
-  Pin,
-  PinOff,
-  Send,
-  FileText,
-} from 'lucide-react';
+import { StickyNote, Plus, Trash2, Pin, PinOff, Send, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Dialog,
-  DialogContent,
-  DialogTrigger,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -76,24 +64,32 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
     fetchNotes();
   }, [fetchNotes]);
 
-  // Auto-save when content changes
-  useEffect(() => {
-    if (selectedNote && isEditing && (debouncedContent !== selectedNote.content || debouncedTitle !== selectedNote.title)) {
-      saveNote(selectedNote.id, debouncedTitle, debouncedContent);
-    }
-  }, [debouncedContent, debouncedTitle]);
-
-  const saveNote = async (id: string, noteTitle: string, noteContent: string) => {
+  const saveNote = useCallback(async (id: string, noteTitle: string, noteContent: string) => {
     try {
       await api.patch<ApiNoteResponse>(`/api/notes/${id}`, {
         title: noteTitle,
         content: noteContent,
       });
-      setNotes(notes.map(n => n.id === id ? { ...n, title: noteTitle, content: noteContent } : n));
+      setNotes((currentNotes) =>
+        currentNotes.map((n) =>
+          n.id === id ? { ...n, title: noteTitle, content: noteContent } : n
+        )
+      );
     } catch (error) {
       console.error('Failed to save note:', error);
     }
-  };
+  }, []);
+
+  // Auto-save when content changes
+  useEffect(() => {
+    if (
+      selectedNote &&
+      isEditing &&
+      (debouncedContent !== selectedNote.content || debouncedTitle !== selectedNote.title)
+    ) {
+      saveNote(selectedNote.id, debouncedTitle, debouncedContent);
+    }
+  }, [debouncedContent, debouncedTitle, isEditing, saveNote, selectedNote]);
 
   const createNote = async () => {
     setLoading(true);
@@ -117,7 +113,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
   const deleteNote = async (id: string) => {
     try {
       await api.delete(`/api/notes/${id}`);
-      setNotes(notes.filter(n => n.id !== id));
+      setNotes(notes.filter((n) => n.id !== id));
       if (selectedNote?.id === id) {
         setSelectedNote(null);
         setIsEditing(false);
@@ -133,7 +129,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
         pinned: !note.pinned,
       });
       if (response.data.success && response.data.data) {
-        setNotes(notes.map(n => n.id === note.id ? response.data.data! : n));
+        setNotes(notes.map((n) => (n.id === note.id ? response.data.data! : n)));
       }
     } catch (error) {
       console.error('Failed to toggle pin:', error);
@@ -174,9 +170,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
           <ScrollArea className="h-full">
             <div className="p-2 space-y-1">
               {notes.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No notes yet
-                </p>
+                <p className="text-sm text-muted-foreground text-center py-4">No notes yet</p>
               ) : (
                 notes.map((note) => (
                   <div
@@ -192,9 +186,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
                     <FileText className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1">
-                        {note.pinned ? (
-                          <Pin className="h-3 w-3 text-amber-500" />
-                        ) : null}
+                        {note.pinned ? <Pin className="h-3 w-3 text-amber-500" /> : null}
                         <p className="text-sm font-medium truncate">{note.title}</p>
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
@@ -251,9 +243,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
                 className="flex-1 resize-none border-0 rounded-none focus-visible:ring-0"
               />
               <div className="shrink-0 flex items-center justify-between p-2 border-t bg-muted/30">
-                <span className="text-xs text-muted-foreground">
-                  {content.length} characters
-                </span>
+                <span className="text-xs text-muted-foreground">{content.length} characters</span>
                 {onSendToChat && (
                   <Button
                     variant="default"

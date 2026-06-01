@@ -16,9 +16,34 @@ export type ImageAttachmentData = FileAttachmentData;
 
 // Buffered message for reconnection replay
 export interface BufferedMessage {
-  type: 'output' | 'message' | 'thinking' | 'tool_use' | 'usage' | 'todos' | 'agent' | 'image' | 'status' | 'mode';
+  type:
+    | 'output'
+    | 'message'
+    | 'thinking'
+    | 'tool_use'
+    | 'usage'
+    | 'todos'
+    | 'agent'
+    | 'image'
+    | 'status'
+    | 'mode';
   data: unknown;
   timestamp: number;
+}
+
+export interface SessionQueueItem {
+  id: string;
+  preview: string;
+  createdAt: string;
+  attachments?: number;
+}
+
+export interface SessionQueueData {
+  sessionId: string;
+  provider: string;
+  depth: number;
+  items: SessionQueueItem[];
+  preempting?: boolean;
 }
 
 // Permission response action type
@@ -36,31 +61,20 @@ export interface ClientToServerEvents {
      */
     clientMessageId?: string;
   }) => void;
-  'session:input': (data: {
-    sessionId: string;
-    input: string;
-  }) => void;
+  'session:input': (data: { sessionId: string; input: string }) => void;
   'session:subscribe': (sessionId: string) => void;
   'session:unsubscribe': (sessionId: string) => void;
   'session:interrupt': (sessionId: string) => void;
   'session:restart': (sessionId: string) => void;
-  'session:reconnect': (data: {
-    sessionId: string;
-    lastTimestamp?: number;
-  }) => void;
-  'session:set-mode': (data: {
-    sessionId: string;
-    mode: SessionMode;
-  }) => void;
+  'session:reconnect': (data: { sessionId: string; lastTimestamp?: number }) => void;
+  'session:set-mode': (data: { sessionId: string; mode: SessionMode }) => void;
   // Legacy permission events (for simple approve/deny flow)
   'session:approve_permission': (data: {
     sessionId: string;
     toolNames: string[]; // Tools to allow
     originalMessage: string; // The message to resend
   }) => void;
-  'session:deny_permission': (data: {
-    sessionId: string;
-  }) => void;
+  'session:deny_permission': (data: { sessionId: string }) => void;
   // New hooks-based permission event (for finer control)
   'session:permission_respond': (data: {
     sessionId: string;
@@ -155,6 +169,13 @@ export interface ServerToClientEvents {
     input?: unknown;
     result?: string;
     error?: string;
+    /**
+     * Backend-clock timestamp at the moment of emission. Frontend should
+     * prefer this over its own Date.now() so the chat timeline orders tools
+     * against assistant messages (which are also stamped with the backend
+     * clock) regardless of browser/server clock skew.
+     */
+    timestamp?: number;
   }) => void;
   'session:agent': (data: {
     sessionId: string;
@@ -182,6 +203,7 @@ export interface ServerToClientEvents {
     error?: string;
   }) => void;
   'session:mode': (data: { sessionId: string; mode: SessionMode }) => void;
+  'session:queue': (data: SessionQueueData) => void;
   // Legacy permission request (simple denials flow)
   'session:permission_request': (data: PermissionRequestData | PendingPermission) => void;
   error: (message: string) => void;

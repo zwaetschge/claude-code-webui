@@ -1,18 +1,17 @@
 import { useId } from 'react';
 
-export type ToolLoaderKind =
-  | 'read'
-  | 'write'
-  | 'edit'
-  | 'shell'
-  | 'web'
-  | 'agent'
-  | 'generic';
+export type ToolLoaderKind = 'read' | 'write' | 'edit' | 'shell' | 'web' | 'agent' | 'generic';
 
 const READ_TOOLS = new Set([
-  'Read', 'Glob', 'Grep',
-  'read_file', 'read_many_files', 'list_directory',
-  'grep_search', 'glob', 'TodoRead',
+  'Read',
+  'Glob',
+  'Grep',
+  'read_file',
+  'read_many_files',
+  'list_directory',
+  'grep_search',
+  'glob',
+  'TodoRead',
 ]);
 const WRITE_TOOLS = new Set(['Write', 'write_file', 'TodoWrite']);
 const EDIT_TOOLS = new Set(['Edit', 'replace', 'MultiEdit']);
@@ -30,23 +29,24 @@ export function toolLoaderKind(toolName: string): ToolLoaderKind {
   return 'generic';
 }
 
-export function ToolLoader({
-  toolName,
-  size = 28,
-}: {
-  toolName: string;
-  size?: number;
-}) {
+export function ToolLoader({ toolName, size = 28 }: { toolName: string; size?: number }) {
   const kind = toolLoaderKind(toolName);
   switch (kind) {
-    case 'read':   return <ReadLoader size={size} />;
-    case 'write':  return <WriteLoader size={size} />;
-    case 'edit':   return <EditLoader size={size} />;
-    case 'shell':  return <ShellLoader size={size} />;
-    case 'web':    return <WebLoader size={size} />;
-    case 'agent':  return <AgentLoader size={size} />;
+    case 'read':
+      return <ReadLoader size={size} />;
+    case 'write':
+      return <WriteLoader size={size} />;
+    case 'edit':
+      return <EditLoader size={size} />;
+    case 'shell':
+      return <ShellLoader size={size} />;
+    case 'web':
+      return <WebLoader size={size} />;
+    case 'agent':
+      return <AgentLoader size={size} />;
     case 'generic':
-    default:       return <GenericLoader size={size} />;
+    default:
+      return <GenericLoader size={size} />;
   }
 }
 
@@ -77,7 +77,17 @@ function ReadLoader({ size }: { size: number }) {
           <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
         </linearGradient>
       </defs>
-      <rect x="8" y="6" width="24" height="28" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.45" />
+      <rect
+        x="8"
+        y="6"
+        width="24"
+        height="28"
+        rx="3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        opacity="0.45"
+      />
       <g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.3">
         <line x1="12" y1="13" x2="28" y2="13" />
         <line x1="12" y1="18" x2="26" y2="18" />
@@ -85,7 +95,14 @@ function ReadLoader({ size }: { size: number }) {
         <line x1="12" y1="28" x2="22" y2="28" />
       </g>
       <g clipPath={`url(#${id}-clip)`}>
-        <rect className="tl-read-beam" x="8" y="6" width="24" height="8" fill={`url(#${id}-beam)`} />
+        <rect
+          className="tl-read-beam"
+          x="8"
+          y="6"
+          width="24"
+          height="8"
+          fill={`url(#${id}-beam)`}
+        />
       </g>
     </svg>
   );
@@ -103,7 +120,14 @@ function WriteLoader({ size }: { size: number }) {
         <ellipse cx="20" cy="10" rx="6" ry="4" fill="currentColor" />
         <circle className="tl-write-drop" cx="20" cy="14" r="3.2" fill="currentColor" />
       </g>
-      <path d="M12 30 Q20 34 28 30" fill="none" stroke="currentColor" strokeWidth="1.4" opacity="0.35" strokeLinecap="round" />
+      <path
+        d="M12 30 Q20 34 28 30"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        opacity="0.35"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -133,7 +157,7 @@ function ShellLoader({ size }: { size: number }) {
         <GooFilter id={`${id}-goo`} blur={2.4} />
       </defs>
       <g filter={`url(#${id}-goo)`}>
-        <circle className="tl-shell-s1" cx="8"  cy="22" r="3" fill="currentColor" />
+        <circle className="tl-shell-s1" cx="8" cy="22" r="3" fill="currentColor" />
         <circle className="tl-shell-s2" cx="16" cy="22" r="3" fill="currentColor" />
         <circle className="tl-shell-s3" cx="24" cy="22" r="3" fill="currentColor" />
         <circle className="tl-shell-s4" cx="32" cy="22" r="3" fill="currentColor" />
@@ -150,8 +174,25 @@ function WebLoader({ size }: { size: number }) {
       <defs>
         <GooFilter id={`${id}-goo`} blur={2.4} />
       </defs>
-      <circle cx="20" cy="20" r="9" fill="none" stroke="currentColor" strokeWidth="1.2" opacity="0.35" />
-      <ellipse cx="20" cy="20" rx="9" ry="4" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.3" />
+      <circle
+        cx="20"
+        cy="20"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        opacity="0.35"
+      />
+      <ellipse
+        cx="20"
+        cy="20"
+        rx="9"
+        ry="4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+        opacity="0.3"
+      />
       <g filter={`url(#${id}-goo)`}>
         <circle cx="20" cy="20" r="4.5" fill="currentColor" />
         <g className="tl-web-orbit" style={{ transformOrigin: '20px 20px' }}>
@@ -186,8 +227,24 @@ function AgentLoader({ size }: { size: number }) {
 function GenericLoader({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden="true">
-      <circle className="tl-generic-a" cx="20" cy="20" r="7" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <circle className="tl-generic-b" cx="20" cy="20" r="7" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <circle
+        className="tl-generic-a"
+        cx="20"
+        cy="20"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <circle
+        className="tl-generic-b"
+        cx="20"
+        cy="20"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
     </svg>
   );
 }

@@ -68,7 +68,11 @@ router.post('/', requireAuth, (req, res) => {
       `INSERT INTO session_categories (id, user_id, name, color, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(id, authReq.userId, name, color || 'blue', icon || 'folder', (maxOrder.max || 0) + 1);
 
-    const category = db.prepare(`SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE id = ?`).get(id) as Category;
+    const category = db
+      .prepare(
+        `SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE id = ?`
+      )
+      .get(id) as Category;
 
     const response: ApiResponse<Category> = {
       success: true,
@@ -94,7 +98,9 @@ router.patch('/:id', requireAuth, (req, res) => {
   try {
     // Check ownership
     const existing = db
-      .prepare(`SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE id = ? AND user_id = ?`)
+      .prepare(
+        `SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE id = ? AND user_id = ?`
+      )
       .get(id, authReq.userId) as Category | undefined;
 
     if (!existing) {
@@ -131,7 +137,11 @@ router.patch('/:id', requireAuth, (req, res) => {
       db.prepare(`UPDATE session_categories SET ${updates.join(', ')} WHERE id = ?`).run(...values);
     }
 
-    const category = db.prepare(`SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE id = ?`).get(id) as Category;
+    const category = db
+      .prepare(
+        `SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE id = ?`
+      )
+      .get(id) as Category;
 
     const response: ApiResponse<Category> = {
       success: true,
@@ -155,8 +165,10 @@ router.delete('/:id', requireAuth, (req, res) => {
 
   try {
     // Remove category from sessions first
-    db.prepare(`UPDATE sessions SET category = NULL WHERE category = ? AND user_id = ?`)
-      .run(id, authReq.userId);
+    db.prepare(`UPDATE sessions SET category = NULL WHERE category = ? AND user_id = ?`).run(
+      id,
+      authReq.userId
+    );
 
     const result = db
       .prepare(`DELETE FROM session_categories WHERE id = ? AND user_id = ?`)
@@ -199,14 +211,18 @@ router.post('/reorder', requireAuth, (req, res) => {
   }
 
   try {
-    const updateStmt = db.prepare(`UPDATE session_categories SET sort_order = ? WHERE id = ? AND user_id = ?`);
+    const updateStmt = db.prepare(
+      `UPDATE session_categories SET sort_order = ? WHERE id = ? AND user_id = ?`
+    );
 
     categoryIds.forEach((categoryId, index) => {
       updateStmt.run(index, categoryId, authReq.userId);
     });
 
     const categories = db
-      .prepare(`SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE user_id = ? ORDER BY sort_order ASC`)
+      .prepare(
+        `SELECT id, user_id, name, color, icon, sort_order, created_at FROM session_categories WHERE user_id = ? ORDER BY sort_order ASC`
+      )
       .all(authReq.userId) as Category[];
 
     const response: ApiResponse<Category[]> = {

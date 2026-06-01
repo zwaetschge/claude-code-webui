@@ -1,7 +1,16 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
-import { Loader2, Plus, Minus, FileCode, Columns, List, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  Loader2,
+  Plus,
+  Minus,
+  FileCode,
+  Columns,
+  List,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react';
 import { api } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -45,10 +54,15 @@ function parseDiffToSideBySide(diff: string): { oldContent: string; newContent: 
 
   for (const line of lines) {
     // Skip diff headers
-    if (line.startsWith('diff --git') || line.startsWith('index ') ||
-        line.startsWith('---') || line.startsWith('+++') ||
-        line.startsWith('@@') || line.startsWith('new file') ||
-        line.startsWith('deleted file')) {
+    if (
+      line.startsWith('diff --git') ||
+      line.startsWith('index ') ||
+      line.startsWith('---') ||
+      line.startsWith('+++') ||
+      line.startsWith('@@') ||
+      line.startsWith('new file') ||
+      line.startsWith('deleted file')
+    ) {
       if (line.startsWith('@@')) {
         inDiff = true;
       }
@@ -128,7 +142,9 @@ export function EnhancedDiffViewer({
         file: file!,
         staged: (staged ?? false).toString(),
       });
-      const response = await api.get<ApiResponse<{ file: string; diff: string; additions: number; deletions: number }>>(`/api/git/diff-file?${params}`);
+      const response = await api.get<
+        ApiResponse<{ file: string; diff: string; additions: number; deletions: number }>
+      >(`/api/git/diff-file?${params}`);
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
@@ -146,7 +162,9 @@ export function EnhancedDiffViewer({
         base: baseRef!,
         head: headRef!,
       });
-      const response = await api.get<ApiResponse<{ diff: string; additions: number; deletions: number }>>(`/api/git/compare?${params}`);
+      const response = await api.get<
+        ApiResponse<{ diff: string; additions: number; deletions: number }>
+      >(`/api/git/compare?${params}`);
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
@@ -173,8 +191,21 @@ export function EnhancedDiffViewer({
   // Get current file list
   const files = useMemo(() => {
     if (commitDiff?.files) return commitDiff.files;
-    if (fileDiff) return [{ file: fileDiff.file, additions: fileDiff.additions, deletions: fileDiff.deletions, status: 'modified' as const }];
-    return Array.from(fileDiffs.keys()).map(f => ({ file: f, additions: 0, deletions: 0, status: 'modified' as const }));
+    if (fileDiff)
+      return [
+        {
+          file: fileDiff.file,
+          additions: fileDiff.additions,
+          deletions: fileDiff.deletions,
+          status: 'modified' as const,
+        },
+      ];
+    return Array.from(fileDiffs.keys()).map((f) => ({
+      file: f,
+      additions: 0,
+      deletions: 0,
+      status: 'modified' as const,
+    }));
   }, [commitDiff, fileDiff, fileDiffs]);
 
   // Get display diff (either selected file or full diff)
@@ -210,9 +241,7 @@ export function EnhancedDiffViewer({
 
   if (!currentDiff) {
     return (
-      <div className="text-center py-4 text-sm text-muted-foreground">
-        No changes to display
-      </div>
+      <div className="text-center py-4 text-sm text-muted-foreground">No changes to display</div>
     );
   }
 
@@ -268,13 +297,16 @@ export function EnhancedDiffViewer({
         <div className="flex items-center gap-2">
           <FileCode className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-mono truncate">
-            {commitHash ? `Commit ${commitHash.substring(0, 7)}` :
-             file ? file :
-             `${baseRef} → ${headRef}`}
+            {commitHash
+              ? `Commit ${commitHash.substring(0, 7)}`
+              : file
+                ? file
+                : `${baseRef} → ${headRef}`}
           </span>
           {commitDiff && (
             <span className="text-xs text-muted-foreground">
-              {commitDiff.message.substring(0, 50)}{commitDiff.message.length > 50 ? '...' : ''}
+              {commitDiff.message.substring(0, 50)}
+              {commitDiff.message.length > 50 ? '...' : ''}
             </span>
           )}
         </div>
@@ -387,15 +419,16 @@ export function EnhancedDiffViewer({
                   bgClass = 'bg-red-500/10';
                 } else if (line.startsWith('diff --git')) {
                   lineClass = 'text-blue-400 font-bold';
-                } else if (line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file')) {
+                } else if (
+                  line.startsWith('index ') ||
+                  line.startsWith('new file') ||
+                  line.startsWith('deleted file')
+                ) {
                   lineClass = 'text-muted-foreground/60';
                 }
 
                 return (
-                  <div
-                    key={index}
-                    className={cn('px-2 -mx-2 min-h-[1.5em]', bgClass)}
-                  >
+                  <div key={index} className={cn('px-2 -mx-2 min-h-[1.5em]', bgClass)}>
                     <span className={lineClass}>{line || ' '}</span>
                   </div>
                 );

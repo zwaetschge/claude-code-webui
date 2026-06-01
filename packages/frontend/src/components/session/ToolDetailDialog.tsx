@@ -21,27 +21,27 @@ interface ToolDetailDialogProps {
 }
 
 const toolIcons: Record<string, typeof Wrench> = {
-  'Write': FileText,
-  'Read': Search,
-  'Edit': Edit3,
-  'Bash': Terminal,
-  'Glob': Search,
-  'Grep': Search,
-  'WebFetch': Globe,
-  'WebSearch': Globe,
-  'Task': Brain,
+  Write: FileText,
+  Read: Search,
+  Edit: Edit3,
+  Bash: Terminal,
+  Glob: Search,
+  Grep: Search,
+  WebFetch: Globe,
+  WebSearch: Globe,
+  Task: Brain,
 };
 
 const toolLabels: Record<string, string> = {
-  'Write': 'Write File',
-  'Read': 'Read File',
-  'Edit': 'Edit File',
-  'Bash': 'Run Command',
-  'Glob': 'Search Files',
-  'Grep': 'Search Code',
-  'WebFetch': 'Fetch Webpage',
-  'WebSearch': 'Web Search',
-  'Task': 'Agent Task',
+  Write: 'Write File',
+  Read: 'Read File',
+  Edit: 'Edit File',
+  Bash: 'Run Command',
+  Glob: 'Search Files',
+  Grep: 'Search Code',
+  WebFetch: 'Fetch Webpage',
+  WebSearch: 'Web Search',
+  Task: 'Agent Task',
 };
 
 function CopyButton({ text }: { text: string }) {
@@ -54,12 +54,7 @@ function CopyButton({ text }: { text: string }) {
   };
 
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={handleCopy}
-      className="h-6 px-2 text-xs"
-    >
+    <Button variant="ghost" size="sm" onClick={handleCopy} className="h-6 px-2 text-xs">
       {copied ? (
         <>
           <Check className="h-3 w-3 mr-1" />
@@ -81,13 +76,17 @@ function CodeBlock({ title, content }: { title: string; content: string }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</span>
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          {title}
+        </span>
         <CopyButton text={content} />
       </div>
-      <pre className={cn(
-        "text-xs p-3 rounded-lg bg-muted/50 border overflow-x-auto max-h-[300px] overflow-y-auto",
-        "font-mono whitespace-pre-wrap break-all"
-      )}>
+      <pre
+        className={cn(
+          'text-xs p-3 rounded-lg bg-muted/50 border overflow-x-auto max-h-[300px] overflow-y-auto',
+          'font-mono whitespace-pre-wrap break-all'
+        )}
+      >
         <code>{content}</code>
       </pre>
     </div>
@@ -99,7 +98,9 @@ function PathDisplay({ label, path }: { label: string; path: string }) {
 
   return (
     <div className="space-y-1">
-      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{label}</span>
+      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        {label}
+      </span>
       <div className="flex items-center gap-2">
         <code className="flex-1 text-sm p-2 rounded bg-muted/50 border font-mono truncate">
           {path}
@@ -128,8 +129,8 @@ function getBoolean(input: Record<string, unknown>, key: string): boolean {
 }
 
 export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogProps) {
-  const Icon = tool ? (toolIcons[tool.toolName] || Wrench) : Wrench;
-  const label = tool ? (toolLabels[tool.toolName] || tool.toolName) : '';
+  const Icon = tool ? toolIcons[tool.toolName] || Wrench : Wrench;
+  const label = tool ? toolLabels[tool.toolName] || tool.toolName : '';
 
   const input = useMemo(() => {
     if (!tool?.input) return null;
@@ -145,12 +146,14 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           <DialogTitle className="flex items-center gap-2">
             <Icon className="h-5 w-5 text-primary" />
             {label}
-            <span className={cn(
-              "ml-2 px-2 py-0.5 text-xs rounded-full",
-              tool.status === 'completed' && "bg-green-500/20 text-green-500",
-              tool.status === 'started' && "bg-primary/20 text-primary",
-              tool.status === 'error' && "bg-destructive/20 text-destructive"
-            )}>
+            <span
+              className={cn(
+                'ml-2 px-2 py-0.5 text-xs rounded-full',
+                tool.status === 'completed' && 'bg-green-500/20 text-green-500',
+                tool.status === 'started' && 'bg-primary/20 text-primary',
+                tool.status === 'error' && 'bg-destructive/20 text-destructive'
+              )}
+            >
               {tool.status}
             </span>
           </DialogTitle>
@@ -161,11 +164,17 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           {tool.toolName === 'Read' && input && (
             <>
               <PathDisplay label="File Path" path={getString(input, 'file_path')} />
-              {(getNumber(input, 'offset') !== undefined || getNumber(input, 'limit') !== undefined) && (
+              {(getNumber(input, 'offset') !== undefined ||
+                getNumber(input, 'limit') !== undefined) && (
                 <div className="text-xs text-muted-foreground">
-                  {getNumber(input, 'offset') !== undefined && <span>Offset: {getNumber(input, 'offset')}</span>}
-                  {getNumber(input, 'offset') !== undefined && getNumber(input, 'limit') !== undefined && <span> · </span>}
-                  {getNumber(input, 'limit') !== undefined && <span>Limit: {getNumber(input, 'limit')} lines</span>}
+                  {getNumber(input, 'offset') !== undefined && (
+                    <span>Offset: {getNumber(input, 'offset')}</span>
+                  )}
+                  {getNumber(input, 'offset') !== undefined &&
+                    getNumber(input, 'limit') !== undefined && <span> · </span>}
+                  {getNumber(input, 'limit') !== undefined && (
+                    <span>Limit: {getNumber(input, 'limit')} lines</span>
+                  )}
                 </div>
               )}
               {tool.result && <CodeBlock title="File Content" content={tool.result} />}
@@ -221,7 +230,9 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
             <>
               <CodeBlock title="Command" content={getString(input, 'command')} />
               {getNumber(input, 'timeout') !== undefined && (
-                <div className="text-xs text-muted-foreground">Timeout: {getNumber(input, 'timeout')}ms</div>
+                <div className="text-xs text-muted-foreground">
+                  Timeout: {getNumber(input, 'timeout')}ms
+                </div>
               )}
               {tool.result && <CodeBlock title="Output" content={tool.result} />}
             </>
@@ -231,7 +242,9 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           {tool.toolName === 'Glob' && input && (
             <>
               <div className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pattern</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Pattern
+                </span>
                 <code className="block text-sm p-2 rounded bg-muted/50 border font-mono">
                   {getString(input, 'pattern')}
                 </code>
@@ -247,7 +260,9 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           {tool.toolName === 'Grep' && input && (
             <>
               <div className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Search Pattern</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Search Pattern
+                </span>
                 <code className="block text-sm p-2 rounded bg-muted/50 border font-mono">
                   {getString(input, 'pattern')}
                 </code>
@@ -263,14 +278,18 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           {tool.toolName === 'WebFetch' && input && (
             <>
               <div className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">URL</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  URL
+                </span>
                 <code className="block text-sm p-2 rounded bg-muted/50 border font-mono break-all">
                   {getString(input, 'url')}
                 </code>
               </div>
               {getString(input, 'prompt') && (
                 <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Prompt</span>
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Prompt
+                  </span>
                   <p className="text-sm p-2 rounded bg-muted/50 border">
                     {getString(input, 'prompt')}
                   </p>
@@ -284,7 +303,9 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           {tool.toolName === 'WebSearch' && input && (
             <>
               <div className="space-y-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Query</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Query
+                </span>
                 <p className="text-sm p-2 rounded bg-muted/50 border">
                   {getString(input, 'query')}
                 </p>
@@ -298,7 +319,9 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
             <>
               {getString(input, 'description') && (
                 <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Description</span>
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Description
+                  </span>
                   <p className="text-sm p-2 rounded bg-muted/50 border">
                     {getString(input, 'description')}
                   </p>
@@ -312,11 +335,19 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           )}
 
           {/* Fallback for unknown tools */}
-          {!['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task'].includes(tool.toolName) && (
+          {![
+            'Read',
+            'Write',
+            'Edit',
+            'Bash',
+            'Glob',
+            'Grep',
+            'WebFetch',
+            'WebSearch',
+            'Task',
+          ].includes(tool.toolName) && (
             <>
-              {input && (
-                <CodeBlock title="Input" content={JSON.stringify(input, null, 2)} />
-              )}
+              {input && <CodeBlock title="Input" content={JSON.stringify(input, null, 2)} />}
               {tool.result && <CodeBlock title="Result" content={tool.result} />}
             </>
           )}
@@ -324,7 +355,9 @@ export function ToolDetailDialog({ tool, open, onOpenChange }: ToolDetailDialogP
           {/* Error display */}
           {tool.error && (
             <div className="space-y-1">
-              <span className="text-xs font-medium text-destructive uppercase tracking-wide">Error</span>
+              <span className="text-xs font-medium text-destructive uppercase tracking-wide">
+                Error
+              </span>
               <pre className="text-xs p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive overflow-x-auto font-mono whitespace-pre-wrap">
                 {tool.error}
               </pre>

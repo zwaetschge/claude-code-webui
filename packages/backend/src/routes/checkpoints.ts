@@ -16,20 +16,24 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
 
   try {
     // Verify session belongs to user
-    const session = db.prepare(
-      'SELECT id FROM sessions WHERE id = ? AND user_id = ?'
-    ).get(sessionId, authReq.userId);
+    const session = db
+      .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, authReq.userId);
 
     if (!session) {
       return res.status(404).json({ success: false, error: { message: 'Session not found' } });
     }
 
-    const checkpoints = db.prepare(`
+    const checkpoints = db
+      .prepare(
+        `
       SELECT id, name, description, message_count, created_at
       FROM session_checkpoints
       WHERE session_id = ?
       ORDER BY created_at DESC
-    `).all(sessionId);
+    `
+      )
+      .all(sessionId);
 
     res.json({ success: true, data: checkpoints });
   } catch (error) {
@@ -45,12 +49,27 @@ router.get('/:checkpointId', async (req: Request, res: Response) => {
   const { checkpointId } = req.params;
 
   try {
-    const checkpoint = db.prepare(`
+    const checkpoint = db
+      .prepare(
+        `
       SELECT c.*, s.user_id
       FROM session_checkpoints c
       JOIN sessions s ON s.id = c.session_id
       WHERE c.id = ?
-    `).get(checkpointId) as { id: string; session_id: string; name: string; description: string; message_count: number; snapshot_data: string; created_at: string; user_id: string } | undefined;
+    `
+      )
+      .get(checkpointId) as
+      | {
+          id: string;
+          session_id: string;
+          name: string;
+          description: string;
+          message_count: number;
+          snapshot_data: string;
+          created_at: string;
+          user_id: string;
+        }
+      | undefined;
 
     if (!checkpoint) {
       return res.status(404).json({ success: false, error: { message: 'Checkpoint not found' } });
@@ -88,26 +107,32 @@ router.post('/', async (req: Request, res: Response) => {
   const { sessionId, name, description } = req.body;
 
   if (!sessionId || !name) {
-    return res.status(400).json({ success: false, error: { message: 'Session ID and name are required' } });
+    return res
+      .status(400)
+      .json({ success: false, error: { message: 'Session ID and name are required' } });
   }
 
   try {
     // Verify session belongs to user
-    const session = db.prepare(
-      'SELECT id, working_directory FROM sessions WHERE id = ? AND user_id = ?'
-    ).get(sessionId, authReq.userId) as { id: string; working_directory: string } | undefined;
+    const session = db
+      .prepare('SELECT id, working_directory FROM sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, authReq.userId) as { id: string; working_directory: string } | undefined;
 
     if (!session) {
       return res.status(404).json({ success: false, error: { message: 'Session not found' } });
     }
 
     // Get current messages for the session
-    const messages = db.prepare(`
+    const messages = db
+      .prepare(
+        `
       SELECT id, role, content, tool_calls, tool_results, is_partial, is_interrupted, cost_usd, model, created_at
       FROM messages
       WHERE session_id = ?
       ORDER BY created_at ASC
-    `).all(sessionId);
+    `
+      )
+      .all(sessionId);
 
     // Create snapshot data
     const snapshotData = {
@@ -118,10 +143,12 @@ router.post('/', async (req: Request, res: Response) => {
 
     const checkpointId = randomUUID();
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO session_checkpoints (id, session_id, name, description, message_count, snapshot_data)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
+    `
+    ).run(
       checkpointId,
       sessionId,
       name,
@@ -130,11 +157,15 @@ router.post('/', async (req: Request, res: Response) => {
       JSON.stringify(snapshotData)
     );
 
-    const checkpoint = db.prepare(`
+    const checkpoint = db
+      .prepare(
+        `
       SELECT id, name, description, message_count, created_at
       FROM session_checkpoints
       WHERE id = ?
-    `).get(checkpointId);
+    `
+      )
+      .get(checkpointId);
 
     res.json({ success: true, data: checkpoint });
   } catch (error) {
@@ -152,12 +183,16 @@ router.put('/:checkpointId', async (req: Request, res: Response) => {
 
   try {
     // Verify checkpoint belongs to user
-    const checkpoint = db.prepare(`
+    const checkpoint = db
+      .prepare(
+        `
       SELECT c.id, s.user_id
       FROM session_checkpoints c
       JOIN sessions s ON s.id = c.session_id
       WHERE c.id = ?
-    `).get(checkpointId) as { id: string; user_id: string } | undefined;
+    `
+      )
+      .get(checkpointId) as { id: string; user_id: string } | undefined;
 
     if (!checkpoint) {
       return res.status(404).json({ success: false, error: { message: 'Checkpoint not found' } });
@@ -167,17 +202,23 @@ router.put('/:checkpointId', async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, error: { message: 'Access denied' } });
     }
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE session_checkpoints
       SET name = COALESCE(?, name), description = ?
       WHERE id = ?
-    `).run(name, description || null, checkpointId);
+    `
+    ).run(name, description || null, checkpointId);
 
-    const updated = db.prepare(`
+    const updated = db
+      .prepare(
+        `
       SELECT id, name, description, message_count, created_at
       FROM session_checkpoints
       WHERE id = ?
-    `).get(checkpointId);
+    `
+      )
+      .get(checkpointId);
 
     res.json({ success: true, data: updated });
   } catch (error) {
@@ -194,12 +235,16 @@ router.delete('/:checkpointId', async (req: Request, res: Response) => {
 
   try {
     // Verify checkpoint belongs to user
-    const checkpoint = db.prepare(`
+    const checkpoint = db
+      .prepare(
+        `
       SELECT c.id, s.user_id
       FROM session_checkpoints c
       JOIN sessions s ON s.id = c.session_id
       WHERE c.id = ?
-    `).get(checkpointId) as { id: string; user_id: string } | undefined;
+    `
+      )
+      .get(checkpointId) as { id: string; user_id: string } | undefined;
 
     if (!checkpoint) {
       return res.status(404).json({ success: false, error: { message: 'Checkpoint not found' } });
@@ -226,12 +271,18 @@ router.post('/:checkpointId/restore', async (req: Request, res: Response) => {
 
   try {
     // Get checkpoint with user verification
-    const checkpoint = db.prepare(`
+    const checkpoint = db
+      .prepare(
+        `
       SELECT c.*, s.user_id
       FROM session_checkpoints c
       JOIN sessions s ON s.id = c.session_id
       WHERE c.id = ?
-    `).get(checkpointId) as { id: string; session_id: string; snapshot_data: string; user_id: string } | undefined;
+    `
+      )
+      .get(checkpointId) as
+      | { id: string; session_id: string; snapshot_data: string; user_id: string }
+      | undefined;
 
     if (!checkpoint) {
       return res.status(404).json({ success: false, error: { message: 'Checkpoint not found' } });
@@ -294,22 +345,48 @@ router.get('/compare/:checkpoint1/:checkpoint2', async (req: Request, res: Respo
 
   try {
     // Get both checkpoints
-    const cp1 = db.prepare(`
+    const cp1 = db
+      .prepare(
+        `
       SELECT c.*, s.user_id
       FROM session_checkpoints c
       JOIN sessions s ON s.id = c.session_id
       WHERE c.id = ?
-    `).get(checkpoint1) as { snapshot_data: string; user_id: string; name: string; message_count: number; created_at: string } | undefined;
+    `
+      )
+      .get(checkpoint1) as
+      | {
+          snapshot_data: string;
+          user_id: string;
+          name: string;
+          message_count: number;
+          created_at: string;
+        }
+      | undefined;
 
-    const cp2 = db.prepare(`
+    const cp2 = db
+      .prepare(
+        `
       SELECT c.*, s.user_id
       FROM session_checkpoints c
       JOIN sessions s ON s.id = c.session_id
       WHERE c.id = ?
-    `).get(checkpoint2) as { snapshot_data: string; user_id: string; name: string; message_count: number; created_at: string } | undefined;
+    `
+      )
+      .get(checkpoint2) as
+      | {
+          snapshot_data: string;
+          user_id: string;
+          name: string;
+          message_count: number;
+          created_at: string;
+        }
+      | undefined;
 
     if (!cp1 || !cp2) {
-      return res.status(404).json({ success: false, error: { message: 'One or both checkpoints not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { message: 'One or both checkpoints not found' } });
     }
 
     if (cp1.user_id !== authReq.userId || cp2.user_id !== authReq.userId) {
