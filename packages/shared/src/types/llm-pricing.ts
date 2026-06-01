@@ -20,7 +20,7 @@ export interface ModelCostEstimate {
   known: boolean;
 }
 
-export const LLM_PRICING_RATE_CARD_VERSION = '2026-06-01-standard-api-equivalent-v2';
+export const LLM_PRICING_RATE_CARD_VERSION = '2026-06-01-standard-api-equivalent-v3';
 
 export const DEFAULT_MODEL_PRICING: ModelPricing = {
   input: 5,
@@ -83,22 +83,22 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   }
 
   // Anthropic, USD per 1M tokens. Cache write uses the 5 minute write rate.
-  if (/^claude-opus-4-(5|6|7|8)/.test(id) || id === 'opus') {
+  if (/^claude-opus-4[.-](5|6|7|8)(?:\b|-|$)/.test(id) || id === 'opus') {
     return price(5, 25, 0.5, 6.25, 'Anthropic API pricing, 2026-06-01', 'Claude Opus 4.5+');
   }
-  if (/^claude-opus-4($|-202|-0|-1)/.test(id)) {
+  if (/^claude-opus-4(?:$|-202|[.-](?:0|1)(?:\b|-|$))/.test(id)) {
     return price(15, 75, 1.5, 18.75, 'Anthropic API pricing, 2026-06-01', 'Claude Opus 4/4.1');
   }
-  if (/^claude-sonnet-4/.test(id) || id === 'sonnet') {
+  if (/^claude-sonnet-4(?:$|[.-])/.test(id) || id === 'sonnet') {
     return price(3, 15, 0.3, 3.75, 'Anthropic API pricing, 2026-06-01', 'Claude Sonnet 4');
   }
-  if (/^claude-3-5-sonnet/.test(id)) {
+  if (/^claude-3[.-]5-sonnet/.test(id)) {
     return price(3, 15, 0.3, 3.75, 'Anthropic API pricing, 2026-06-01', 'Claude Sonnet 3.5');
   }
-  if (/^claude-haiku-4-5/.test(id) || id === 'haiku') {
+  if (/^claude-haiku-4[.-]5(?:\b|-|$)/.test(id) || id === 'haiku') {
     return price(1, 5, 0.1, 1.25, 'Anthropic API pricing, 2026-06-01', 'Claude Haiku 4.5');
   }
-  if (/^claude-3-5-haiku/.test(id)) {
+  if (/^claude-3[.-]5-haiku/.test(id)) {
     return price(0.8, 4, 0.08, 1, 'Anthropic API pricing, 2026-06-01', 'Claude Haiku 3.5');
   }
 

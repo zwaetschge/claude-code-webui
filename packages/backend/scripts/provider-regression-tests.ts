@@ -71,6 +71,15 @@ function testOpenCodePromptContext() {
 function testPricingTable() {
   assert.deepEqual(resolveModelPricing('gpt-5.5')?.input, 5);
   assert.deepEqual(resolveModelPricing('gpt-5.4-mini')?.output, 4.5);
+  assert.deepEqual(resolveModelPricing('claude-opus-4-8')?.input, 5);
+  assert.deepEqual(resolveModelPricing('claude-opus-4.7')?.output, 25);
+  assert.deepEqual(resolveModelPricing('anthropic/claude-opus-4.5')?.cacheWrite, 6.25);
+  assert.deepEqual(resolveModelPricing('claude-opus-4-1-20250805')?.input, 15);
+  assert.deepEqual(resolveModelPricing('claude-opus-4.1')?.output, 75);
+  assert.deepEqual(resolveModelPricing('claude-sonnet-4.6')?.cacheRead, 0.3);
+  assert.deepEqual(resolveModelPricing('anthropic/claude-sonnet-4.5')?.output, 15);
+  assert.deepEqual(resolveModelPricing('claude-haiku-4.5')?.cacheWrite, 1.25);
+  assert.deepEqual(resolveModelPricing('claude-3.5-haiku-20241022')?.input, 0.8);
   assert.deepEqual(resolveModelPricing('z-ai/glm-5.1')?.cacheRead, 0.26);
   assert.deepEqual(resolveModelPricing('glm-4.7')?.output, 2.2);
   assert.deepEqual(resolveModelPricing('gemini-3.1-pro-preview')?.cacheRead, 0.2);
