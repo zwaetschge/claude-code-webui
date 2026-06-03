@@ -44,6 +44,7 @@ export interface SessionQueueData {
   provider: string;
   depth: number;
   items: SessionQueueItem[];
+  busy?: boolean;
   preempting?: boolean;
 }
 

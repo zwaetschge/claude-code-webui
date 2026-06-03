@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,6 +13,11 @@ import {
   Bot,
   Palette,
   ArrowUpRight,
+  MoreHorizontal,
+  Pencil,
+  Activity,
+  Star,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,22 +33,19 @@ import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { DiscoveredProjects } from '@/components/projects';
 import { SessionCategories, CategorySelector } from '@/components/session-categories';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
+import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
 import { useSessionStore } from '@/stores/sessionStore';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
 import type { Session, ApiResponse, UserSettings, CLIProvider } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { useProviderStore } from '@/stores/providerStore';
-import {
-  toCliProvider,
-  CLI_PROVIDER_ICON,
-  UI_PROVIDER_META,
-  type UiProvider,
-} from '@/lib/providers';
+import { toCliProvider, toUiProvider, UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
@@ -61,6 +63,7 @@ export function DashboardPage() {
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showCategories, setShowCategories] = useState(false);
+  const [renamingSession, setRenamingSession] = useState<Session | null>(null);
   const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() =>
     toCliProvider(uiProvider)
   );
@@ -165,6 +168,32 @@ export function DashboardPage() {
   });
 
   const hasDefaultDir = !!settings?.defaultWorkingDir;
+  const filteredSessions = useMemo(
+    () => (selectedCategory ? sessions.filter((s) => s.category === selectedCategory) : sessions),
+    [selectedCategory, sessions]
+  );
+  const runningSessions = useMemo(
+    () => sessions.filter((session) => session.status === 'running').length,
+    [sessions]
+  );
+  const starredSessions = useMemo(
+    () => sessions.filter((session) => session.starred).length,
+    [sessions]
+  );
+  const categorizedSessions = useMemo(
+    () => new Set(sessions.map((session) => session.category).filter(Boolean)).size,
+    [sessions]
+  );
+  const providerCounts = useMemo(() => {
+    return sessions.reduce(
+      (acc, session) => {
+        const provider = session.cliProvider || 'codex';
+        acc[provider] = (acc[provider] || 0) + 1;
+        return acc;
+      },
+      {} as Partial<Record<CLIProvider, number>>
+    );
+  }, [sessions]);
 
   // Delete session mutation
   const deleteMutation = useMutation({
@@ -208,22 +237,21 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Compact horizontal header */}
-      <header className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-            Sessions
-            <span className="rounded-full bg-muted/60 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              {sessions.length}
-            </span>
-          </h1>
-          <span className="text-sm text-muted-foreground hidden sm:inline">
-            Pick up where you left off
-          </span>
+    <div className="dashboard-shell space-y-5">
+      <section className="dashboard-hero">
+        <div className="dashboard-hero-main">
+          <div className="dashboard-eyebrow">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>{UI_PROVIDER_META[uiProvider].productName}</span>
+          </div>
+          <div className="dashboard-title-row">
+            <h1>Sessions</h1>
+            <span className="dashboard-count">{sessions.length}</span>
+          </div>
+          <p className="dashboard-subtitle ui-text">Pick up where you left off.</p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="dashboard-hero-actions">
           <Button onClick={() => setShowNewSession(true)} size="sm" className="gap-1.5">
             <Plus className="h-4 w-4" />
             <span className="hidden sm:inline">New Session</span>
@@ -233,10 +261,11 @@ export function DashboardPage() {
             size="sm"
             onClick={() => setShowCategories(!showCategories)}
             className="gap-1.5"
+            title="Categories"
           >
             <Tags className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="sm" asChild className="gap-1.5">
+          <Button variant="outline" size="sm" asChild className="gap-1.5" title="Connections">
             <Link to="/connect">
               <ArrowUpRight className="h-4 w-4" />
             </Link>
@@ -248,7 +277,7 @@ export function DashboardPage() {
                 <span className="hidden md:inline">{UI_PROVIDER_META[uiProvider].label}</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuContent align="end" className="panel-dropdown w-44">
               {(Object.keys(UI_PROVIDER_META) as UiProvider[]).map((provider) => (
                 <DropdownMenuItem
                   key={provider}
@@ -262,11 +291,59 @@ export function DashboardPage() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </header>
+
+        <div className="dashboard-stat-grid">
+          <div className="dashboard-stat">
+            <MessageSquare className="h-4 w-4" />
+            <span>Total</span>
+            <strong>{sessions.length}</strong>
+          </div>
+          <div className="dashboard-stat">
+            <Activity className="h-4 w-4" />
+            <span>Running</span>
+            <strong>{runningSessions}</strong>
+          </div>
+          <div className="dashboard-stat">
+            <Star className="h-4 w-4" />
+            <span>Starred</span>
+            <strong>{starredSessions}</strong>
+          </div>
+          <div className="dashboard-stat">
+            <Tags className="h-4 w-4" />
+            <span>Groups</span>
+            <strong>{categorizedSessions}</strong>
+          </div>
+        </div>
+
+        {cliProviders && cliProviders.length > 0 && (
+          <div className="dashboard-provider-strip">
+            {cliProviders.map((provider) => (
+              <button
+                key={provider.id}
+                type="button"
+                disabled={!provider.available}
+                className={cn(
+                  'dashboard-provider-chip',
+                  selectedCliProvider === provider.id && 'is-selected'
+                )}
+                onClick={() => {
+                  setSelectedCliProvider(provider.id);
+                  setShowNewSession(true);
+                }}
+                title={`Start with ${provider.name}`}
+              >
+                <ProviderLogo provider={toUiProvider(provider.id)} className="h-5 w-5" alt="" />
+                <span>{provider.name}</span>
+                <strong>{providerCounts[provider.id] || 0}</strong>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* New Session Form */}
       {showNewSession && (
-        <Card>
+        <Card className="dashboard-create-card">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Create New Session</CardTitle>
             <CardDescription className="text-xs">
@@ -355,7 +432,11 @@ export function DashboardPage() {
                             disabled={!provider.available}
                           >
                             <span className="flex items-center gap-2">
-                              <span>{provider.icon}</span>
+                              <ProviderLogo
+                                provider={toUiProvider(provider.id)}
+                                className="h-4 w-4"
+                                alt=""
+                              />
                               <span>{provider.name}</span>
                               {!provider.available && (
                                 <span className="text-xs text-muted-foreground">(N/A)</span>
@@ -367,9 +448,6 @@ export function DashboardPage() {
                     </Select>
                   </div>
                 </div>
-
-                {/* Multi-CLI Configuration */}
-                {/* Multi-CLI config removed - multi provider no longer exists */}
 
                 {sessionMode === 'existing' && (
                   <div className="space-y-2">
@@ -441,9 +519,9 @@ export function DashboardPage() {
       />
 
       {/* Sessions with Optional Categories */}
-      <div className="flex gap-4">
+      <div className="dashboard-content-row">
         {showCategories && (
-          <Card className="w-56 shrink-0 hidden md:block">
+          <Card className="dashboard-categories-panel hidden md:block">
             <SessionCategories
               selectedCategory={selectedCategory}
               onCategorySelect={setSelectedCategory}
@@ -452,38 +530,39 @@ export function DashboardPage() {
           </Card>
         )}
 
-        <div className="flex-1 grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {(selectedCategory
-            ? sessions.filter((s) => s.category === selectedCategory)
-            : sessions
-          ).map((session) => (
+        <div className="dashboard-session-grid">
+          {filteredSessions.map((session) => (
             <Card
               key={session.id}
-              className="cursor-pointer transition-colors hover:border-primary"
+              className="dashboard-session-card cursor-pointer"
               onClick={() => navigate(`/session/${session.id}`)}
             >
+              <span className="dashboard-session-light" />
               <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                 <div className="space-y-0.5 min-w-0 flex-1">
-                  <CardTitle className="text-sm flex items-center gap-1.5 truncate">
-                    <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                  <CardTitle className="text-sm flex items-center gap-2 truncate">
+                    <ProviderLogo
+                      provider={toUiProvider(session.cliProvider)}
+                      className="h-4 w-4 shrink-0"
+                      alt=""
+                    />
                     <span className="truncate">{session.name}</span>
-                    {session.cliProvider && (
-                      <span className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground shrink-0">
-                        {CLI_PROVIDER_ICON[session.cliProvider]}
-                      </span>
-                    )}
+                    {session.starred && <Star className="h-3.5 w-3.5 shrink-0 text-amber-400" />}
                   </CardTitle>
-                  <CardDescription className="flex items-center gap-1 text-[10px] truncate">
+                  <CardDescription className="flex items-center gap-1 text-[10px] truncate ui-text">
                     <FolderOpen className="h-2.5 w-2.5 shrink-0" />
                     <span className="truncate">{session.workingDirectory}</span>
                   </CardDescription>
+                  {session.lastMessage && (
+                    <p className="dashboard-last-message ui-text">{session.lastMessage}</p>
+                  )}
                 </div>
                 <div
                   className={cn(
-                    'h-2 w-2 rounded-full shrink-0 mt-1',
-                    session.status === 'running' && 'bg-green-500',
-                    session.status === 'stopped' && 'bg-gray-400',
-                    session.status === 'error' && 'bg-red-500'
+                    'dashboard-status-dot',
+                    session.status === 'running' && 'is-running',
+                    session.status === 'stopped' && 'is-stopped',
+                    session.status === 'error' && 'is-error'
                   )}
                 />
               </CardHeader>
@@ -496,18 +575,34 @@ export function DashboardPage() {
                     />
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-[10px] text-muted-foreground ui-text">
                       {new Date(session.updatedAt).toLocaleDateString()}
                     </span>
                     <div onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => deleteMutation.mutate(session.id)}
-                      >
-                        <Trash2 className="h-3 w-3 text-destructive" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-6 w-6">
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem
+                            onClick={() => setRenamingSession(session)}
+                            className="cursor-pointer"
+                          >
+                            <Pencil className="mr-2 h-3.5 w-3.5" />
+                            Rename
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => deleteMutation.mutate(session.id)}
+                            className="cursor-pointer text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 </div>
@@ -515,22 +610,28 @@ export function DashboardPage() {
             </Card>
           ))}
 
-          {(selectedCategory ? sessions.filter((s) => s.category === selectedCategory) : sessions)
-            .length === 0 &&
-            !showNewSession && (
-              <Card className="col-span-full">
-                <CardContent className="flex flex-col items-center justify-center py-8">
-                  <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
-                  <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
-                  <Button size="sm" onClick={() => setShowNewSession(true)}>
-                    <Plus className="mr-1.5 h-3.5 w-3.5" />
-                    Create your first session
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+          {filteredSessions.length === 0 && !showNewSession && (
+            <Card className="dashboard-empty-card">
+              <CardContent className="flex flex-col items-center justify-center py-8">
+                <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
+                <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
+                <Button size="sm" onClick={() => setShowNewSession(true)}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Create your first session
+                </Button>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
+
+      <RenameSessionDialog
+        session={renamingSession}
+        open={!!renamingSession}
+        onOpenChange={(open) => {
+          if (!open) setRenamingSession(null);
+        }}
+      />
     </div>
   );
 }

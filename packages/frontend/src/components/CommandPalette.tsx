@@ -28,7 +28,8 @@ import {
 import { useCommandPaletteStore } from '@/stores/commandPaletteStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { socketService } from '@/services/socket';
-import { CLI_PROVIDER_ICON } from '@/lib/providers';
+import { ProviderLogo } from '@/components/branding/ProviderLogo';
+import { toUiProvider } from '@/lib/providers';
 import type { SessionMode } from '@claude-code-webui/shared';
 
 export function CommandPalette() {
@@ -154,9 +155,11 @@ export function CommandPalette() {
                   <MessageSquare />
                   <span className="flex-1 truncate">{session.name}</span>
                   {session.starred && <Star className="h-3 w-3 text-amber-500 fill-amber-500" />}
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {CLI_PROVIDER_ICON[session.cliProvider] || ''}
-                  </span>
+                  <ProviderLogo
+                    provider={toUiProvider(session.cliProvider)}
+                    className="h-3.5 w-3.5 shrink-0 opacity-75"
+                    alt=""
+                  />
                 </CommandItem>
               ))}
             </CommandGroup>

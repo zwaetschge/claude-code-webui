@@ -31,18 +31,6 @@ const SettingsPage = lazy(() =>
 const AnalyticsPage = lazy(() =>
   import('@/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
 );
-const AdminLayout = lazy(() =>
-  import('@/pages/admin/AdminLayout').then((m) => ({ default: m.AdminLayout }))
-);
-const AdminOverviewPage = lazy(() =>
-  import('@/pages/admin/AdminOverviewPage').then((m) => ({ default: m.AdminOverviewPage }))
-);
-const AdminUsersPage = lazy(() =>
-  import('@/pages/admin/AdminUsersPage').then((m) => ({ default: m.AdminUsersPage }))
-);
-const AdminAuditLogPage = lazy(() =>
-  import('@/pages/admin/AdminAuditLogPage').then((m) => ({ default: m.AdminAuditLogPage }))
-);
 
 // Loading fallback component
 function PageLoader() {
@@ -159,14 +147,26 @@ export default function App() {
                 path="admin"
                 element={
                   <AdminRoute>
-                    <AdminLayout />
+                    <Navigate to="/settings?tab=admin&adminTab=overview" replace />
                   </AdminRoute>
                 }
-              >
-                <Route index element={<AdminOverviewPage />} />
-                <Route path="users" element={<AdminUsersPage />} />
-                <Route path="audit-log" element={<AdminAuditLogPage />} />
-              </Route>
+              />
+              <Route
+                path="admin/users"
+                element={
+                  <AdminRoute>
+                    <Navigate to="/settings?tab=admin&adminTab=users" replace />
+                  </AdminRoute>
+                }
+              />
+              <Route
+                path="admin/audit-log"
+                element={
+                  <AdminRoute>
+                    <Navigate to="/settings?tab=admin&adminTab=audit-log" replace />
+                  </AdminRoute>
+                }
+              />
             </Route>
           </Routes>
         </Suspense>

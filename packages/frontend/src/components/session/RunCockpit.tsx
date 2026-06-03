@@ -1,7 +1,6 @@
 import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity,
   AlertCircle,
   CheckCircle2,
   Circle,
@@ -45,6 +44,7 @@ interface RunCockpitProps {
   onInterrupt: () => void;
   onRestart: () => void;
   onReviewChanges: () => void;
+  onJumpToMessage?: (messageId: string) => void;
 }
 
 type RunTone = 'neutral' | 'good' | 'warn' | 'bad' | 'live';
@@ -164,6 +164,7 @@ export function RunCockpit({
   onInterrupt,
   onRestart,
   onReviewChanges,
+  onJumpToMessage,
 }: RunCockpitProps) {
   const isLive =
     sessionStatus === 'running' ||
@@ -225,16 +226,25 @@ export function RunCockpit({
           createdAt: message.createdAt,
         }));
 
+  const turnEvents = useMemo(
+    () =>
+      messages
+        .filter(
+          (message) =>
+            (message.role === 'user' || message.role === 'assistant') &&
+            !message.id?.startsWith('compact-')
+        )
+        .map((message) => ({
+          id: message.id,
+          role: message.role,
+          kind: message.role === 'user' ? 'You' : providerLabel,
+          text: stripPreview(message.content, 120),
+          ts: new Date(message.createdAt).getTime(),
+        })),
+    [messages, providerLabel]
+  );
+
   const runEvents = useMemo(() => {
-    const messageEvents = messages
-      .filter((message) => message.role === 'user' || message.role === 'assistant')
-      .map((message) => ({
-        id: `m-${message.id}`,
-        kind: message.role === 'user' ? 'Input' : providerLabel,
-        text: stripPreview(message.content),
-        ts: new Date(message.createdAt).getTime(),
-        icon: message.role === 'user' ? MessageSquare : Activity,
-      }));
     const toolEvents = tools.map((tool) => ({
       id: `t-${tool.toolId}`,
       kind: tool.toolName,
@@ -242,11 +252,11 @@ export function RunCockpit({
       ts: tool.timestamp,
       icon: tool.toolName === 'Bash' ? SquareTerminal : Wrench,
     }));
-    return [...messageEvents, ...toolEvents]
+    return toolEvents
       .filter((event) => event.text)
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 8);
-  }, [messages, providerLabel, tools]);
+  }, [tools]);
 
   const runTone: RunTone =
     sessionStatus === 'error' ? 'bad' : isLive ? 'live' : failedTools.length > 0 ? 'warn' : 'good';
@@ -276,7 +286,7 @@ export function RunCockpit({
           </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground">{providerLabel}</div>
         </div>
-        <button type="button" className="turn-map-close" onClick={onClose} title="Close run panel">
+        <button type="button" className="rail-close" onClick={onClose} title="Close run panel">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -424,7 +434,49 @@ export function RunCockpit({
         </div>
       </Section>
 
-      <Section title="Timeline" icon={<Clock3 className="h-3.5 w-3.5" />}>
+      <Section title="Turns" icon={<MessageSquare className="h-3.5 w-3.5" />}>
+        <div className="space-y-1">
+          {turnEvents.length === 0 ? (
+            <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+              Empty
+            </div>
+          ) : (
+            turnEvents.map((event, index) => (
+              <button
+                key={event.id}
+                type="button"
+                onClick={() => onJumpToMessage?.(event.id)}
+                className="grid w-full grid-cols-[16px_1fr_auto] gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-foreground/[0.045]"
+              >
+                <span
+                  className={cn(
+                    'mt-1.5 h-1.5 w-1.5 rounded-full',
+                    event.role === 'user' ? 'bg-foreground' : 'bg-primary'
+                  )}
+                />
+                <span className="min-w-0">
+                  <span
+                    className={cn(
+                      'block truncate text-xs font-medium text-foreground',
+                      event.role === 'assistant' && 'text-primary'
+                    )}
+                  >
+                    {index + 1}. {event.kind}
+                  </span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {event.text || '(empty)'}
+                  </span>
+                </span>
+                <span className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                  {timeShort(event.ts)}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </Section>
+
+      <Section title="Recent Tools" icon={<Clock3 className="h-3.5 w-3.5" />}>
         <div className="space-y-1">
           {runEvents.length === 0 ? (
             <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">

@@ -61,6 +61,7 @@ import devicesRoutes from './routes/devices';
 import previewRoutes from './routes/preview';
 import adminRoutes from './routes/admin';
 import comfyuiRoutes from './routes/comfyui';
+import automationRoutes from './routes/automation';
 import { initTaskManager } from './services/tasks';
 
 function parseBooleanEnv(value?: string): boolean {
@@ -306,6 +307,7 @@ async function main() {
   app.use('/api/preview', previewRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/comfyui', comfyuiRoutes);
+  app.use('/api/automation', automationRoutes);
 
   const logosDir = process.env.LOGOS_DIR || path.join(process.cwd(), 'logos');
   if (fs.existsSync(logosDir)) {

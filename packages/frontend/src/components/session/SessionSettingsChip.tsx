@@ -10,7 +10,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { CLI_PROVIDER_ICON, CLI_PROVIDER_LABEL } from '@/lib/providers';
+import { ProviderLogo } from '@/components/branding/ProviderLogo';
+import { CLI_PROVIDER_LABEL, toUiProvider } from '@/lib/providers';
 import type { CLIProvider, SessionMode, CliTool } from '@claude-code-webui/shared';
 
 interface ProviderInfo {
@@ -154,9 +155,11 @@ export function SessionSettingsChip({
           <ModeIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="font-medium hidden sm:inline">{current.label}</span>
           <span className="h-3 w-px bg-current opacity-30 hidden sm:inline-block" />
-          <span className="text-[10px] font-semibold opacity-80 hidden sm:inline">
-            {CLI_PROVIDER_ICON[provider] || ''}
-          </span>
+          <ProviderLogo
+            provider={toUiProvider(provider)}
+            className="hidden h-3.5 w-3.5 shrink-0 opacity-85 sm:inline"
+            alt=""
+          />
           <span className="text-[11px] font-mono opacity-90 hidden md:inline max-w-[100px] truncate">
             {modelShort}
           </span>
@@ -228,9 +231,7 @@ export function SessionSettingsChip({
                     active && 'bg-muted/60'
                   )}
                 >
-                  <span className="text-xs font-semibold w-4 text-center">
-                    {CLI_PROVIDER_ICON[p.id] || p.name.slice(0, 1).toUpperCase()}
-                  </span>
+                  <ProviderLogo provider={toUiProvider(p.id)} className="h-4 w-4 shrink-0" alt="" />
                   <span className="flex-1 text-xs">{p.name}</span>
                   {!p.available && (
                     <span className="text-[9px] text-muted-foreground">not installed</span>

@@ -22,13 +22,14 @@ import {
   Code2,
   Star,
   FolderKey,
-  Pin,
   X,
-  PanelRight,
   Activity,
+  Pencil,
+  Settings,
 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Card } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -41,20 +42,20 @@ import { StreamingContent } from '@/components/chat/StreamingContent';
 import { ProviderLoader } from '@/components/chat/providerAnimations/ProviderLoader';
 import { ContextPopover } from '@/components/session/SessionControls';
 import { SessionSettingsChip } from '@/components/session/SessionSettingsChip';
-import { FileTree } from '@/components/file-tree';
 import { AllowedDirectoriesDialog } from '@/components/session/AllowedDirectoriesDialog';
 import { PermissionRequestCard } from '@/components/session/PermissionRequestCard';
 import { EditorPanel } from '@/components/code-editor';
-import { WebPreview } from '@/components/preview';
+import { WorkspaceFiles } from '@/components/files';
 import { AgentsEditor } from '@/components/agents-editor';
 import { MemoryViewer } from '@/components/memory-viewer';
 import { ToolLogPanel } from '@/components/session/ToolLogPanel';
 import { RunCockpit } from '@/components/session/RunCockpit';
+import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
 import { CompactBoundaryCard } from '@/components/chat/CompactBoundaryCard';
 import { MessageBubble } from '@/components/chat/MessageBubble';
-import { TurnMap } from '@/components/chat/TurnMap';
 import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { ToolDetailDialog } from '@/components/session/ToolDetailDialog';
+import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import {
   useSessionStore,
   type ActivityState,
@@ -104,6 +105,10 @@ const EMPTY_IMAGES: GeneratedImage[] = [];
 const EMPTY_TOOL_EXECUTIONS: ToolExecution[] = [];
 const EMPTY_OPEN_FILES: OpenFile[] = [];
 const IDLE_ACTIVITY: ActivityState = { type: 'idle' };
+type WorkspaceSheetPanel = Exclude<DockablePanel, 'files'>;
+type MobileSheetPanel = WorkspaceSheetPanel | 'settings';
+const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = ['tasks', 'config', 'tools'];
+const RIGHT_RAIL_PANEL_KEYS: WorkspaceSheetPanel[] = ['tasks', 'tools'];
 
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -132,7 +137,6 @@ export function SessionPage() {
     currentToolExecutions,
     currentQueue,
     currentPendingPermission,
-    currentSelectedFile,
     currentOpenFiles,
   } = useSessionStore(
     useShallow((s) => {
@@ -148,7 +152,6 @@ export function SessionPage() {
         currentToolExecutions: s.toolExecutions[sid] ?? EMPTY_TOOL_EXECUTIONS,
         currentQueue: s.queueState[sid] ?? null,
         currentPendingPermission: s.pendingPermissions[sid] ?? null,
-        currentSelectedFile: s.selectedFile[sid] ?? null,
         currentOpenFiles: s.openFiles[sid] ?? EMPTY_OPEN_FILES,
       };
     })
@@ -158,7 +161,6 @@ export function SessionPage() {
   const setMessages = useSessionStore((s) => s.setMessages);
   const addMessage = useSessionStore((s) => s.addMessage);
   const clearStreamingContent = useSessionStore((s) => s.clearStreamingContent);
-  const setSelectedFile = useSessionStore((s) => s.setSelectedFile);
   const openFileInStore = useSessionStore((s) => s.openFile);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
 
@@ -167,6 +169,8 @@ export function SessionPage() {
   const [isExecutingTool, _setIsExecutingTool] = useState(false);
   const cliToolAbortRef = useRef<AbortController | null>(null);
   const [showAllowedDirsDialog, setShowAllowedDirsDialog] = useState(false);
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [mobileSheetPanel, setMobileSheetPanel] = useState<MobileSheetPanel | null>(null);
 
   useEffect(() => {
     const handler = () => setShowAllowedDirsDialog(true);
@@ -182,8 +186,9 @@ export function SessionPage() {
   const { uiProvider, setProvider } = useProviderStore();
   const pinnedPanels = usePanelDockStore((s) => s.pinned);
   const togglePinPanel = usePanelDockStore((s) => s.togglePin);
-  const anyPanelPinned =
-    pinnedPanels.files || pinnedPanels.tasks || pinnedPanels.config || pinnedPanels.tools;
+  const setPinnedPanel = usePanelDockStore((s) => s.setPinned);
+  const unpinAllPanels = usePanelDockStore((s) => s.unpinAll);
+  const anyPanelPinned = DOCKED_PANEL_KEYS.some((panel) => pinnedPanels[panel]);
   const sessionModeStorageKey = useMemo(() => (id ? `sessionMode:${id}` : null), [id]);
 
   const scrollToBottom = useCallback(() => {
@@ -264,46 +269,56 @@ export function SessionPage() {
     return cliTools.find((t) => t.id === selectedCliTool)?.name;
   }, [selectedCliTool, cliTools]);
 
-  const [mainView, setMainView] = useState<'chat' | 'editor' | 'preview'>('chat');
+  const [mainView, setMainView] = useState<'chat' | 'editor' | 'files'>('chat');
   const [configTab, setConfigTab] = useState<'memories' | 'agents'>('memories');
-  const [turnMapOpen, setTurnMapOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem('chat.turnMapOpen') === '1';
-  });
   const [runCockpitOpen, setRunCockpitOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('chat.runCockpitOpen') === '1';
   });
-  const toggleTurnMap = useCallback(() => {
-    setTurnMapOpen((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('chat.turnMapOpen', next ? '1' : '0');
-      }
-      if (next) {
-        setRunCockpitOpen(false);
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem('chat.runCockpitOpen', '0');
-        }
-      }
-      return next;
-    });
-  }, []);
   const toggleRunCockpit = useCallback(() => {
     setRunCockpitOpen((prev) => {
       const next = !prev;
       if (typeof window !== 'undefined') {
         window.localStorage.setItem('chat.runCockpitOpen', next ? '1' : '0');
       }
-      if (next) {
-        setTurnMapOpen(false);
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem('chat.turnMapOpen', '0');
-        }
-      }
       return next;
     });
   }, []);
+
+  const closeActivityRails = useCallback(() => {
+    setRunCockpitOpen(false);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('chat.runCockpitOpen', '0');
+    }
+  }, []);
+
+  const openRightPanel = useCallback(
+    (panel: WorkspaceSheetPanel) => {
+      const openCount = DOCKED_PANEL_KEYS.filter((key) => pinnedPanels[key]).length;
+      const isOnlyOpenPanel = pinnedPanels[panel] && openCount === 1;
+
+      unpinAllPanels();
+      if (!isOnlyOpenPanel) {
+        setPinnedPanel(panel, true);
+        closeActivityRails();
+      }
+    },
+    [closeActivityRails, pinnedPanels, setPinnedPanel, unpinAllPanels]
+  );
+
+  const openWorkspacePanel = useCallback(
+    (panel: WorkspaceSheetPanel) => {
+      const isDesktop =
+        typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches;
+      if (isDesktop) {
+        openRightPanel(panel);
+      } else {
+        setMobileSheetPanel(panel);
+      }
+    },
+    [openRightPanel]
+  );
+
   const hasOpenFiles = currentOpenFiles.length > 0;
 
   // Combine messages, generated images and tool executions into a single timeline
@@ -346,7 +361,7 @@ export function SessionPage() {
     [currentToolExecutions]
   );
 
-  // Live ref of the current timeline so the turn-map jump handler always reads
+  // Live ref of the current timeline so Run turn jumps always read
   // fresh indices without retriggering Virtuoso's internal observers.
   const timelineRef = useRef<TimelineItem[]>([]);
   timelineRef.current = timeline;
@@ -376,6 +391,18 @@ export function SessionPage() {
       virtuosoRef.current?.scrollToIndex({ index: idx, behavior: 'smooth', align: 'start' });
     }
   }, []);
+
+  const jumpToMessageFromRun = useCallback(
+    (messageId: string) => {
+      setMainView('chat');
+      if (typeof window === 'undefined') {
+        jumpToMessage(messageId);
+        return;
+      }
+      window.requestAnimationFrame(() => jumpToMessage(messageId));
+    },
+    [jumpToMessage]
+  );
 
   // Helper to get tool icon and name - memoized to prevent re-creation on every render
   const getToolDisplay = useCallback((toolName: string) => {
@@ -657,11 +684,19 @@ export function SessionPage() {
     enabled: !!id,
   });
 
-  const isActive =
-    session?.status === 'running' ||
+  const sessionProvider = session?.cliProvider ?? toCliProvider(uiProvider);
+  const sessionUiProvider = toUiProvider(sessionProvider);
+  const providerLabel = CLI_PROVIDER_LABEL[sessionProvider];
+  const hasLiveRunActivity =
     currentActivity.type === 'thinking' ||
     currentActivity.type === 'tool' ||
-    !!currentActiveAgent;
+    !!currentActiveAgent ||
+    !!currentStreamingContent;
+  const hasQueuedRunWork = !!currentQueue?.busy;
+  const isActive = hasLiveRunActivity || hasQueuedRunWork;
+  const composerQueuesWhileActive = sessionProvider === 'codex';
+  const canInterruptActiveRun =
+    hasLiveRunActivity || (!composerQueuesWhileActive && hasQueuedRunWork);
 
   useEffect(() => {
     if (!id || !session) {
@@ -685,10 +720,6 @@ export function SessionPage() {
       loadedModeForSessionRef.current = id;
     }
   }, [id, session, sessionModeStorageKey, getStoredSessionMode, allowedSessionModes]);
-
-  const sessionProvider = session?.cliProvider ?? toCliProvider(uiProvider);
-  const sessionUiProvider = toUiProvider(sessionProvider);
-  const providerLabel = CLI_PROVIDER_LABEL[sessionProvider];
 
   // Keep the footer's live dependencies fresh. The stable memoized Footer
   // component reads from this ref every render, so updates here propagate
@@ -960,7 +991,7 @@ export function SessionPage() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only trigger on Escape when Claude is active and not typing in an input
-      if (e.key === 'Escape' && isActive) {
+      if (e.key === 'Escape' && canInterruptActiveRun) {
         const target = e.target as HTMLElement;
         const isTyping =
           target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
@@ -980,7 +1011,7 @@ export function SessionPage() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [id, isActive]);
+  }, [id, canInterruptActiveRun]);
 
   useEffect(() => {
     if (!id) return;
@@ -1460,6 +1491,65 @@ export function SessionPage() {
     }
   };
 
+  const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
+  const runningToolsCount = recentTools.filter((t) => t.status === 'started').length;
+  const queuedTurnsCount = currentQueue?.depth ?? 0;
+  const runAttentionCount = queuedTurnsCount + runningToolsCount;
+
+  const composerActions = useMemo(
+    () => [
+      {
+        id: 'run',
+        label: runCockpitOpen ? 'Hide running' : 'Running',
+        icon: <Activity className="h-3.5 w-3.5" />,
+        onSelect: toggleRunCockpit,
+        badge: runAttentionCount,
+        active: runCockpitOpen,
+      },
+      {
+        id: 'files',
+        label: 'Files',
+        icon: <FolderOpen className="h-3.5 w-3.5" />,
+        onSelect: () => setMainView('files'),
+      },
+      {
+        id: 'tasks',
+        label: 'Tasks',
+        icon: <ListTodo className="h-3.5 w-3.5" />,
+        onSelect: () => openWorkspacePanel('tasks'),
+        badge: pendingTasksCount,
+      },
+      {
+        id: 'tools',
+        label: 'Tools',
+        icon: <Wrench className="h-3.5 w-3.5" />,
+        onSelect: () => openWorkspacePanel('tools'),
+        badge: runningToolsCount,
+        badgePulse: runningToolsCount > 0,
+      },
+      {
+        id: 'config',
+        label: 'Config',
+        icon: <Brain className="h-3.5 w-3.5" />,
+        onSelect: () => openWorkspacePanel('config'),
+      },
+      {
+        id: 'session',
+        label: 'Session settings',
+        icon: <Settings className="h-3.5 w-3.5" />,
+        onSelect: () => setMobileSheetPanel('settings'),
+      },
+    ],
+    [
+      openWorkspacePanel,
+      pendingTasksCount,
+      runAttentionCount,
+      runCockpitOpen,
+      runningToolsCount,
+      toggleRunCockpit,
+    ]
+  );
+
   if (sessionLoading || messagesLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1475,16 +1565,6 @@ export function SessionPage() {
       </div>
     );
   }
-
-  const renderFilesBody = (heightClass: string) => (
-    <FileTree
-      workingDirectory={session.workingDirectory}
-      selectedFile={currentSelectedFile || null}
-      onFileSelect={(path) => id && setSelectedFile(id, path)}
-      onFileOpen={(path, content) => id && openFileInStore(id, path, content)}
-      className={heightClass}
-    />
-  );
 
   const tasksBody =
     currentTodos.length === 0 ? (
@@ -1573,11 +1653,6 @@ export function SessionPage() {
     <ToolLogPanel executions={currentToolExecutions} className={heightClass} />
   );
 
-  const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
-  const runningToolsCount = recentTools.filter((t) => t.status === 'started').length;
-  const queuedTurnsCount = currentQueue?.depth ?? 0;
-  const runAttentionCount = queuedTurnsCount + runningToolsCount;
-
   const panelMeta: Record<
     DockablePanel,
     { title: string; icon: ReactElement; badge?: ReactElement | null }
@@ -1608,46 +1683,12 @@ export function SessionPage() {
     },
   };
 
-  const renderPanelTrigger = (panel: DockablePanel) => {
-    const meta = panelMeta[panel];
-    const isPinned = pinnedPanels[panel];
-    if (isPinned) {
-      return (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="panel-trigger bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30"
-          onClick={() => togglePinPanel(panel)}
-          title="Unpin panel (currently docked in sidebar)"
-        >
-          {meta.icon}
-          <span className="hidden sm:inline">{meta.title}</span>
-          {meta.badge}
-          <Pin className="h-3 w-3 fill-current" />
-        </Button>
-      );
-    }
-    return null;
-  };
-
-  const renderDockedPanel = (panel: DockablePanel) => {
+  const renderDockedPanel = (panel: WorkspaceSheetPanel) => {
     const meta = panelMeta[panel];
     let body: ReactElement;
-    if (panel === 'files') body = renderFilesBody('h-full');
-    else if (panel === 'tasks') body = <div className="h-full overflow-auto">{tasksBody}</div>;
+    if (panel === 'tasks') body = <div className="h-full overflow-auto">{tasksBody}</div>;
     else if (panel === 'config') body = renderConfigBody('h-full');
     else body = renderToolsBody('h-full');
-
-    const extraHeaderAction =
-      panel === 'files' ? (
-        <button
-          onClick={() => setShowAllowedDirsDialog(true)}
-          className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
-          title="Manage allowed directories"
-        >
-          <FolderKey className="h-3.5 w-3.5 text-primary" />
-        </button>
-      ) : null;
 
     return (
       <div
@@ -1658,7 +1699,6 @@ export function SessionPage() {
           <span className="text-muted-foreground shrink-0">{meta.icon}</span>
           <span className="text-xs font-medium flex-1 truncate">{meta.title}</span>
           {meta.badge}
-          {extraHeaderAction}
           <button
             onClick={() => togglePinPanel(panel)}
             className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0 text-muted-foreground hover:text-foreground"
@@ -1672,16 +1712,207 @@ export function SessionPage() {
     );
   };
 
+  const renderSessionSettingsChip = () => (
+    <SessionSettingsChip
+      mode={sessionMode}
+      onModeChange={handleModeChange}
+      provider={sessionProvider}
+      providers={cliProviders?.map((p) => ({
+        id: p.id,
+        name: p.name,
+        available: p.available,
+      }))}
+      onProviderChange={(p) => providerMutation.mutate(p)}
+      modelValue={modelSelectValue}
+      modelOptions={modelOptions}
+      modelLabels={modelLabels}
+      resolvedDefaultModel={resolvedDefaultModel}
+      onModelChange={applyModelSelection}
+      reasoningValue={reasoningSelectValue}
+      reasoningOptions={
+        ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider)
+          ? reasoningOptions
+          : undefined
+      }
+      onReasoningChange={
+        ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider)
+          ? applyReasoningSelection
+          : undefined
+      }
+      reasoningLabel={sessionProvider === 'claude' ? 'Effort' : 'Reasoning'}
+      codexFastMode={settings?.cliProviderServiceTiers?.codex === 'fast'}
+      cliTools={cliTools}
+      selectedCliTool={selectedCliTool}
+      onCliToolChange={setSelectedCliTool}
+    />
+  );
+
+  const activeTodo =
+    currentTodos.find((todo) => todo.status === 'in_progress') ??
+    currentTodos.find((todo) => todo.status === 'pending');
+
+  const renderTodoStrip = (mode: 'desktop' | 'mobile') => {
+    if (!activeTodo || pendingTasksCount === 0) return null;
+    return (
+      <button
+        type="button"
+        className={cn('todo-floating-strip', mode === 'desktop' ? 'hidden md:flex' : 'md:hidden')}
+        onClick={() => {
+          if (mode === 'desktop') openRightPanel('tasks');
+          else setMobileSheetPanel('tasks');
+        }}
+      >
+        <span
+          className={cn('todo-floating-dot', activeTodo.status === 'in_progress' && 'is-running')}
+        />
+        <span className="truncate">
+          {activeTodo.status === 'in_progress' && activeTodo.activeForm
+            ? activeTodo.activeForm
+            : activeTodo.content}
+        </span>
+        <span className="todo-floating-count">{pendingTasksCount}</span>
+      </button>
+    );
+  };
+
+  const renderRightRailButton = (panel: WorkspaceSheetPanel) => {
+    const meta = panelMeta[panel];
+    const isActive = pinnedPanels[panel];
+    const badgeCount =
+      panel === 'tasks' ? pendingTasksCount : panel === 'tools' ? runningToolsCount : 0;
+
+    return (
+      <button
+        key={panel}
+        type="button"
+        className={cn('session-right-rail-button', isActive && 'is-active')}
+        onClick={() => openRightPanel(panel)}
+        title={isActive ? `Close ${meta.title}` : `Open ${meta.title}`}
+        aria-label={isActive ? `Close ${meta.title}` : `Open ${meta.title}`}
+      >
+        {meta.icon}
+        {badgeCount > 0 && <span className="session-right-rail-badge">{badgeCount}</span>}
+      </button>
+    );
+  };
+
+  const renderMobileSheetContent = () => {
+    if (!mobileSheetPanel) return null;
+
+    if (mobileSheetPanel === 'settings') {
+      return (
+        <div className="mobile-session-sheet-content">
+          <div className="mobile-session-sheet-header">
+            <Settings className="h-4 w-4 text-muted-foreground" />
+            <h3>Session</h3>
+          </div>
+          <div className="mobile-session-sheet-body space-y-4">
+            <div className="mobile-view-switch">
+              <button
+                type="button"
+                onClick={() => {
+                  setMainView('chat');
+                  setMobileSheetPanel(null);
+                }}
+                className={cn(mainView === 'chat' && 'is-active')}
+              >
+                <MessageSquare className="h-4 w-4" />
+                <span>Chat</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMainView('editor');
+                  setMobileSheetPanel(null);
+                }}
+                disabled={!hasOpenFiles}
+                className={cn(mainView === 'editor' && 'is-active')}
+              >
+                <Code2 className="h-4 w-4" />
+                <span>Code</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMainView('files');
+                  setMobileSheetPanel(null);
+                }}
+                className={cn(mainView === 'files' && 'is-active')}
+              >
+                <FolderOpen className="h-4 w-4" />
+                <span>Files</span>
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-foreground/[0.025] p-3">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-foreground">Provider</div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {providerLabel}
+                </div>
+              </div>
+              {renderSessionSettingsChip()}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSheetPanel(null);
+                  setShowRenameDialog(true);
+                }}
+                className="mobile-sheet-command"
+              >
+                <Pencil className="h-4 w-4" />
+                <span>Rename</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSheetPanel(null);
+                  setShowAllowedDirsDialog(true);
+                }}
+                className="mobile-sheet-command"
+              >
+                <FolderKey className="h-4 w-4" />
+                <span>Directories</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const meta = panelMeta[mobileSheetPanel];
+    return (
+      <div className="mobile-session-sheet-content">
+        <div className="mobile-session-sheet-header">
+          <span className="text-muted-foreground">{meta.icon}</span>
+          <h3>{meta.title}</h3>
+        </div>
+        <div className="mobile-session-sheet-body">
+          {mobileSheetPanel === 'tasks' && (
+            <div className="h-[56dvh] overflow-auto">{tasksBody}</div>
+          )}
+          {mobileSheetPanel === 'tools' && renderToolsBody('h-[56dvh]')}
+          {mobileSheetPanel === 'config' && renderConfigBody('h-[56dvh]')}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div ref={rootShellRef} className="flex h-full min-h-0 relative overflow-hidden">
       {/* Main column: sticky topbar + scrollable stream + sticky composer */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Session Header — sticky topbar inside the main column */}
         <div ref={headerBarRef} className="chat-topbar shrink-0">
-          <div className="flex-1 flex items-center gap-2 md:gap-3 min-w-0 flex-wrap">
+          <div className="flex-1 flex items-center gap-2 md:gap-3 min-w-0 flex-nowrap md:flex-wrap">
             {/* Title cluster */}
-            <div className="min-w-0 flex-1 md:flex-none md:max-w-[240px] lg:max-w-[320px] xl:max-w-[380px]">
+            <div className="hidden md:block min-w-0 flex-1 md:flex-none md:max-w-[260px] lg:max-w-[340px] xl:max-w-[400px]">
               <h2 className="text-[13px] font-semibold tracking-display flex items-center gap-1.5">
+                <ProviderLogo
+                  provider={sessionUiProvider}
+                  className="h-5 w-5 shrink-0 object-contain"
+                />
                 <button
                   onClick={() => starMutation.mutate()}
                   disabled={starMutation.isPending}
@@ -1731,169 +1962,13 @@ export function SessionPage() {
             {/* Divider — subtle vertical separator */}
             <div className="hidden md:block w-px h-8 bg-border/40 shrink-0" />
 
-            {/* Panels Bar — Files, Tasks, Config, Tools */}
-            <div className="flex items-center gap-1 shrink-0 order-3 md:order-none w-full md:w-auto overflow-x-auto md:overflow-visible scrollbar-none -mx-1 px-1 md:mx-0 md:px-0">
-              {pinnedPanels.files ? (
-                renderPanelTrigger('files')
-              ) : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="panel-trigger">
-                      <FolderOpen className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Files</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    className="panel-dropdown w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0"
-                  >
-                    <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
-                      <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <span
-                        className="text-xs text-muted-foreground truncate flex-1 font-mono"
-                        title={session.workingDirectory}
-                      >
-                        {session.workingDirectory}
-                      </span>
-                      <button
-                        onClick={() => setShowAllowedDirsDialog(true)}
-                        className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
-                        title="Manage allowed directories"
-                      >
-                        <FolderKey className="h-3.5 w-3.5 text-primary" />
-                      </button>
-                      <button
-                        onClick={() => togglePinPanel('files')}
-                        className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
-                        title="Pin panel to sidebar"
-                      >
-                        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                    <FileTree
-                      workingDirectory={session.workingDirectory}
-                      selectedFile={currentSelectedFile || null}
-                      onFileSelect={(path) => id && setSelectedFile(id, path)}
-                      onFileOpen={(path, content) => id && openFileInStore(id, path, content)}
-                      className="h-[40vh] sm:h-[50vh]"
-                    />
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-
-              {pinnedPanels.tasks ? (
-                renderPanelTrigger('tasks')
-              ) : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="panel-trigger">
-                      <ListTodo className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Tasks</span>
-                      {pendingTasksCount > 0 && (
-                        <span className="panel-badge">{pendingTasksCount}</span>
-                      )}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    className="panel-dropdown w-[calc(100vw-2rem)] sm:w-80 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0"
-                  >
-                    <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
-                      <ListTodo className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <span className="text-xs text-muted-foreground flex-1 truncate">Tasks</span>
-                      {pendingTasksCount > 0 && (
-                        <span className="panel-badge">{pendingTasksCount}</span>
-                      )}
-                      <button
-                        onClick={() => togglePinPanel('tasks')}
-                        className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
-                        title="Pin panel to sidebar"
-                      >
-                        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                    {tasksBody}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-
-              {pinnedPanels.config ? (
-                renderPanelTrigger('config')
-              ) : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="panel-trigger">
-                      <Brain className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Config</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    className="panel-dropdown w-[calc(100vw-2rem)] sm:w-[480px] max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0"
-                  >
-                    <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
-                      <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <span className="text-xs text-muted-foreground flex-1 truncate">Config</span>
-                      <button
-                        onClick={() => togglePinPanel('config')}
-                        className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
-                        title="Pin panel to sidebar"
-                      >
-                        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                    {renderConfigBody('h-[40vh] sm:h-[50vh]')}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-
-              {pinnedPanels.tools ? (
-                renderPanelTrigger('tools')
-              ) : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="panel-trigger">
-                      <Wrench className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Tools</span>
-                      {runningToolsCount > 0 && (
-                        <span className="panel-badge panel-badge-pulse">{runningToolsCount}</span>
-                      )}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    className="panel-dropdown w-[calc(100vw-2rem)] sm:w-96 max-h-[50vh] sm:max-h-[60vh] overflow-auto p-0"
-                  >
-                    <div className="flex items-center gap-2 px-3 py-2 border-b border-foreground/5">
-                      <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <span className="text-xs text-muted-foreground flex-1 truncate">Tools</span>
-                      {runningToolsCount > 0 && (
-                        <span className="panel-badge panel-badge-pulse">{runningToolsCount}</span>
-                      )}
-                      <button
-                        onClick={() => togglePinPanel('tools')}
-                        className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0"
-                        title="Pin panel to sidebar"
-                      >
-                        <Pin className="h-3.5 w-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                    <ToolLogPanel
-                      executions={currentToolExecutions}
-                      className="h-[40vh] sm:h-[50vh]"
-                    />
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-
             {/* Flex spacer — pushes right cluster to the edge */}
             <div className="hidden md:block flex-1" />
 
             {/* Right controls — View Toggle + Session Settings + Context + More */}
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto md:ml-0">
+            <div className="chat-action-bar flex items-center gap-1.5 shrink-0 ml-auto md:ml-0">
               {/* View Toggle */}
-              <div className="flex gap-0.5 bg-background/40 backdrop-blur-md border border-border/40 rounded-lg p-0.5 shrink-0">
+              <div className="hidden sm:flex gap-0.5 bg-background/40 backdrop-blur-md border border-border/40 rounded-lg p-0.5 shrink-0">
                 <button
                   onClick={() => setMainView('chat')}
                   className={cn(
@@ -1923,17 +1998,17 @@ export function SessionPage() {
                   </button>
                 )}
                 <button
-                  onClick={() => setMainView('preview')}
+                  onClick={() => setMainView('files')}
                   className={cn(
                     'flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all',
-                    mainView === 'preview'
+                    mainView === 'files'
                       ? 'bg-foreground/10 text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
                   )}
-                  title="Preview"
+                  title="Files"
                 >
-                  <Globe className="h-3 w-3" />
-                  <span className="hidden lg:inline">Preview</span>
+                  <FolderOpen className="h-3 w-3" />
+                  <span className="hidden lg:inline">Files</span>
                 </button>
               </div>
 
@@ -1941,7 +2016,7 @@ export function SessionPage() {
               <button
                 onClick={toggleRunCockpit}
                 className={cn(
-                  'flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg border transition-all shrink-0',
+                  'hidden sm:flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg border transition-all shrink-0',
                   runCockpitOpen
                     ? 'bg-foreground/10 border-border/60 text-foreground'
                     : 'bg-background/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-foreground/5'
@@ -1955,55 +2030,8 @@ export function SessionPage() {
                 )}
               </button>
 
-              {/* Turn Map toggle (chat view only) */}
-              {mainView === 'chat' && (
-                <button
-                  onClick={toggleTurnMap}
-                  className={cn(
-                    'flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg border transition-all shrink-0',
-                    turnMapOpen
-                      ? 'bg-foreground/10 border-border/60 text-foreground'
-                      : 'bg-background/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-                  )}
-                  title={turnMapOpen ? 'Hide turn map' : 'Show turn map'}
-                >
-                  <PanelRight className="h-3 w-3" />
-                </button>
-              )}
-
               {/* Consolidated Session Settings */}
-              <SessionSettingsChip
-                mode={sessionMode}
-                onModeChange={handleModeChange}
-                provider={sessionProvider}
-                providers={cliProviders?.map((p) => ({
-                  id: p.id,
-                  name: p.name,
-                  available: p.available,
-                }))}
-                onProviderChange={(p) => providerMutation.mutate(p)}
-                modelValue={modelSelectValue}
-                modelOptions={modelOptions}
-                modelLabels={modelLabels}
-                resolvedDefaultModel={resolvedDefaultModel}
-                onModelChange={applyModelSelection}
-                reasoningValue={reasoningSelectValue}
-                reasoningOptions={
-                  ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider)
-                    ? reasoningOptions
-                    : undefined
-                }
-                onReasoningChange={
-                  ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider)
-                    ? applyReasoningSelection
-                    : undefined
-                }
-                reasoningLabel={sessionProvider === 'claude' ? 'Effort' : 'Reasoning'}
-                codexFastMode={settings?.cliProviderServiceTiers?.codex === 'fast'}
-                cliTools={cliTools}
-                selectedCliTool={selectedCliTool}
-                onCliToolChange={setSelectedCliTool}
-              />
+              {renderSessionSettingsChip()}
 
               {/* Context bar (status indicator) */}
               {currentUsage && currentUsage.contextWindow > 0 && (
@@ -2017,7 +2045,27 @@ export function SessionPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="panel-dropdown w-48">
+                  <DropdownMenuItem onClick={() => setMainView('chat')}>
+                    <MessageSquare className="mr-2 h-3.5 w-3.5" />
+                    Chat view
+                  </DropdownMenuItem>
+                  {hasOpenFiles && (
+                    <DropdownMenuItem onClick={() => setMainView('editor')}>
+                      <Code2 className="mr-2 h-3.5 w-3.5" />
+                      Editor view
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => setMainView('files')}>
+                    <FolderOpen className="mr-2 h-3.5 w-3.5" />
+                    Files view
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setShowRenameDialog(true)}>
+                    <Pencil className="mr-2 h-3.5 w-3.5" />
+                    Rename session
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShowAllowedDirsDialog(true)}>
+                    <FolderKey className="mr-2 h-3.5 w-3.5" />
                     Manage directories
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
@@ -2045,8 +2093,17 @@ export function SessionPage() {
         >
           {mainView === 'editor' ? (
             <EditorPanel sessionId={id || ''} />
-          ) : mainView === 'preview' ? (
-            <WebPreview className="h-full" />
+          ) : mainView === 'files' ? (
+            <WorkspaceFiles
+              workingDirectory={session.workingDirectory}
+              onManageDirectories={() => setShowAllowedDirsDialog(true)}
+              onFileOpen={(path, content) => {
+                if (!id) return;
+                openFileInStore(id, path, content);
+                setMainView('editor');
+              }}
+              className="h-full"
+            />
           ) : (
             <>
               {timeline.length === 0 && !currentStreamingContent && (
@@ -2173,6 +2230,7 @@ export function SessionPage() {
                   <span>Response saved</span>
                 </div>
               )}
+              {renderTodoStrip('desktop')}
               <ChatInput
                 sessionId={id || ''}
                 onSendMessage={handleSendMessage}
@@ -2183,10 +2241,12 @@ export function SessionPage() {
                 selectedToolName={selectedToolName}
                 selectedCliTool={selectedCliTool}
                 quickPrompts={quickPrompts}
+                composerActions={composerActions}
                 disabled={session.status === 'error'}
                 isSending={isSending}
                 isExecutingTool={isExecutingTool}
                 isActive={isActive}
+                queuesWhileActive={composerQueuesWhileActive}
               />
             </div>
           </div>
@@ -2219,27 +2279,34 @@ export function SessionPage() {
             socketService.sendMessage(id, '/review');
             clearStreamingContent(id);
           }}
+          onJumpToMessage={jumpToMessageFromRun}
         />
       )}
 
-      {/* Right rail: turn map (chat view only, toggleable, hidden < 1180px via CSS) */}
-      {mainView === 'chat' && turnMapOpen && (
-        <TurnMap
-          messages={sessionMessages}
-          assistantName={providerLabel}
-          onJump={jumpToMessage}
-          onClose={toggleTurnMap}
-        />
-      )}
-
-      {/* Docked panels column (when panels are pinned) */}
-      {anyPanelPinned && (
-        <div className="hidden md:flex flex-col w-80 shrink-0 border-l border-border/40 overflow-hidden bg-background/40">
-          {(['files', 'tasks', 'config', 'tools'] as DockablePanel[]).map((p) =>
-            pinnedPanels[p] ? renderDockedPanel(p) : null
+      {/* Right session bar: primary workspace panels live here, not in the topbar. */}
+      {!runCockpitOpen && (
+        <div className="session-right-dock hidden md:flex">
+          <nav className="session-right-rail" aria-label="Session workspace panels">
+            {RIGHT_RAIL_PANEL_KEYS.map((panel) => renderRightRailButton(panel))}
+          </nav>
+          {anyPanelPinned && (
+            <div className="session-docked-panel-column">
+              {DOCKED_PANEL_KEYS.map((p) => (pinnedPanels[p] ? renderDockedPanel(p) : null))}
+            </div>
           )}
         </div>
       )}
+
+      <Sheet
+        open={mobileSheetPanel !== null}
+        onOpenChange={(open) => {
+          if (!open) setMobileSheetPanel(null);
+        }}
+      >
+        <SheetContent side="bottom" className="mobile-session-sheet p-0">
+          {renderMobileSheetContent()}
+        </SheetContent>
+      </Sheet>
 
       {/* Permission Approval Dialog (hooks-based flow) */}
       {currentPendingPermission && (
@@ -2260,6 +2327,12 @@ export function SessionPage() {
           // Invalidate session query to get updated allowed directories
           queryClient.invalidateQueries({ queryKey: ['session', id] });
         }}
+      />
+
+      <RenameSessionDialog
+        session={session}
+        open={showRenameDialog}
+        onOpenChange={setShowRenameDialog}
       />
 
       {/* Tool Detail Dialog */}

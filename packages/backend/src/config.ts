@@ -107,7 +107,9 @@ function loadConfig() {
     trustProxy,
     encryptionKey: env.ENCRYPTION_KEY,
     hookSecret: env.WEBUI_HOOK_SECRET || randomBytes(32).toString('hex'),
-    allowedBasePaths: env.ALLOWED_BASE_PATHS.split(',').map((p) => p.trim()),
+    allowedBasePaths: env.ALLOWED_BASE_PATHS.split(',')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0),
     previewHostname: env.PREVIEW_HOSTNAME?.toLowerCase(),
     auth: {
       // Empty array means "no allowlist" — every successful OAuth/basic-auth

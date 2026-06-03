@@ -17,19 +17,21 @@ import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/useDebounce';
 import ReactMarkdown from 'react-markdown';
+import type { ApiResponse } from '@claude-code-webui/shared';
 
 interface AgentsEditorProps {
   workingDirectory: string;
   className?: string;
 }
 
-interface FileReadResponse {
-  success: boolean;
-  data?: { content: string; exists: boolean };
+interface FileContentResponse {
+  content: string;
 }
 
 interface FileWriteResponse {
-  success: boolean;
+  path: string;
+  size: number;
+  modifiedAt: string;
 }
 
 export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps) {
@@ -52,14 +54,14 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
 
     try {
       const filePath = `${workingDirectory}/AGENTS.md`;
-      const response = await api.get<FileReadResponse>(
-        `/api/files/read?path=${encodeURIComponent(filePath)}`
+      const response = await api.get<ApiResponse<FileContentResponse>>(
+        `/api/files/content?path=${encodeURIComponent(filePath)}`
       );
 
       if (response.data.success && response.data.data) {
         setContent(response.data.data.content || '');
         setOriginalContent(response.data.data.content || '');
-        setFileExists(response.data.data.exists !== false);
+        setFileExists(true);
       } else {
         // File doesn't exist, start with template
         const template = getAgentsTemplate();
@@ -85,7 +87,7 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
 
       try {
         const filePath = `${workingDirectory}/AGENTS.md`;
-        const response = await api.post<FileWriteResponse>('/api/files/write', {
+        const response = await api.put<ApiResponse<FileWriteResponse>>('/api/files/content', {
           path: filePath,
           content: nextContent,
         });
@@ -126,7 +128,7 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
 
     try {
       const filePath = `${workingDirectory}/AGENTS.md`;
-      const response = await api.post<FileWriteResponse>('/api/files/write', {
+      const response = await api.put<ApiResponse<FileWriteResponse>>('/api/files/content', {
         path: filePath,
         content: content,
       });

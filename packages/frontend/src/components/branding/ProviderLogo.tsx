@@ -43,7 +43,7 @@ export function ProviderLogo({ provider, className, alt }: ProviderLogoProps) {
   if (provider === 'vibe') {
     const resolvedAlt = alt === undefined ? 'Mistral Vibe' : alt;
     return (
-      <img src="/logos/vibe.png" alt={resolvedAlt} className={cn('object-contain', className)} />
+      <img src="/logos/mistral.svg" alt={resolvedAlt} className={cn('object-contain', className)} />
     );
   }
 

@@ -126,6 +126,38 @@ export function validateMimeType(buffer: Buffer, claimedMimeType: string): boole
 }
 
 /**
+ * Redact likely credentials from process output before it is sent back to clients.
+ */
+export function redactSensitiveText(value: string): string {
+  return value
+    .replace(
+      /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g,
+      '[REDACTED_PRIVATE_KEY]'
+    )
+    .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_OPENAI_KEY]')
+    .replace(/\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_ANTHROPIC_KEY]')
+    .replace(/\bgh[pousr]_[A-Za-z0-9_]{30,}\b/g, '[REDACTED_GITHUB_TOKEN]')
+    .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, '[REDACTED_GOOGLE_KEY]')
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED_AWS_ACCESS_KEY]')
+    .replace(
+      /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+      '[REDACTED_JWT]'
+    )
+    .replace(
+      /\b(Authorization\s*[:=]\s*Bearer\s+)[^\s'"]+/gi,
+      '$1[REDACTED_TOKEN]'
+    )
+    .replace(
+      /\b([A-Z0-9_]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN|ID[_-]?TOKEN|CLIENT[_-]?SECRET|SESSION[_-]?SECRET|JWT[_-]?SECRET|PASSWORD|COOKIE|CREDENTIAL|PRIVATE[_-]?KEY|SECRET)[A-Z0-9_]*\s*=\s*)([^\s'"]+)/gi,
+      '$1[REDACTED]'
+    )
+    .replace(
+      /\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|session[_-]?secret|jwt[_-]?secret|password|cookie|credential|private[_-]?key|secret)\s*[:=]\s*)(['"]?)([^'",\s}]{8,})(\2)/gi,
+      '$1$2[REDACTED]$4'
+    );
+}
+
+/**
  * List of allowed MIME types for file uploads
  */
 export const ALLOWED_UPLOAD_MIME_TYPES = new Set([

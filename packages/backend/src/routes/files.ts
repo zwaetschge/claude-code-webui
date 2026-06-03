@@ -9,6 +9,7 @@ import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { config } from '../config';
 import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize';
 import { rateLimiters } from '../middleware/rateLimiter';
+import { isAllowedBasePath } from '../utils/allowedPaths';
 import type { FileInfo, DirectoryContents } from '@claude-code-webui/shared';
 
 // CSV parsing helper
@@ -56,8 +57,7 @@ const storage = multer.diskStorage({
     }
     try {
       const resolvedPath = path.resolve(targetDir);
-      const isAllowed = config.allowedBasePaths.some((base) => resolvedPath.startsWith(base));
-      if (!isAllowed) {
+      if (!isAllowedBasePath(resolvedPath)) {
         return cb(new Error('Path not allowed'), '');
       }
       // Ensure directory exists
@@ -133,7 +133,7 @@ router.get(
         try {
           await fs.access(p);
           // Path exists, check if it's allowed
-          if (config.allowedBasePaths.some((base) => p.startsWith(base))) {
+          if (isAllowedBasePath(p)) {
             commonPaths.push({ name: item.name, path: p });
             break; // Found one, move to next item
           }
@@ -157,12 +157,7 @@ router.get(
 // Validate path is within allowed directories
 function validatePath(filePath: string): string {
   const resolvedPath = path.resolve(filePath);
-  const isAllowed = config.allowedBasePaths.some((base) => {
-    const resolvedBase = path.resolve(base);
-    return resolvedPath === resolvedBase || resolvedPath.startsWith(resolvedBase + path.sep);
-  });
-
-  if (!isAllowed) {
+  if (!isAllowedBasePath(resolvedPath)) {
     throw new AppError('Path not allowed', 403, 'FORBIDDEN_PATH');
   }
 
@@ -661,6 +656,19 @@ router.get(
         '.gif': 'image/gif',
         '.webp': 'image/webp',
         '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.bmp': 'image/bmp',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime',
+        '.m4v': 'video/x-m4v',
+        '.ogv': 'video/ogg',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.flac': 'audio/flac',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
       };
 
       const contentType = contentTypes[ext] || 'application/octet-stream';

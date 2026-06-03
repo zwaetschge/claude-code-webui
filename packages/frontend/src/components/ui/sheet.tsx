@@ -11,7 +11,7 @@ interface SheetProps {
 interface SheetContentProps {
   children: React.ReactNode;
   className?: string;
-  side?: 'left' | 'right';
+  side?: 'left' | 'right' | 'bottom';
 }
 
 const SheetContext = React.createContext<{
@@ -74,9 +74,12 @@ export function SheetContent({ children, className, side = 'left' }: SheetConten
       <div
         className={cn(
           'fixed z-50 bg-background shadow-xl transition-transform duration-300 ease-in-out',
-          side === 'left'
-            ? 'inset-y-0 left-0 h-full w-3/4 max-w-xs border-r animate-in slide-in-from-left'
-            : 'inset-y-0 right-0 h-full w-3/4 max-w-xs border-l animate-in slide-in-from-right',
+          side === 'left' &&
+            'inset-y-0 left-0 h-full w-3/4 max-w-xs border-r animate-in slide-in-from-left',
+          side === 'right' &&
+            'inset-y-0 right-0 h-full w-3/4 max-w-xs border-l animate-in slide-in-from-right',
+          side === 'bottom' &&
+            'inset-x-0 bottom-0 max-h-[88dvh] rounded-t-2xl border-t animate-in slide-in-from-bottom',
           className
         )}
       >

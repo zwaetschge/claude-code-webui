@@ -1,14 +1,5 @@
 import { memo, useCallback, useState } from 'react';
-import {
-  FileText,
-  FileCode,
-  File as FileIcon,
-  Copy,
-  RotateCcw,
-  Check,
-  Rewind,
-  Pencil,
-} from 'lucide-react';
+import { FileText, FileCode, File as FileIcon, Copy, RotateCcw, Check, Rewind } from 'lucide-react';
 import { MemoizedMarkdown } from './MemoizedMarkdown';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from './InteractiveOptions';
 import { DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
@@ -204,9 +195,6 @@ export const MessageBubble = memo(
                   title="Delete this message and everything after; reset context"
                 >
                   <Rewind className="h-3 w-3" />
-                </button>
-                <button className="mini-btn" title="Edit (coming soon)" disabled>
-                  <Pencil className="h-3 w-3" />
                 </button>
               </span>
               {timestamp && (

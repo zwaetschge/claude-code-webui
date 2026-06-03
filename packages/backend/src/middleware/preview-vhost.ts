@@ -1,8 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { Socket } from 'net';
 import type { NextFunction, Request, Response } from 'express';
+import { createReadStream, type Stats } from 'fs';
+import fs from 'fs/promises';
 import httpProxy from 'http-proxy';
 import { config } from '../config';
+import {
+  STATIC_INIT_PATH,
+  STATIC_ROOT_COOKIE,
+  decodePreviewRoot,
+  previewContentType,
+  resolvePreviewStaticPath,
+} from '../utils/previewStatic';
 
 const PORT_COOKIE = 'preview_port';
 const INIT_PATH = '/__preview-init';
@@ -45,12 +54,24 @@ function isPortAllowed(port: number): boolean {
   return true;
 }
 
-function parsePortCookie(cookieHeader: string | undefined): number | null {
+function parseCookie(cookieHeader: string | undefined, name: string): string | null {
   if (!cookieHeader) return null;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${PORT_COOKIE}=(\\d+)`));
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]*)`));
   if (!match || !match[1]) return null;
-  const port = parseInt(match[1], 10);
+  return match[1];
+}
+
+function parsePortCookie(cookieHeader: string | undefined): number | null {
+  const raw = parseCookie(cookieHeader, PORT_COOKIE);
+  if (!raw) return null;
+  const port = parseInt(raw, 10);
   return isPortAllowed(port) ? port : null;
+}
+
+function parseStaticRootCookie(cookieHeader: string | undefined): string | null {
+  const token = parseCookie(cookieHeader, STATIC_ROOT_COOKIE);
+  return token ? decodePreviewRoot(token) : null;
 }
 
 function errorPage(title: string, detail: string): string {
@@ -70,11 +91,39 @@ function errorPage(title: string, detail: string): string {
 .card{max-width:520px;padding:2rem;border:1px solid #262626;border-radius:12px;background:#111}
 h1{margin:0 0 .5rem;font-size:1.25rem;color:#fafafa}p{margin:.25rem 0;color:#a3a3a3;font-size:.875rem}
 code{font-family:ui-monospace,monospace;background:#1a1a1a;padding:.125rem .375rem;border-radius:4px;color:#d4d4d4}</style>
-</head><body><div class="card"><h1>${esc(title)}</h1><p>${esc(detail)}</p><p>Pick a port from the WebUI preview panel to start.</p></div></body></html>`;
+</head><body><div class="card"><h1>${esc(title)}</h1><p>${esc(detail)}</p><p>Pick a port or HTML file from the WebUI preview panel to start.</p></div></body></html>`;
 }
 
-function initSetupPage(port: number): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>Preview ready</title></head><body><script>location.replace('/');</script>Setting up preview for port ${port}…</body></html>`;
+function normalizePreviewPath(value: string | null): string {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/';
+  return value;
+}
+
+function cookieString(name: string, value: string, maxAgeSeconds: number): string {
+  return [
+    `${name}=${value}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    config.isProduction ? 'Secure' : '',
+    `Max-Age=${maxAgeSeconds}`,
+  ]
+    .filter(Boolean)
+    .join('; ');
+}
+
+function clearCookieString(name: string): string {
+  return cookieString(name, '', 0);
+}
+
+function initSetupPage(port: number, previewPath: string): string {
+  const destination = JSON.stringify(previewPath).replace(/</g, '\\u003c');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Preview ready</title></head><body><script>location.replace(${destination});</script>Setting up preview for port ${port}...</body></html>`;
+}
+
+function staticSetupPage(previewPath: string): string {
+  const destination = JSON.stringify(previewPath).replace(/</g, '\\u003c');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Static preview ready</title></head><body><script>location.replace(${destination});</script>Opening static preview...</body></html>`;
 }
 
 // Sets the preview_port cookie. Called via iframe src change when user picks a port.
@@ -82,6 +131,7 @@ function handleInit(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url || '/', 'http://localhost');
   const portParam = url.searchParams.get('port');
   const port = portParam ? parseInt(portParam, 10) : NaN;
+  const previewPath = normalizePreviewPath(url.searchParams.get('to'));
 
   if (!isPortAllowed(port)) {
     res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -95,41 +145,97 @@ function handleInit(req: IncomingMessage, res: ServerResponse): void {
   }
 
   // HttpOnly signed by nothing — we rely on Authelia (Traefik ForwardAuth) for AuthZ.
-  // Cookie is scoped to the preview subdomain only.
-  const cookie = [
-    `${PORT_COOKIE}=${port}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    config.isProduction ? 'Secure' : '',
-    `Max-Age=${60 * 60 * 8}`, // 8 hours
-  ]
-    .filter(Boolean)
-    .join('; ');
+  // Cookies are scoped to the preview subdomain only.
+  const cookies = [
+    cookieString(PORT_COOKIE, String(port), 60 * 60 * 8),
+    clearCookieString(STATIC_ROOT_COOKIE),
+  ];
 
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Set-Cookie': cookie,
+    'Set-Cookie': cookies,
   });
-  res.end(initSetupPage(port));
+  res.end(initSetupPage(port, previewPath));
+}
+
+function handleStaticInit(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const token = url.searchParams.get('root') || '';
+  const rootPath = decodePreviewRoot(token);
+  const fileParam = url.searchParams.get('file') || 'index.html';
+  const previewPath = normalizePreviewPath(`/${fileParam}`);
+
+  if (!rootPath) {
+    res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(errorPage('Invalid static preview', 'The preview root token is invalid.'));
+    return;
+  }
+
+  const resolvedPath = resolvePreviewStaticPath(rootPath, previewPath);
+  if (!resolvedPath) {
+    res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(errorPage('Static preview blocked', 'The requested file is not previewable.'));
+    return;
+  }
+
+  const cookies = [
+    cookieString(STATIC_ROOT_COOKIE, token, 60 * 60 * 8),
+    clearCookieString(PORT_COOKIE),
+  ];
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Set-Cookie': cookies,
+  });
+  res.end(staticSetupPage(previewPath));
 }
 
 function handleClear(_req: IncomingMessage, res: ServerResponse): void {
-  const cookie = [
-    `${PORT_COOKIE}=`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    config.isProduction ? 'Secure' : '',
-    'Max-Age=0',
-  ]
-    .filter(Boolean)
-    .join('; ');
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Set-Cookie': cookie,
+    'Set-Cookie': [clearCookieString(PORT_COOKIE), clearCookieString(STATIC_ROOT_COOKIE)],
   });
   res.end(errorPage('Preview cleared', 'Pick a port from the WebUI to reconnect.'));
+}
+
+async function serveStaticPreview(req: Request, res: Response, rootPath: string): Promise<void> {
+  const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+  const filePath = resolvePreviewStaticPath(rootPath, pathname);
+  if (!filePath) {
+    res
+      .status(403)
+      .type('html')
+      .send(errorPage('Static preview blocked', 'The requested file is not previewable.'));
+    return;
+  }
+
+  const contentType = previewContentType(filePath);
+  if (!contentType) {
+    res
+      .status(403)
+      .type('html')
+      .send(errorPage('Static preview blocked', 'This file type is not previewable.'));
+    return;
+  }
+
+  let stats: Stats;
+  try {
+    stats = await fs.stat(filePath);
+  } catch {
+    res.status(404).type('html').send(errorPage('Static file not found', pathname));
+    return;
+  }
+
+  if (!stats.isFile()) {
+    res.status(404).type('html').send(errorPage('Static file not found', pathname));
+    return;
+  }
+
+  res.status(200);
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', String(stats.size));
+  res.setHeader('Cache-Control', 'no-store');
+  createReadStream(filePath).pipe(res);
 }
 
 export function previewVhostMiddleware(req: Request, res: Response, next: NextFunction): void {
@@ -146,8 +252,26 @@ export function previewVhostMiddleware(req: Request, res: Response, next: NextFu
     return;
   }
 
+  if (reqUrl === STATIC_INIT_PATH || reqUrl.startsWith(`${STATIC_INIT_PATH}?`)) {
+    handleStaticInit(req, res);
+    return;
+  }
+
   if (reqUrl === '/__preview-clear') {
     handleClear(req, res);
+    return;
+  }
+
+  const staticRoot = parseStaticRootCookie(req.headers.cookie);
+  if (staticRoot) {
+    void serveStaticPreview(req, res, staticRoot).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : 'Static preview failed';
+      if (!res.headersSent) {
+        res.status(500).type('html').send(errorPage('Static preview failed', message));
+      } else {
+        res.end();
+      }
+    });
     return;
   }
 
@@ -157,7 +281,7 @@ export function previewVhostMiddleware(req: Request, res: Response, next: NextFu
       .status(412)
       .type('html')
       .send(
-        errorPage('No preview port selected', 'The preview session cookie is missing or invalid.')
+        errorPage('No preview target selected', 'The preview session cookie is missing or invalid.')
       );
     return;
   }
@@ -169,6 +293,11 @@ export function handlePreviewUpgrade(req: IncomingMessage, socket: Socket, head:
   const host = ((req.headers.host || '').split(':')[0] || '').toLowerCase();
   if (!isPreviewHost(host)) {
     return false;
+  }
+
+  if (parseStaticRootCookie(req.headers.cookie)) {
+    socket.destroy();
+    return true;
   }
 
   const port = parsePortCookie(req.headers.cookie);

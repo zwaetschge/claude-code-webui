@@ -30,7 +30,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useProviderStore } from '@/stores/providerStore';
 import { useCategoryStore } from '@/stores/categoryStore';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
-import { CLI_PROVIDER_ICON, CLI_PROVIDER_LABEL, UI_PROVIDER_META } from '@/lib/providers';
+import { CLI_PROVIDER_LABEL, UI_PROVIDER_META, toUiProvider } from '@/lib/providers';
 import { api, ApiError } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -52,7 +52,11 @@ const baseNavItems = [
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
-const adminNavItem = { icon: Shield, label: 'Admin', path: '/admin' };
+const adminNavItem = {
+  icon: Shield,
+  label: 'Admin',
+  path: '/settings?tab=admin&adminTab=overview',
+};
 
 type SortMode = 'updated' | 'created' | 'name' | 'starred';
 
@@ -106,6 +110,15 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
 
   const activeMatch = location.pathname.match(/^\/session\/([^/]+)/);
   const activeId = activeMatch ? activeMatch[1] : null;
+  const settingsTab = useMemo(
+    () => new URLSearchParams(location.search).get('tab'),
+    [location.search]
+  );
+  const isAdminSettingsTab =
+    settingsTab === 'admin' ||
+    settingsTab === 'admin-overview' ||
+    settingsTab === 'admin-users' ||
+    settingsTab === 'admin-audit-log';
 
   const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -286,9 +299,11 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
         <div className="space-y-1 shrink-0">
           {(user?.role === 'admin' ? [...baseNavItems, adminNavItem] : baseNavItems).map((item) => {
             const Icon = item.icon;
-            const isActive =
-              item.path === '/admin'
-                ? location.pathname.startsWith('/admin')
+            const isActive = item.path.startsWith('/settings?tab=admin')
+              ? location.pathname.startsWith('/admin') ||
+                (location.pathname === '/settings' && isAdminSettingsTab)
+              : item.path === '/settings'
+                ? location.pathname === '/settings' && !isAdminSettingsTab
                 : location.pathname === item.path;
 
             return (
@@ -560,12 +575,16 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
                                 <span className="truncate font-medium">{session.name}</span>
                                 {session.cliProvider && (
                                   <span
-                                    className="inline-flex items-center rounded bg-muted/60 px-1 py-0.5 text-[9px] font-medium text-muted-foreground shrink-0"
+                                    className="inline-flex h-4 w-4 items-center justify-center rounded bg-muted/60 p-0.5 shrink-0"
                                     title={
                                       CLI_PROVIDER_LABEL[session.cliProvider] || session.cliProvider
                                     }
                                   >
-                                    {CLI_PROVIDER_ICON[session.cliProvider] || ''}
+                                    <ProviderLogo
+                                      provider={toUiProvider(session.cliProvider)}
+                                      className="h-3 w-3"
+                                      alt=""
+                                    />
                                   </span>
                                 )}
                               </div>

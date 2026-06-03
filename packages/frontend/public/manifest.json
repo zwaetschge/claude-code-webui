@@ -2,11 +2,15 @@
   "name": "Plum Code WebUI",
   "short_name": "Plum Code",
   "description": "Web Interface for Plum Code",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0a0a0b",
-  "theme_color": "#D97757",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "orientation": "portrait-primary",
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/logos/plum.png",
@@ -21,5 +25,19 @@
       "purpose": "any maskable"
     }
   ],
-  "categories": ["developer", "productivity", "utilities"]
+  "categories": ["developer", "productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "New Session",
+      "short_name": "New",
+      "url": "/?new=true",
+      "description": "Start a new coding session"
+    },
+    {
+      "name": "Settings",
+      "short_name": "Settings",
+      "url": "/settings",
+      "description": "Open WebUI settings"
+    }
+  ]
 }

@@ -121,15 +121,45 @@ function buildManagedBlock(claudeSettings: ClaudeSettings | null): string {
 
 function spliceManagedBlock(existing: string, newBlock: string): string {
   const startIdx = existing.indexOf(MANAGED_BLOCK_START);
-  const endIdx = existing.indexOf(MANAGED_BLOCK_END);
-  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+  const endIdx = existing.lastIndexOf(MANAGED_BLOCK_END);
+  if (startIdx === -1) {
     // No managed block yet — append (with leading separator if file isn't empty)
     const sep = existing.trim() ? '\n\n' : '';
     return `${existing.trimEnd()}${sep}${newBlock}\n`;
   }
+  if (endIdx === -1 || endIdx <= startIdx) {
+    const before = existing.slice(0, startIdx);
+    return `${before.trimEnd()}\n${newBlock}\n`;
+  }
   const before = existing.slice(0, startIdx);
   const after = existing.slice(endIdx + MANAGED_BLOCK_END.length);
   return `${before.trimEnd()}\n${newBlock}\n${after.trimStart()}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function removeMirroredMcpTables(existing: string, serverNames: string[]): string {
+  let next = existing;
+  for (const name of serverNames) {
+    const escapedName = escapeRegExp(name);
+    next = next.replace(
+      new RegExp(
+        `(?:^|\\n)\\[mcp_servers\\.${escapedName}\\]\\n[\\s\\S]*?(?=\\n\\[mcp_servers\\.|\\n\\[[^\\n]+\\]|\\n${escapeRegExp(MANAGED_BLOCK_START)}|\\n${escapeRegExp(MANAGED_BLOCK_END)}|$)`,
+        'g'
+      ),
+      '\n'
+    );
+    next = next.replace(
+      new RegExp(
+        `(?:^|\\n)\\[mcp_servers\\.${escapedName}\\.env\\]\\n[\\s\\S]*?(?=\\n\\[mcp_servers\\.|\\n\\[[^\\n]+\\]|\\n${escapeRegExp(MANAGED_BLOCK_START)}|\\n${escapeRegExp(MANAGED_BLOCK_END)}|$)`,
+        'g'
+      ),
+      '\n'
+    );
+  }
+  return next.replace(/\n{3,}/g, '\n\n').trimEnd() + (next.trim() ? '\n' : '');
 }
 
 /**
@@ -153,6 +183,7 @@ export async function syncCodexConfig(
   }
 
   const managedBlock = buildManagedBlock(claudeSettings);
+  const mirroredServerNames = claudeSettings?.mcpServers ? Object.keys(claudeSettings.mcpServers) : [];
 
   await fs.mkdir(codexHome, { recursive: true });
 
@@ -163,7 +194,9 @@ export async function syncCodexConfig(
     // First run — file doesn't exist
   }
 
-  const updated = spliceManagedBlock(existing, managedBlock);
+  const dedupedExisting =
+    mirroredServerNames.length > 0 ? removeMirroredMcpTables(existing, mirroredServerNames) : existing;
+  const updated = spliceManagedBlock(dedupedExisting, managedBlock);
 
   // Skip write if nothing changed (idempotent across restarts)
   if (existing === updated) {

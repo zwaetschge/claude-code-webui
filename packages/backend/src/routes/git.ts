@@ -3,7 +3,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'path';
 import { requireAuth } from '../middleware/auth';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { config } from '../config';
+import { isAllowedBasePath } from '../utils/allowedPaths';
 import type { GitStatus, GitBranch, GitCommit } from '@claude-code-webui/shared';
 
 const router = Router();
@@ -11,9 +11,7 @@ const router = Router();
 // Validate path
 function validatePath(filePath: string): string {
   const resolvedPath = path.resolve(filePath);
-  const isAllowed = config.allowedBasePaths.some((base) => resolvedPath.startsWith(base));
-
-  if (!isAllowed) {
+  if (!isAllowedBasePath(resolvedPath)) {
     throw new AppError('Path not allowed', 403, 'FORBIDDEN_PATH');
   }
 

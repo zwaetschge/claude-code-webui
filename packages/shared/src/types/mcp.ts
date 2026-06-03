@@ -1,4 +1,5 @@
 export type McpServerType = 'subprocess' | 'sse';
+export type McpServerSource = 'database' | 'claude-settings';
 
 export interface McpServer {
   id: string;
@@ -11,6 +12,9 @@ export interface McpServer {
   env: Record<string, string>;
   enabled: boolean;
   createdAt: string;
+  source?: McpServerSource;
+  readOnly?: boolean;
+  envKeys?: string[];
 }
 
 export interface CreateMcpServerInput {

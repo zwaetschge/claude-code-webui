@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo, memo, useEffect } from 'react';
+import { useState, useRef, useCallback, useMemo, memo, useEffect, type ReactNode } from 'react';
 import {
   Send,
   Paperclip,
@@ -8,6 +8,8 @@ import {
   FileCode,
   File as FileIcon,
   StopCircle,
+  Plus,
+  Image,
   Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,6 +20,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
@@ -30,6 +35,20 @@ interface FileAttachment {
   file: File;
   preview: string | null;
   type: AttachmentType;
+}
+
+type QuickPromptItem = { label: string; value: string; hint?: string };
+type QuickPrompt = QuickPromptItem | { heading: string };
+
+interface ComposerAction {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  onSelect: () => void;
+  badge?: number;
+  badgePulse?: boolean;
+  active?: boolean;
+  disabled?: boolean;
 }
 
 // Supported file types for upload
@@ -116,11 +135,13 @@ interface ChatInputProps {
   commands?: Command[];
   selectedToolName?: string | null;
   selectedCliTool?: string | null;
-  quickPrompts?: Array<{ label: string; value: string; hint?: string } | { heading: string }>;
+  quickPrompts?: QuickPrompt[];
+  composerActions?: ComposerAction[];
   disabled?: boolean;
   isSending?: boolean;
   isExecutingTool?: boolean;
   isActive?: boolean;
+  queuesWhileActive?: boolean;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -132,10 +153,12 @@ export const ChatInput = memo(function ChatInput({
   selectedToolName,
   selectedCliTool,
   quickPrompts,
+  composerActions,
   disabled,
   isSending,
   isExecutingTool,
   isActive,
+  queuesWhileActive,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -212,10 +235,18 @@ export const ChatInput = memo(function ChatInput({
     [addFiles]
   );
 
+  const blocksSubmitForActiveRun = !!isActive && !queuesWhileActive;
+
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if ((!input.trim() && attachments.length === 0) || disabled || isSending || isExecutingTool)
+      if (
+        (!input.trim() && attachments.length === 0) ||
+        disabled ||
+        isSending ||
+        isExecutingTool ||
+        blocksSubmitForActiveRun
+      )
         return;
 
       const currentInput = input;
@@ -268,6 +299,7 @@ export const ChatInput = memo(function ChatInput({
       disabled,
       isSending,
       isExecutingTool,
+      blocksSubmitForActiveRun,
       onCommandExecute,
       onSendMessage,
       onSendMessageWithFiles,
@@ -324,6 +356,39 @@ export const ChatInput = memo(function ChatInput({
     inputRef.current?.focus();
   }, []);
 
+  const imagegenQuickPrompt = useMemo(() => {
+    return quickPrompts?.find(
+      (prompt): prompt is QuickPromptItem =>
+        !('heading' in prompt) && prompt.value.trimStart().startsWith('/imagegen')
+    );
+  }, [quickPrompts]);
+
+  const quickPromptGroups = useMemo(() => {
+    const groups: Array<{ heading: string; items: QuickPromptItem[] }> = [];
+    let currentGroup: { heading: string; items: QuickPromptItem[] } | null = null;
+
+    quickPrompts?.forEach((prompt) => {
+      if ('heading' in prompt) {
+        currentGroup = { heading: prompt.heading, items: [] };
+        groups.push(currentGroup);
+        return;
+      }
+
+      if (prompt.value.trimStart().startsWith('/imagegen')) {
+        return;
+      }
+
+      if (!currentGroup) {
+        currentGroup = { heading: 'Prompts', items: [] };
+        groups.push(currentGroup);
+      }
+
+      currentGroup.items.push(prompt);
+    });
+
+    return groups.filter((group) => group.items.length > 0);
+  }, [quickPrompts]);
+
   // Helper to get icon for attachment type
   const getAttachmentIcon = (type: AttachmentType) => {
     switch (type) {
@@ -374,7 +439,7 @@ export const ChatInput = memo(function ChatInput({
       <form
         onSubmit={handleSubmit}
         className={cn(
-          'glass-chrome flex gap-1 items-end p-1.5 rounded-2xl relative shadow-lg shadow-black/5 dark:shadow-black/20',
+          'glass-chrome chat-composer-form relative rounded-[18px] md:rounded-2xl shadow-lg shadow-black/5 dark:shadow-black/20',
           selectedCliTool && 'ring-1 ring-orange-500/30'
         )}
       >
@@ -388,129 +453,186 @@ export const ChatInput = memo(function ChatInput({
           onChange={handleFileSelect}
         />
 
-        {/* Quick prompts dropdown */}
-        {quickPrompts && quickPrompts.length > 0 && (
+        <div className="composer-input-shell">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                disabled={disabled || isSending || isExecutingTool}
-                className="h-10 w-10 shrink-0 text-muted-foreground hover:text-foreground hover:bg-foreground/5 rounded-xl"
-                title="Quick prompts"
+                disabled={disabled}
+                className="composer-control-button composer-plus-button"
+                title="Add tools and actions"
+                aria-label="Add tools and actions"
               >
-                <Sparkles className="h-5 w-5" />
+                <Plus className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="start"
               side="top"
               sideOffset={8}
-              className="glass-panel min-w-[240px] max-h-[70vh] overflow-y-auto border-foreground/10 rounded-xl p-1"
+              className="composer-plus-menu glass-panel min-w-[280px] max-h-[72vh] overflow-y-auto border-foreground/10 rounded-xl p-1"
             >
-              {quickPrompts.map((prompt, index) => {
-                if ('heading' in prompt) {
-                  return (
-                    <div key={`heading-${index}`}>
-                      {index > 0 && <DropdownMenuSeparator />}
-                      <DropdownMenuLabel className="text-xs uppercase tracking-wider text-muted-foreground font-medium px-3 pt-2 pb-1">
-                        {prompt.heading}
-                      </DropdownMenuLabel>
-                    </div>
-                  );
-                }
-                return (
-                  <DropdownMenuItem
-                    key={`${prompt.label}-${index}`}
-                    onSelect={() => handleQuickPrompt(prompt.value)}
-                    className="cursor-pointer rounded-lg px-3 py-2 focus:bg-foreground/10 flex items-center justify-between gap-3"
-                  >
-                    <span>{prompt.label}</span>
-                    {prompt.hint && (
-                      <span className="text-xs text-muted-foreground font-mono">{prompt.hint}</span>
-                    )}
-                  </DropdownMenuItem>
-                );
-              })}
+              <DropdownMenuLabel className="composer-menu-label">Add</DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={() => fileInputRef.current?.click()}
+                className="composer-plus-menu-item"
+              >
+                <Paperclip className="composer-menu-icon" />
+                <span className="flex-1">Attach files</span>
+                <span className="composer-menu-meta">Images, docs, code</span>
+              </DropdownMenuItem>
+              {imagegenQuickPrompt && (
+                <DropdownMenuItem
+                  disabled={isSending || isExecutingTool}
+                  onSelect={() => handleQuickPrompt(imagegenQuickPrompt.value)}
+                  className="composer-plus-menu-item"
+                >
+                  <Image className="composer-menu-icon" />
+                  <span className="flex-1">{imagegenQuickPrompt.label}</span>
+                  {imagegenQuickPrompt.hint && (
+                    <span className="composer-menu-meta">{imagegenQuickPrompt.hint}</span>
+                  )}
+                </DropdownMenuItem>
+              )}
+
+              {composerActions && composerActions.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="composer-menu-label">Workspace</DropdownMenuLabel>
+                  {composerActions.map((action) => (
+                    <DropdownMenuItem
+                      key={action.id}
+                      disabled={action.disabled}
+                      onSelect={action.onSelect}
+                      className={cn('composer-plus-menu-item', action.active && 'is-active')}
+                    >
+                      {action.icon && <span className="composer-menu-icon">{action.icon}</span>}
+                      <span className="flex-1">{action.label}</span>
+                      {action.badge !== undefined && action.badge > 0 && (
+                        <span
+                          className={cn(
+                            'composer-menu-badge',
+                            action.badgePulse && 'panel-badge-pulse'
+                          )}
+                        >
+                          {action.badge}
+                        </span>
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
+
+              {quickPromptGroups.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="composer-menu-label">Commands</DropdownMenuLabel>
+                  {quickPromptGroups.map((group) => (
+                    <DropdownMenuSub key={group.heading}>
+                      <DropdownMenuSubTrigger className="composer-plus-menu-item">
+                        <Sparkles className="composer-menu-icon" />
+                        <span className="flex-1">{group.heading}</span>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="composer-plus-submenu min-w-[240px] max-h-[70vh] overflow-y-auto">
+                        {group.items.map((prompt, index) => (
+                          <DropdownMenuItem
+                            key={`${group.heading}-${prompt.label}-${index}`}
+                            disabled={isSending || isExecutingTool}
+                            onSelect={() => handleQuickPrompt(prompt.value)}
+                            className="composer-plus-menu-item"
+                          >
+                            <span className="flex-1">{prompt.label}</span>
+                            {prompt.hint && (
+                              <span className="composer-menu-meta">{prompt.hint}</span>
+                            )}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  ))}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
 
-        {/* File upload button */}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => fileInputRef.current?.click()}
-          className="h-10 w-10 shrink-0 text-muted-foreground hover:text-foreground hover:bg-foreground/5 rounded-xl"
-          title="Attach files (images, text, pdf, code)"
-        >
-          <Paperclip className="h-5 w-5" />
-        </Button>
-
-        {/* Text input */}
-        <div className="flex-1 flex items-center relative">
-          {/* Command autocomplete menu */}
-          {showCommandMenu && filteredCommands.length > 0 && (
-            <CommandMenu
-              commands={filteredCommands}
-              filter=""
-              selectedIndex={commandMenuIndex}
-              onSelect={handleCommandSelect}
-              onClose={() => setShowCommandMenu(false)}
+          {/* Text input */}
+          <div className="composer-field relative">
+            {/* Command autocomplete menu */}
+            {showCommandMenu && filteredCommands.length > 0 && (
+              <CommandMenu
+                commands={filteredCommands}
+                filter=""
+                selectedIndex={commandMenuIndex}
+                onSelect={handleCommandSelect}
+                onClose={() => setShowCommandMenu(false)}
+              />
+            )}
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder={selectedToolName ? `Prompt for ${selectedToolName}...` : 'Message...'}
+              rows={1}
+              className={cn(
+                'composer-textarea w-full min-h-[40px] max-h-[148px] md:max-h-[220px] bg-transparent border-0 focus:outline-none focus:ring-0 text-base md:text-sm resize-none placeholder:text-muted-foreground/60 text-foreground'
+              )}
+              style={{ height: 'auto', overflow: 'hidden' }}
+              onInput={(e) => {
+                const target = e.target as HTMLTextAreaElement;
+                const maxHeight =
+                  typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches
+                    ? 148
+                    : 220;
+                target.style.height = 'auto';
+                target.style.height = Math.min(target.scrollHeight, maxHeight) + 'px';
+              }}
             />
-          )}
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder={selectedToolName ? `Prompt for ${selectedToolName}...` : 'Message...'}
-            rows={1}
-            className={cn(
-              'w-full min-h-[40px] max-h-[200px] px-2 py-2 bg-transparent border-0 focus:outline-none focus:ring-0 text-base md:text-sm resize-none placeholder:text-muted-foreground/60 text-foreground'
+          </div>
+
+          <div className="composer-actions-right">
+            {onInterrupt && isActive && !queuesWhileActive ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="destructive"
+                onClick={onInterrupt}
+                className="composer-control-button composer-control-danger"
+                title="Stop (Escape)"
+                aria-label="Stop generation"
+              >
+                <StopCircle className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                size="icon"
+                variant="ghost"
+                disabled={
+                  (!input.trim() && attachments.length === 0) ||
+                  disabled ||
+                  isSending ||
+                  isExecutingTool ||
+                  blocksSubmitForActiveRun
+                }
+                className={cn(
+                  'composer-control-button composer-control-send',
+                  selectedCliTool && 'composer-control-tool'
+                )}
+                title={isActive && queuesWhileActive ? 'Queue message' : 'Send'}
+                aria-label={isActive && queuesWhileActive ? 'Queue message' : 'Send message'}
+              >
+                {isSending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
             )}
-            style={{ height: 'auto', overflow: 'hidden' }}
-            onInput={(e) => {
-              const target = e.target as HTMLTextAreaElement;
-              target.style.height = 'auto';
-              target.style.height = Math.min(target.scrollHeight, 200) + 'px';
-            }}
-          />
+          </div>
         </div>
-
-        {/* Stop button - always visible, dimmed when inactive */}
-        {onInterrupt && (
-          <Button
-            type="button"
-            size="icon"
-            variant={isActive ? 'destructive' : 'ghost'}
-            onClick={onInterrupt}
-            disabled={!isActive}
-            className={cn(
-              'h-10 w-10 shrink-0 rounded-xl transition-all',
-              !isActive && 'opacity-30 hover:bg-foreground/5'
-            )}
-            title="Stop (Escape)"
-          >
-            <StopCircle className="h-5 w-5" />
-          </Button>
-        )}
-
-        {/* Send button */}
-        <Button
-          type="submit"
-          size="icon"
-          disabled={(!input.trim() && attachments.length === 0) || isSending || isExecutingTool}
-          className={cn(
-            'h-10 w-10 shrink-0 rounded-xl shadow-sm transition-all',
-            'hover:shadow-md hover:scale-105 active:scale-95',
-            selectedCliTool && 'bg-orange-600 hover:bg-orange-700'
-          )}
-        >
-          {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        </Button>
       </form>
     </div>
   );

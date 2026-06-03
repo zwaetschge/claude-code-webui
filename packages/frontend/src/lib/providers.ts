@@ -81,6 +81,14 @@ export const CLI_PROVIDER_DEFAULT_MODEL: Record<CLIProvider, string> = {
   vibe: 'mistral-vibe-cli-latest',
 };
 
+export const UI_PROVIDER_THEME_COLOR: Record<UiProvider, string> = {
+  plum: '#6d2a88',
+  claude: '#141413',
+  codex: '#000000',
+  opencode: '#160d2b',
+  vibe: '#1e1e1e',
+};
+
 export const CLI_PROVIDER_LIMIT_LABELS: Record<
   CLIProvider,
   {
@@ -175,4 +183,14 @@ export function applyProviderClass(provider: UiProvider): void {
   );
   root.classList.add(`provider-${provider}`);
   root.setAttribute('data-provider', provider);
+
+  const themeMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (themeMeta) {
+    themeMeta.content = UI_PROVIDER_THEME_COLOR[provider];
+  }
+
+  const tileMeta = document.querySelector<HTMLMetaElement>('meta[name="msapplication-TileColor"]');
+  if (tileMeta) {
+    tileMeta.content = UI_PROVIDER_THEME_COLOR[provider];
+  }
 }

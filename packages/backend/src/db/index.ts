@@ -438,6 +438,44 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
   `);
 
+  // Automation API tokens let a CLI session or supervisor bot act on behalf of a
+  // user without receiving the user's browser cookie/JWT. Store only token hashes.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      scopes_json TEXT NOT NULL,
+      expires_at DATETIME,
+      revoked_at DATETIME,
+      last_used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_tokens_user_id ON automation_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_tokens_hash ON automation_tokens(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_automation_tokens_revoked ON automation_tokens(revoked_at);
+
+    CREATE TABLE IF NOT EXISTS session_goals (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_by_token_id TEXT REFERENCES automation_tokens(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      instructions TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      priority INTEGER NOT NULL DEFAULT 0,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_goals_session_id ON session_goals(session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_goals_status ON session_goals(status);
+    CREATE INDEX IF NOT EXISTS idx_session_goals_created ON session_goals(created_at DESC);
+  `);
+
   // Bootstrap: promote SEED_ADMIN_EMAIL to admin role, or promote the first existing user
   // if no admin exists yet. Runs on every start so a fresh deploy with an env change takes
   // effect without manual SQL.

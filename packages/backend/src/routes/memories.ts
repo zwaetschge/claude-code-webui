@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
+import { isPathInside } from '../utils/allowedPaths';
 
 const router = Router();
 
@@ -29,7 +30,7 @@ function getMemoryDir(workingDirectory: string): string {
  */
 function validateMemoryPath(filePath: string, memoryDir: string): string {
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(memoryDir)) {
+  if (!isPathInside(memoryDir, resolved)) {
     throw new AppError('Path not allowed', 403, 'FORBIDDEN_PATH');
   }
   return resolved;

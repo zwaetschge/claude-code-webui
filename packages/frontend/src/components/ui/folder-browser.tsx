@@ -117,15 +117,22 @@ export function FolderBrowser({ value, onChange, onClose, showFiles = false }: F
   // Check if a path is allowed or is a parent of an allowed path
   const isPathAllowed = (path: string) => {
     if (!homeInfo?.allowedPaths) return false; // Don't allow anything until we know allowed paths
-    if (path === '/') {
+    const normalizePath = (value: string) => value.replace(/\/+$/, '') || '/';
+    const isSameOrInside = (base: string, candidate: string) =>
+      candidate === base ||
+      (base === '/' ? candidate.startsWith('/') : candidate.startsWith(`${base}/`));
+    const normalizedPath = normalizePath(path);
+    if (normalizedPath === '/') {
       // Root is only allowed if explicitly in the list
       return homeInfo.allowedPaths.includes('/');
     }
-    return homeInfo.allowedPaths.some(
-      (base) =>
-        path.startsWith(base) || // path is inside allowed base
-        base.startsWith(path + '/') // path is a parent of allowed base
-    );
+    return homeInfo.allowedPaths.some((rawBase) => {
+      const base = normalizePath(rawBase);
+      return (
+        isSameOrInside(base, normalizedPath) || // path is inside allowed base
+        isSameOrInside(normalizedPath, base) // path is a parent of allowed base
+      );
+    });
   };
 
   const handleSelect = () => {

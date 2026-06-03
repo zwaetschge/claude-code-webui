@@ -9,6 +9,24 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
+const CHUNK_RELOAD_KEY_PREFIX = 'plum:chunk-reload-attempted';
+const CHUNK_ERROR_PATTERNS = [
+  'ChunkLoadError',
+  'Failed to fetch dynamically imported module',
+  'error loading dynamically imported module',
+  'Importing a module script failed',
+  'dynamically imported module',
+];
+
+function isChunkLoadError(error: Error): boolean {
+  return CHUNK_ERROR_PATTERNS.some((pattern) => error.message.includes(pattern));
+}
+
+function getChunkReloadKey(): string {
+  const runtimeScript = document.querySelector<HTMLScriptElement>('script[type="module"][src]');
+  return `${CHUNK_RELOAD_KEY_PREFIX}:${runtimeScript?.src || window.location.pathname}`;
+}
+
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };
 
@@ -18,6 +36,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('[ErrorBoundary]', error, info.componentStack);
+
+    if (!isChunkLoadError(error)) {
+      return;
+    }
+
+    const reloadKey = getChunkReloadKey();
+    if (window.sessionStorage.getItem(reloadKey) === '1') {
+      return;
+    }
+
+    window.sessionStorage.setItem(reloadKey, '1');
+    window.location.reload();
   }
 
   handleReset = (): void => {

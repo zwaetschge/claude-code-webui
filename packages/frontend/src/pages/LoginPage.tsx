@@ -72,37 +72,27 @@ const providerStyles: Record<
     bg: string;
     hover: string;
     text: string;
-    gradient: string;
-    glow: string;
   }
 > = {
   claude: {
-    bg: 'bg-[#CC785C]',
-    hover: 'hover:bg-[#B8694F]',
+    bg: 'provider-login-button provider-login-button-claude',
+    hover: '',
     text: 'text-white',
-    gradient: 'from-[#CC785C] to-[#C377FF]',
-    glow: 'shadow-[#CC785C]/30',
   },
   codex: {
-    bg: 'bg-black',
-    hover: 'hover:bg-neutral-900',
+    bg: 'provider-login-button provider-login-button-codex',
+    hover: '',
     text: 'text-white',
-    gradient: 'from-white to-[#74aa9c]',
-    glow: 'shadow-white/20',
   },
   opencode: {
-    bg: 'bg-[#3b82f6]',
-    hover: 'hover:bg-[#2563eb]',
+    bg: 'provider-login-button provider-login-button-opencode',
+    hover: '',
     text: 'text-white',
-    gradient: 'from-[#3b82f6] to-[#6366f1]',
-    glow: 'shadow-[#3b82f6]/30',
   },
   vibe: {
-    bg: 'bg-[#FA520F]',
-    hover: 'hover:bg-[#E04510]',
+    bg: 'provider-login-button provider-login-button-vibe',
+    hover: '',
     text: 'text-white',
-    gradient: 'from-[#FA520F] to-[#FFB347]',
-    glow: 'shadow-[#FA520F]/30',
   },
 };
 
@@ -249,55 +239,20 @@ export function LoginPage() {
     providers?.vibe && 'vibe',
     providers?.claude && 'claude',
   ].filter(Boolean);
+  const loginGalaxyProvider = hoveredProvider || 'plum';
 
   return (
     <div className="relative min-h-screen bg-background overflow-hidden">
-      {/* Animated gradient mesh background */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        {/* Dynamic gradient orbs */}
-        <div
-          className={cn(
-            'absolute w-[800px] h-[800px] rounded-full blur-[120px] transition-all duration-1000 ease-out',
-            hoveredProvider === 'claude' && 'bg-[#CC785C]/20',
-            hoveredProvider === 'codex' && 'bg-white/10',
-            hoveredProvider === 'opencode' && 'bg-[#3b82f6]/20',
-            !hoveredProvider && 'bg-primary/10'
-          )}
-          style={{
-            top: '10%',
-            left: '-20%',
-            transform: hoveredProvider ? 'scale(1.2)' : 'scale(1)',
-          }}
-        />
-        <div
-          className={cn(
-            'absolute w-[600px] h-[600px] rounded-full blur-[100px] transition-all duration-1000 ease-out',
-            hoveredProvider === 'claude' && 'bg-[#C377FF]/15',
-            hoveredProvider === 'codex' && 'bg-[#74aa9c]/15',
-            hoveredProvider === 'opencode' && 'bg-[#6366f1]/15',
-            !hoveredProvider && 'bg-accent/10'
-          )}
-          style={{
-            bottom: '5%',
-            right: '-10%',
-            transform: hoveredProvider ? 'scale(1.3) translateY(-20px)' : 'scale(1)',
-          }}
-        />
-
-        {/* Subtle grid pattern */}
-        <div
-          className="absolute inset-0 opacity-[0.015]"
-          style={{
-            backgroundImage: `
-              linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
-            `,
-            backgroundSize: '60px 60px',
-          }}
-        />
-
-        {/* Diagonal accent line */}
-        <div className="absolute top-0 right-0 w-px h-screen bg-gradient-to-b from-transparent via-primary/20 to-transparent transform rotate-12 translate-x-32" />
+      <div
+        className={cn(
+          'fixed inset-0 overflow-hidden pointer-events-none login-galaxy',
+          `login-galaxy-${loginGalaxyProvider}`
+        )}
+      >
+        <div className="login-galaxy-stars" />
+        <div className="login-galaxy-band login-galaxy-band-main" />
+        <div className="login-galaxy-band login-galaxy-band-cross" />
+        <div className="login-galaxy-haze" />
       </div>
 
       {/* Main content */}
@@ -382,13 +337,12 @@ export function LoginPage() {
                   onMouseEnter={() => setHoveredProvider('codex')}
                   onMouseLeave={() => setHoveredProvider(null)}
                   className={cn(
-                    'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                    'group relative w-full h-14 rounded-lg font-medium text-base transition-all duration-300',
                     'flex items-center justify-between px-5',
                     providerStyles.codex.bg,
                     providerStyles.codex.hover,
                     providerStyles.codex.text,
-                    'hover:shadow-lg hover:shadow-white/10 hover:scale-[1.02] active:scale-[0.98]',
-                    'border border-neutral-800'
+                    'hover:scale-[1.02] active:scale-[0.98]'
                   )}
                 >
                   <span className="flex items-center gap-3">
@@ -406,12 +360,12 @@ export function LoginPage() {
                     onMouseEnter={() => setHoveredProvider('opencode')}
                     onMouseLeave={() => setHoveredProvider(null)}
                     className={cn(
-                      'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                      'group relative w-full h-14 rounded-lg font-medium text-base transition-all duration-300',
                       'flex items-center justify-between px-5',
                       providerStyles.opencode.bg,
                       providerStyles.opencode.hover,
                       providerStyles.opencode.text,
-                      'hover:shadow-lg hover:shadow-[#3b82f6]/25 hover:scale-[1.02] active:scale-[0.98]'
+                      'hover:scale-[1.02] active:scale-[0.98]'
                     )}
                   >
                     <span className="flex items-center gap-3">
@@ -429,12 +383,12 @@ export function LoginPage() {
                   onMouseEnter={() => setHoveredProvider('vibe')}
                   onMouseLeave={() => setHoveredProvider(null)}
                   className={cn(
-                    'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                    'group relative w-full h-14 rounded-lg font-medium text-base transition-all duration-300',
                     'flex items-center justify-between px-5',
                     providerStyles.vibe.bg,
                     providerStyles.vibe.hover,
                     providerStyles.vibe.text,
-                    'hover:shadow-lg hover:shadow-[#FA520F]/25 hover:scale-[1.02] active:scale-[0.98]'
+                    'hover:scale-[1.02] active:scale-[0.98]'
                   )}
                 >
                   <span className="flex items-center gap-3">
@@ -455,12 +409,12 @@ export function LoginPage() {
                     onMouseEnter={() => setHoveredProvider('claude')}
                     onMouseLeave={() => setHoveredProvider(null)}
                     className={cn(
-                      'group relative w-full h-14 rounded-xl font-medium text-base transition-all duration-300',
+                      'group relative w-full h-14 rounded-lg font-medium text-base transition-all duration-300',
                       'flex items-center justify-between px-5',
                       providerStyles.claude.bg,
                       providerStyles.claude.hover,
                       providerStyles.claude.text,
-                      'hover:shadow-lg hover:shadow-[#CC785C]/25 hover:scale-[1.02] active:scale-[0.98]'
+                      'hover:scale-[1.02] active:scale-[0.98]'
                     )}
                   >
                     <span className="flex items-center gap-3">

@@ -1540,6 +1540,28 @@ interface CodexPreparedTurn {
   codexNativeSlashCommand: boolean;
 }
 
+export interface SessionRuntimeSnapshot {
+  running: boolean;
+  provider: CLIProvider | null;
+  mode: SessionMode | null;
+  model: string | null;
+  workingDirectory: string | null;
+  claudeSessionId: string | null;
+  busy: boolean;
+  streaming: boolean;
+  currentToolName: string | null;
+  currentAgentType: string | null;
+  queueDepth: number;
+  queueItems: Array<{
+    id: string;
+    preview: string;
+    createdAt: string;
+    attachments?: number;
+  }>;
+  lastActivityAt: string | null;
+  disconnectedAt: string | null;
+}
+
 export class ClaudeProcessManager {
   private processes: Map<string, ClaudeProcess> = new Map();
   private pendingModes: Map<string, SessionMode> = new Map(); // Store modes for sessions not yet started
@@ -4703,6 +4725,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
       provider: proc.cliProvider,
       depth: items.length,
       items,
+      busy:
+        proc.cliProvider === 'codex'
+          ? !proc.codexIdle || items.length > 0
+          : proc.cliProvider === 'vibe'
+            ? !proc.vibeIdle
+            : proc.isStreaming || !!proc.currentToolName,
       preempting: !!proc.codexPreemptingForQueuedTurn,
     });
   }
@@ -5067,8 +5095,8 @@ ${proc.contextReminder.summary}
 
     const recordMessage = options?.recordMessage !== false;
     const updateLastMessage = options?.updateLastMessage !== false;
-    let recordedMessageId = nanoid();
-    let recordedCreatedAt = new Date().toISOString();
+    const recordedMessageId = nanoid();
+    const recordedCreatedAt = new Date().toISOString();
 
     if (recordMessage) {
       // Save user message and emit to frontend (show original message, images as metadata)
@@ -5456,6 +5484,58 @@ ${proc.contextReminder.summary}
 
   getRunningSessionIds(): string[] {
     return Array.from(this.processes.keys());
+  }
+
+  getSessionRuntimeSnapshot(sessionId: string): SessionRuntimeSnapshot {
+    const proc = this.processes.get(sessionId);
+    if (!proc) {
+      return {
+        running: false,
+        provider: null,
+        mode: this.pendingModes.get(sessionId) ?? null,
+        model: null,
+        workingDirectory: null,
+        claudeSessionId: null,
+        busy: false,
+        streaming: false,
+        currentToolName: null,
+        currentAgentType: null,
+        queueDepth: 0,
+        queueItems: [],
+        lastActivityAt: null,
+        disconnectedAt: null,
+      };
+    }
+
+    const queueItems = (proc.codexQueuedTurns ?? []).map((turn) => ({
+      id: turn.queueId,
+      preview: turn.originalMessage.slice(0, 240),
+      createdAt: turn.queuedAt,
+      attachments: turn.attachments?.length,
+    }));
+    const busy =
+      proc.cliProvider === 'codex'
+        ? !proc.codexIdle || queueItems.length > 0
+        : proc.cliProvider === 'vibe'
+          ? !proc.vibeIdle
+          : proc.isStreaming || !!proc.currentToolName;
+
+    return {
+      running: true,
+      provider: proc.cliProvider,
+      mode: proc.mode,
+      model: proc.model,
+      workingDirectory: proc.workingDirectory,
+      claudeSessionId: proc.claudeSessionId,
+      busy,
+      streaming: proc.isStreaming,
+      currentToolName: proc.currentToolName,
+      currentAgentType: proc.currentAgentType,
+      queueDepth: queueItems.length,
+      queueItems,
+      lastActivityAt: new Date(proc.lastActivityAt).toISOString(),
+      disconnectedAt: proc.disconnectedAt ? new Date(proc.disconnectedAt).toISOString() : null,
+    };
   }
 
   /**

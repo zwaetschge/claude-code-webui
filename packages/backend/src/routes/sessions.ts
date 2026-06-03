@@ -10,6 +10,7 @@ import { config } from '../config';
 import { safeJsonParse } from '../utils/json';
 import { rateLimiters } from '../middleware/rateLimiter';
 import { getProcessManager } from '../websocket';
+import { isAllowedBasePath } from '../utils/allowedPaths';
 
 const router = Router();
 
@@ -35,8 +36,7 @@ const updateModeSchema = z.object({
 
 // Validate working directory
 function validateWorkingDirectory(dir: string): boolean {
-  const resolvedPath = path.resolve(dir);
-  return config.allowedBasePaths.some((base) => resolvedPath.startsWith(base));
+  return isAllowedBasePath(dir);
 }
 
 // Sanitize session name for folder creation
@@ -221,8 +221,9 @@ router.put('/:id', requireAuth, (req, res) => {
   }
 
   const { name, workingDirectory } = parsed.data;
+  const resolvedWorkingDirectory = workingDirectory ? path.resolve(workingDirectory) : null;
 
-  if (workingDirectory && !validateWorkingDirectory(workingDirectory)) {
+  if (resolvedWorkingDirectory && !validateWorkingDirectory(resolvedWorkingDirectory)) {
     throw new AppError('Working directory not allowed', 400, 'INVALID_PATH');
   }
 
@@ -233,9 +234,9 @@ router.put('/:id', requireAuth, (req, res) => {
     updates.push('name = ?');
     values.push(name);
   }
-  if (workingDirectory) {
+  if (resolvedWorkingDirectory) {
     updates.push('working_directory = ?');
-    values.push(workingDirectory);
+    values.push(resolvedWorkingDirectory);
   }
 
   if (updates.length > 0) {

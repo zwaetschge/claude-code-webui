@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Trash2,
@@ -33,7 +34,10 @@ import {
   X,
   Lock,
   User,
+  Users,
   Shield,
+  FileText,
+  LayoutDashboard,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -72,6 +76,10 @@ import type {
 } from '@claude-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { CLI_PROVIDER_LABEL } from '@/lib/providers';
+import { useAuthStore } from '@/stores/authStore';
+import { AdminOverviewPage } from '@/pages/admin/AdminOverviewPage';
+import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
+import { AdminAuditLogPage } from '@/pages/admin/AdminAuditLogPage';
 
 interface AgentInfo {
   id: string;
@@ -172,8 +180,60 @@ interface ProviderDiagnostic {
   } | null;
 }
 
+type SettingsTab =
+  | 'general'
+  | 'security'
+  | 'api-keys'
+  | 'integrations'
+  | 'diagnostics'
+  | 'extensions'
+  | 'admin';
+
+type AdminSettingsTab = 'overview' | 'users' | 'audit-log';
+
+const SETTINGS_TABS = new Set<SettingsTab>([
+  'general',
+  'security',
+  'api-keys',
+  'integrations',
+  'diagnostics',
+  'extensions',
+  'admin',
+]);
+
+const ADMIN_SETTINGS_TABS = new Set<AdminSettingsTab>(['overview', 'users', 'audit-log']);
+
+function getSettingsTab(tab: string | null, isAdmin: boolean): SettingsTab {
+  if (
+    tab === 'admin-overview' ||
+    tab === 'admin-users' ||
+    tab === 'admin-audit-log' ||
+    tab === 'admin'
+  ) {
+    return isAdmin ? 'admin' : 'general';
+  }
+
+  if (tab && SETTINGS_TABS.has(tab as SettingsTab)) {
+    return tab === 'admin' && !isAdmin ? 'general' : (tab as SettingsTab);
+  }
+
+  return 'general';
+}
+
+function getAdminSettingsTab(tab: string | null, adminTab: string | null): AdminSettingsTab {
+  if (adminTab && ADMIN_SETTINGS_TABS.has(adminTab as AdminSettingsTab)) {
+    return adminTab as AdminSettingsTab;
+  }
+
+  if (tab === 'admin-users') return 'users';
+  if (tab === 'admin-audit-log') return 'audit-log';
+  return 'overview';
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const configProvider = useMemo(() => 'claude' as const, []);
   const configQuery = useMemo(
     () => `provider=${encodeURIComponent(configProvider)}`,
@@ -182,6 +242,34 @@ export function SettingsPage() {
   const withProvider = useMemo(() => {
     return (endpoint: string) => `${endpoint}${endpoint.includes('?') ? '&' : '?'}${configQuery}`;
   }, [configQuery]);
+  const activeTab = useMemo(
+    () => getSettingsTab(searchParams.get('tab'), isAdmin),
+    [isAdmin, searchParams]
+  );
+  const activeAdminTab = useMemo(
+    () => getAdminSettingsTab(searchParams.get('tab'), searchParams.get('adminTab')),
+    [searchParams]
+  );
+  const handleSettingsTabChange = (value: string) => {
+    const tab = value as SettingsTab;
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab);
+
+    if (tab === 'admin') {
+      next.set('adminTab', activeAdminTab);
+    } else {
+      next.delete('adminTab');
+    }
+
+    setSearchParams(next);
+  };
+  const handleAdminTabChange = (value: string) => {
+    const adminTab = value as AdminSettingsTab;
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'admin');
+    next.set('adminTab', adminTab);
+    setSearchParams(next);
+  };
   const [showMcpForm, setShowMcpForm] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
@@ -1122,7 +1210,12 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto pb-12 space-y-6 md:space-y-8">
+      <div
+        className={cn(
+          'mx-auto pb-12 space-y-6 md:space-y-8',
+          activeTab === 'admin' ? 'max-w-7xl' : 'max-w-5xl'
+        )}
+      >
         {/* Status Overview Grid */}
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
           {/* CLI Status Card */}
@@ -1233,8 +1326,8 @@ export function SettingsPage() {
         </div>
 
         {/* Tabs Navigation */}
-        <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-6 h-12">
+        <Tabs value={activeTab} onValueChange={handleSettingsTabChange} className="w-full">
+          <TabsList className={cn('grid w-full h-12', isAdmin ? 'grid-cols-7' : 'grid-cols-6')}>
             <TabsTrigger value="general" className="gap-2">
               <Settings2 className="h-4 w-4" />
               <span className="hidden sm:inline">General</span>
@@ -1259,6 +1352,12 @@ export function SettingsPage() {
               <Puzzle className="h-4 w-4" />
               <span className="hidden sm:inline">Extensions</span>
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="admin" className="gap-2">
+                <Shield className="h-4 w-4" />
+                <span className="hidden sm:inline">Admin</span>
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* Security Tab */}
@@ -2818,6 +2917,12 @@ export function SettingsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <p className="font-medium">{server.name}</p>
+                            {server.readOnly && (
+                              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                <Lock className="h-3 w-3" />
+                                Global
+                              </span>
+                            )}
                             {testResult?.connected === true && (
                               <span className="text-xs text-green-600 dark:text-green-400">
                                 Connected
@@ -2860,14 +2965,16 @@ export function SettingsPage() {
                           )}
                           <span className="ml-1 text-xs">Test</span>
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteMcpMutation.mutate(server.id)}
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {!server.readOnly && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteMcpMutation.mutate(server.id)}
+                            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     );
                   })}
@@ -3531,6 +3638,37 @@ export function SettingsPage() {
               </div>
             </section>
           </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="admin" className="space-y-6">
+              <Tabs value={activeAdminTab} onValueChange={handleAdminTabChange} className="w-full">
+                <TabsList className="grid h-11 w-full max-w-xl grid-cols-3">
+                  <TabsTrigger value="overview" className="gap-2">
+                    <LayoutDashboard className="h-4 w-4" />
+                    <span className="hidden sm:inline">Overview</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="users" className="gap-2">
+                    <Users className="h-4 w-4" />
+                    <span className="hidden sm:inline">Users</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="audit-log" className="gap-2">
+                    <FileText className="h-4 w-4" />
+                    <span className="hidden sm:inline">Audit Log</span>
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="overview" className="space-y-4">
+                  <AdminOverviewPage />
+                </TabsContent>
+                <TabsContent value="users" className="space-y-4">
+                  <AdminUsersPage />
+                </TabsContent>
+                <TabsContent value="audit-log" className="space-y-4">
+                  <AdminAuditLogPage />
+                </TabsContent>
+              </Tabs>
+            </TabsContent>
+          )}
         </Tabs>
 
         {/* Dialogs */}
