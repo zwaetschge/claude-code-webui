@@ -12,21 +12,21 @@ Self-hosted web interface for Codex, OpenCode, Mistral Vibe, and Claude Code CLI
 
 ## Desktop
 
-![Sessions dashboard](docs/screenshots/dashboard.png)
+![Sessions dashboard](docs/screenshots/plum-dashboard.png)
 _Sessions dashboard - create or resume projects, filter by provider, and start Codex/OpenCode/Vibe/Claude sessions from one place._
 
-![Codex chat](docs/screenshots/chat-codex.png)
+![Codex chat](docs/screenshots/plum-chat-codex.png)
 _Codex chat - streaming output, tool execution, provider/model controls, YOLO mode, usage limits, and mobile-aware layout._
 
-![Analytics page](docs/screenshots/analytics.png)
+![Analytics page](docs/screenshots/plum-analytics.png)
 _Analytics - unified token volume, API-equivalent spend, cache efficiency, provider mix, pricing health, and per-model breakdown._
 
-![Extensions settings](docs/screenshots/settings-extensions.png)
+![Extensions settings](docs/screenshots/plum-settings-extensions.png)
 _Extensions - manage MCP servers, shared agents, skills, plugins, and provider-specific auth/config from the settings UI._
 
 ## Mobile
 
-<img src="docs/screenshots/mobile-chat.png" alt="Mobile chat view" width="320" />
+<img src="docs/screenshots/plum-mobile-chat.png" alt="Mobile chat view" width="320" />
 
 _Responsive chat with the same provider-aware UI on phone-sized viewports._
 
