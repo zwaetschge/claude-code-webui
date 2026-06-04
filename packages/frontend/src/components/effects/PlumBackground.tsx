@@ -58,7 +58,6 @@ export function PlumBackground({ className, enableCursorGlow = true }: PlumBackg
       )}
     >
       <div className="absolute inset-0 bg-background/70 backdrop-blur-[70px]" />
-      <div className="login-galaxy-stars" />
       <div className="login-galaxy-band login-galaxy-band-main" />
       <div className="login-galaxy-band login-galaxy-band-cross" />
       <div className="login-galaxy-haze" />

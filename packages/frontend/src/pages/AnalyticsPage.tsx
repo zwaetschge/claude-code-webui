@@ -591,7 +591,7 @@ export function AnalyticsPage() {
   }, [timeline, providerSeries, chartMetric]);
 
   return (
-    <div className="container mx-auto py-6 px-4 max-w-7xl space-y-8">
+    <div className="analytics-shell glass-page container mx-auto py-6 px-4 max-w-7xl space-y-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-muted-foreground">

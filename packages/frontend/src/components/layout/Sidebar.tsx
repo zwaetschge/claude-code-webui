@@ -10,7 +10,6 @@ import {
   User,
   Star,
   BarChart3,
-  Shield,
   Search,
   X,
   MoreHorizontal,
@@ -51,12 +50,6 @@ const baseNavItems = [
   { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
-
-const adminNavItem = {
-  icon: Shield,
-  label: 'Admin',
-  path: '/settings?tab=admin&adminTab=overview',
-};
 
 type SortMode = 'updated' | 'created' | 'name' | 'starred';
 
@@ -110,15 +103,6 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
 
   const activeMatch = location.pathname.match(/^\/session\/([^/]+)/);
   const activeId = activeMatch ? activeMatch[1] : null;
-  const settingsTab = useMemo(
-    () => new URLSearchParams(location.search).get('tab'),
-    [location.search]
-  );
-  const isAdminSettingsTab =
-    settingsTab === 'admin' ||
-    settingsTab === 'admin-overview' ||
-    settingsTab === 'admin-users' ||
-    settingsTab === 'admin-audit-log';
 
   const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -297,13 +281,11 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
       <nav className="flex-1 flex flex-col min-h-0 p-2 overflow-hidden">
         {/* Top nav */}
         <div className="space-y-1 shrink-0">
-          {(user?.role === 'admin' ? [...baseNavItems, adminNavItem] : baseNavItems).map((item) => {
+          {baseNavItems.map((item) => {
             const Icon = item.icon;
-            const isActive = item.path.startsWith('/settings?tab=admin')
-              ? location.pathname.startsWith('/admin') ||
-                (location.pathname === '/settings' && isAdminSettingsTab)
-              : item.path === '/settings'
-                ? location.pathname === '/settings' && !isAdminSettingsTab
+            const isActive =
+              item.path === '/settings'
+                ? location.pathname === '/settings'
                 : location.pathname === item.path;
 
             return (

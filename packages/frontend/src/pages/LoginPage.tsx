@@ -249,7 +249,6 @@ export function LoginPage() {
           `login-galaxy-${loginGalaxyProvider}`
         )}
       >
-        <div className="login-galaxy-stars" />
         <div className="login-galaxy-band login-galaxy-band-main" />
         <div className="login-galaxy-band login-galaxy-band-cross" />
         <div className="login-galaxy-haze" />

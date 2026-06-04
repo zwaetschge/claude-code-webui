@@ -1,5 +1,5 @@
 import { memo, useCallback, useState } from 'react';
-import { FileText, FileCode, File as FileIcon, Copy, RotateCcw, Check, Rewind } from 'lucide-react';
+import { FileText, FileCode, File as FileIcon, Copy, RotateCcw, Check } from 'lucide-react';
 import { MemoizedMarkdown } from './MemoizedMarkdown';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from './InteractiveOptions';
 import { DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
@@ -78,29 +78,6 @@ export const MessageBubble = memo(
       if (message.role !== 'user' || !message.content.trim()) return;
       socketService.sendMessage(sessionId, message.content);
     }, [message.content, message.role, sessionId]);
-
-    const handleRewind = useCallback(async () => {
-      const confirmed = window.confirm(
-        `Rewind here? This deletes this message and everything after, and resets the ${assistantName} context.`
-      );
-      if (!confirmed) return;
-      try {
-        const token = useAuthStore.getState().token || '';
-        const res = await fetch(`/api/sessions/${sessionId}/rewind`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ messageId: message.id }),
-        });
-        if (!res.ok) throw new Error(`Rewind failed (${res.status})`);
-        await queryClient.invalidateQueries({ queryKey: ['session', sessionId, 'messages'] });
-        await queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
-      } catch (err) {
-        console.error('Rewind failed:', err);
-      }
-    }, [assistantName, message.id, sessionId, queryClient]);
 
     const token = useAuthStore.getState().token || '';
     const timestamp = formatMessageTime(message.createdAt);
@@ -189,13 +166,6 @@ export const MessageBubble = memo(
                 >
                   <RotateCcw className="h-3 w-3" />
                 </button>
-                <button
-                  onClick={handleRewind}
-                  className="mini-btn"
-                  title="Delete this message and everything after; reset context"
-                >
-                  <Rewind className="h-3 w-3" />
-                </button>
               </span>
               {timestamp && (
                 <span
@@ -261,11 +231,6 @@ export const MessageBubble = memo(
                 <Copy className="h-3 w-3" />
               )}
               <span>{copied ? 'Copied' : 'Copy'}</span>
-            </button>
-            <span className="sep" />
-            <button onClick={handleRewind} className="a danger">
-              <Rewind className="h-3 w-3" />
-              <span>Rewind</span>
             </button>
           </div>
         </div>

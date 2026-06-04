@@ -126,7 +126,7 @@ export function Layout() {
             </span>
           </Link>
 
-          {isFullBleed && headerUsage && headerUsage.contextWindow > 0 && (
+          {isFullBleed && headerUsage && (
             <div className="mobile-header-context shrink-0">
               <ContextPopover usage={headerUsage} />
             </div>

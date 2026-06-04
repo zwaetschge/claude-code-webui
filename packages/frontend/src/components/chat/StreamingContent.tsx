@@ -25,6 +25,8 @@ interface StreamingContentProps {
   providerLabel?: string;
 }
 
+const LIVE_MARKDOWN_CHAR_LIMIT = 6000;
+
 // Strip ANSI escape codes for clean text
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[\?[0-9;]*[a-zA-Z]/g, '');
@@ -262,6 +264,19 @@ function parseClaudeOutput(content: string): {
   return { type: 'empty' };
 }
 
+type ParsedStreamingOutput = ReturnType<typeof parseClaudeOutput>;
+
+function parseProviderOutput(content: string, provider: UiProvider): ParsedStreamingOutput {
+  // Codex/OpenCode/Vibe stream clean assistant deltas through the backend. The
+  // heavy terminal-screen parser exists for legacy Claude CLI output only.
+  if (provider !== 'claude') {
+    const cleanContent = stripAnsi(content);
+    return cleanContent.trim() ? { type: 'response', message: cleanContent } : { type: 'empty' };
+  }
+
+  return parseClaudeOutput(content);
+}
+
 // Trust Dialog Component
 function TrustDialog({
   path,
@@ -441,20 +456,20 @@ function ThinkingIndicator({
   provider: UiProvider;
 }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <div
-        className={cn(
-          'flex items-center justify-center w-14 h-14',
-          isIdeating ? 'text-blue-500' : 'text-primary'
-        )}
-      >
-        <ProviderLoader provider={provider} size={56} accent={isIdeating} />
+    <div className={cn('pl-inline-thinking', isIdeating && 'is-ideating')}>
+      <div className="pl-inline-thinking-mark">
+        <ProviderLoader provider={provider} size={24} accent={isIdeating} />
       </div>
-      <div className="flex flex-col">
-        <span className="text-sm font-medium">
-          {isIdeating ? `${providerLabel} is ideating...` : `${providerLabel} is thinking...`}
+      <div className="min-w-0">
+        <span className="pl-inline-thinking-title">
+          {isIdeating ? `${providerLabel} is ideating` : `${providerLabel} is thinking`}
+          <span className="pl-thinking-dots" aria-hidden="true">
+            <span>.</span>
+            <span>.</span>
+            <span>.</span>
+          </span>
         </span>
-        {thinkingTime && <span className="text-xs text-muted-foreground">{thinkingTime}</span>}
+        {thinkingTime && <span className="pl-inline-thinking-detail">{thinkingTime}</span>}
       </div>
     </div>
   );
@@ -492,19 +507,34 @@ function PlanModeIndicator({
   );
 }
 
-// Claude response with markdown and LaTeX support — renders streaming partial
-// text; trailing per-provider cursor (Template B) signals live streaming.
+function LiveStreamingText({ message }: { message: string }) {
+  return (
+    <div className="whitespace-pre-wrap break-words text-sm leading-7 text-foreground">
+      {message}
+    </div>
+  );
+}
+
+// Live response with markdown and LaTeX support for normal-sized partial text.
+// Very long partial streams render as plain text until the final persisted
+// message arrives; that avoids reparsing a large markdown document every flush.
 function ClaudeResponse({ message, provider }: { message: string; provider: UiProvider }) {
+  const shouldUsePlainText = message.length > LIVE_MARKDOWN_CHAR_LIMIT;
+
   return (
     <div className="flex gap-3">
       <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
         <Bot className="h-4 w-4 text-primary" />
       </div>
       <div className={cn('flex-1 min-w-0', streamingContentClass(provider))}>
-        <MemoizedMarkdown
-          content={message}
-          className="prose prose-sm dark:prose-invert max-w-none"
-        />
+        {shouldUsePlainText ? (
+          <LiveStreamingText message={message} />
+        ) : (
+          <MemoizedMarkdown
+            content={message}
+            className="prose prose-sm dark:prose-invert max-w-none"
+          />
+        )}
         <StreamingCursor provider={provider} />
       </div>
     </div>
@@ -521,15 +551,10 @@ export function StreamingContent({
   const resolvedProvider = provider ?? uiProvider;
   const providerLabel = explicitProviderLabel ?? UI_PROVIDER_META[resolvedProvider].label;
   const providerName = UI_PROVIDER_META[resolvedProvider].productName;
-  const parsed = useMemo(() => {
-    const clean = stripAnsi(content);
-    const result = parseClaudeOutput(content);
-    console.log('StreamingContent parsed:', result.type);
-    console.log('Clean content:', clean);
-    console.log('Has bullet:', /[●○◉◎]/.test(clean));
-    console.log('Has Hatching:', clean.includes('Hatching'));
-    return result;
-  }, [content]);
+  const parsed = useMemo(
+    () => parseProviderOutput(content, resolvedProvider),
+    [content, resolvedProvider]
+  );
 
   if (parsed.type === 'welcome' && parsed.welcomeData) {
     return <WelcomeScreen data={parsed.welcomeData} providerName={providerName} />;
@@ -551,19 +576,14 @@ export function StreamingContent({
 
   if (parsed.type === 'thinking') {
     return (
-      <Card
-        className={cn(
-          'max-w-[80%] p-0 bg-card border overflow-hidden',
-          parsed.isIdeating && 'border-blue-500/30'
-        )}
-      >
+      <div className={cn('max-w-full', parsed.isIdeating && 'text-blue-500')}>
         <ThinkingIndicator
           thinkingTime={parsed.thinkingTime}
           isIdeating={parsed.isIdeating}
           providerLabel={providerLabel}
           provider={resolvedProvider}
         />
-      </Card>
+      </div>
     );
   }
 

@@ -199,12 +199,12 @@ async function main() {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
           // Socket.IO upgrades same-origin XHR to WebSocket. Browsers differ on
           // whether 'self' implicitly covers ws:/wss:, so we list both explicitly.
           connectSrc: ["'self'", 'ws:', 'wss:'],
-          fontSrc: ["'self'", 'data:'],
+          fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
           frameSrc: ["'self'"],
           objectSrc: ["'none'"],
           baseUri: ["'self'"],

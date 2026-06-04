@@ -11,12 +11,35 @@ import type {
 } from '@claude-code-webui/shared';
 
 // --- Streaming content buffer ---
-// Accumulates content chunks and flushes to Zustand at ~30fps via RAF
+// Accumulates CLI deltas and flushes to Zustand at a bounded cadence. Rendering
+// the whole streaming markdown tree on every browser frame is expensive enough
+// to drag the chat below 60fps on long answers, so text updates are capped while
+// the browser still gets free animation frames between React commits.
+const STREAMING_FLUSH_INTERVAL_MS = 50;
 const streamingBuffer: Record<string, string> = {};
 let rafId: number | null = null;
+let flushTimerId: number | null = null;
+let lastStreamingFlushAt = 0;
+
+function nowMs() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function scheduleStreamingFlush() {
+  if (rafId !== null || flushTimerId !== null) return;
+
+  const elapsed = nowMs() - lastStreamingFlushAt;
+  const delay = Math.max(0, STREAMING_FLUSH_INTERVAL_MS - elapsed);
+
+  flushTimerId = window.setTimeout(() => {
+    flushTimerId = null;
+    rafId = requestAnimationFrame(flushStreamingBuffer);
+  }, delay);
+}
 
 function flushStreamingBuffer() {
   rafId = null;
+  lastStreamingFlushAt = nowMs();
   const entries = Object.entries(streamingBuffer);
   if (entries.length === 0) return;
 
@@ -42,9 +65,7 @@ function flushStreamingBuffer() {
 
 function bufferStreamingContent(sessionId: string, content: string) {
   streamingBuffer[sessionId] = (streamingBuffer[sessionId] || '') + content;
-  if (rafId === null) {
-    rafId = requestAnimationFrame(flushStreamingBuffer);
-  }
+  scheduleStreamingFlush();
 }
 
 function dropPendingStreamingChunks(sessionId: string) {

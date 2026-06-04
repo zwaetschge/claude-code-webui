@@ -17,12 +17,10 @@ import { CommandMenu } from '@/components/chat/CommandMenu';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
@@ -351,10 +349,51 @@ export const ChatInput = memo(function ChatInput({
     inputRef.current?.focus();
   }, []);
 
-  const handleQuickPrompt = useCallback((value: string) => {
-    setInput(value);
-    inputRef.current?.focus();
-  }, []);
+  const handleQuickPrompt = useCallback(
+    (value: string) => {
+      const commandInput = value.trimStart();
+      const hasTrailingWhitespace = /\s$/.test(value);
+
+      setShowCommandMenu(false);
+
+      if (commandInput.startsWith('/') && !hasTrailingWhitespace) {
+        void onCommandExecute(commandInput);
+        inputRef.current?.focus();
+        return;
+      }
+
+      if (!commandInput.startsWith('/')) {
+        const prompt = value.trim();
+        if (!prompt) return;
+
+        setInput('');
+        if (inputRef.current) {
+          inputRef.current.style.height = 'auto';
+        }
+
+        if (attachments.length > 0) {
+          const currentAttachments = [...attachments];
+          onSendMessageWithFiles(
+            prompt,
+            currentAttachments.map((attachment) => attachment.file)
+          );
+          currentAttachments.forEach((attachment) => {
+            if (attachment.preview) URL.revokeObjectURL(attachment.preview);
+          });
+          setAttachments([]);
+        } else {
+          onSendMessage(prompt);
+        }
+
+        inputRef.current?.focus();
+        return;
+      }
+
+      setInput(value);
+      inputRef.current?.focus();
+    },
+    [attachments, onCommandExecute, onSendMessage, onSendMessageWithFiles]
+  );
 
   const imagegenQuickPrompt = useMemo(() => {
     return quickPrompts?.find(
@@ -363,30 +402,13 @@ export const ChatInput = memo(function ChatInput({
     );
   }, [quickPrompts]);
 
-  const quickPromptGroups = useMemo(() => {
-    const groups: Array<{ heading: string; items: QuickPromptItem[] }> = [];
-    let currentGroup: { heading: string; items: QuickPromptItem[] } | null = null;
-
-    quickPrompts?.forEach((prompt) => {
-      if ('heading' in prompt) {
-        currentGroup = { heading: prompt.heading, items: [] };
-        groups.push(currentGroup);
-        return;
-      }
-
-      if (prompt.value.trimStart().startsWith('/imagegen')) {
-        return;
-      }
-
-      if (!currentGroup) {
-        currentGroup = { heading: 'Prompts', items: [] };
-        groups.push(currentGroup);
-      }
-
-      currentGroup.items.push(prompt);
-    });
-
-    return groups.filter((group) => group.items.length > 0);
+  const quickPromptTemplates = useMemo(() => {
+    return (
+      quickPrompts?.filter(
+        (prompt): prompt is QuickPromptItem =>
+          !('heading' in prompt) && !prompt.value.trimStart().startsWith('/')
+      ) ?? []
+    );
   }, [quickPrompts]);
 
   // Helper to get icon for attachment type
@@ -498,7 +520,7 @@ export const ChatInput = memo(function ChatInput({
               )}
 
               {composerActions && composerActions.length > 0 && (
-                <>
+                <DropdownMenuGroup className="md:hidden">
                   <DropdownMenuSeparator />
                   <DropdownMenuLabel className="composer-menu-label">Workspace</DropdownMenuLabel>
                   {composerActions.map((action) => (
@@ -522,35 +544,24 @@ export const ChatInput = memo(function ChatInput({
                       )}
                     </DropdownMenuItem>
                   ))}
-                </>
+                </DropdownMenuGroup>
               )}
 
-              {quickPromptGroups.length > 0 && (
+              {quickPromptTemplates.length > 0 && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="composer-menu-label">Commands</DropdownMenuLabel>
-                  {quickPromptGroups.map((group) => (
-                    <DropdownMenuSub key={group.heading}>
-                      <DropdownMenuSubTrigger className="composer-plus-menu-item">
-                        <Sparkles className="composer-menu-icon" />
-                        <span className="flex-1">{group.heading}</span>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="composer-plus-submenu min-w-[240px] max-h-[70vh] overflow-y-auto">
-                        {group.items.map((prompt, index) => (
-                          <DropdownMenuItem
-                            key={`${group.heading}-${prompt.label}-${index}`}
-                            disabled={isSending || isExecutingTool}
-                            onSelect={() => handleQuickPrompt(prompt.value)}
-                            className="composer-plus-menu-item"
-                          >
-                            <span className="flex-1">{prompt.label}</span>
-                            {prompt.hint && (
-                              <span className="composer-menu-meta">{prompt.hint}</span>
-                            )}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
+                  <DropdownMenuLabel className="composer-menu-label">Prompts</DropdownMenuLabel>
+                  {quickPromptTemplates.map((prompt, index) => (
+                    <DropdownMenuItem
+                      key={`${prompt.label}-${index}`}
+                      disabled={disabled || isSending || isExecutingTool || blocksSubmitForActiveRun}
+                      onSelect={() => handleQuickPrompt(prompt.value)}
+                      className="composer-plus-menu-item"
+                    >
+                      <Sparkles className="composer-menu-icon" />
+                      <span className="flex-1">{prompt.label}</span>
+                      {prompt.hint && <span className="composer-menu-meta">{prompt.hint}</span>}
+                    </DropdownMenuItem>
                   ))}
                 </>
               )}

@@ -13,7 +13,6 @@ export const AuroraBackground = memo(function AuroraBackground({
       className={`pointer-events-none fixed inset-0 overflow-hidden aurora-backdrop aurora-${intensity}`}
       style={{ zIndex: 0 }}
     >
-      <div className="aurora-stars" />
       <div className="aurora-galaxy" />
       <div className="aurora-ribbon aurora-ribbon-1" />
       <div className="aurora-ribbon aurora-ribbon-2" />

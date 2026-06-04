@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -45,9 +45,13 @@ interface RunCockpitProps {
   onRestart: () => void;
   onReviewChanges: () => void;
   onJumpToMessage?: (messageId: string) => void;
+  presentation?: 'rail' | 'dock';
+  activeSection?: RunCockpitSection;
+  focusVersion?: number;
 }
 
 type RunTone = 'neutral' | 'good' | 'warn' | 'bad' | 'live';
+export type RunCockpitSection = 'overview' | 'queue' | 'diff' | 'verify' | 'turns' | 'tools';
 
 function stripPreview(content: string, max = 92): string {
   const compact = content
@@ -165,7 +169,17 @@ export function RunCockpit({
   onRestart,
   onReviewChanges,
   onJumpToMessage,
+  presentation = 'rail',
+  activeSection = 'overview',
+  focusVersion = 0,
 }: RunCockpitProps) {
+  const railRef = useRef<HTMLElement | null>(null);
+  const overviewRef = useRef<HTMLDivElement | null>(null);
+  const queueRef = useRef<HTMLDivElement | null>(null);
+  const diffRef = useRef<HTMLDivElement | null>(null);
+  const verifyRef = useRef<HTMLDivElement | null>(null);
+  const turnsRef = useRef<HTMLDivElement | null>(null);
+  const toolsRef = useRef<HTMLDivElement | null>(null);
   const isLive =
     sessionStatus === 'running' ||
     activity.type === 'thinking' ||
@@ -263,9 +277,35 @@ export function RunCockpit({
   const runLabel = sessionStatus === 'error' ? 'Error' : isLive ? 'Running' : 'Ready';
   const dirtyCount = changedFiles.length;
 
+  useEffect(() => {
+    const rail = railRef.current;
+    const target =
+      activeSection === 'overview'
+        ? overviewRef.current
+        : activeSection === 'queue'
+          ? queueRef.current
+          : activeSection === 'diff'
+            ? diffRef.current
+            : activeSection === 'verify'
+              ? verifyRef.current
+              : activeSection === 'turns'
+                ? turnsRef.current
+                : toolsRef.current;
+
+    if (!rail || !target) return;
+
+    const railRect = rail.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const nextTop = targetRect.top - railRect.top + rail.scrollTop - 8;
+    rail.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
+  }, [activeSection, focusVersion]);
+
   return (
-    <aside className="run-cockpit-rail">
-      <div className="flex items-start justify-between gap-3 px-4 pb-4">
+    <aside
+      ref={railRef}
+      className={cn(presentation === 'dock' ? 'run-cockpit-dock-panel' : 'run-cockpit-rail')}
+    >
+      <div ref={overviewRef} className="flex items-start justify-between gap-3 px-4 pb-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span
@@ -325,182 +365,192 @@ export function RunCockpit({
         </button>
       </div>
 
-      <Section title="Queue" icon={<MessageSquare className="h-3.5 w-3.5" />}>
-        {queuedItems.length === 0 ? (
-          <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
-            Empty
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {queuedItems.slice(0, 3).map((item, index) => (
-              <div
-                key={item.id}
-                className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2"
-              >
-                <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
-                  <span>Next {index + 1}</span>
-                  <span>{timeShort(item.createdAt)}</span>
-                </div>
-                <div className="mt-1 text-xs leading-relaxed text-foreground">
-                  {stripPreview(item.preview, 120)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Diff" icon={<GitBranch className="h-3.5 w-3.5" />}>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs text-muted-foreground">
-              {gitStatus ? gitStatus.branch : gitFetching ? 'Checking' : 'No git repo'}
-            </div>
-            <button
-              type="button"
-              onClick={onReviewChanges}
-              disabled={!gitStatus || dirtyCount === 0}
-              className="panel-trigger h-7 px-2 text-[11px] disabled:pointer-events-none disabled:opacity-45"
-            >
-              <ShieldCheck className="h-3 w-3" />
-              Review
-            </button>
-          </div>
-          {changedFiles.length === 0 ? (
+      <div ref={queueRef}>
+        <Section title="Queue" icon={<MessageSquare className="h-3.5 w-3.5" />}>
+          {queuedItems.length === 0 ? (
             <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
-              Clean
+              Empty
             </div>
           ) : (
-            <div className="space-y-1">
-              {changedFiles.slice(0, 6).map((file) => (
+            <div className="space-y-2">
+              {queuedItems.slice(0, 3).map((item, index) => (
                 <div
-                  key={file}
-                  className="flex items-center gap-2 rounded-md bg-foreground/[0.025] px-2 py-1.5 text-xs"
+                  key={item.id}
+                  className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2"
                 >
-                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate font-mono">{file}</span>
+                  <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
+                    <span>Next {index + 1}</span>
+                    <span>{timeShort(item.createdAt)}</span>
+                  </div>
+                  <div className="mt-1 text-xs leading-relaxed text-foreground">
+                    {stripPreview(item.preview, 120)}
+                  </div>
                 </div>
               ))}
-              {changedFiles.length > 6 && (
-                <div className="px-2 pt-1 text-[11px] text-muted-foreground">
-                  +{changedFiles.length - 6}
-                </div>
-              )}
             </div>
           )}
-        </div>
-      </Section>
+        </Section>
+      </div>
 
-      <Section title="Verify" icon={<CheckCircle2 className="h-3.5 w-3.5" />}>
-        <div className="space-y-1">
-          <GateRow
-            tone={isLive ? 'live' : 'good'}
-            label="Agent"
-            detail={isLive ? activity.message || activity.toolName || 'Working' : 'Idle'}
-          />
-          <GateRow
-            tone={failedTools.length ? 'bad' : runningTools.length ? 'live' : 'good'}
-            label="Tools"
-            detail={
-              failedTools.length
-                ? `${failedTools.length} failed`
-                : runningTools.length
-                  ? `${runningTools.length} running`
-                  : `${tools.length} recorded`
-            }
-          />
-          <GateRow
-            tone={pendingTodos.length ? 'warn' : 'good'}
-            label="Tasks"
-            detail={pendingTodos.length ? `${pendingTodos.length} open` : 'Complete'}
-          />
-          <GateRow
-            tone={
-              !lastVerifyTool
-                ? 'neutral'
-                : lastVerifyTool.status === 'error'
-                  ? 'bad'
-                  : lastVerifyTool.status === 'started'
-                    ? 'live'
-                    : 'good'
-            }
-            label="Check"
-            detail={
-              lastVerifyTool
-                ? inputPreview(lastVerifyTool.input) || lastVerifyTool.status
-                : 'Not run in this session'
-            }
-          />
-        </div>
-      </Section>
-
-      <Section title="Turns" icon={<MessageSquare className="h-3.5 w-3.5" />}>
-        <div className="space-y-1">
-          {turnEvents.length === 0 ? (
-            <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
-              Empty
-            </div>
-          ) : (
-            turnEvents.map((event, index) => (
+      <div ref={diffRef}>
+        <Section title="Diff" icon={<GitBranch className="h-3.5 w-3.5" />}>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs text-muted-foreground">
+                {gitStatus ? gitStatus.branch : gitFetching ? 'Checking' : 'No git repo'}
+              </div>
               <button
-                key={event.id}
                 type="button"
-                onClick={() => onJumpToMessage?.(event.id)}
-                className="grid w-full grid-cols-[16px_1fr_auto] gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-foreground/[0.045]"
+                onClick={onReviewChanges}
+                disabled={!gitStatus || dirtyCount === 0}
+                className="panel-trigger h-7 px-2 text-[11px] disabled:pointer-events-none disabled:opacity-45"
               >
-                <span
-                  className={cn(
-                    'mt-1.5 h-1.5 w-1.5 rounded-full',
-                    event.role === 'user' ? 'bg-foreground' : 'bg-primary'
-                  )}
-                />
-                <span className="min-w-0">
+                <ShieldCheck className="h-3 w-3" />
+                Review
+              </button>
+            </div>
+            {changedFiles.length === 0 ? (
+              <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+                Clean
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {changedFiles.slice(0, 6).map((file) => (
+                  <div
+                    key={file}
+                    className="flex items-center gap-2 rounded-md bg-foreground/[0.025] px-2 py-1.5 text-xs"
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-mono">{file}</span>
+                  </div>
+                ))}
+                {changedFiles.length > 6 && (
+                  <div className="px-2 pt-1 text-[11px] text-muted-foreground">
+                    +{changedFiles.length - 6}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </Section>
+      </div>
+
+      <div ref={verifyRef}>
+        <Section title="Verify" icon={<CheckCircle2 className="h-3.5 w-3.5" />}>
+          <div className="space-y-1">
+            <GateRow
+              tone={isLive ? 'live' : 'good'}
+              label="Agent"
+              detail={isLive ? activity.message || activity.toolName || 'Working' : 'Idle'}
+            />
+            <GateRow
+              tone={failedTools.length ? 'bad' : runningTools.length ? 'live' : 'good'}
+              label="Tools"
+              detail={
+                failedTools.length
+                  ? `${failedTools.length} failed`
+                  : runningTools.length
+                    ? `${runningTools.length} running`
+                    : `${tools.length} recorded`
+              }
+            />
+            <GateRow
+              tone={pendingTodos.length ? 'warn' : 'good'}
+              label="Tasks"
+              detail={pendingTodos.length ? `${pendingTodos.length} open` : 'Complete'}
+            />
+            <GateRow
+              tone={
+                !lastVerifyTool
+                  ? 'neutral'
+                  : lastVerifyTool.status === 'error'
+                    ? 'bad'
+                    : lastVerifyTool.status === 'started'
+                      ? 'live'
+                      : 'good'
+              }
+              label="Check"
+              detail={
+                lastVerifyTool
+                  ? inputPreview(lastVerifyTool.input) || lastVerifyTool.status
+                  : 'Not run in this session'
+              }
+            />
+          </div>
+        </Section>
+      </div>
+
+      <div ref={turnsRef}>
+        <Section title="Turns" icon={<MessageSquare className="h-3.5 w-3.5" />}>
+          <div className="space-y-1">
+            {turnEvents.length === 0 ? (
+              <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+                Empty
+              </div>
+            ) : (
+              turnEvents.map((event, index) => (
+                <button
+                  key={event.id}
+                  type="button"
+                  onClick={() => onJumpToMessage?.(event.id)}
+                  className="grid w-full grid-cols-[16px_1fr_auto] gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-foreground/[0.045]"
+                >
                   <span
                     className={cn(
-                      'block truncate text-xs font-medium text-foreground',
-                      event.role === 'assistant' && 'text-primary'
+                      'mt-1.5 h-1.5 w-1.5 rounded-full',
+                      event.role === 'user' ? 'bg-foreground' : 'bg-primary'
                     )}
-                  >
-                    {index + 1}. {event.kind}
+                  />
+                  <span className="min-w-0">
+                    <span
+                      className={cn(
+                        'block truncate text-xs font-medium text-foreground',
+                        event.role === 'assistant' && 'text-primary'
+                      )}
+                    >
+                      {index + 1}. {event.kind}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {event.text || '(empty)'}
+                    </span>
                   </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {event.text || '(empty)'}
-                  </span>
-                </span>
-                <span className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">
-                  {timeShort(event.ts)}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-      </Section>
-
-      <Section title="Recent Tools" icon={<Clock3 className="h-3.5 w-3.5" />}>
-        <div className="space-y-1">
-          {runEvents.length === 0 ? (
-            <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
-              Empty
-            </div>
-          ) : (
-            runEvents.map((event) => {
-              const Icon = event.icon;
-              return (
-                <div key={event.id} className="grid grid-cols-[16px_1fr_auto] gap-2 px-1 py-1.5">
-                  <Icon className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-medium text-foreground">{event.kind}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">{event.text}</div>
-                  </div>
-                  <div className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                  <span className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">
                     {timeShort(event.ts)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </Section>
+      </div>
+
+      <div ref={toolsRef}>
+        <Section title="Recent Tools" icon={<Clock3 className="h-3.5 w-3.5" />}>
+          <div className="space-y-1">
+            {runEvents.length === 0 ? (
+              <div className="rounded-md border border-border/45 bg-foreground/[0.02] px-3 py-2 text-xs text-muted-foreground">
+                Empty
+              </div>
+            ) : (
+              runEvents.map((event) => {
+                const Icon = event.icon;
+                return (
+                  <div key={event.id} className="grid grid-cols-[16px_1fr_auto] gap-2 px-1 py-1.5">
+                    <Icon className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium text-foreground">{event.kind}</div>
+                      <div className="truncate text-[11px] text-muted-foreground">{event.text}</div>
+                    </div>
+                    <div className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                      {timeShort(event.ts)}
+                    </div>
                   </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </Section>
+                );
+              })
+            )}
+          </div>
+        </Section>
+      </div>
 
       {usage && (
         <div className="mt-auto border-t border-border/45 px-4 py-3 text-[11px] text-muted-foreground">

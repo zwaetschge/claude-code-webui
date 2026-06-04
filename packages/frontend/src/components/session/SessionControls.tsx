@@ -205,7 +205,15 @@ function getGradientColor(percent: number): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-export function ContextPopover({ usage }: { usage: UsageData }) {
+export function ContextPopover({
+  usage,
+  className,
+  showLabel = false,
+}: {
+  usage: UsageData;
+  className?: string;
+  showLabel?: boolean;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -229,8 +237,9 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
     enabled: !!activeSessionId && limitsSupported,
   });
 
-  const percent = usage.contextUsedPercent ?? 0;
-  const rawPercent = usage.contextUsedPercentRaw ?? percent;
+  const hasContextWindow = usage.contextWindow > 0;
+  const percent = hasContextWindow ? (usage.contextUsedPercent ?? 0) : 0;
+  const rawPercent = hasContextWindow ? (usage.contextUsedPercentRaw ?? percent) : 0;
   const color = getGradientColor(percent);
   const isCritical = percent >= 95;
 
@@ -339,24 +348,26 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
               )}
 
               {/* Context Bar */}
-              <div>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-muted-foreground">Context Window</span>
-                  <span className="font-mono font-medium" style={{ color }}>
-                    {rawPercent.toFixed(0)}%
-                  </span>
+              {hasContextWindow && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">Context Window</span>
+                    <span className="font-mono font-medium" style={{ color }}>
+                      {rawPercent.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {formatTokens(usage.totalTokens)} / {formatTokens(usage.contextWindow)}
+                    {usage.contextExceeded && ' (over reported window)'}
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }}
-                  />
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {formatTokens(usage.totalTokens)} / {formatTokens(usage.contextWindow)}
-                  {usage.contextExceeded && ' (over reported window)'}
-                </div>
-              </div>
+              )}
 
               {/* Token Breakdown */}
               <div className="space-y-1.5 text-xs">
@@ -407,10 +418,16 @@ export function ContextPopover({ usage }: { usage: UsageData }) {
       <button
         ref={triggerRef}
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 hover:opacity-80 transition-opacity cursor-pointer"
-        title={`Context: ${rawPercent.toFixed(0)}%`}
+        className={cn(
+          'context-popover-trigger flex items-center gap-1.5 hover:opacity-80 transition-opacity cursor-pointer',
+          className
+        )}
+        title={hasContextWindow ? `Context: ${rawPercent.toFixed(0)}%` : 'Usage limits'}
       >
         <Activity className="h-3 w-3 text-muted-foreground" />
+        {showLabel && (
+          <span className="context-popover-label">{hasContextWindow ? 'Context' : 'Usage'}</span>
+        )}
         <div className="w-10 h-1.5 rounded-full bg-muted overflow-hidden">
           <div
             className={cn(
@@ -436,7 +453,7 @@ export function SessionControls({ mode, onModeChange, usage }: SessionControlsPr
       <ModeDropdown mode={mode} onModeChange={onModeChange} />
 
       {/* Context Popover */}
-      {usage && usage.contextWindow > 0 && (
+      {usage && (
         <>
           <div className="h-4 w-px bg-border" />
           <ContextPopover usage={usage} />

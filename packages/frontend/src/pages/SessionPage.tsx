@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown,
-  MoreHorizontal,
   FolderOpen,
   Image,
   CheckCircle2,
@@ -25,21 +24,16 @@ import {
   X,
   Activity,
   Pencil,
+  RotateCcw,
   Settings,
+  Square,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
-import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Card } from '@/components/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { StreamingContent } from '@/components/chat/StreamingContent';
-import { ProviderLoader } from '@/components/chat/providerAnimations/ProviderLoader';
 import { ContextPopover } from '@/components/session/SessionControls';
 import { SessionSettingsChip } from '@/components/session/SessionSettingsChip';
 import { AllowedDirectoriesDialog } from '@/components/session/AllowedDirectoriesDialog';
@@ -49,7 +43,7 @@ import { WorkspaceFiles } from '@/components/files';
 import { AgentsEditor } from '@/components/agents-editor';
 import { MemoryViewer } from '@/components/memory-viewer';
 import { ToolLogPanel } from '@/components/session/ToolLogPanel';
-import { RunCockpit } from '@/components/session/RunCockpit';
+import { RunCockpit, type RunCockpitSection } from '@/components/session/RunCockpit';
 import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
 import { CompactBoundaryCard } from '@/components/chat/CompactBoundaryCard';
 import { MessageBubble } from '@/components/chat/MessageBubble';
@@ -108,7 +102,6 @@ const IDLE_ACTIVITY: ActivityState = { type: 'idle' };
 type WorkspaceSheetPanel = Exclude<DockablePanel, 'files'>;
 type MobileSheetPanel = WorkspaceSheetPanel | 'settings';
 const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = ['tasks', 'config', 'tools'];
-const RIGHT_RAIL_PANEL_KEYS: WorkspaceSheetPanel[] = ['tasks', 'tools'];
 
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -271,19 +264,54 @@ export function SessionPage() {
 
   const [mainView, setMainView] = useState<'chat' | 'editor' | 'files'>('chat');
   const [configTab, setConfigTab] = useState<'memories' | 'agents'>('memories');
+  const [rightDockCollapsed, setRightDockCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('chat.rightDockCollapsed') === '1';
+  });
   const [runCockpitOpen, setRunCockpitOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('chat.runCockpitOpen') === '1';
   });
+  const [runCockpitTarget, setRunCockpitTarget] = useState<{
+    section: RunCockpitSection;
+    version: number;
+  }>({ section: 'overview', version: 0 });
+  const toggleRightDockCollapsed = useCallback(() => {
+    setRightDockCollapsed((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('chat.rightDockCollapsed', next ? '1' : '0');
+      }
+      return next;
+    });
+  }, []);
+  const openRunCockpitSection = useCallback(
+    (section: RunCockpitSection = 'overview') => {
+      unpinAllPanels();
+      setRunCockpitOpen(true);
+      setRunCockpitTarget((prev) => ({ section, version: prev.version + 1 }));
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('chat.runCockpitOpen', '1');
+      }
+    },
+    [unpinAllPanels]
+  );
   const toggleRunCockpit = useCallback(() => {
     setRunCockpitOpen((prev) => {
       const next = !prev;
+      if (next) {
+        unpinAllPanels();
+        setRunCockpitTarget((target) => ({
+          section: target.section || 'overview',
+          version: target.version + 1,
+        }));
+      }
       if (typeof window !== 'undefined') {
         window.localStorage.setItem('chat.runCockpitOpen', next ? '1' : '0');
       }
       return next;
     });
-  }, []);
+  }, [unpinAllPanels]);
 
   const closeActivityRails = useCallback(() => {
     setRunCockpitOpen(false);
@@ -320,6 +348,9 @@ export function SessionPage() {
   );
 
   const hasOpenFiles = currentOpenFiles.length > 0;
+  const hasLiveAssistantFooter =
+    currentActivity.type === 'thinking' || !!currentActiveAgent || !!currentStreamingContent;
+  const hasLiveAssistantTimelinePoint = !!currentStreamingContent;
 
   // Combine messages, generated images and tool executions into a single timeline
   type TimelineItem =
@@ -366,22 +397,46 @@ export function SessionPage() {
   const timelineRef = useRef<TimelineItem[]>([]);
   timelineRef.current = timeline;
 
-  // Per-item flag: is this item visually part of an open assistant turn?
-  // Tools and generated images are always assistant-produced, so they always
-  // belong to an assistant turn (true even when they arrive before the
-  // assistant's text reply, i.e. the previous neighbour in the timeline is
-  // still the user's message). For messages themselves we only mark assistant
-  // messages — user messages render as right-aligned tail bubbles outside the
-  // rail. This keeps the continuous left rail from breaking when the model
-  // calls tools first and replies in text afterwards.
-  const inAssistantTurn = useMemo(() => {
-    return timeline.map((item) => {
-      if (item.type === 'message') {
-        return (item.data as Message).role === 'assistant';
+  const assistantTurnSegments = useMemo(() => {
+    const isAssistantProduced = (item: TimelineItem | undefined) =>
+      !!item && (item.type !== 'message' || (item.data as Message).role === 'assistant');
+
+    return timeline.map((item, index) => {
+      const inTurn = isAssistantProduced(item);
+      if (!inTurn) {
+        return {
+          inTurn: false,
+          startsAfterUser: false,
+          continuesBefore: false,
+          continuesAfter: false,
+          continuation: false,
+        };
       }
-      return true;
+
+      const previousItem = timeline[index - 1];
+      const nextItem = timeline[index + 1];
+      const isLastItem = index === timeline.length - 1;
+      const previousContinuesTurn = isAssistantProduced(previousItem);
+      const nextContinuesTurn = isAssistantProduced(nextItem);
+
+      return {
+        inTurn: true,
+        startsAfterUser: !isAssistantProduced(previousItem),
+        continuesBefore: previousContinuesTurn,
+        continuesAfter: nextContinuesTurn || (isLastItem && hasLiveAssistantTimelinePoint),
+        continuation: item.type !== 'message',
+      };
     });
-  }, [timeline]);
+  }, [hasLiveAssistantTimelinePoint, timeline]);
+
+  const footerConnectsToAssistantTurn = useMemo(() => {
+    if (!hasLiveAssistantTimelinePoint) return false;
+    const lastItem = timeline[timeline.length - 1];
+    return (
+      !!lastItem &&
+      (lastItem.type !== 'message' || (lastItem.data as Message).role === 'assistant')
+    );
+  }, [hasLiveAssistantTimelinePoint, timeline]);
 
   const jumpToMessage = useCallback((messageId: string) => {
     const idx = timelineRef.current.findIndex(
@@ -531,6 +586,7 @@ export function SessionPage() {
     getToolDisplay: typeof getToolDisplay;
     formatElapsed: typeof formatElapsed;
     clearStreamingContent: typeof clearStreamingContent;
+    footerConnectsToAssistantTurn: boolean;
   } | null>(null);
 
   const virtuosoComponents = useMemo(() => {
@@ -550,67 +606,78 @@ export function SessionPage() {
         return <div aria-hidden style={{ height: '8px' }} />;
       }
       return (
-        <div className="chat-stream pb-2">
+        <div
+          className={cn(
+            'chat-stream chat-footer-stream',
+            deps.footerConnectsToAssistantTurn && 'asst-footer-continues'
+          )}
+        >
           {/* Tool activity is rendered as a compact ToolExecutionCard inside the
               timeline (see itemContent → 'tool' branch) — it appears at the
               correct chronological position with a live spinner + duration and
               persists after completion. The footer only handles state with no
               timeline equivalent: thinking and active subagents. */}
-          {(footerActivity.type === 'thinking' || footerActiveAgent) && !footerStreamingContent && (
-            <div className="flex justify-start animate-fade-in">
-              <Card className="border p-3 sm:p-4 bg-muted/40 border-border/60">
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
+          {(footerActivity.type === 'thinking' || footerActiveAgent) &&
+            !footerStreamingContent && (
+              <div className="turn-asst pl-thinking-turn animate-fade-in">
+                <div className="ai-rail">
+                  <div className="ai-mark pl-thinking-mark" title={deps.providerLabel}>
                     {footerActiveAgent ? (
                       <>
-                        <div className="relative">
-                          <Brain className="h-5 w-5 text-primary" />
-                          <span className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-ping" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium text-foreground">
-                            Agent: {deps.getAgentDisplay(footerActiveAgent.agentType)}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {footerActiveAgent.description ||
-                              deps.getAgentDescription(footerActiveAgent.agentType)}
-                            {footerActiveAgent.startedAt
-                              ? ` (${deps.formatElapsed(footerNow - footerActiveAgent.startedAt)})`
-                              : ''}
-                          </span>
-                        </div>
+                        <Brain className="h-4 w-4" />
+                        <span className="pl-thinking-ping" />
                       </>
-                    ) : footerActivity.type === 'thinking' ? (
+                    ) : (
                       <>
-                        <div className="flex items-center justify-center w-12 h-12 shrink-0 text-primary">
-                          <ProviderLoader provider={deps.uiProvider} size={48} />
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-sm font-medium">
-                            {deps.providerLabel} is thinking...
-                          </span>
-                          {footerActivity.message && (
-                            <span className="text-xs text-muted-foreground truncate">
-                              {footerActivity.message}
-                              {footerActivity.messageStartedAt
-                                ? ` (${deps.formatElapsed(footerNow - footerActivity.messageStartedAt)})`
-                                : ''}
-                            </span>
-                          )}
-                        </div>
+                        <ProviderLogo provider={deps.uiProvider} className="h-5 w-5" />
+                        <span className="pl-thinking-ping" />
                       </>
+                    )}
+                  </div>
+                  <div className="ai-thread" />
+                </div>
+                <div className="ai-body">
+                  <div className="pl-thinking-body">
+                    <div className="pl-thinking-title">
+                      {footerActiveAgent ? (
+                        <>Agent: {deps.getAgentDisplay(footerActiveAgent.agentType)}</>
+                      ) : (
+                        <>
+                          {deps.providerLabel} is thinking
+                          <span className="pl-thinking-dots" aria-hidden="true">
+                            <span>.</span>
+                            <span>.</span>
+                            <span>.</span>
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {footerActiveAgent ? (
+                      <div className="pl-thinking-detail">
+                        {footerActiveAgent.description ||
+                          deps.getAgentDescription(footerActiveAgent.agentType)}
+                        {footerActiveAgent.startedAt
+                          ? ` (${deps.formatElapsed(footerNow - footerActiveAgent.startedAt)})`
+                          : ''}
+                      </div>
+                    ) : footerActivity.type === 'thinking' && footerActivity.message ? (
+                      <div className="pl-thinking-detail">
+                        {footerActivity.message}
+                        {footerActivity.messageStartedAt
+                          ? ` (${deps.formatElapsed(footerNow - footerActivity.messageStartedAt)})`
+                          : ''}
+                      </div>
                     ) : null}
                   </div>
                 </div>
-              </Card>
-            </div>
-          )}
+              </div>
+            )}
 
           {footerStreamingContent && (
             <div className="turn-asst animate-fade-in">
               <div className="ai-rail">
                 <div className="ai-mark" title={deps.providerLabel}>
-                  <ProviderLoader provider={deps.uiProvider} size={20} />
+                  <ProviderLogo provider={deps.uiProvider} className="h-4 w-4" />
                 </div>
                 <div className="ai-thread" />
               </div>
@@ -645,7 +712,7 @@ export function SessionPage() {
     }
 
     function ChatHeader() {
-      return <div aria-hidden style={{ height: '8px' }} />;
+      return <div className="chat-top-spacer" aria-hidden="true" />;
     }
 
     return { Footer: ChatFooter, Header: ChatHeader };
@@ -687,11 +754,7 @@ export function SessionPage() {
   const sessionProvider = session?.cliProvider ?? toCliProvider(uiProvider);
   const sessionUiProvider = toUiProvider(sessionProvider);
   const providerLabel = CLI_PROVIDER_LABEL[sessionProvider];
-  const hasLiveRunActivity =
-    currentActivity.type === 'thinking' ||
-    currentActivity.type === 'tool' ||
-    !!currentActiveAgent ||
-    !!currentStreamingContent;
+  const hasLiveRunActivity = hasLiveAssistantFooter || currentActivity.type === 'tool';
   const hasQueuedRunWork = !!currentQueue?.busy;
   const isActive = hasLiveRunActivity || hasQueuedRunWork;
   const composerQueuesWhileActive = sessionProvider === 'codex';
@@ -733,6 +796,7 @@ export function SessionPage() {
     getToolDisplay,
     formatElapsed,
     clearStreamingContent,
+    footerConnectsToAssistantTurn,
   };
   const resolvedDefaultModel =
     settings?.cliProviderModels?.[sessionProvider] || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider];
@@ -1491,6 +1555,12 @@ export function SessionPage() {
     }
   };
 
+  const handleReviewChanges = useCallback(() => {
+    if (!id) return;
+    socketService.sendMessage(id, '/review');
+    clearStreamingContent(id);
+  }, [clearStreamingContent, id]);
+
   const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
   const runningToolsCount = recentTools.filter((t) => t.status === 'started').length;
   const queuedTurnsCount = currentQueue?.depth ?? 0;
@@ -1712,6 +1782,34 @@ export function SessionPage() {
     );
   };
 
+  const renderRunCockpitPanel = (presentation: 'dock' | 'rail' = 'dock') => (
+    <RunCockpit
+      presentation={presentation}
+      activeSection={runCockpitTarget.section}
+      focusVersion={runCockpitTarget.version}
+      workingDirectory={session.workingDirectory}
+      providerLabel={providerLabel}
+      sessionStatus={session.status}
+      messages={sessionMessages}
+      streamingContent={currentStreamingContent}
+      activity={currentActivity}
+      todos={currentTodos}
+      tools={currentToolExecutions}
+      usage={currentUsage}
+      queue={currentQueue}
+      onClose={() => {
+        setRunCockpitOpen(false);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('chat.runCockpitOpen', '0');
+        }
+      }}
+      onInterrupt={handleInterrupt}
+      onRestart={handleRestart}
+      onReviewChanges={handleReviewChanges}
+      onJumpToMessage={jumpToMessageFromRun}
+    />
+  );
+
   const renderSessionSettingsChip = () => (
     <SessionSettingsChip
       mode={sessionMode}
@@ -1775,25 +1873,64 @@ export function SessionPage() {
     );
   };
 
-  const renderRightRailButton = (panel: WorkspaceSheetPanel) => {
+  const renderSideMenuItem = ({
+    id: itemId,
+    label,
+    icon,
+    onClick,
+    active,
+    disabled,
+    badge,
+    badgePulse,
+    title,
+    nested,
+  }: {
+    id: string;
+    label: string;
+    icon: ReactElement;
+    onClick: () => void;
+    active?: boolean;
+    disabled?: boolean;
+    badge?: number;
+    badgePulse?: boolean;
+    title?: string;
+    nested?: boolean;
+  }) => (
+    <button
+      key={itemId}
+      type="button"
+      className={cn('session-side-menu-item', nested && 'is-subitem', active && 'is-active')}
+      onClick={onClick}
+      disabled={disabled}
+      title={title || label}
+      aria-pressed={active || undefined}
+    >
+      <span className="session-side-menu-icon">{icon}</span>
+      <span className="session-side-menu-label">{label}</span>
+      {badge && badge > 0 ? (
+        <span className={cn('session-side-menu-badge', badgePulse && 'is-pulsing')}>
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+
+  const renderPanelMenuItem = (panel: WorkspaceSheetPanel) => {
     const meta = panelMeta[panel];
     const isActive = pinnedPanels[panel];
     const badgeCount =
       panel === 'tasks' ? pendingTasksCount : panel === 'tools' ? runningToolsCount : 0;
 
-    return (
-      <button
-        key={panel}
-        type="button"
-        className={cn('session-right-rail-button', isActive && 'is-active')}
-        onClick={() => openRightPanel(panel)}
-        title={isActive ? `Close ${meta.title}` : `Open ${meta.title}`}
-        aria-label={isActive ? `Close ${meta.title}` : `Open ${meta.title}`}
-      >
-        {meta.icon}
-        {badgeCount > 0 && <span className="session-right-rail-badge">{badgeCount}</span>}
-      </button>
-    );
+    return renderSideMenuItem({
+      id: `panel-${panel}`,
+      label: meta.title,
+      icon: meta.icon,
+      onClick: () => openRightPanel(panel),
+      active: isActive,
+      badge: badgeCount,
+      badgePulse: panel === 'tools' && runningToolsCount > 0,
+      title: isActive ? `Close ${meta.title}` : `Open ${meta.title}`,
+    });
   };
 
   const renderMobileSheetContent = () => {
@@ -1875,6 +2012,43 @@ export function SessionPage() {
                 <FolderKey className="h-4 w-4" />
                 <span>Directories</span>
               </button>
+              {session.status === 'running' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileSheetPanel(null);
+                    handleInterrupt();
+                  }}
+                  className="mobile-sheet-command"
+                >
+                  <Square className="h-4 w-4" />
+                  <span>Interrupt</span>
+                </button>
+              )}
+              {isExecutingTool && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileSheetPanel(null);
+                    handleCancelCliTool();
+                  }}
+                  className="mobile-sheet-command"
+                >
+                  <X className="h-4 w-4" />
+                  <span>Cancel tool</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSheetPanel(null);
+                  handleRestart();
+                }}
+                className="mobile-sheet-command"
+              >
+                <RotateCcw className="h-4 w-4" />
+                <span>Restart</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1901,9 +2075,14 @@ export function SessionPage() {
 
   return (
     <div ref={rootShellRef} className="flex h-full min-h-0 relative overflow-hidden">
-      {/* Main column: sticky topbar + scrollable stream + sticky composer */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* Session Header — sticky topbar inside the main column */}
+      {/* Main column: layered chat viewport with transparent topbar/composer overlays */}
+      <div
+        className={cn(
+          'session-main-column flex-1 min-h-0 flex flex-col overflow-hidden',
+          mainView === 'chat' && 'session-chat-layered'
+        )}
+      >
+        {/* Session Header */}
         <div ref={headerBarRef} className="chat-topbar shrink-0">
           <div className="flex-1 flex items-center gap-2 md:gap-3 min-w-0 flex-nowrap md:flex-wrap">
             {/* Title cluster */}
@@ -1965,121 +2144,20 @@ export function SessionPage() {
             {/* Flex spacer — pushes right cluster to the edge */}
             <div className="hidden md:block flex-1" />
 
-            {/* Right controls — View Toggle + Session Settings + Context + More */}
+            {/* Right controls — session settings + context */}
             <div className="chat-action-bar flex items-center gap-1.5 shrink-0 ml-auto md:ml-0">
-              {/* View Toggle */}
-              <div className="hidden sm:flex gap-0.5 bg-background/40 backdrop-blur-md border border-border/40 rounded-lg p-0.5 shrink-0">
-                <button
-                  onClick={() => setMainView('chat')}
-                  className={cn(
-                    'flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all',
-                    mainView === 'chat'
-                      ? 'bg-foreground/10 text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-                  )}
-                  title="Chat"
-                >
-                  <MessageSquare className="h-3 w-3" />
-                  <span className="hidden lg:inline">Chat</span>
-                </button>
-                {hasOpenFiles && (
-                  <button
-                    onClick={() => setMainView('editor')}
-                    className={cn(
-                      'flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all',
-                      mainView === 'editor'
-                        ? 'bg-foreground/10 text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-                    )}
-                    title="Editor"
-                  >
-                    <Code2 className="h-3 w-3" />
-                    <span className="hidden lg:inline">Editor</span>
-                  </button>
-                )}
-                <button
-                  onClick={() => setMainView('files')}
-                  className={cn(
-                    'flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all',
-                    mainView === 'files'
-                      ? 'bg-foreground/10 text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-                  )}
-                  title="Files"
-                >
-                  <FolderOpen className="h-3 w-3" />
-                  <span className="hidden lg:inline">Files</span>
-                </button>
-              </div>
-
-              {/* Run Cockpit */}
-              <button
-                onClick={toggleRunCockpit}
-                className={cn(
-                  'hidden sm:flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg border transition-all shrink-0',
-                  runCockpitOpen
-                    ? 'bg-foreground/10 border-border/60 text-foreground'
-                    : 'bg-background/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-                )}
-                title={runCockpitOpen ? 'Hide run panel' : 'Show run panel'}
-              >
-                <Activity className="h-3 w-3" />
-                <span className="hidden lg:inline">Run</span>
-                {runAttentionCount > 0 && (
-                  <span className="panel-badge ml-0.5">{runAttentionCount}</span>
-                )}
-              </button>
-
               {/* Consolidated Session Settings */}
               {renderSessionSettingsChip()}
 
               {/* Context bar (status indicator) */}
-              {currentUsage && currentUsage.contextWindow > 0 && (
-                <ContextPopover usage={currentUsage} />
+              {currentUsage && (
+                <ContextPopover
+                  usage={currentUsage}
+                  className="desktop-context-trigger"
+                  showLabel
+                />
               )}
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="icon" className="h-7 w-7" title="More actions">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="panel-dropdown w-48">
-                  <DropdownMenuItem onClick={() => setMainView('chat')}>
-                    <MessageSquare className="mr-2 h-3.5 w-3.5" />
-                    Chat view
-                  </DropdownMenuItem>
-                  {hasOpenFiles && (
-                    <DropdownMenuItem onClick={() => setMainView('editor')}>
-                      <Code2 className="mr-2 h-3.5 w-3.5" />
-                      Editor view
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={() => setMainView('files')}>
-                    <FolderOpen className="mr-2 h-3.5 w-3.5" />
-                    Files view
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setShowRenameDialog(true)}>
-                    <Pencil className="mr-2 h-3.5 w-3.5" />
-                    Rename session
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setShowAllowedDirsDialog(true)}>
-                    <FolderKey className="mr-2 h-3.5 w-3.5" />
-                    Manage directories
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  {session.status === 'running' && (
-                    <DropdownMenuItem onClick={handleInterrupt}>Interrupt session</DropdownMenuItem>
-                  )}
-                  {isExecutingTool && (
-                    <DropdownMenuItem onClick={handleCancelCliTool}>
-                      Cancel active tool
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={handleRestart}>Restart session</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
           </div>
         </div>
@@ -2087,8 +2165,8 @@ export function SessionPage() {
         {/* Main Content - Chat or Editor */}
         <div
           className={cn(
-            'flex-1 min-h-0 overflow-y-auto',
-            mainView === 'chat' && 'chat-scroll-fade'
+            'flex-1 min-h-0',
+            mainView === 'chat' ? 'chat-scroll-shell' : 'overflow-y-auto'
           )}
         >
           {mainView === 'editor' ? (
@@ -2106,6 +2184,8 @@ export function SessionPage() {
             />
           ) : (
             <>
+              <div className="chat-edge-fade chat-edge-fade-top" aria-hidden="true" />
+              <div className="chat-edge-fade chat-edge-fade-bottom" aria-hidden="true" />
               {timeline.length === 0 && !currentStreamingContent && (
                 <div className="flex items-center justify-center h-full text-center">
                   <div>
@@ -2129,7 +2209,7 @@ export function SessionPage() {
                   increaseViewportBy={200}
                   followOutput="smooth"
                   atBottomStateChange={setIsAtBottom}
-                  className="flex-1"
+                  className="chat-virtuoso flex-1"
                   computeItemKey={(_index, item) =>
                     item.type === 'message'
                       ? `msg-${item.data.id ?? item.timestamp}`
@@ -2138,7 +2218,8 @@ export function SessionPage() {
                         : `img-${item.data.timestamp}`
                   }
                   itemContent={(index, item) => {
-                    const isInTurn = inAssistantTurn[index] ?? false;
+                    const turnSegment = assistantTurnSegments[index];
+                    const isInTurn = turnSegment?.inTurn ?? false;
                     const isMessage = item.type === 'message';
                     let content: ReactElement;
                     if (item.type === 'message') {
@@ -2193,6 +2274,10 @@ export function SessionPage() {
                         className={cn(
                           'mx-auto max-w-[760px] w-full px-4 sm:px-7 animate-fade-in',
                           isInTurn ? 'asst-turn-item' : 'pb-9',
+                          isInTurn && turnSegment?.startsAfterUser && 'asst-turn-start',
+                          isInTurn && turnSegment?.continuesBefore && 'asst-turn-link-before',
+                          isInTurn && turnSegment?.continuesAfter && 'asst-turn-link-after',
+                          isInTurn && !turnSegment?.continuesAfter && 'asst-turn-end',
                           isInTurn && !isMessage && 'asst-turn-cont'
                         )}
                       >
@@ -2205,7 +2290,7 @@ export function SessionPage() {
               )}
 
               {!isAtBottom && mainView === 'chat' && (
-                <div className="sticky bottom-2 flex justify-center pointer-events-none z-30">
+                <div className="chat-jump-latest flex justify-center pointer-events-none z-30">
                   <button
                     type="button"
                     onClick={scrollToBottom}
@@ -2220,7 +2305,7 @@ export function SessionPage() {
           )}
         </div>
 
-        {/* Centered composer (sticky, in flow) */}
+        {/* Centered composer */}
         {mainView === 'chat' && (
           <div ref={inputBarRef} className="composer-wrap shrink-0">
             <div className="composer-inner">
@@ -2254,48 +2339,180 @@ export function SessionPage() {
       </div>
       {/* /main column */}
 
-      {runCockpitOpen && (
-        <RunCockpit
-          workingDirectory={session.workingDirectory}
-          providerLabel={providerLabel}
-          sessionStatus={session.status}
-          messages={sessionMessages}
-          streamingContent={currentStreamingContent}
-          activity={currentActivity}
-          todos={currentTodos}
-          tools={currentToolExecutions}
-          usage={currentUsage}
-          queue={currentQueue}
-          onClose={() => {
-            setRunCockpitOpen(false);
-            if (typeof window !== 'undefined') {
-              window.localStorage.setItem('chat.runCockpitOpen', '0');
-            }
-          }}
-          onInterrupt={handleInterrupt}
-          onRestart={handleRestart}
-          onReviewChanges={() => {
-            if (!id) return;
-            socketService.sendMessage(id, '/review');
-            clearStreamingContent(id);
-          }}
-          onJumpToMessage={jumpToMessageFromRun}
-        />
-      )}
+      {/* Right session menu: former More actions, Run, and workspace panels live here. */}
+      <div
+        className={cn('session-right-dock hidden md:flex', rightDockCollapsed && 'is-collapsed')}
+      >
+        <nav className="session-right-menu" aria-label="Session menu">
+          <div className="session-right-menu-header">
+            <button
+              type="button"
+              className="session-right-collapse-button"
+              onClick={toggleRightDockCollapsed}
+              title={rightDockCollapsed ? 'Expand right menu' : 'Collapse right menu'}
+              aria-label={rightDockCollapsed ? 'Expand right menu' : 'Collapse right menu'}
+            >
+              {rightDockCollapsed ? (
+                <ChevronLeft className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <span className="session-right-menu-title">Session</span>
+          </div>
 
-      {/* Right session bar: primary workspace panels live here, not in the topbar. */}
-      {!runCockpitOpen && (
-        <div className="session-right-dock hidden md:flex">
-          <nav className="session-right-rail" aria-label="Session workspace panels">
-            {RIGHT_RAIL_PANEL_KEYS.map((panel) => renderRightRailButton(panel))}
-          </nav>
-          {anyPanelPinned && (
-            <div className="session-docked-panel-column">
-              {DOCKED_PANEL_KEYS.map((p) => (pinnedPanels[p] ? renderDockedPanel(p) : null))}
+          <div className="session-side-menu-scroll">
+            <div className="session-side-menu-section">
+              {renderSideMenuItem({
+                id: 'view-chat',
+                label: 'Chat view',
+                icon: <MessageSquare className="h-3.5 w-3.5" />,
+                onClick: () => setMainView('chat'),
+                active: mainView === 'chat',
+              })}
+              {hasOpenFiles &&
+                renderSideMenuItem({
+                  id: 'view-editor',
+                  label: 'Editor view',
+                  icon: <Code2 className="h-3.5 w-3.5" />,
+                  onClick: () => setMainView('editor'),
+                  active: mainView === 'editor',
+                })}
+              {renderSideMenuItem({
+                id: 'view-files',
+                label: 'Files view',
+                icon: <FolderOpen className="h-3.5 w-3.5" />,
+                onClick: () => setMainView('files'),
+                active: mainView === 'files',
+              })}
             </div>
-          )}
-        </div>
-      )}
+
+            <div className="session-side-menu-separator" />
+
+            <div className="session-side-menu-section">
+              {renderSideMenuItem({
+                id: 'rename-session',
+                label: 'Rename session',
+                icon: <Pencil className="h-3.5 w-3.5" />,
+                onClick: () => setShowRenameDialog(true),
+              })}
+              {renderSideMenuItem({
+                id: 'manage-directories',
+                label: 'Manage directories',
+                icon: <FolderKey className="h-3.5 w-3.5" />,
+                onClick: () => setShowAllowedDirsDialog(true),
+              })}
+            </div>
+
+            <div className="session-side-menu-separator" />
+
+            <div className="session-side-menu-section">
+              {renderSideMenuItem({
+                id: 'run-overview',
+                label: 'Run',
+                icon: <Activity className="h-3.5 w-3.5" />,
+                onClick: () => openRunCockpitSection('overview'),
+                active: runCockpitOpen && runCockpitTarget.section === 'overview',
+                badge: runAttentionCount,
+                badgePulse: runningToolsCount > 0,
+              })}
+              <div className="session-side-menu-subgroup">
+                {renderSideMenuItem({
+                  id: 'run-queue',
+                  label: 'Queue',
+                  icon: <MessageSquare className="h-3.5 w-3.5" />,
+                  onClick: () => openRunCockpitSection('queue'),
+                  active: runCockpitOpen && runCockpitTarget.section === 'queue',
+                  badge: queuedTurnsCount,
+                  nested: true,
+                })}
+                {renderSideMenuItem({
+                  id: 'run-diff',
+                  label: 'Diff',
+                  icon: <FileText className="h-3.5 w-3.5" />,
+                  onClick: () => openRunCockpitSection('diff'),
+                  active: runCockpitOpen && runCockpitTarget.section === 'diff',
+                  nested: true,
+                })}
+                {renderSideMenuItem({
+                  id: 'run-verify',
+                  label: 'Verify',
+                  icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+                  onClick: () => openRunCockpitSection('verify'),
+                  active: runCockpitOpen && runCockpitTarget.section === 'verify',
+                  nested: true,
+                })}
+                {renderSideMenuItem({
+                  id: 'run-turns',
+                  label: 'Turns',
+                  icon: <MessageSquare className="h-3.5 w-3.5" />,
+                  onClick: () => openRunCockpitSection('turns'),
+                  active: runCockpitOpen && runCockpitTarget.section === 'turns',
+                  nested: true,
+                })}
+                {renderSideMenuItem({
+                  id: 'run-tools',
+                  label: 'Recent tools',
+                  icon: <Wrench className="h-3.5 w-3.5" />,
+                  onClick: () => openRunCockpitSection('tools'),
+                  active: runCockpitOpen && runCockpitTarget.section === 'tools',
+                  badge: runningToolsCount,
+                  badgePulse: runningToolsCount > 0,
+                  nested: true,
+                })}
+                {renderSideMenuItem({
+                  id: 'run-review',
+                  label: 'Review changes',
+                  icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+                  onClick: () => {
+                    openRunCockpitSection('diff');
+                    handleReviewChanges();
+                  },
+                  nested: true,
+                })}
+                {renderSideMenuItem({
+                  id: 'run-stop',
+                  label: 'Stop',
+                  icon: <Square className="h-3.5 w-3.5" />,
+                  onClick: handleInterrupt,
+                  disabled: session.status !== 'running' && !hasLiveRunActivity,
+                  nested: true,
+                })}
+              {isExecutingTool &&
+                renderSideMenuItem({
+                  id: 'cancel-active-tool',
+                  label: 'Cancel active tool',
+                  icon: <X className="h-3.5 w-3.5" />,
+                  onClick: handleCancelCliTool,
+                  nested: true,
+                })}
+              {renderSideMenuItem({
+                id: 'run-restart',
+                label: 'Restart',
+                icon: <RotateCcw className="h-3.5 w-3.5" />,
+                onClick: handleRestart,
+                nested: true,
+              })}
+              </div>
+            </div>
+
+            <div className="session-side-menu-separator" />
+
+            <div className="session-side-menu-section">
+              {DOCKED_PANEL_KEYS.map((panel) => renderPanelMenuItem(panel))}
+            </div>
+          </div>
+        </nav>
+        {(runCockpitOpen || anyPanelPinned) && (
+          <div className="session-docked-panel-column">
+            {runCockpitOpen
+              ? renderRunCockpitPanel()
+              : DOCKED_PANEL_KEYS.map((p) => (pinnedPanels[p] ? renderDockedPanel(p) : null))}
+          </div>
+        )}
+      </div>
+
+      {runCockpitOpen && <div className="md:hidden">{renderRunCockpitPanel('rail')}</div>}
 
       <Sheet
         open={mobileSheetPanel !== null}

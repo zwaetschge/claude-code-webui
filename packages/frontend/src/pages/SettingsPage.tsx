@@ -1194,7 +1194,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="settings-shell glass-page min-h-screen">
       {/* Compact Header */}
       <div className="relative mb-6 md:mb-8">
         <div className="flex items-center gap-3 md:gap-4">

@@ -52,7 +52,6 @@ class SocketService {
     });
 
     this.socket.on('session:output', (data) => {
-      console.log(`[SOCKET] session:output received:`, data.content?.substring(0, 50));
       useSessionStore.getState().appendStreamingContent(data.sessionId, data.content);
     });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -53,7 +53,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { setSessions, sessions } = useSessionStore();
+  const { setSessions, sessions, updateSession } = useSessionStore();
   const { uiProvider, setProvider } = useProviderStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
@@ -67,6 +67,7 @@ export function DashboardPage() {
   const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() =>
     toCliProvider(uiProvider)
   );
+  const providerSelectedExplicitlyRef = useRef(false);
 
   // Fetch user settings
   const { data: settings } = useQuery({
@@ -84,8 +85,10 @@ export function DashboardPage() {
   }, [settings?.uiProvider, setProvider]);
 
   useEffect(() => {
-    if (!showNewSession || !settings?.defaultCliProvider) return;
-    setSelectedCliProvider(settings.defaultCliProvider);
+    if (!settings?.defaultCliProvider) return;
+    if (!showNewSession || !providerSelectedExplicitlyRef.current) {
+      setSelectedCliProvider(settings.defaultCliProvider);
+    }
   }, [settings?.defaultCliProvider, showNewSession]);
 
   // Fetch sessions
@@ -129,6 +132,7 @@ export function DashboardPage() {
     onSuccess: (data) => {
       if (data.success && data.data) {
         queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        providerSelectedExplicitlyRef.current = false;
         setShowNewSession(false);
         setNewSessionName('');
         setSessionMode('new');
@@ -225,8 +229,25 @@ export function DashboardPage() {
   };
 
   useEffect(() => {
-    if (searchParams.get('new') === 'true') setShowNewSession(true);
+    if (searchParams.get('new') === 'true') {
+      providerSelectedExplicitlyRef.current = false;
+      setShowNewSession(true);
+    }
   }, [searchParams]);
+
+  const openNewSession = (provider?: CLIProvider) => {
+    providerSelectedExplicitlyRef.current = !!provider;
+    setSelectedCliProvider(provider ?? settings?.defaultCliProvider ?? toCliProvider(uiProvider));
+    setShowNewSession(true);
+  };
+
+  const closeNewSession = () => {
+    providerSelectedExplicitlyRef.current = false;
+    setShowNewSession(false);
+    setSessionMode('new');
+    setSelectedFolder(null);
+    setNewSessionName('');
+  };
 
   if (isLoading) {
     return (
@@ -252,7 +273,7 @@ export function DashboardPage() {
         </div>
 
         <div className="dashboard-hero-actions">
-          <Button onClick={() => setShowNewSession(true)} size="sm" className="gap-1.5">
+          <Button onClick={() => openNewSession()} size="sm" className="gap-1.5">
             <Plus className="h-4 w-4" />
             <span className="hidden sm:inline">New Session</span>
           </Button>
@@ -327,8 +348,7 @@ export function DashboardPage() {
                   selectedCliProvider === provider.id && 'is-selected'
                 )}
                 onClick={() => {
-                  setSelectedCliProvider(provider.id);
-                  setShowNewSession(true);
+                  openNewSession(provider.id);
                 }}
                 title={`Start with ${provider.name}`}
               >
@@ -419,7 +439,10 @@ export function DashboardPage() {
                     </label>
                     <Select
                       value={selectedCliProvider}
-                      onValueChange={(v) => setSelectedCliProvider(v as CLIProvider)}
+                      onValueChange={(v) => {
+                        providerSelectedExplicitlyRef.current = true;
+                        setSelectedCliProvider(v as CLIProvider);
+                      }}
                     >
                       <SelectTrigger className="h-9">
                         <SelectValue placeholder="Select provider" />
@@ -487,17 +510,7 @@ export function DashboardPage() {
                   >
                     {createMutation.isPending ? 'Creating...' : 'Create'}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setShowNewSession(false);
-                      setSessionMode('new');
-                      setSelectedFolder(null);
-                      setNewSessionName('');
-                    }}
-                  >
+                  <Button type="button" variant="outline" size="sm" onClick={closeNewSession}>
                     Cancel
                   </Button>
                 </div>
@@ -521,7 +534,7 @@ export function DashboardPage() {
       {/* Sessions with Optional Categories */}
       <div className="dashboard-content-row">
         {showCategories && (
-          <Card className="dashboard-categories-panel hidden md:block">
+          <Card className="dashboard-categories-panel">
             <SessionCategories
               selectedCategory={selectedCategory}
               onCategorySelect={setSelectedCategory}
@@ -572,6 +585,10 @@ export function DashboardPage() {
                     <CategorySelector
                       sessionId={session.id}
                       currentCategory={session.category || null}
+                      onCategoryChange={(categoryId) => {
+                        updateSession(session.id, { category: categoryId });
+                        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+                      }}
                     />
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -615,7 +632,7 @@ export function DashboardPage() {
               <CardContent className="flex flex-col items-center justify-center py-8">
                 <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
                 <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
-                <Button size="sm" onClick={() => setShowNewSession(true)}>
+                <Button size="sm" onClick={() => openNewSession()}>
                   <Plus className="mr-1.5 h-3.5 w-3.5" />
                   Create your first session
                 </Button>
