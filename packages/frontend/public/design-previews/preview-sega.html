@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sega Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Sega tokens */
+      --primary: #4502FF;         /* electric blue-purple */
+      --primary-dark: #2c00b5;
+      --secondary: #FFDA14;       /* arcade yellow */
+      --secondary-dark: #c9a800;
+      --success: #16A34A;
+      --warning: #D97706;
+      --danger: #DC2626;
+      --surface: #FFFFFF;
+      --text: #111827;
+      --paper: #F2F0E8;           /* off-white arcade backdrop */
+      --ink: #111827;
+      --pixel: 'VT323', monospace;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      background: var(--paper);
+      font-family: var(--pixel);
+      color: var(--text);
+      -webkit-font-smoothing: none;
+      -moz-osx-font-smoothing: grayscale;
+      image-rendering: pixelated;
+    }
+
+    /* CRT scanline overlay over the whole preview */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: repeating-linear-gradient(
+        0deg,
+        rgba(17, 24, 39, 0.05) 0px,
+        rgba(17, 24, 39, 0.05) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .stage {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      padding: 14px;
+      background: var(--paper);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+    }
+
+    /* Pixel checker strip across the top */
+    .strip {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 6px;
+      background:
+        repeating-linear-gradient(90deg,
+          var(--primary) 0 14px,
+          var(--secondary) 14px 28px,
+          var(--danger) 28px 42px,
+          var(--success) 42px 56px
+        );
+    }
+
+    /* --- MARQUEE --- */
+    .marquee {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0 0;
+    }
+
+    .logo {
+      font-family: var(--pixel);
+      font-size: 30px;
+      line-height: 0.9;
+      color: var(--ink);
+      letter-spacing: 0.02em;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .logo .arcade {
+      color: var(--primary);
+      text-shadow:
+        3px 0 0 var(--secondary),
+        0 0 0 var(--primary);
+    }
+
+    .logo .reg {
+      font-size: 12px;
+      color: var(--ink);
+      align-self: flex-start;
+      margin-top: 2px;
+    }
+
+    .credits {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--pixel);
+      font-size: 18px;
+      color: var(--ink);
+    }
+
+    .credits .lbl {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+
+    .credits .val {
+      display: inline-block;
+      min-width: 26px;
+      text-align: center;
+      padding: 1px 6px;
+      background: var(--ink);
+      color: var(--secondary);
+      font-family: var(--pixel);
+      font-size: 18px;
+      line-height: 1.1;
+    }
+
+    /* --- PLAYFIELD CARD --- */
+    .playfield {
+      position: relative;
+      background: var(--surface);
+      border: 3px solid var(--ink);
+      /* rainbow-ringed cabinet shadow */
+      box-shadow:
+        6px 0 0 var(--primary),
+        6px 6px 0 var(--primary-dark),
+        0 6px 0 var(--secondary),
+        -6px 0 0 var(--danger),
+        -6px 6px 0 #8a1414,
+        0 -6px 0 var(--success),
+        6px -6px 0 var(--primary),
+        -6px -6px 0 var(--secondary);
+      padding: 12px 14px 12px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    /* HUD left: score column */
+    .hud {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .stat .label {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+
+    .stat .num {
+      font-family: var(--pixel);
+      font-size: 26px;
+      line-height: 1;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat.score .num { color: var(--primary); }
+    .stat.hi .num { color: var(--danger); }
+    .stat.combo .num { color: var(--success); }
+
+    .divider {
+      height: 0;
+      border-top: 2px dashed var(--ink);
+      margin: 1px 0;
+    }
+
+    /* Right: hi-score podium */
+    .podium {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .podium .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+
+    .podium .head .badge {
+      display: inline-block;
+      padding: 1px 5px;
+      background: var(--secondary);
+      color: var(--ink);
+      font-size: 8px;
+      letter-spacing: 0.08em;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--pixel);
+      font-size: 16px;
+      line-height: 1.05;
+      color: var(--ink);
+      padding: 1px 0;
+    }
+
+    .row .rank {
+      display: grid;
+      place-items: center;
+      width: 14px;
+      height: 14px;
+      background: var(--ink);
+      color: var(--secondary);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .row.gold .rank { background: var(--secondary); color: var(--ink); }
+    .row.gold .name { color: var(--primary); font-weight: 700; }
+
+    .row .score {
+      font-variant-numeric: tabular-nums;
+    }
+    .row.gold .score { color: var(--danger); }
+
+    /* --- FOOTER: chunky press buttons --- */
+    .controls {
+      display: grid;
+      grid-template-columns: auto 1fr auto auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    /* 1up coin icon */
+    .coin {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      background: var(--secondary);
+      border: 2px solid var(--ink);
+      box-shadow: 2px 2px 0 var(--ink);
+      font-family: var(--pixel);
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .hint {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--ink);
+      line-height: 1.3;
+    }
+    .hint b { color: var(--primary); font-weight: 700; }
+
+    /* Chunky pixel pill button that presses into a solid offset block */
+    .btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 0 12px;
+      height: 30px;
+      font-family: var(--pixel);
+      font-size: 18px;
+      line-height: 1;
+      letter-spacing: 0.04em;
+      color: var(--ink);
+      background: var(--secondary);
+      border: 3px solid var(--ink);
+      /* solid offset block = the "pressed-into" base */
+      box-shadow: 4px 4px 0 var(--ink);
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+
+    .btn:hover { transform: translate(1px, 1px); box-shadow: 3px 3px 0 var(--ink); }
+    .btn:active { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--ink); }
+    .btn:focus-visible { outline: 3px dashed var(--primary); outline-offset: 3px; }
+
+    .btn.primary {
+      background: var(--primary);
+      color: var(--secondary);
+    }
+    .btn.primary:active { background: var(--primary-dark); }
+
+    .btn.ghost {
+      background: var(--surface);
+      padding: 0 10px;
+    }
+
+    .arrow {
+      font-family: var(--pixel);
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+      .btn:hover, .btn:active { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="strip" aria-hidden="true"></div>
+
+    <!-- Marquee -->
+    <header class="marquee">
+      <div class="logo">
+        <span class="arcade">PIXEL</span><span>RAID<span class="reg">®</span></span>
+      </div>
+      <div class="credits">
+        <span class="lbl">Credits</span>
+        <span class="val">03</span>
+      </div>
+    </header>
+
+    <!-- Playfield -->
+    <section class="playfield">
+
+      <!-- HUD -->
+      <div class="hud">
+        <div class="stat score">
+          <span class="label">1P Score</span>
+          <span class="num">0284500</span>
+        </div>
+        <div class="stat hi">
+          <span class="label">Hi-Score</span>
+          <span class="num">0512000</span>
+        </div>
+        <div class="divider"></div>
+        <div class="stat combo">
+          <span class="label">Combo ×</span>
+          <span class="num">×24</span>
+        </div>
+      </div>
+
+      <!-- Hi-score podium -->
+      <div class="podium">
+        <div class="head">
+          <span>Top Raiders</span>
+          <span class="badge">Live</span>
+        </div>
+        <div class="row gold">
+          <span class="rank">1</span>
+          <span class="name">AAA &mdash; NEO</span>
+          <span class="score">512000</span>
+        </div>
+        <div class="row">
+          <span class="rank">2</span>
+          <span class="name">BOL &mdash; KO</span>
+          <span class="score">402150</span>
+        </div>
+        <div class="row">
+          <span class="rank">3</span>
+          <span class="name">JMX &mdash; AY</span>
+          <span class="score">388900</span>
+        </div>
+        <div class="row">
+          <span class="rank">4</span>
+          <span class="name">YOU</span>
+          <span class="score">028450</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Controls -->
+    <footer class="controls">
+      <div class="coin" aria-hidden="true">¤</div>
+      <p class="hint"><b>INSERT COIN</b> &mdash; press <b>START</b> to continue run</p>
+      <button class="btn ghost" aria-label="How to play">?</button>
+      <button class="btn primary"><span class="arrow">▶</span> Start</button>
+    </footer>
+  </div>
+</body>
+</html>

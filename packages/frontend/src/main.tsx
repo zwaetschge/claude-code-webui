@@ -4,41 +4,42 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
-import { applyProviderClass, getStoredUiProvider } from '@/lib/providers';
+import { applyProviderClass } from '@/lib/providers';
+import {
+  applyBackgroundAnimation,
+  applyTheme,
+  getStoredBackgroundAnimation,
+  getStoredTheme,
+} from '@/stores/appearanceStore';
 
 // Initialize theme before render to prevent flash
 function initializeTheme() {
-  const stored = localStorage.getItem('theme');
-  const theme = stored || 'system';
-
-  document.documentElement.classList.remove('light', 'dark');
-
-  if (theme === 'system') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    document.documentElement.classList.add(prefersDark ? 'dark' : 'light');
-  } else {
-    document.documentElement.classList.add(theme);
-  }
+  applyTheme(getStoredTheme());
 }
 
 initializeTheme();
 
-// Initialize provider theme before render to prevent flash
+// Keep the app shell visually Plum regardless of the selected CLI provider.
 function initializeProvider() {
-  const provider = getStoredUiProvider();
-  applyProviderClass(provider);
+  applyProviderClass('plum');
 }
 
 initializeProvider();
+applyBackgroundAnimation(getStoredBackgroundAnimation());
 
-// Listen for system theme changes
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-  const stored = localStorage.getItem('theme');
-  if (!stored || stored === 'system') {
-    document.documentElement.classList.remove('light', 'dark');
-    document.documentElement.classList.add(e.matches ? 'dark' : 'light');
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || import.meta.env.DEV) {
+    return;
   }
-});
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((error) => {
+      console.warn('Service worker registration failed:', error);
+    });
+  });
+}
+
+registerServiceWorker();
 
 const queryClient = new QueryClient({
   defaultOptions: {

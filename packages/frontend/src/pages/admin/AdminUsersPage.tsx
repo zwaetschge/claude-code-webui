@@ -11,7 +11,7 @@ import {
   Mail,
   Clock,
 } from 'lucide-react';
-import type { UserRole, UserStatus } from '@claude-code-webui/shared';
+import type { UserRole, UserStatus } from '@plum-code-webui/shared';
 import { api, ApiError } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';

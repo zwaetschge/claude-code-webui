@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Brain, CheckCircle, Hand, Zap, ChevronDown, Activity } from 'lucide-react';
@@ -6,8 +6,13 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { api } from '@/services/api';
 import { useSessionStore } from '@/stores/sessionStore';
-import { CLI_PROVIDER_LIMIT_LABELS } from '@/lib/providers';
-import type { UsageData } from '@claude-code-webui/shared';
+import {
+  CLI_PROVIDER_DEFAULT_MODEL,
+  CLI_PROVIDER_LIMIT_LABELS,
+  USAGE_PROVIDER_SHORT_LABEL,
+  getUsageLimitProviderForModel,
+} from '@/lib/providers';
+import type { CLIProvider, UsageData } from '@plum-code-webui/shared';
 
 type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
 
@@ -29,6 +34,11 @@ interface UsageLimitsResponse {
   supported: boolean;
   provider: string;
   data: UsageLimitData | null;
+}
+
+interface ContextEventStats {
+  contextSnapshots: number;
+  compactEvents: number;
 }
 
 const modeConfig: Record<
@@ -159,6 +169,12 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+function cleanModelId(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'unknown') return null;
+  return trimmed;
+}
+
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -209,32 +225,58 @@ export function ContextPopover({
   usage,
   className,
   showLabel = false,
+  contextStats,
+  triggerVariant = 'bar',
+  placement = 'bottom',
+  collapsed = false,
+  sessionId,
+  sessionProvider,
+  sessionModel,
+  sessionRuntimeModel,
 }: {
   usage: UsageData;
   className?: string;
   showLabel?: boolean;
+  contextStats?: ContextEventStats;
+  triggerVariant?: 'bar' | 'sidebarUsageBar';
+  placement?: 'bottom' | 'right';
+  collapsed?: boolean;
+  sessionId?: string | null;
+  sessionProvider?: CLIProvider | null;
+  sessionModel?: string | null;
+  sessionRuntimeModel?: string | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState({ top: 0, left: 0 });
 
   const { activeSessionId, sessions } = useSessionStore();
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const provider = activeSession?.cliProvider || 'claude';
-  const limitsSupported =
-    provider === 'claude' || provider === 'codex' || provider === 'opencode' || provider === 'vibe';
+  const resolvedSessionId = sessionId || activeSessionId;
+  const activeSession = sessions.find((s) => s.id === resolvedSessionId);
+  const provider: CLIProvider = sessionProvider || activeSession?.cliProvider || 'codex';
+  const effectiveModel =
+    cleanModelId(sessionModel) ||
+    cleanModelId(sessionRuntimeModel) ||
+    cleanModelId(activeSession?.cliModel) ||
+    cleanModelId(activeSession?.runtime?.model) ||
+    cleanModelId(usage.model) ||
+    CLI_PROVIDER_DEFAULT_MODEL[provider];
+  const usageProvider = getUsageLimitProviderForModel(provider, effectiveModel);
+  const limitsSupported = true;
 
   const { data: usageLimits } = useQuery({
-    queryKey: ['usage-limits', provider],
+    queryKey: ['usage-limits', usageProvider],
     queryFn: async () => {
-      const response = await api.get<UsageLimitsResponse>(`/api/usage/limits?provider=${provider}`);
+      const response = await api.get<UsageLimitsResponse>(
+        `/api/usage/limits?provider=${usageProvider}`
+      );
       if (response.data.success && response.data.supported && response.data.data) {
         return response.data.data;
       }
       return null;
     },
     staleTime: 60000,
-    enabled: !!activeSessionId && limitsSupported,
+    enabled: !!resolvedSessionId && limitsSupported,
   });
 
   const hasContextWindow = usage.contextWindow > 0;
@@ -244,7 +286,8 @@ export function ContextPopover({
   const isCritical = percent >= 95;
 
   // Build limit bars for popover
-  const labels = CLI_PROVIDER_LIMIT_LABELS[provider];
+  const labels = CLI_PROVIDER_LIMIT_LABELS[usageProvider];
+  const providerShortLabel = USAGE_PROVIDER_SHORT_LABEL[usageProvider];
   const limitBars: Array<{
     key: string;
     label: string;
@@ -282,18 +325,61 @@ export function ContextPopover({
     }
   }
 
+  const sidebarMeters = [
+    {
+      key: 'five-hour',
+      label:
+        usageProvider === 'opencode-go'
+          ? 'Go'
+          : usageProvider === 'z-ai'
+            ? 'Z'
+            : labels.session.title,
+      value: usageLimits?.fiveHour?.utilization ?? null,
+      title: `${providerShortLabel} ${labels.session.title} limit`,
+      tone: 'session',
+    },
+    {
+      key: 'weekly',
+      label: 'Weekly',
+      value: usageLimits?.sevenDay?.utilization ?? usageLimits?.sevenDaySonnet?.utilization ?? null,
+      title: `${providerShortLabel} weekly limit`,
+      tone: 'weekly',
+    },
+    {
+      key: 'context',
+      label: 'Context',
+      value: rawPercent,
+      title: 'Context window',
+      tone: 'context',
+    },
+  ];
+  const formatSidebarMeterValue = (value: number | null) =>
+    value === null ? '–' : `${Math.round(value)}%`;
+  const sidebarMeterTitle = sidebarMeters
+    .map((meter) => `${meter.label}: ${formatSidebarMeterValue(meter.value)}`)
+    .join(' · ');
+
   useEffect(() => {
     if (isOpen && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       const popoverWidth = 280;
+      const estimatedHeight = 360;
+      if (placement === 'right') {
+        let left = rect.right + 8;
+        if (left + popoverWidth > window.innerWidth - 8) {
+          left = rect.left - popoverWidth - 8;
+        }
+        setPosition({
+          top: Math.max(8, Math.min(rect.top - 8, window.innerHeight - estimatedHeight - 8)),
+          left: Math.max(8, left),
+        });
+        return;
+      }
       let left = rect.left - popoverWidth / 2 + rect.width / 2;
       left = Math.max(8, Math.min(left, window.innerWidth - popoverWidth - 8));
-      setPosition({
-        top: rect.bottom + 4,
-        left,
-      });
+      setPosition({ top: rect.bottom + 4, left });
     }
-  }, [isOpen]);
+  }, [isOpen, placement]);
 
   const popover = isOpen
     ? createPortal(
@@ -308,7 +394,7 @@ export function ContextPopover({
               {limitBars.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    Usage Limits
+                    Rate limits
                   </div>
                   {limitBars.map((bar) => (
                     <div key={bar.key}>
@@ -399,6 +485,22 @@ export function ContextPopover({
                   <span className="text-muted-foreground">Cost</span>
                   <span className="font-mono">{formatCost(usage.totalCostUsd)}</span>
                 </div>
+                {contextStats && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Snapshots</span>
+                      <span className="font-mono">
+                        {contextStats.contextSnapshots.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Compacts</span>
+                      <span className="font-mono">
+                        {contextStats.compactEvents.toLocaleString()}
+                      </span>
+                    </div>
+                  </>
+                )}
                 {usage.model && usage.model !== 'unknown' && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Model</span>
@@ -420,26 +522,110 @@ export function ContextPopover({
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           'context-popover-trigger flex items-center gap-1.5 hover:opacity-80 transition-opacity cursor-pointer',
+          triggerVariant === 'sidebarUsageBar' && 'context-popover-trigger-sidebar',
+          collapsed && 'is-collapsed',
           className
         )}
-        title={hasContextWindow ? `Context: ${rawPercent.toFixed(0)}%` : 'Usage limits'}
+        title={
+          triggerVariant === 'sidebarUsageBar'
+            ? sidebarMeterTitle
+            : hasContextWindow
+              ? `Context: ${rawPercent.toFixed(0)}%${
+                  contextStats ? ` · ${contextStats.compactEvents} compacts` : ''
+                }`
+              : 'Usage limits'
+        }
       >
-        <Activity className="h-3 w-3 text-muted-foreground" />
-        {showLabel && (
-          <span className="context-popover-label">{hasContextWindow ? 'Context' : 'Usage'}</span>
-        )}
-        <div className="w-10 h-1.5 rounded-full bg-muted overflow-hidden">
-          <div
-            className={cn(
-              'h-full rounded-full transition-all duration-500',
-              isCritical && 'animate-pulse'
+        {triggerVariant === 'sidebarUsageBar' ? (
+          <>
+            {!collapsed && (
+              <span className="context-sidebar-copy">
+                <span className="context-sidebar-meter-grid">
+                  {sidebarMeters.map((meter) => (
+                    <span
+                      key={meter.key}
+                      className={cn(
+                        'context-sidebar-meter',
+                        `is-${meter.tone}`,
+                        meter.value === null && 'is-unavailable',
+                        (meter.value ?? 0) > 0 && 'has-usage',
+                        (meter.value ?? 0) >= 95 && 'is-critical'
+                      )}
+                      title={`${meter.title}: ${formatSidebarMeterValue(meter.value)}`}
+                      style={
+                        {
+                          '--meter-value': `${Math.min(100, Math.max(0, meter.value ?? 0))}%`,
+                          '--meter-color':
+                            meter.value === null
+                              ? 'hsl(var(--muted-foreground) / 0.28)'
+                              : getGradientColor(meter.value),
+                        } as CSSProperties
+                      }
+                    >
+                      <span className="context-sidebar-meter-head">
+                        <span className="context-sidebar-meter-label">{meter.label}</span>
+                        <span className="context-sidebar-meter-value">
+                          {formatSidebarMeterValue(meter.value)}
+                        </span>
+                      </span>
+                      <span className="context-sidebar-bar-track" aria-hidden="true">
+                        <span className="context-sidebar-bar-fill" />
+                      </span>
+                    </span>
+                  ))}
+                </span>
+              </span>
             )}
-            style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }}
-          />
-        </div>
-        <span className="text-[10px] font-mono tabular-nums" style={{ color }}>
-          {rawPercent.toFixed(0)}%
-        </span>
+            {collapsed && (
+              <span className="context-sidebar-collapsed-bars" aria-hidden="true">
+                {sidebarMeters.map((meter) => (
+                  <span
+                    key={meter.key}
+                    className={cn(
+                      'context-sidebar-bar-track',
+                      meter.value === null && 'is-unavailable',
+                      (meter.value ?? 0) > 0 && 'has-usage',
+                      (meter.value ?? 0) >= 95 && 'is-critical'
+                    )}
+                    title={`${meter.title}: ${formatSidebarMeterValue(meter.value)}`}
+                    style={
+                      {
+                        '--meter-value': `${Math.min(100, Math.max(0, meter.value ?? 0))}%`,
+                        '--meter-color':
+                          meter.value === null
+                            ? 'hsl(var(--muted-foreground) / 0.28)'
+                            : getGradientColor(meter.value),
+                      } as CSSProperties
+                    }
+                  >
+                    <span className="context-sidebar-bar-fill" />
+                  </span>
+                ))}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <Activity className="h-3 w-3 text-muted-foreground" />
+            {showLabel && (
+              <span className="context-popover-label">
+                {hasContextWindow ? 'Context' : 'Usage'}
+              </span>
+            )}
+            <div className="w-10 h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-all duration-500',
+                  isCritical && 'animate-pulse'
+                )}
+                style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: color }}
+              />
+            </div>
+            <span className="text-[10px] font-mono tabular-nums" style={{ color }}>
+              {rawPercent.toFixed(0)}%
+            </span>
+          </>
+        )}
       </button>
       {popover}
     </>

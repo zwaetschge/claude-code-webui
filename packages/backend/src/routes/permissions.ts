@@ -220,7 +220,12 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
 
   if (!request) {
     try {
-      const reply = action === 'deny' ? 'reject' : action === 'allow_global' ? 'always' : 'once';
+      const reply =
+        action === 'deny'
+          ? 'reject'
+          : action === 'allow_global' || action === 'allow_project'
+            ? 'always'
+            : 'once';
       const handled = await opencodeServer.replyPermission(requestId, reply, pattern);
       if (handled) {
         auditFromRequest(req, 'permission.respond', {

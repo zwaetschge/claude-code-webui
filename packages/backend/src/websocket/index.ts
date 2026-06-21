@@ -6,7 +6,7 @@ import type {
   ServerToClientEvents,
   InterServerEvents,
   SocketData,
-} from '@claude-code-webui/shared';
+} from '@plum-code-webui/shared';
 import { config } from '../config';
 import { getDatabase } from '../db';
 import { ClaudeProcessManager } from '../services/claude/ClaudeProcessManager';
@@ -198,9 +198,9 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       socket.leave(`session:${sessionId}`);
       console.log(`Socket ${socket.id} unsubscribed from session ${sessionId}`);
 
-      // If the last subscriber just left, mark the session disconnected so the
-      // idle-cleanup job can reclaim it. Otherwise the process + its buffer live
-      // on forever after the only client navigated away.
+      // If the last subscriber just left, mark the session as headless so a
+      // later reconnect can report that no browser is attached. The CLI keeps
+      // running in the background.
       const roomSize = io.sockets.adapter.rooms.get(`session:${sessionId}`)?.size ?? 0;
       if (roomSize === 0) {
         processManager.markSessionDisconnected(sessionId);
@@ -225,28 +225,33 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     };
 
     // Send message to Claude
-    socket.on('session:send', async ({ sessionId, message, images, clientMessageId }) => {
-      // Dedupe BEFORE rate-limiting: a retried message should not burn a token.
-      if (clientMessageId && !rememberId(seenSendIds, clientMessageId)) {
-        console.log(
-          `[WS] session:send dedup clientMessageId=${clientMessageId} sessionId=${sessionId}`
-        );
-        return;
+    socket.on(
+      'session:send',
+      async ({ sessionId, message, images, activeFollowupMode, clientMessageId }) => {
+        // Dedupe BEFORE rate-limiting: a retried message should not burn a token.
+        if (clientMessageId && !rememberId(seenSendIds, clientMessageId)) {
+          console.log(
+            `[WS] session:send dedup clientMessageId=${clientMessageId} sessionId=${sessionId}`
+          );
+          return;
+        }
+        if (denyControl(sessionId, 'session:send')) return;
+        if (rateLimited(sessionId, 'session:send')) return;
+        console.log(`Received session:send for ${sessionId}: "${message?.substring(0, 50)}..."`);
+        try {
+          await processManager.sendMessage(sessionId, socket.data.userId, message, images, {
+            activeFollowupMode,
+          });
+        } catch (err) {
+          socket.emit('session:error', {
+            sessionId,
+            error: logError('session:send', sessionId, err) || 'Failed to send message',
+          });
+        }
       }
-      if (denyControl(sessionId, 'session:send')) return;
-      if (rateLimited(sessionId, 'session:send')) return;
-      console.log(`Received session:send for ${sessionId}: "${message?.substring(0, 50)}..."`);
-      try {
-        await processManager.sendMessage(sessionId, socket.data.userId, message, images);
-      } catch (err) {
-        socket.emit('session:error', {
-          sessionId,
-          error: logError('session:send', sessionId, err) || 'Failed to send message',
-        });
-      }
-    });
+    );
 
-    // Interrupt Claude session
+    // Interrupt the active CLI session.
     socket.on('session:interrupt', (sessionId) => {
       if (denyControl(sessionId, 'session:interrupt')) return;
       try {
@@ -393,7 +398,8 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     // Cleanup on disconnect
     socket.on('disconnect', () => {
       console.log(`Client disconnected: ${socket.id}`);
-      // Mark subscribed sessions as disconnected
+      // Mark subscribed sessions as headless, but leave the underlying process
+      // alone so it can finish without an open browser tab.
       for (const sessionId of socket.data.subscribedSessions) {
         processManager.markSessionDisconnected(sessionId);
       }

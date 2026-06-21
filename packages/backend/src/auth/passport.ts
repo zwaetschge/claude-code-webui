@@ -4,7 +4,7 @@ import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { nanoid } from 'nanoid';
 import { config } from '../config';
 import { getDatabase } from '../db';
-import type { User } from '@claude-code-webui/shared';
+import type { User } from '@plum-code-webui/shared';
 
 // Explicit column list excludes password_hash and api_key_encrypted so auth flows never
 // accidentally serialize sensitive columns into the session or OAuth profile responses.

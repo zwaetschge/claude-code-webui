@@ -5,7 +5,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
-import type { ApiResponse, CliProviderUpdateResponse } from '@claude-code-webui/shared';
+import type { ApiResponse, CliProviderUpdateResponse } from '@plum-code-webui/shared';
 import {
   CLI_PROVIDERS,
   getAvailableProviders,

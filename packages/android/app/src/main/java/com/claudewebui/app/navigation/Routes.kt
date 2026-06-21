@@ -77,27 +77,6 @@ sealed class Routes(val route: String) {
     /** Usage analytics dashboard */
     object Analytics : Routes("analytics")
 
-    /** Watchdog / background process monitor */
-    object Watchdog : Routes("watchdog")
-
-    /** Orchestration / multi-agent view for a session */
-    data class Orchestration(val sessionId: String) : Routes("orchestration/{sessionId}") {
-        companion object {
-            const val ROUTE = "orchestration/{sessionId}"
-            const val ARG_SESSION_ID = "sessionId"
-            fun createRoute(sessionId: String) = "orchestration/$sessionId"
-        }
-    }
-
-    /** Ralph AI assistant for a session */
-    data class Ralph(val sessionId: String) : Routes("ralph/{sessionId}") {
-        companion object {
-            const val ROUTE = "ralph/{sessionId}"
-            const val ARG_SESSION_ID = "sessionId"
-            fun createRoute(sessionId: String) = "ralph/$sessionId"
-        }
-    }
-
     /** Checkpoint manager for a session */
     data class CheckpointManager(val sessionId: String) : Routes("checkpoints/{sessionId}") {
         companion object {

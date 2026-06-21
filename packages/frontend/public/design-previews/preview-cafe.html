@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cafe — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CAFE DESIGN SYSTEM — 400×300 THUMBNAIL PREVIEW
+     Warm tones · soft typography · cozy · clean layouts
+     ============================================================ */
+  :root {
+    --cf-primary: #5D4432;        /* roasted coffee brown */
+    --cf-primary-soft: #7A5C46;
+    --cf-secondary: #E9E3DD;      /* warm beige */
+    --cf-success: #16A34A;
+    --cf-warning: #D97706;
+    --cf-danger: #DC2626;
+    --cf-accent: #C8915A;         /* caramel */
+
+    --cf-surface: #F9F7F5;        /* cream paper */
+    --cf-surface-2: #F3EEE8;
+    --cf-card: #FFFFFF;
+    --cf-ink: #3E2B1E;            /* deep espresso */
+    --cf-ink-2: #5A4636;
+    --cf-ink-3: #8A7868;
+    --cf-ink-4: #B8A999;
+    --cf-line: #E9E3DD;
+    --cf-line-2: #F0EBE4;
+
+    --cf-font: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+    --cf-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --cf-r-sm: 8px;
+    --cf-r-md: 12px;
+    --cf-r-lg: 18px;
+    --cf-r-xl: 24px;
+
+    --cf-sh-1: 0 1px 3px rgba(62,43,30,0.05);
+    --cf-sh-2: 0 8px 24px -8px rgba(62,43,30,0.12), 0 2px 6px -2px rgba(62,43,30,0.05);
+    --cf-sh-warm: 0 10px 28px -8px rgba(93,68,50,0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cf-font);
+    font-size: 12px;
+    color: var(--cf-ink);
+    background:
+      radial-gradient(180px 120px at 100% 0%, rgba(200,145,90,0.10), transparent 60%),
+      radial-gradient(160px 100px at 0% 100%, rgba(93,68,50,0.06), transparent 60%),
+      var(--cf-surface);
+    -webkit-font-smoothing: antialiased;
+    padding: 12px;
+  }
+
+  .frame {
+    width: 376px;
+    height: 276px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ===== HEADER ===== */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--cf-primary), var(--cf-accent));
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--cf-sh-warm);
+  }
+  .brand__mark svg { width: 15px; height: 15px; }
+  .brand__name {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--cf-ink);
+  }
+  .brand__name span {
+    color: var(--cf-accent);
+    font-weight: 600;
+  }
+  .header__tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: var(--cf-card);
+    border: 1px solid var(--cf-line);
+    border-radius: 99px;
+    font-family: var(--cf-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--cf-ink-2);
+    letter-spacing: 0.04em;
+  }
+  .header__tag::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--cf-success);
+  }
+
+  /* ===== MAIN GRID ===== */
+  .main {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  .card {
+    background: var(--cf-card);
+    border: 1px solid var(--cf-line);
+    border-radius: var(--cf-r-lg);
+    padding: 14px;
+    box-shadow: var(--cf-sh-1);
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ===== LEFT: featured menu ===== */
+  .featured {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: linear-gradient(160deg, var(--cf-card) 0%, var(--cf-surface-2) 100%);
+  }
+  .featured__label {
+    font-family: var(--cf-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cf-accent);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .featured__label::before {
+    content: "";
+    width: 16px; height: 1.5px;
+    background: var(--cf-accent);
+    border-radius: 1px;
+  }
+  .featured__title {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--cf-ink);
+  }
+  .featured__title em {
+    font-style: normal;
+    color: var(--cf-primary);
+    font-weight: 600;
+  }
+  .featured__sub {
+    font-size: 10px;
+    color: var(--cf-ink-3);
+    line-height: 1.5;
+  }
+  /* Decorative coffee cup illustration (CSS/SVG) */
+  .featured__art {
+    position: absolute;
+    top: 10px; right: -10px;
+    width: 80px; height: 80px;
+    opacity: 0.9;
+  }
+
+  /* Mini menu list */
+  .menu {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--cf-line);
+  }
+  .menu__item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 10px;
+  }
+  .menu__name {
+    color: var(--cf-ink-2);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .menu__name::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--cf-accent);
+    flex-shrink: 0;
+  }
+  .menu__dots {
+    flex: 1;
+    border-bottom: 1px dotted var(--cf-ink-4);
+    margin: 0 4px;
+    transform: translateY(-2px);
+  }
+  .menu__price {
+    font-family: var(--cf-font-mono);
+    font-weight: 700;
+    color: var(--cf-primary);
+    font-size: 10px;
+  }
+
+  /* ===== RIGHT: stack of smaller cards ===== */
+  .right {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  /* Revenue stat */
+  .stat {
+    padding: 10px 12px;
+  }
+  .stat__label {
+    font-family: var(--cf-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cf-ink-3);
+    margin-bottom: 2px;
+  }
+  .stat__value {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--cf-ink);
+    line-height: 1.1;
+  }
+  .stat__value span {
+    font-family: var(--cf-font-mono);
+    font-size: 12px;
+    color: var(--cf-ink-3);
+    font-weight: 500;
+  }
+  .stat__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    margin-top: 2px;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--cf-font-mono);
+    font-weight: 700;
+    color: var(--cf-success);
+  }
+  .delta svg { width: 8px; height: 8px; }
+  .delta-text { color: var(--cf-ink-4); }
+
+  /* Rating card with stars */
+  .rating {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .rating__score {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--cf-ink);
+    letter-spacing: -0.02em;
+  }
+  .rating__body { flex: 1; min-width: 0; }
+  .rating__stars {
+    display: flex;
+    gap: 1px;
+    color: var(--cf-accent);
+    margin-bottom: 1px;
+  }
+  .rating__stars svg { width: 10px; height: 10px; }
+  .rating__stars svg.dim { color: var(--cf-line); }
+  .rating__count {
+    font-family: var(--cf-font-mono);
+    font-size: 8.5px;
+    color: var(--cf-ink-4);
+  }
+
+  /* Today's hours / status */
+  .status {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .status__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+  }
+  .status__label {
+    color: var(--cf-ink-2);
+    font-weight: 500;
+  }
+  .status__val {
+    font-family: var(--cf-font-mono);
+    font-weight: 700;
+    color: var(--cf-ink);
+    font-size: 10px;
+  }
+  .status__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: rgba(22,163,74,0.10);
+    color: var(--cf-success);
+    border-radius: 99px;
+    font-family: var(--cf-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+  }
+  .status__pill::before {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--cf-success);
+  }
+
+  /* Mini sparkline */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 18px;
+    margin-top: 4px;
+  }
+  .spark__bar {
+    flex: 1;
+    background: var(--cf-accent);
+    opacity: 0.6;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .spark__bar--peak { opacity: 1; background: var(--cf-primary); }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Cafe design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>
+      </span>
+      <span class="brand__name">MORNING · <span>brew</span></span>
+    </div>
+    <span class="header__tag">open now</span>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: featured menu -->
+    <article class="card featured">
+
+      <!-- Decorative coffee cup -->
+      <svg class="featured__art" viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <linearGradient id="cupGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#C8915A"/>
+            <stop offset="100%" stop-color="#5D4432"/>
+          </linearGradient>
+        </defs>
+        <!-- steam -->
+        <path d="M 38 15 Q 36 10 38 5 Q 40 2 38 -2" stroke="#C8915A" stroke-width="1.5" fill="none" opacity="0.4" stroke-linecap="round"/>
+        <path d="M 50 15 Q 52 10 50 5 Q 48 2 50 -2" stroke="#C8915A" stroke-width="1.5" fill="none" opacity="0.4" stroke-linecap="round"/>
+        <path d="M 62 15 Q 60 10 62 5 Q 64 2 62 -2" stroke="#C8915A" stroke-width="1.5" fill="none" opacity="0.4" stroke-linecap="round"/>
+        <!-- cup body -->
+        <path d="M 25 30 L 30 75 Q 30 82 38 82 L 62 82 Q 70 82 70 75 L 75 30 Z" fill="url(#cupGrad)"/>
+        <!-- coffee surface -->
+        <ellipse cx="50" cy="32" rx="24" ry="3" fill="#3E2B1E" opacity="0.5"/>
+        <!-- handle -->
+        <path d="M 75 40 Q 88 42 88 55 Q 88 68 75 70" stroke="#5D4432" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+        <!-- saucer -->
+        <ellipse cx="50" cy="88" rx="32" ry="3" fill="#5D4432" opacity="0.6"/>
+      </svg>
+
+      <div>
+        <div class="featured__label">Today's special</div>
+        <h1 class="featured__title">Caramel<br><em>oat latte</em></h1>
+        <p class="featured__sub">Double shot espresso, steamed oat milk, house caramel — slow afternoons, sorted.</p>
+      </div>
+
+      <div class="menu">
+        <div class="menu__item">
+          <span class="menu__name">Flat white</span>
+          <span class="menu__dots"></span>
+          <span class="menu__price">4.50</span>
+        </div>
+        <div class="menu__item">
+          <span class="menu__name">Pour over</span>
+          <span class="menu__dots"></span>
+          <span class="menu__price">5.20</span>
+        </div>
+        <div class="menu__item">
+          <span class="menu__name">Matcha latte</span>
+          <span class="menu__dots"></span>
+          <span class="menu__price">5.80</span>
+        </div>
+      </div>
+    </article>
+
+    <!-- RIGHT: stat stack -->
+    <div class="right">
+
+      <!-- Revenue -->
+      <article class="card stat">
+        <div class="stat__label">Today</div>
+        <div class="stat__value">€1,284<span> · 312 cups</span></div>
+        <div class="stat__sub">
+          <span class="delta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            12%
+          </span>
+          <span class="delta-text">vs avg Tue</span>
+        </div>
+      </article>
+
+      <!-- Rating -->
+      <article class="card rating">
+        <div class="rating__score">4.8</div>
+        <div class="rating__body">
+          <div class="rating__stars" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+          </div>
+          <div class="rating__count">428 reviews</div>
+        </div>
+      </article>
+
+      <!-- Status / hours -->
+      <article class="card status">
+        <div class="status__row">
+          <span class="status__label">Open until</span>
+          <span class="status__pill">18:00</span>
+        </div>
+        <div class="status__row">
+          <span class="status__label">Tables free</span>
+          <span class="status__val">4 / 12</span>
+        </div>
+        <div class="spark" aria-hidden="true">
+          <div class="spark__bar" style="height:25%"></div>
+          <div class="spark__bar" style="height:40%"></div>
+          <div class="spark__bar" style="height:55%"></div>
+          <div class="spark__bar" style="height:48%"></div>
+          <div class="spark__bar spark__bar--peak" style="height:90%"></div>
+          <div class="spark__bar" style="height:72%"></div>
+          <div class="spark__bar" style="height:60%"></div>
+          <div class="spark__bar" style="height:45%"></div>
+        </div>
+      </article>
+
+    </div>
+
+  </section>
+
+</main>
+
+</body>
+</html>

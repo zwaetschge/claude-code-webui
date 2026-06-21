@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Perspective — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     PERSPECTIVE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Spatial depth · isometric views · vanishing points · layered
+     ============================================================ */
+  :root {
+    --ps-primary: #00BD7D;        /* mint */
+    --ps-primary-2: #00A86B;
+    --ps-primary-soft: #E6FAF2;
+    --ps-secondary: #00BD7D;
+    --ps-success: #16A34A;
+    --ps-warning: #D97706;
+    --ps-danger: #DC2626;
+
+    --ps-surface: #FFFFFF;
+    --ps-surface-2: #F7F9FB;
+    --ps-surface-3: #EEF2F5;
+
+    --ps-ink: #111827;
+    --ps-ink-2: #374151;
+    --ps-ink-3: #6B7280;
+    --ps-ink-4: #9CA3AF;
+    --ps-line: #E5E7EB;
+    --ps-line-2: #F1F3F5;
+
+    --ps-font: 'Poppins', -apple-system, sans-serif;
+    --ps-font-display: 'Oswald', 'Poppins', sans-serif;
+    --ps-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --ps-r-sm: 6px;
+    --ps-r-md: 10px;
+    --ps-r-lg: 14px;
+    --ps-r-pill: 999px;
+
+    /* depth shadows follow the perspective — long, low, directional */
+    --ps-shadow-1: 0 1px 2px rgba(17,24,39,0.06), 0 2px 6px rgba(17,24,39,0.04);
+    --ps-shadow-2: 0 4px 10px rgba(17,24,39,0.08), 0 10px 24px rgba(17,24,39,0.06);
+    --ps-shadow-3: 0 10px 20px rgba(17,24,39,0.10), 0 24px 48px rgba(17,24,39,0.08);
+    --ps-shadow-primary: 0 8px 18px -4px rgba(0,189,125,0.40), 0 16px 36px -8px rgba(0,189,125,0.28);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ps-font);
+    font-size: 12px;
+    color: var(--ps-ink);
+    background: var(--ps-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============================================================
+     POSTER SHELL with perspective context
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: var(--ps-surface);
+    isolation: isolate;
+  }
+
+  /* ---- Vanishing-point grid on the right half ----
+     Converging lines towards a single VP at (320, 150).
+     This is the defining identity of the Perspective style. */
+  .vp-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, transparent 38%, #000 70%, #000 100%);
+            mask-image: linear-gradient(90deg, transparent 0%, transparent 38%, #000 70%, #000 100%);
+    opacity: 0.55;
+  }
+  .vp-grid svg { width: 100%; height: 100%; display: block; }
+
+  /* soft horizon glow behind the stack */
+  .horizon {
+    position: absolute;
+    z-index: 0;
+    left: 0; right: 0;
+    top: 130px;
+    height: 120px;
+    background: radial-gradient(ellipse at 70% 50%,
+      rgba(0,189,125,0.10) 0%,
+      rgba(0,189,125,0.04) 35%,
+      transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     LAYOUT GRID
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 18px 24px 16px;
+    gap: 12px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--ps-font-display);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--ps-ink);
+  }
+  .brand__mark {
+    width: 16px;
+    height: 16px;
+    position: relative;
+    transform: perspective(60px) rotateX(48deg) rotateZ(45deg);
+  }
+  .brand__mark::before,
+  .brand__mark::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid var(--ps-primary);
+  }
+  .brand__mark::after {
+    transform: translateZ(6px);
+    border-color: var(--ps-ink);
+    opacity: 0.55;
+  }
+  .nav {
+    display: flex;
+    gap: 14px;
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--ps-ink-3);
+    letter-spacing: 0.01em;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--ps-ink); }
+  .nav a.is-active {
+    color: var(--ps-primary);
+    font-weight: 600;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 16px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--ps-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ps-primary);
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 16px;
+    height: 1.5px;
+    background: var(--ps-primary);
+  }
+  .hero__title {
+    font-family: var(--ps-font-display);
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 0.98;
+    letter-spacing: 0.005em;
+    text-transform: uppercase;
+    color: var(--ps-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--ps-primary);
+  }
+  .hero__sub {
+    font-size: 10.5px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: var(--ps-ink-3);
+    max-width: 26ch;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 14px;
+    border: none;
+    border-radius: var(--ps-r-sm);
+    font-family: var(--ps-font);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn--primary {
+    background: var(--ps-primary);
+    color: #FFFFFF;
+    box-shadow: var(--ps-shadow-primary);
+    transform: translateZ(0);
+  }
+  .btn--primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px -4px rgba(0,189,125,0.50), 0 20px 44px -8px rgba(0,189,125,0.34);
+  }
+  .btn--ghost {
+    background: transparent;
+    color: var(--ps-ink-2);
+    padding: 0 4px;
+    height: auto;
+    font-weight: 500;
+  }
+  .btn--ghost:hover { color: var(--ps-primary); }
+  .btn--ghost::after { content: " →"; }
+
+  /* ============================================================
+     RIGHT: ISOMETRIC / PERSPECTIVE CARD STACK
+     The centerpiece — three cards receding along the Z-axis with
+     a vanishing point behind them. This is the style signature.
+     ============================================================ */
+  .iso-stage {
+    position: relative;
+    height: 100%;
+    min-height: 150px;
+    perspective: 720px;
+    perspective-origin: 60% 40%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .iso-stack {
+    position: relative;
+    width: 150px;
+    height: 110px;
+    transform-style: preserve-3d;
+    transform: rotateX(20deg) rotateY(-26deg) rotateZ(2deg);
+    animation: floatStack 6s ease-in-out infinite;
+  }
+  @keyframes floatStack {
+    0%, 100% { transform: rotateX(20deg) rotateY(-26deg) rotateZ(2deg) translateZ(0); }
+    50%      { transform: rotateX(20deg) rotateY(-30deg) rotateZ(2deg) translateZ(6px); }
+  }
+
+  .card-3d {
+    position: absolute;
+    left: 0; top: 0;
+    width: 150px;
+    height: 96px;
+    border-radius: var(--ps-r-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background: var(--ps-surface);
+    border: 1px solid var(--ps-line);
+    backface-visibility: hidden;
+  }
+  /* Layer 1 — back, recedes along +Z (away from viewer) */
+  .card-3d--back {
+    transform: translate3d(8px, -10px, -48px) scale(0.86);
+    background: var(--ps-surface-3);
+    border-color: var(--ps-line);
+    box-shadow: var(--ps-shadow-1);
+    opacity: 0.85;
+  }
+  /* Layer 2 — mid */
+  .card-3d--mid {
+    transform: translate3d(4px, -5px, -22px) scale(0.93);
+    background: var(--ps-surface-2);
+    box-shadow: var(--ps-shadow-2);
+  }
+  /* Layer 3 — front, the hero card */
+  .card-3d--front {
+    transform: translate3d(0, 0, 0);
+    background: var(--ps-surface);
+    border-color: var(--ps-primary);
+    border-width: 1.5px;
+    box-shadow: var(--ps-shadow-3);
+    z-index: 3;
+  }
+
+  .card-3d__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-3d__tag {
+    font-family: var(--ps-font-mono);
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ps-ink-4);
+  }
+  .card-3d--front .card-3d__tag { color: var(--ps-primary); }
+  .card-3d__dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--ps-line);
+  }
+  .card-3d--front .card-3d__dot { background: var(--ps-primary); }
+
+  .card-3d__metric {
+    font-family: var(--ps-font-display);
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    color: var(--ps-ink);
+  }
+  .card-3d__metric span {
+    font-family: var(--ps-font);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--ps-ink-3);
+    margin-left: 3px;
+  }
+  .card-3d--back .card-3d__metric,
+  .card-3d--mid   .card-3d__metric { font-size: 18px; color: var(--ps-ink-3); }
+
+  .card-3d__spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 14px;
+  }
+  .card-3d__spark i {
+    flex: 1;
+    background: var(--ps-line);
+    border-radius: 1px;
+    min-height: 2px;
+  }
+  .card-3d--front .card-3d__spark i { background: var(--ps-primary-soft); }
+  .card-3d--front .card-3d__spark i.peak { background: var(--ps-primary); }
+
+  /* Floating depth chip — sits above the stack, reinforces spatial layering */
+  .depth-chip {
+    position: absolute;
+    top: 6px;
+    right: -4px;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: var(--ps-ink);
+    color: #FFFFFF;
+    border-radius: var(--ps-r-pill);
+    font-family: var(--ps-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: var(--ps-shadow-2);
+    transform: translateZ(20px);
+  }
+  .depth-chip::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--ps-primary);
+    box-shadow: 0 0 0 2px rgba(0,189,125,0.25);
+  }
+
+  /* depth axis label, lower-left of the stage */
+  .axis {
+    position: absolute;
+    left: -2px;
+    bottom: 4px;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--ps-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ps-ink-4);
+  }
+  .axis__line {
+    width: 22px;
+    height: 1px;
+    background: linear-gradient(90deg, var(--ps-ink-4), transparent);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--ps-line);
+    padding-top: 10px;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 18px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.1;
+  }
+  .stat__k {
+    font-family: var(--ps-font-display);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--ps-ink);
+  }
+  .stat__k span {
+    font-size: 9px;
+    color: var(--ps-ink-3);
+    font-family: var(--ps-font);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+  .stat__l {
+    font-family: var(--ps-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ps-ink-4);
+  }
+  .footer__meta {
+    font-family: var(--ps-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--ps-ink-4);
+    text-transform: uppercase;
+  }
+  .footer__meta b {
+    color: var(--ps-primary);
+    font-weight: 700;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .iso-stack { animation: none; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Perspective design language preview">
+
+  <!-- ===== Vanishing-point grid (style signature) ===== -->
+  <div class="vp-grid" aria-hidden="true">
+    <!-- Lines converge toward a single vanishing point at (320,150) -->
+    <svg viewBox="0 0 400 300" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="vpFade" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"  stop-color="#00BD7D" stop-opacity="0"/>
+          <stop offset="60%" stop-color="#00BD7D" stop-opacity="0.10"/>
+          <stop offset="100%" stop-color="#00BD7D" stop-opacity="0.55"/>
+        </linearGradient>
+      </defs>
+      <g stroke="url(#vpFade)" stroke-width="0.75" fill="none">
+        <!-- radiating rays from VP (320,150) -->
+        <line x1="320" y1="150" x2="160" y2="0"/>
+        <line x1="320" y1="150" x2="120" y2="40"/>
+        <line x1="320" y1="150" x2="100" y2="80"/>
+        <line x1="320" y1="150" x2="90"  y2="120"/>
+        <line x1="320" y1="150" x2="90"  y2="150"/>
+        <line x1="320" y1="150" x2="90"  y2="180"/>
+        <line x1="320" y1="150" x2="100" y2="220"/>
+        <line x1="320" y1="150" x2="120" y2="260"/>
+        <line x1="320" y1="150" x2="160" y2="300"/>
+        <!-- horizon -->
+        <line x1="0" y1="150" x2="400" y2="150" stroke="#111827" stroke-opacity="0.06" stroke-dasharray="2 4"/>
+        <!-- receding floor lines (parallel, converging) -->
+        <line x1="0"   y1="220" x2="400" y2="170"/>
+        <line x1="0"   y1="260" x2="400" y2="185"/>
+        <line x1="0"   y1="80"  x2="400" y2="135"/>
+        <line x1="0"   y1="40"  x2="400" y2="120"/>
+      </g>
+      <!-- VP marker -->
+      <circle cx="320" cy="150" r="2.5" fill="#00BD7D"/>
+      <circle cx="320" cy="150" r="6" fill="none" stroke="#00BD7D" stroke-opacity="0.35"/>
+    </svg>
+  </div>
+  <div class="horizon" aria-hidden="true"></div>
+
+  <!-- ===== CONTENT FRAME ===== -->
+  <div class="frame">
+
+    <!-- HEADER -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span>Apex</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Depth</a>
+        <a href="#">Layers</a>
+        <a href="#">Atlas</a>
+      </nav>
+    </header>
+
+    <!-- STAGE -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">Spatial · v3</span>
+        <h1 class="hero__title">Design in<br><em>three</em> dimensions.</h1>
+        <p class="hero__sub">Layered surfaces with real depth — interfaces that guide the eye through space.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Enter atlas</button>
+          <button class="btn btn--ghost" type="button">Docs</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: isometric card stack -->
+      <div class="iso-stage" aria-label="Isometric depth visualization">
+        <div class="iso-stack">
+
+          <!-- back layer -->
+          <div class="card-3d card-3d--back" aria-hidden="true">
+            <div class="card-3d__top">
+              <span class="card-3d__tag">Q1</span>
+              <span class="card-3d__dot"></span>
+            </div>
+            <div class="card-3d__metric">128</div>
+          </div>
+
+          <!-- mid layer -->
+          <div class="card-3d card-3d--mid" aria-hidden="true">
+            <div class="card-3d__top">
+              <span class="card-3d__tag">Q2</span>
+              <span class="card-3d__dot"></span>
+            </div>
+            <div class="card-3d__metric">214</div>
+          </div>
+
+          <!-- front layer (hero) -->
+          <div class="card-3d card-3d--front">
+            <div class="card-3d__top">
+              <span class="card-3d__tag">Q3 · live</span>
+              <span class="card-3d__dot"></span>
+            </div>
+            <div class="card-3d__metric">342<span>+38%</span></div>
+            <div class="card-3d__spark" aria-hidden="true">
+              <i style="height:30%"></i>
+              <i style="height:45%"></i>
+              <i style="height:40%"></i>
+              <i style="height:62%"></i>
+              <i style="height:55%"></i>
+              <i class="peak" style="height:90%"></i>
+              <i style="height:70%"></i>
+              <i style="height:58%"></i>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- depth label chip floating above stack -->
+        <span class="depth-chip" aria-hidden="true">Z+ axis</span>
+
+        <!-- axis caption -->
+        <span class="axis" aria-hidden="true">
+          <span class="axis__line"></span>
+          vanishing point
+        </span>
+      </div>
+
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">3<span>layers</span></span>
+          <span class="stat__l">Depth</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">720<span>px</span></span>
+          <span class="stat__l">Perspective</span>
+        </div>
+      </div>
+      <span class="footer__meta">WCAG AA · <b>#00BD7D</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

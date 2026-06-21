@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Neumorphism — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     NEUMORPHISM DESIGN SYSTEM — 400×300 THUMBNAIL (v2 compact)
+     Dense · stronger shadow read · music-player layout · teal accent
+     ============================================================ */
+  :root {
+    --nm-primary: #006666;
+    --nm-primary-light: #008080;
+    --nm-primary-soft: #E0F0F0;
+    --nm-secondary: #F1F2F5;
+    --nm-success: #00A63D;
+    --nm-warning: #FE9900;
+    --nm-danger: #FF2157;
+
+    --nm-surface: #E7E5E4;
+    --nm-ink: #1E2938;
+    --nm-ink-2: #475569;
+    --nm-ink-3: #64748B;
+    --nm-ink-4: #94A3B8;
+
+    --nm-font: 'Space Mono', monospace;
+    --nm-font-mono: 'JetBrains Mono', monospace;
+
+    --nm-r-sm: 8px;
+    --nm-r-md: 12px;
+    --nm-r-lg: 16px;
+    --nm-r-pill: 999px;
+
+    /* Stronger shadows for thumbnail readability */
+    --nm-raised:
+      5px 5px 12px rgba(163,160,155,0.55),
+      -5px -5px 12px rgba(255,255,255,0.95);
+    --nm-raised-sm:
+      3px 3px 8px rgba(163,160,155,0.50),
+      -3px -3px 8px rgba(255,255,255,0.90);
+    --nm-raised-xs:
+      2px 2px 5px rgba(163,160,155,0.45),
+      -2px -2px 5px rgba(255,255,255,0.85);
+    --nm-inset:
+      inset 3px 3px 7px rgba(163,160,155,0.55),
+      inset -3px -3px 7px rgba(255,255,255,0.85);
+    --nm-inset-sm:
+      inset 2px 2px 5px rgba(163,160,155,0.50),
+      inset -2px -2px 5px rgba(255,255,255,0.80);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--nm-font);
+    font-size: 12px;
+    color: var(--nm-ink);
+    background: var(--nm-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame {
+    width: 400px;
+    height: 300px;
+    padding: 8px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+    background: var(--nm-surface);
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--nm-surface);
+    border-radius: var(--nm-r-md);
+    box-shadow: var(--nm-raised-sm);
+  }
+  .header__left { display: flex; align-items: center; gap: 6px; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--nm-primary);
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    background: var(--nm-surface);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--nm-primary);
+    box-shadow: var(--nm-raised-xs);
+  }
+  .brand__mark svg { width: 12px; height: 12px; }
+
+  .nav { display: flex; gap: 3px; }
+  .nav a {
+    padding: 3px 8px;
+    border-radius: var(--nm-r-pill);
+    text-decoration: none;
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--nm-ink-3);
+    background: var(--nm-surface);
+    box-shadow: var(--nm-raised-xs);
+  }
+  .nav a.is-active { color: var(--nm-primary); box-shadow: var(--nm-inset-sm); }
+
+  .header__avatar {
+    width: 26px; height: 26px;
+    background: var(--nm-surface);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--nm-primary);
+    font-weight: 700;
+    font-size: 9px;
+    box-shadow: var(--nm-raised-xs);
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  /* LEFT — music player card */
+  .player {
+    background: var(--nm-surface);
+    border-radius: var(--nm-r-lg);
+    box-shadow: var(--nm-raised);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+  }
+  .player__label {
+    font-family: var(--nm-font);
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--nm-ink-4);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* Album disc — neumorphic circle */
+  .player__disc {
+    width: 56px; height: 56px;
+    background: var(--nm-surface);
+    border-radius: 50%;
+    box-shadow: var(--nm-raised-sm);
+    display: grid; place-items: center;
+    margin: 2px auto;
+    position: relative;
+  }
+  .player__disc-inner {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background:
+      conic-gradient(from 0deg, var(--nm-primary), var(--nm-primary-light), var(--nm-primary), var(--nm-primary-light), var(--nm-primary));
+    box-shadow: var(--nm-inset-sm);
+    display: grid; place-items: center;
+  }
+  .player__disc-inner::after {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--nm-surface);
+    box-shadow: var(--nm-raised-xs);
+  }
+
+  .player__track {
+    text-align: center;
+  }
+  .player__title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--nm-ink);
+    line-height: 1.2;
+  }
+  .player__artist {
+    font-size: 9px;
+    color: var(--nm-ink-3);
+  }
+
+  /* Progress bar — inset track */
+  .player__progress {
+    margin-top: 2px;
+  }
+  .player__progress-track {
+    height: 6px;
+    background: var(--nm-surface);
+    border-radius: var(--nm-r-pill);
+    box-shadow: var(--nm-inset-sm);
+    overflow: hidden;
+    position: relative;
+  }
+  .player__progress-fill {
+    height: 100%;
+    width: 42%;
+    background: linear-gradient(90deg, var(--nm-primary), var(--nm-primary-light));
+    border-radius: var(--nm-r-pill);
+  }
+  .player__progress-times {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--nm-font);
+    font-size: 7px;
+    color: var(--nm-ink-4);
+    margin-top: 2px;
+  }
+
+  /* Controls */
+  .player__controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .ctrl {
+    width: 28px; height: 28px;
+    background: var(--nm-surface);
+    border: none;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--nm-ink-3);
+    box-shadow: var(--nm-raised-xs);
+    cursor: pointer;
+  }
+  .ctrl:active { box-shadow: var(--nm-inset-sm); }
+  .ctrl svg { width: 12px; height: 12px; }
+  .ctrl--play {
+    width: 36px; height: 36px;
+    color: var(--nm-primary);
+  }
+
+  /* RIGHT — stat + control grid */
+  .right {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 6px;
+    min-height: 0;
+  }
+
+  /* Mini stat cards */
+  .stat {
+    background: var(--nm-surface);
+    border-radius: var(--nm-r-md);
+    box-shadow: var(--nm-raised-sm);
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+  }
+  .stat__icon {
+    width: 28px; height: 28px;
+    background: var(--nm-surface);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--nm-primary);
+    box-shadow: var(--nm-raised-xs);
+    flex-shrink: 0;
+  }
+  .stat__icon svg { width: 14px; height: 14px; }
+  .stat__body { flex: 1; min-width: 0; }
+  .stat__label {
+    font-size: 7.5px;
+    font-weight: 700;
+    color: var(--nm-ink-4);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+  .stat__value {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--nm-ink);
+    line-height: 1.1;
+    margin-top: 1px;
+  }
+  .stat__value span {
+    font-size: 9px;
+    color: var(--nm-ink-3);
+    font-weight: 400;
+  }
+  .stat__delta {
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--nm-primary);
+    line-height: 1;
+  }
+
+  /* Mini progress ring */
+  .ring {
+    width: 32px; height: 32px;
+    background: var(--nm-surface);
+    border-radius: 50%;
+    box-shadow: var(--nm-inset-sm);
+    display: grid; place-items: center;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .ring__bar {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(var(--nm-primary) 0% 72%, transparent 72% 100%);
+    -webkit-mask: radial-gradient(circle, transparent 58%, black 60%);
+    mask: radial-gradient(circle, transparent 58%, black 60%);
+  }
+  .ring__val {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--nm-primary);
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Toggle row */
+  .toggle-card {
+    background: var(--nm-surface);
+    border-radius: var(--nm-r-md);
+    box-shadow: var(--nm-raised-sm);
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .toggle-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .toggle-name {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--nm-ink);
+  }
+  .toggle-sub {
+    font-size: 7px;
+    color: var(--nm-ink-4);
+  }
+  .switch {
+    position: relative;
+    width: 34px; height: 20px;
+    background: var(--nm-surface);
+    border-radius: var(--nm-r-pill);
+    box-shadow: var(--nm-inset-sm);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .switch__thumb {
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: var(--nm-surface);
+    border-radius: 50%;
+    box-shadow: var(--nm-raised-xs);
+    transition: transform .25s ease, background .25s ease;
+  }
+  .switch.is-on .switch__thumb {
+    transform: translateX(14px);
+    background: var(--nm-primary);
+  }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Neumorphism design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="header__left">
+      <div class="brand">
+        <span class="brand__mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" opacity="0.4"/></svg>
+        </span>
+        <span>soft.io</span>
+      </div>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Home</a>
+      <a href="#">Studio</a>
+      <a href="#">Club</a>
+    </nav>
+    <div class="header__avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: music player -->
+    <article class="player">
+      <span class="player__label">— now playing —</span>
+      <div class="player__disc">
+        <div class="player__disc-inner"></div>
+      </div>
+      <div class="player__track">
+        <div class="player__title">Soft Horizon</div>
+        <div class="player__artist">Pillow Talk · 2024</div>
+      </div>
+      <div class="player__progress">
+        <div class="player__progress-track">
+          <div class="player__progress-fill"></div>
+        </div>
+        <div class="player__progress-times">
+          <span>1:24</span>
+          <span>3:18</span>
+        </div>
+      </div>
+      <div class="player__controls">
+        <button class="ctrl" type="button" aria-label="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg>
+        </button>
+        <button class="ctrl ctrl--play" type="button" aria-label="Play">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="ctrl" type="button" aria-label="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+        </button>
+      </div>
+    </article>
+
+    <!-- RIGHT: stat + control grid -->
+    <aside class="right">
+
+      <!-- Stat 1: members -->
+      <div class="stat">
+        <div class="stat__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </div>
+        <div class="stat__body">
+          <div class="stat__label">Members</div>
+          <div class="stat__value">2,847</div>
+        </div>
+        <div class="stat__delta">+12%</div>
+      </div>
+
+      <!-- Stat 2: goal ring -->
+      <div class="stat">
+        <div class="ring">
+          <div class="ring__bar"></div>
+          <span class="ring__val">72</span>
+        </div>
+        <div class="stat__body">
+          <div class="stat__label">Daily goal</div>
+          <div class="stat__value">72<span>/100</span></div>
+        </div>
+      </div>
+
+      <!-- Toggle card -->
+      <div class="toggle-card">
+        <div class="toggle-info">
+          <span class="toggle-name">Ambient mode</span>
+          <span class="toggle-sub">soft glow</span>
+        </div>
+        <div class="switch is-on"><div class="switch__thumb"></div></div>
+      </div>
+
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

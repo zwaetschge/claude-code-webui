@@ -1,5 +1,5 @@
 import type { Message, StreamingMessage } from './message.js';
-import type { SessionStatus } from './session.js';
+import type { SessionStatus, SubagentRunStatus, UsageSnapshot } from './session.js';
 
 // Session permission mode
 export type SessionMode = 'planning' | 'auto-accept' | 'manual' | 'danger';
@@ -26,6 +26,7 @@ export interface BufferedMessage {
     | 'agent'
     | 'image'
     | 'compact'
+    | 'question'
     | 'status'
     | 'mode';
   data: unknown;
@@ -48,6 +49,15 @@ export interface SessionQueueData {
   preempting?: boolean;
 }
 
+export type ActiveFollowupMode = 'queue' | 'steer';
+
+export interface ToolActionSummary {
+  title: string;
+  explanation: string;
+  source: 'template' | 'fallback' | 'agent-pending' | 'agent';
+  generatedAt: number;
+}
+
 // Permission response action type
 export type PermissionAction = 'allow_once' | 'allow_project' | 'allow_global' | 'deny';
 
@@ -57,6 +67,7 @@ export interface ClientToServerEvents {
     sessionId: string;
     message: string;
     images?: ImageAttachmentData[];
+    activeFollowupMode?: ActiveFollowupMode;
     /**
      * Optional client-generated unique ID (e.g. nanoid/uuid) used to dedupe retries.
      * If the server has recently seen the same ID on this socket, the resend is dropped.
@@ -87,24 +98,7 @@ export interface ClientToServerEvents {
 }
 
 // Usage data from Claude CLI
-export interface UsageData {
-  sessionId: string;
-  // Token usage
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  totalTokens: number;
-  // Context window
-  contextWindow: number;
-  contextUsedPercent: number;
-  contextUsedPercentRaw?: number;
-  contextExceeded?: boolean;
-  // Cost
-  totalCostUsd: number;
-  // Model info
-  model: string;
-}
+export type UsageData = UsageSnapshot;
 
 // Todo item from Claude's TodoWrite tool
 export interface TodoItem {
@@ -121,6 +115,7 @@ export interface ToolExecution {
   input?: unknown;
   result?: string;
   error?: string;
+  actionSummary?: ToolActionSummary;
   timestamp: number;
   completedAt?: number;
 }
@@ -129,10 +124,31 @@ export interface ToolExecution {
 export interface PendingPermission {
   sessionId: string;
   requestId: string;
+  providerSessionId?: string;
   toolName: string;
   toolInput: unknown;
   description: string;
   suggestedPattern: string;
+}
+
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface PendingQuestionItem {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
+export interface PendingQuestion {
+  sessionId: string;
+  requestId: string;
+  providerSessionId?: string;
+  questions: PendingQuestionItem[];
 }
 
 // Generated image data
@@ -173,6 +189,7 @@ export interface ServerToClientEvents {
     input?: unknown;
     result?: string;
     error?: string;
+    actionSummary?: ToolActionSummary;
     /**
      * Backend-clock timestamp at the moment of emission. Frontend should
      * prefer this over its own Date.now() so the chat timeline orders tools
@@ -183,9 +200,17 @@ export interface ServerToClientEvents {
   }) => void;
   'session:agent': (data: {
     sessionId: string;
+    agentId?: string;
     agentType: string;
     description?: string;
-    status: 'started' | 'completed' | 'error';
+    status: SubagentRunStatus;
+    startedAt?: number;
+    completedAt?: number;
+    result?: string;
+    error?: string;
+    toolId?: string;
+    externalAgentId?: string;
+    timestamp?: number;
   }) => void;
   'session:thinking': (data: { sessionId: string; isThinking: boolean; message?: string }) => void;
   'session:todos': (data: { sessionId: string; todos: TodoItem[] }) => void;
@@ -199,15 +224,18 @@ export interface ServerToClientEvents {
     needsFullResync?: boolean;
   }) => void;
   'session:compact': (data: {
+    id?: string;
     sessionId: string;
     message: string;
     summary?: string;
     clear?: boolean;
     reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
     error?: string;
+    createdAt?: string;
   }) => void;
   'session:mode': (data: { sessionId: string; mode: SessionMode }) => void;
   'session:queue': (data: SessionQueueData) => void;
+  'session:question_request': (data: PendingQuestion) => void;
   // Legacy permission request (simple denials flow)
   'session:permission_request': (data: PermissionRequestData | PendingPermission) => void;
   error: (message: string) => void;

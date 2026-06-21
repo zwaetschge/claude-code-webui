@@ -37,10 +37,10 @@ data class WorkerDetailState(
 
 data class OrchestrationConfigDraft(
     val task: String = "",
-    val masterProvider: CLIProvider = CLIProvider.CLAUDE,
+    val masterProvider: CLIProvider = CLIProvider.CODEX,
     val workers: List<WorkerConfig> = listOf(
-        WorkerConfig(provider = CLIProvider.CLAUDE),
-        WorkerConfig(provider = CLIProvider.GEMINI),
+        WorkerConfig(provider = CLIProvider.CODEX),
+        WorkerConfig(provider = CLIProvider.OPENCODE),
     ),
     val strategy: TaskRouting = TaskRouting.AUTO,
     val parallelExecution: Boolean = true,

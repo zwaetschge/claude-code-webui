@@ -4,14 +4,25 @@ import { cn } from '@/lib/utils';
 
 interface CompactBoundaryCardProps {
   content: string;
+  compactIndex?: number;
   className?: string;
 }
 
-export function CompactBoundaryCard({ content, className }: CompactBoundaryCardProps) {
+export function CompactBoundaryCard({
+  content,
+  compactIndex,
+  className,
+}: CompactBoundaryCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const parts = content.split('\n\n');
+  const message = parts[0]?.trim() || 'Context compacted';
   const summary = parts.slice(1).join('\n\n');
+  const label = message.toLowerCase().includes('provider switched')
+    ? 'Provider switched'
+    : message.toLowerCase().includes('limit')
+      ? 'Context limit'
+      : 'Context compacted';
 
   return (
     <div className={cn('flex flex-col items-center gap-2 py-3', className)}>
@@ -27,7 +38,12 @@ export function CompactBoundaryCard({ content, className }: CompactBoundaryCardP
           )}
         >
           <Scissors className="h-3 w-3" />
-          <span>Context Compacted</span>
+          <span>{label}</span>
+          {typeof compactIndex === 'number' && (
+            <span className="rounded-full border border-border/60 bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+              #{compactIndex}
+            </span>
+          )}
           {summary &&
             (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
         </button>

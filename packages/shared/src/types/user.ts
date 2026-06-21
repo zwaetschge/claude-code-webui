@@ -6,7 +6,7 @@ export interface User {
   email: string;
   name: string | null;
   avatarUrl: string | null;
-  provider: 'github' | 'google' | 'claude' | 'codex' | 'zai' | 'dev' | 'cli';
+  provider: 'github' | 'google' | 'claude' | 'codex' | 'zai' | 'dev' | 'cli' | 'proxy';
   providerId: string;
   role?: UserRole;
   status?: UserStatus;

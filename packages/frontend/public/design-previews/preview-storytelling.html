@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storytelling Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Storytelling tokens */
+      --primary: #3B82F6;         /* blue */
+      --primary-soft: #EFF6FF;
+      --secondary: #8B5CF6;       /* purple */
+      --secondary-soft: #F5F3FF;
+      --accent: #FBBF24;          /* warm story accent (amber) */
+      --accent-soft: #FEF6D9;
+      --success: #16A34A;
+      --warning: #D97706;
+      --danger: #DC2626;
+      --text: #111827;
+      --text-soft: #6B7280;
+      --text-mute: #9CA3AF;
+      --surface: #FFFFFF;
+      --paper: #FFFCF3;           /* warm parchment */
+      --paper-2: #FBF6E6;
+      --rule: #E5E0CF;
+      --display: 'Abril Fatface', Georgia, serif;
+      --sans: 'Inter', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      background: #E9E3D0;
+      font-family: var(--sans);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .scene {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      padding: 14px;
+      background: #E9E3D0;
+      display: grid;
+      place-items: center;
+    }
+
+    /* Decorative paper grain over the whole scene */
+    .scene::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle at 20% 30%, rgba(180, 150, 80, 0.06) 0, transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(120, 90, 40, 0.05) 0, transparent 45%);
+      pointer-events: none;
+    }
+
+    .book {
+      position: relative;
+      width: 372px;
+      height: 272px;
+      background: var(--paper);
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      overflow: hidden;
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.7) inset,
+        0 -1px 0 rgba(0,0,0,0.04) inset,
+        0 12px 28px rgba(60, 40, 10, 0.18),
+        0 3px 8px rgba(60, 40, 10, 0.10);
+      z-index: 1;
+    }
+
+    /* Page-binding shadow between columns */
+    .book::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 112px;
+      width: 14px;
+      background: linear-gradient(90deg,
+        rgba(60, 40, 10, 0.18) 0%,
+        rgba(60, 40, 10, 0.04) 40%,
+        transparent 100%);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    /* ---- Illustration page ---- */
+    .illus {
+      position: relative;
+      background:
+        linear-gradient(180deg, #2b3a55 0%, #1a2538 55%, #0d1422 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    /* Night sky stars */
+    .illus::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle at 18% 22%, rgba(255,255,255,0.9) 0.6px, transparent 1.2px),
+        radial-gradient(circle at 35% 14%, rgba(255,255,255,0.6) 0.5px, transparent 1px),
+        radial-gradient(circle at 70% 30%, rgba(255,255,255,0.7) 0.6px, transparent 1.2px),
+        radial-gradient(circle at 84% 18%, rgba(255,255,255,0.5) 0.5px, transparent 1px),
+        radial-gradient(circle at 25% 42%, rgba(255,255,255,0.5) 0.4px, transparent 1px),
+        radial-gradient(circle at 88% 48%, rgba(255,255,255,0.7) 0.5px, transparent 1px);
+      pointer-events: none;
+    }
+
+    /* Moon */
+    .moon {
+      position: absolute;
+      top: 16px;
+      right: 14px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #FFF6D6 0%, #F4DB8A 60%, #D9B85A 100%);
+      box-shadow:
+        0 0 14px rgba(251, 191, 36, 0.45),
+        inset -3px -3px 6px rgba(160, 120, 40, 0.4);
+    }
+    .moon::after {
+      /* crescent shadow */
+      content: '';
+      position: absolute;
+      top: 0; left: -4px;
+      width: 22px; height: 26px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, #2b3a55 0%, #1a2538 100%);
+    }
+
+    /* Lighthouse silhouette (simple shapes) */
+    .scene-art {
+      position: relative;
+      height: 96px;
+      display: grid;
+      place-items: end center;
+    }
+
+    .lighthouse {
+      position: relative;
+      width: 22px;
+      height: 78px;
+    }
+    .lighthouse .top {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 14px;
+      height: 8px;
+      background: #0d1422;
+      border-radius: 7px 7px 0 0;
+    }
+    .lighthouse .lamp {
+      position: absolute;
+      top: 7px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 10px;
+      height: 8px;
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(251, 191, 36, 0.8);
+      border-radius: 2px;
+    }
+    .lighthouse .beam {
+      position: absolute;
+      top: 9px;
+      left: 50%;
+      width: 0;
+      height: 0;
+      border-top: 18px solid transparent;
+      border-bottom: 18px solid transparent;
+      border-left: 70px solid rgba(251, 191, 36, 0.18);
+      transform-origin: 0 50%;
+      transform: translateY(-1px);
+      filter: blur(0.5px);
+      animation: beam 6s ease-in-out infinite alternate;
+    }
+    @keyframes beam {
+      0% { transform: translateY(-1px) rotate(-22deg); opacity: 0.7; }
+      100% { transform: translateY(-1px) rotate(22deg); opacity: 0.4; }
+    }
+    .lighthouse .body {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 9px solid transparent;
+      border-right: 9px solid transparent;
+      border-bottom: 52px solid #0d1422;
+    }
+    .lighthouse .stripes {
+      position: absolute;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 14px;
+      height: 48px;
+      background: repeating-linear-gradient(
+        180deg,
+        rgba(220, 38, 38, 0.85) 0 8px,
+        transparent 8px 16px
+      );
+      clip-path: polygon(15% 0, 85% 0, 100% 100%, 0% 100%);
+    }
+    .lighthouse .base {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 24px;
+      height: 6px;
+      background: #0d1422;
+      border-radius: 2px;
+    }
+
+    /* Cliff line */
+    .cliff {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 16px;
+      background:
+        linear-gradient(180deg, #0d1422 0%, #050810 100%);
+      clip-path: polygon(0 60%, 20% 30%, 38% 50%, 55% 20%, 72% 45%, 88% 25%, 100% 50%, 100% 100%, 0 100%);
+    }
+
+    /* ---- Story page ---- */
+    .page {
+      position: relative;
+      padding: 16px 16px 14px 14px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto auto 1fr auto;
+      gap: 6px;
+      min-width: 0;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 8.5px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--secondary);
+    }
+    .eyebrow::before {
+      content: '';
+      width: 18px;
+      height: 1px;
+      background: var(--secondary);
+    }
+    .eyebrow .dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .headline {
+      font-family: var(--display);
+      font-weight: 400;
+      font-size: 23px;
+      line-height: 1.0;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      max-width: 100%;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .headline .it {
+      font-style: italic;
+      color: var(--secondary);
+    }
+    .headline .am {
+      color: var(--primary);
+    }
+
+    .lede {
+      font-family: var(--sans);
+      font-size: 10.5px;
+      line-height: 1.5;
+      color: var(--text-soft);
+      font-weight: 400;
+    }
+    .lede b {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    /* Reading progress + step nav */
+    .footer {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 8.5px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: var(--text-soft);
+    }
+    .progress-row .n { color: var(--text); font-weight: 700; }
+    .progress-row .bar {
+      flex: 1;
+      height: 3px;
+      background: var(--rule);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-row .bar > span {
+      display: block;
+      height: 100%;
+      width: 38%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      border-radius: 999px;
+    }
+
+    .steps {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .step-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-family: var(--sans);
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .step-btn .arrow {
+      font-family: var(--display);
+      font-size: 14px;
+      line-height: 1;
+    }
+    .step-btn.prev {
+      background: transparent;
+      color: var(--text-soft);
+      border-color: var(--rule);
+    }
+    .step-btn.prev:hover { color: var(--text); }
+    .step-btn.next {
+      background: var(--text);
+      color: var(--paper);
+    }
+    .step-btn.next:hover { background: #000; }
+    .step-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+    .step-dots {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .step-dots .d {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--rule);
+    }
+    .step-dots .d.done { background: var(--secondary); }
+    .step-dots .d.current {
+      width: 16px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .lighthouse .beam { animation: none !important; opacity: 0.45; }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <article class="book">
+
+      <!-- Illustration page -->
+      <div class="illus" aria-hidden="true">
+        <div class="moon"></div>
+        <div class="scene-art">
+          <div class="lighthouse">
+            <div class="beam"></div>
+            <div class="top"></div>
+            <div class="lamp"></div>
+            <div class="body"></div>
+            <div class="stripes"></div>
+            <div class="base"></div>
+          </div>
+        </div>
+        <div class="cliff"></div>
+      </div>
+
+      <!-- Story page -->
+      <div class="page">
+        <span class="eyebrow">
+          Chapter 03 · 5 min read
+          <span class="dot" aria-hidden="true"></span>
+        </span>
+
+        <h1 class="headline">
+          The last <span class="it">light</span><br>
+          on the <span class="am">cape</span>
+        </h1>
+
+        <p class="lede">
+          The keeper hadn&rsquo;t seen another ship in <b>seventeen nights</b>. Then the lamp began to answer something out past the rocks.
+        </p>
+
+        <div class="footer">
+          <div class="progress-row">
+            <span class="n">38%</span>
+            <span class="bar" aria-hidden="true"><span></span></span>
+            <span>Ch. 3 / 8</span>
+          </div>
+
+          <div class="steps">
+            <button class="step-btn prev" aria-label="Previous chapter">
+              <span class="arrow" aria-hidden="true">←</span> Back
+            </button>
+            <div class="step-dots" aria-label="Chapter progress">
+              <span class="d done"></span>
+              <span class="d done"></span>
+              <span class="d current"></span>
+              <span class="d"></span>
+              <span class="d"></span>
+              <span class="d"></span>
+              <span class="d"></span>
+              <span class="d"></span>
+            </div>
+            <button class="step-btn next" aria-label="Next chapter">
+              Next <span class="arrow" aria-hidden="true">→</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </article>
+  </div>
+</body>
+</html>

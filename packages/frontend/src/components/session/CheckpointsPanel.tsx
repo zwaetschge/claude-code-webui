@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface Checkpoint {

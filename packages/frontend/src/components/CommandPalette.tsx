@@ -30,7 +30,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { socketService } from '@/services/socket';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { toUiProvider } from '@/lib/providers';
-import type { SessionMode } from '@claude-code-webui/shared';
+import type { SessionMode } from '@plum-code-webui/shared';
 
 export function CommandPalette() {
   const { open, setOpen } = useCommandPaletteStore();

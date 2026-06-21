@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
-import type { DiscoveredProject } from '@claude-code-webui/shared';
+import type { DiscoveredProject } from '@plum-code-webui/shared';
 
 const router = Router();
 

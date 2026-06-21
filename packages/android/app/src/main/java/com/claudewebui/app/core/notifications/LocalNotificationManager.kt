@@ -126,34 +126,6 @@ object LocalNotificationManager {
             }
             .launchIn(scope)
 
-        // Ralph events
-        socket.ralphEvents
-            .onEach { event ->
-                if (appInForeground) return@onEach
-                val ctx = appContext ?: return@onEach
-                when (event) {
-                    is com.claudewebui.app.data.model.RalphEvent.Completed -> {
-                        NotificationService.notifyRalphState(
-                            ctx,
-                            event.sessionId,
-                            event.runId,
-                            "completed",
-                            "Ralph completed: ${event.exitReason}"
-                        )
-                    }
-                    is com.claudewebui.app.data.model.RalphEvent.Error -> {
-                        NotificationService.notifyRalphState(
-                            ctx,
-                            event.sessionId,
-                            event.runId,
-                            "error",
-                            event.error
-                        )
-                    }
-                    else -> Unit
-                }
-            }
-            .launchIn(scope)
     }
 
     // ── Permission request handling ────────────────────────────────────────────

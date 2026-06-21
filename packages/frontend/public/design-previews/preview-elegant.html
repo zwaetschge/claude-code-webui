@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Elegant — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=Anonymous+Pro:wght@400;700&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     ELEGANT DESIGN SYSTEM — 400×300 THUMBNAIL
+     Graceful · refined · delicate · airy · polished · subtle
+     ============================================================ */
+  :root {
+    --eg-primary: #3B82F6;
+    --eg-primary-soft: #93C5FD;
+    --eg-primary-bg: #EFF6FF;
+    --eg-secondary: #8B5CF6;
+    --eg-secondary-soft: #C4B5FD;
+    --eg-secondary-bg: #F5F3FF;
+    --eg-success: #16A34A;
+    --eg-warning: #D97706;
+    --eg-danger: #DC2626;
+
+    --eg-surface: #FFFFFF;
+    --eg-surface-2: #FBFBFD;
+    --eg-surface-3: #F5F5F8;
+    --eg-ink: #111827;
+    --eg-ink-2: #4B5563;
+    --eg-ink-3: #6B7280;
+    --eg-ink-4: #9CA3AF;
+    --eg-ink-5: #D1D5DB;
+    --eg-line: #E5E7EB;
+    --eg-line-soft: #F3F4F6;
+    --eg-line-accent: linear-gradient(90deg, transparent, var(--eg-primary), transparent);
+
+    --eg-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --eg-font-display: 'Cormorant Garamond', 'Inter', serif;
+    --eg-font-mono: 'Anonymous Pro', ui-monospace, monospace;
+
+    --eg-r-sm: 4px;
+    --eg-r-md: 8px;
+    --eg-r-lg: 14px;
+    --eg-r-xl: 20px;
+    --eg-r-pill: 999px;
+
+    /* Soft, barely-there shadows — refined */
+    --eg-sh-1: 0 1px 2px rgba(17,24,39,0.03), 0 1px 1px rgba(17,24,39,0.02);
+    --eg-sh-2: 0 4px 14px -4px rgba(17,24,39,0.06), 0 2px 4px -1px rgba(17,24,39,0.03);
+    --eg-sh-soft-blue: 0 8px 28px -8px rgba(59,130,246,0.18), 0 2px 6px -1px rgba(59,130,246,0.08);
+    --eg-sh-inset: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--eg-font);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--eg-ink);
+    background: var(--eg-surface);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(220px 160px at 90% 10%, rgba(139,92,246,0.06), transparent 60%),
+      radial-gradient(220px 160px at 10% 90%, rgba(59,130,246,0.05), transparent 60%),
+      var(--eg-surface);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 20px 28px;
+    gap: 18px;
+    position: relative;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--eg-font);
+    font-size: 14px;
+    font-weight: 500;          /* gentle weight — never bold */
+    letter-spacing: -0.01em;
+    color: var(--eg-ink);
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    border-radius: var(--eg-r-md);
+    background: linear-gradient(135deg, var(--eg-primary-soft) 0%, var(--eg-secondary-soft) 100%);
+    display: grid; place-items: center;
+    box-shadow: var(--eg-sh-soft-blue);
+    position: relative;
+  }
+  .brand__mark::before {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: var(--eg-sh-inset);
+  }
+  .brand__name em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--eg-primary), var(--eg-secondary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 500;
+  }
+
+  .nav {
+    display: flex;
+    gap: 22px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--eg-ink-3);
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .2s ease;
+    position: relative;
+    padding: 2px 0;
+  }
+  .nav a:hover { color: var(--eg-ink); }
+  .nav a.is-active { color: var(--eg-ink); font-weight: 500; }
+  .nav a.is-active::after {
+    content: "";
+    position: absolute;
+    bottom: -4px; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, var(--eg-primary), var(--eg-secondary));
+    border-radius: 1px;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 32px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* LEFT — refined headline */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--eg-font-mono);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--eg-primary);
+    align-self: flex-start;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 22px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--eg-primary));
+  }
+
+  /* Refined headline — serif italic meets sans */
+  .hero__title {
+    font-family: var(--eg-font-display);
+    font-size: 32px;
+    font-weight: 400;
+    line-height: 1.08;
+    letter-spacing: -0.018em;
+    color: var(--eg-ink);
+  }
+  .hero__title em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--eg-secondary);
+  }
+  .hero__title-mono {
+    font-family: var(--eg-font);
+    font-size: 24px;
+    font-weight: 300;
+    color: var(--eg-ink-3);
+    display: block;
+    letter-spacing: -0.015em;
+  }
+
+  .hero__sub {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--eg-ink-3);
+    max-width: 30ch;
+    font-weight: 400;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 4px;
+  }
+  /* Buttons — refined, never heavy */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 16px;
+    border: none;
+    border-radius: var(--eg-r-pill);
+    font-family: var(--eg-font);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .btn--primary {
+    background: linear-gradient(135deg, var(--eg-primary) 0%, var(--eg-secondary) 100%);
+    color: #fff;
+    box-shadow: var(--eg-sh-soft-blue);
+  }
+  .btn--primary:hover { transform: translateY(-1px); box-shadow: 0 12px 32px -8px rgba(59,130,246,0.30), 0 4px 8px -2px rgba(139,92,246,0.15); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--eg-ink-2);
+    padding: 0 4px;
+    height: auto;
+    font-weight: 500;
+  }
+  .btn--ghost:hover { color: var(--eg-primary); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — refined stat card */
+  .card {
+    background: var(--eg-surface);
+    border: 1px solid var(--eg-line-soft);
+    border-radius: var(--eg-r-lg);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: var(--eg-sh-2), var(--eg-sh-inset);
+    position: relative;
+    overflow: hidden;
+  }
+  /* Soft top sheen */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 10%;
+    width: 80%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), rgba(139,92,246,0.4), transparent);
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card__label {
+    font-family: var(--eg-font-mono);
+    font-size: 9.5px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--eg-ink-4);
+  }
+  .card__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--eg-font-mono);
+    font-size: 9.5px;
+    font-weight: 400;
+    color: var(--eg-success);
+    letter-spacing: 0.06em;
+  }
+  .card__status::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--eg-success);
+    box-shadow: 0 0 0 3px rgba(22,163,74,0.12);
+  }
+
+  .card__value {
+    font-family: var(--eg-font-display);
+    font-size: 32px;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -0.025em;
+    color: var(--eg-ink);
+  }
+  .card__value span {
+    font-family: var(--eg-font);
+    font-size: 14px;
+    color: var(--eg-ink-3);
+    font-weight: 300;
+  }
+  .card__delta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--eg-font-mono);
+    font-size: 10px;
+    color: var(--eg-ink-3);
+  }
+  .delta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    background: var(--eg-primary-bg);
+    color: var(--eg-primary);
+    border-radius: var(--eg-r-pill);
+    font-weight: 700;
+  }
+  .delta-pill svg { width: 8px; height: 8px; }
+
+  /* Refined sparkline — thin strokes */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 32px;
+    padding-top: 8px;
+    border-top: 1px solid var(--eg-line-soft);
+  }
+  .spark__bar {
+    flex: 1;
+    background: var(--eg-primary-soft);
+    opacity: 0.5;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+    transition: opacity .2s ease;
+  }
+  .spark__bar--mid {
+    opacity: 0.75;
+    background: var(--eg-primary);
+  }
+  .spark__bar--peak {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--eg-secondary), var(--eg-primary));
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 14px;
+    border-top: 1px solid var(--eg-line-soft);
+    font-family: var(--eg-font-mono);
+    font-size: 9.5px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    color: var(--eg-ink-4);
+  }
+  .footer__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .footer__item svg { width: 11px; height: 11px; color: var(--eg-ink-4); }
+  .footer__group { display: flex; align-items: center; gap: 16px; }
+  .footer__version { color: var(--eg-ink-4); }
+  .footer__brand {
+    background: linear-gradient(135deg, var(--eg-primary), var(--eg-secondary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Elegant design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">aether<em>.</em></span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Overview</a>
+      <a href="#">Pricing</a>
+      <a href="#">Stories</a>
+      <a href="#">Sign in</a>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: refined hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">Quiet · Refined · Calm</span>
+      <h1 class="hero__title">
+        Beauty in<br>
+        <em>restraint</em>.
+        <span class="hero__title-mono">— software, distilled.</span>
+      </h1>
+      <p class="hero__sub">Polished surfaces, gentle weight, deliberate space. The interface fades, the work remains.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Begin trial
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Tour the product</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: refined stat card -->
+    <aside class="card">
+      <div class="card__head">
+        <span class="card__label">This month</span>
+        <span class="card__status">all systems</span>
+      </div>
+      <div>
+        <div class="card__value">99.98<span>% uptime</span></div>
+        <div class="card__delta">
+          <span class="delta-pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            +0.3
+          </span>
+          <span>vs last 30d</span>
+        </div>
+      </div>
+      <div class="spark" aria-hidden="true">
+        <div class="spark__bar" style="height:38%"></div>
+        <div class="spark__bar" style="height:50%"></div>
+        <div class="spark__bar spark__bar--mid" style="height:62%"></div>
+        <div class="spark__bar" style="height:48%"></div>
+        <div class="spark__bar spark__bar--mid" style="height:72%"></div>
+        <div class="spark__bar spark__bar--peak" style="height:96%"></div>
+        <div class="spark__bar spark__bar--mid" style="height:80%"></div>
+        <div class="spark__bar" style="height:68%"></div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="footer__group">
+      <span class="footer__item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        SOC 2
+      </span>
+      <span class="footer__item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        EU hosted
+      </span>
+    </div>
+    <span class="footer__version"><span class="footer__brand">aether</span> · v2.1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

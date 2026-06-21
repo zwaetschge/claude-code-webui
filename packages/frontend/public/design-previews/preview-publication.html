@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Publication — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@200;300;400;500;600;700;800;900&family=Oswald:wght@200;300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     PUBLICATION DESIGN SYSTEM — 400×300 THUMBNAIL
+     Editorial · print-inspired · Oswald display + Nunito + mono
+     Purple accent on deep-navy ink, white paper.
+     ============================================================ */
+  :root {
+    --pb-primary:    #A855F7;   /* editorial purple */
+    --pb-primary-2:  #9333EA;   /* pressed purple */
+    --pb-primary-soft: rgba(168,84,247,0.10);
+    --pb-secondary:  #0A1829;   /* deep navy ink */
+    --pb-secondary-2:#1B2A3F;
+    --pb-success:    #16A34A;
+    --pb-warning:    #D97706;
+    --pb-danger:     #DC2626;
+
+    --pb-surface:    #FFFFFF;
+    --pb-surface-2:  #FAF9F7;   /* warm paper white */
+    --pb-surface-3:  #F3F1EE;
+
+    --pb-ink:        #0A1829;   /* primary text */
+    --pb-ink-2:      #33415C;   /* secondary */
+    --pb-ink-3:      #64748B;   /* tertiary */
+    --pb-ink-4:      #94A3B8;   /* muted */
+    --pb-line:       #E2E1DE;   /* warm rule */
+    --pb-line-2:     #EFEEEB;
+
+    --pb-font:    'Nunito', -apple-system, 'Segoe UI', sans-serif;
+    --pb-font-d:  'Oswald', 'Nunito', sans-serif;       /* display: condensed */
+    --pb-font-m:  'JetBrains Mono', ui-monospace, monospace;
+
+    --pb-r-sm: 2px;     /* print = sharp corners */
+    --pb-r-md: 4px;
+    --pb-r-pill: 999px;
+
+    --pb-shadow-1: 0 1px 2px rgba(10,24,41,0.05);
+    --pb-shadow-2: 0 6px 18px rgba(10,24,41,0.08), 0 2px 4px rgba(10,24,41,0.04);
+    --pb-shadow-purple: 0 8px 20px -6px rgba(168,84,247,0.35), 0 2px 6px rgba(10,24,41,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--pb-font);
+    font-size: 12px;
+    color: var(--pb-ink);
+    background: var(--pb-surface);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — warm paper canvas with editorial column rules
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 50% 40% at 88% 12%, rgba(168,84,247,0.08) 0%, transparent 60%),
+      linear-gradient(180deg, #FFFFFF 0%, var(--pb-surface-2) 100%);
+    isolation: isolate;
+  }
+  /* faint paper grain — the print tell */
+  .grain {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image: radial-gradient(rgba(10,24,41,0.03) 1px, transparent 1px);
+    background-size: 3px 3px;
+    -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 85%);
+            mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 85%);
+  }
+  /* left margin column rule — editorial grid signature */
+  .colrule {
+    position: absolute;
+    z-index: 1;
+    left: 132px;
+    top: 46px;
+    bottom: 46px;
+    width: 1px;
+    background: var(--pb-line);
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 12px 18px 10px;
+    gap: 8px;
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--pb-secondary);
+    padding-bottom: 6px;
+  }
+  .masthead__left {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .logo {
+    font-family: var(--pb-font-d);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--pb-secondary);
+    line-height: 1;
+  }
+  .logo em {
+    font-style: normal;
+    color: var(--pb-primary);
+  }
+  .masthead__tag {
+    font-family: var(--pb-font-m);
+    font-size: 7.5px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--pb-ink-3);
+    padding-bottom: 2px;
+  }
+  .masthead__right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--pb-font-m);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pb-ink-3);
+  }
+  .masthead__right b {
+    color: var(--pb-secondary);
+    font-weight: 600;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--pb-primary-soft);
+    color: var(--pb-primary-2);
+    border-radius: var(--pb-r-pill);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 18px;
+    align-items: start;
+    min-height: 0;
+    padding-top: 4px;
+  }
+
+  /* ---- LEFT: editorial headline + deck ---- */
+  .lead {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--pb-font-m);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--pb-primary-2);
+  }
+  .kicker::before {
+    content: "";
+    width: 18px; height: 2px;
+    background: var(--pb-primary);
+  }
+  .headline {
+    font-family: var(--pb-font-d);
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 0.98;
+    letter-spacing: -0.005em;
+    text-transform: uppercase;
+    color: var(--pb-secondary);
+    margin-top: 1px;
+  }
+  .headline em {
+    font-style: italic;
+    font-family: 'Nunito', serif;
+    font-weight: 800;
+    text-transform: none;
+    letter-spacing: -0.02em;
+    color: var(--pb-primary);
+  }
+  .deck {
+    font-size: 10.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: -0.002em;
+    color: var(--pb-ink-2);
+    max-width: 30ch;
+    margin-top: 2px;
+  }
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-family: var(--pb-font-m);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--pb-ink-3);
+  }
+  .byline b { color: var(--pb-secondary); font-weight: 600; }
+  .byline span { color: var(--pb-line); }
+
+  /* ============================================================
+     RIGHT: PULL QUOTE CARD
+     Publication signature — large quotation, attribution,
+     reading metadata, section folio.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 12px 12px 11px;
+    background: var(--pb-surface);
+    border: 1px solid var(--pb-line);
+    border-left: 3px solid var(--pb-primary);
+    box-shadow: var(--pb-shadow-2);
+    overflow: hidden;
+  }
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .card__sec {
+    font-family: var(--pb-font-m);
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--pb-ink-4);
+  }
+  .card__folio {
+    font-family: var(--pb-font-d);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--pb-primary);
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+
+  .quote {
+    position: relative;
+    font-family: 'Nunito', serif;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.32;
+    letter-spacing: -0.015em;
+    color: var(--pb-secondary);
+    margin-bottom: 8px;
+    padding-left: 14px;
+  }
+  .quote::before {
+    content: "\201C";
+    position: absolute;
+    left: -2px;
+    top: -10px;
+    font-family: 'Oswald', serif;
+    font-size: 38px;
+    font-weight: 700;
+    color: var(--pb-primary);
+    line-height: 1;
+    opacity: 0.85;
+  }
+  .quote em {
+    font-style: normal;
+    background: linear-gradient(180deg, transparent 62%, rgba(168,84,247,0.28) 62%, rgba(168,84,247,0.28) 92%, transparent 92%);
+    padding: 0 1px;
+  }
+
+  .attrib {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 9px;
+  }
+  .attrib__avatar {
+    flex: 0 0 auto;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--pb-primary) 0%, var(--pb-primary-2) 100%);
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-family: var(--pb-font-d);
+    font-size: 9px;
+    font-weight: 600;
+  }
+  .attrib__txt { min-width: 0; line-height: 1.15; }
+  .attrib__name {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--pb-secondary);
+    letter-spacing: -0.005em;
+  }
+  .attrib__role {
+    font-family: var(--pb-font-m);
+    font-size: 7.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--pb-ink-3);
+  }
+
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 7px;
+    border-top: 1px solid var(--pb-line-2);
+  }
+  .readmeta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--pb-font-m);
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--pb-ink-3);
+  }
+  .readmeta b { color: var(--pb-secondary); }
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--pb-font-d);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--pb-primary-2);
+    text-decoration: none;
+    border-bottom: 1.5px solid var(--pb-primary);
+    padding-bottom: 1px;
+  }
+
+  /* ============ FOOTER (folio bar) ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--pb-line);
+    padding-top: 7px;
+  }
+  .sections {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--pb-font-d);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--pb-ink-3);
+  }
+  .sections b {
+    color: var(--pb-secondary);
+    font-weight: 600;
+    position: relative;
+    padding-bottom: 4px;
+  }
+  .sections b::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -8px;
+    height: 2px;
+    background: var(--pb-primary);
+  }
+  .footer__meta {
+    font-family: var(--pb-font-m);
+    font-size: 7.5px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pb-ink-4);
+  }
+  .footer__meta b { color: var(--pb-primary); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Publication design language preview — editorial">
+
+  <div class="grain" aria-hidden="true"></div>
+  <div class="colrule" aria-hidden="true"></div>
+
+  <div class="frame">
+
+    <!-- ===== MASTHEAD ===== -->
+    <header class="masthead">
+      <div class="masthead__left">
+        <span class="logo">F<em>o</em>lio</span>
+        <span class="masthead__tag">Vol. 12 · Issue 04</span>
+      </div>
+      <div class="masthead__right">
+        <span><b>Autumn</b> 2025</span>
+        <span class="pill">Weekly</span>
+      </div>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: editorial lead -->
+      <article class="lead">
+        <span class="kicker">Feature · Culture</span>
+        <h1 class="headline">The art of <em>slow</em> reading</h1>
+        <p class="deck">In a world built for scrolls, a quiet movement is bringing attention back to the printed page.</p>
+        <div class="byline">
+          <b>By M. Sato</b>
+          <span>·</span>
+          <span>8 min read</span>
+        </div>
+      </article>
+
+      <!-- RIGHT: pull quote card -->
+      <div class="card" aria-label="Pull quote">
+        <div class="card__head">
+          <span class="card__sec">Excerpt · Essay</span>
+          <span class="card__folio">№ 07</span>
+        </div>
+
+        <p class="quote">A page turned slowly is a page <em>remembered</em>.</p>
+
+        <div class="attrib">
+          <span class="attrib__avatar" aria-hidden="true">R</span>
+          <div class="attrib__txt">
+            <div class="attrib__name">R. Lindqvist</div>
+            <div class="attrib__role">Editor-in-Chief</div>
+          </div>
+        </div>
+
+        <div class="card__row">
+          <span class="readmeta">Page <b>14</b> · <b>1,820</b> words</span>
+          <a class="cta" href="#">Read</a>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER (folio bar) ===== -->
+    <footer class="footer">
+      <nav class="sections" aria-label="Sections">
+        <b>Culture</b>
+        <span>Design</span>
+        <span>Essays</span>
+        <span>Archive</span>
+      </nav>
+      <span class="footer__meta">Publication · <b>#A855F7</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

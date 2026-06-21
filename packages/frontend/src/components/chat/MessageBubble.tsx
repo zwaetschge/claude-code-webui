@@ -1,5 +1,5 @@
 import { memo, useCallback, useState } from 'react';
-import { FileText, FileCode, File as FileIcon, Copy, RotateCcw, Check } from 'lucide-react';
+import { FileText, FileCode, File as FileIcon, Copy, Check } from 'lucide-react';
 import { MemoizedMarkdown } from './MemoizedMarkdown';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from './InteractiveOptions';
 import { DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
@@ -7,7 +7,7 @@ import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { useAuthStore } from '@/stores/authStore';
 import { socketService } from '@/services/socket';
 import { cn } from '@/lib/utils';
-import type { Message, MessageImage, MessageAttachment } from '@claude-code-webui/shared';
+import type { Message, MessageImage, MessageAttachment } from '@plum-code-webui/shared';
 import type { UiProvider } from '@/lib/providers';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -21,6 +21,8 @@ interface MessageBubbleProps {
   modelLabel?: string;
   /** Display name for the assistant (default: "Assistant"). */
   assistantName?: string;
+  /** Show provider/model identity for the first message in an assistant streak. */
+  showAssistantIdentity?: boolean;
 }
 
 function formatMessageTime(iso: string): string {
@@ -49,6 +51,7 @@ export const MessageBubble = memo(
     provider = 'codex',
     modelLabel,
     assistantName = 'Assistant',
+    showAssistantIdentity = true,
   }: MessageBubbleProps) {
     const queryClient = useQueryClient();
     const [copied, setCopied] = useState(false);
@@ -73,11 +76,6 @@ export const MessageBubble = memo(
         // clipboard may be blocked in insecure contexts — ignore silently
       }
     }, [message.content]);
-
-    const handleRetry = useCallback(() => {
-      if (message.role !== 'user' || !message.content.trim()) return;
-      socketService.sendMessage(sessionId, message.content);
-    }, [message.content, message.role, sessionId]);
 
     const token = useAuthStore.getState().token || '';
     const timestamp = formatMessageTime(message.createdAt);
@@ -142,31 +140,23 @@ export const MessageBubble = memo(
       return (
         <div className="turn-user animate-fade-in">
           <div>
-            <div className="ub-bubble">
-              {renderAttachments()}
-              <MemoizedMarkdown
-                content={message.content}
-                className="prose prose-sm max-w-none prose-invert"
-              />
+            <div className="message-copy-shell">
+              <button onClick={handleCopy} className="message-copy-button" title="Copy message">
+                {copied ? (
+                  <Check className="h-3 w-3 text-emerald-500" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </button>
+              <div className="ub-bubble">
+                {renderAttachments()}
+                <MemoizedMarkdown
+                  content={message.content}
+                  className="prose prose-sm max-w-none prose-invert"
+                />
+              </div>
             </div>
             <div className="user-meta">
-              <span className="actions">
-                <button onClick={handleCopy} className="mini-btn" title="Copy message">
-                  {copied ? (
-                    <Check className="h-3 w-3 text-emerald-500" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </button>
-                <button
-                  onClick={handleRetry}
-                  className="mini-btn"
-                  title="Resend this prompt"
-                  disabled={sessionStatus === 'error'}
-                >
-                  <RotateCcw className="h-3 w-3" />
-                </button>
-              </span>
               {timestamp && (
                 <span
                   className="font-mono tabular-nums"
@@ -182,25 +172,34 @@ export const MessageBubble = memo(
       );
     }
 
+    const copyButton = (
+      <button onClick={handleCopy} className="message-copy-button" title="Copy message">
+        {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+      </button>
+    );
+
     // Assistant turn
     return (
       <div className="turn-asst animate-fade-in">
         <div className="ai-rail">
+          {timestamp && (
+            <span className="rail-time" title={new Date(message.createdAt).toLocaleString()}>
+              {timestamp}
+            </span>
+          )}
           <div className="ai-mark" title={assistantName}>
             <ProviderLogo provider={provider} className="h-4 w-4" />
           </div>
           <div className="ai-thread" />
         </div>
         <div className="ai-body">
-          <div className="asst-meta">
-            <span className="asst-name">{assistantName}</span>
-            {modelLabel && <span className="asst-model">{modelLabel}</span>}
-            {timestamp && (
-              <span className="asst-time" title={new Date(message.createdAt).toLocaleString()}>
-                {timestamp}
-              </span>
-            )}
-          </div>
+          {copyButton}
+          {showAssistantIdentity && (
+            <div className="asst-meta">
+              <span className="asst-name">{assistantName}</span>
+              {modelLabel && <span className="asst-model">{modelLabel}</span>}
+            </div>
+          )}
           {renderAttachments()}
           <MemoizedMarkdown
             content={message.content}
@@ -223,16 +222,6 @@ export const MessageBubble = memo(
             providerLabel={assistantName}
             onAccessGranted={handleAccessGranted}
           />
-          <div className="asst-actions">
-            <button onClick={handleCopy} className="a">
-              {copied ? (
-                <Check className="h-3 w-3 text-emerald-500" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-              <span>{copied ? 'Copied' : 'Copy'}</span>
-            </button>
-          </div>
         </div>
       </div>
     );
@@ -244,7 +233,8 @@ export const MessageBubble = memo(
       prev.sessionStatus === next.sessionStatus &&
       prev.provider === next.provider &&
       prev.modelLabel === next.modelLabel &&
-      prev.assistantName === next.assistantName
+      prev.assistantName === next.assistantName &&
+      prev.showAssistantIdentity === next.showAssistantIdentity
     );
   }
 );

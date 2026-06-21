@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creative — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CREATIVE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Comic · Bangers · playful character · bold graphics · landing page
+     ============================================================ */
+  :root {
+    --cr-primary: #3B82F6;
+    --cr-secondary: #8B5CF6;
+    --cr-success: #16A34A;
+    --cr-warning: #D97706;
+    --cr-danger: #DC2626;
+
+    /* Playful extended palette */
+    --cr-yellow: #FFD93D;
+    --cr-pink: #FF6B9D;
+    --cr-mint: #4ADE80;
+    --cr-orange: #FF6B35;
+    --cr-cream: #FFF8E7;
+
+    --cr-surface: #FFFFFF;
+    --cr-ink: #111827;
+    --cr-ink-2: #374151;
+    --cr-ink-3: #6B7280;
+    --cr-line: #111827;
+
+    --cr-font-display: 'Bangers', 'Bebas Neue', Impact, sans-serif;
+    --cr-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --cr-font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+    /* Hard shadow offsets — comic signature */
+    --cr-shadow-hard: 5px 5px 0 var(--cr-ink);
+    --cr-shadow-hard-sm: 3px 3px 0 var(--cr-ink);
+    --cr-shadow-hard-blue: 5px 5px 0 var(--cr-primary);
+    --cr-shadow-hard-pink: 5px 5px 0 var(--cr-pink);
+    --cr-shadow-hard-yellow: 4px 4px 0 var(--cr-yellow);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cr-font-ui);
+    font-size: 12px;
+    color: var(--cr-ink);
+    /* Cream paper with playful confetti dots */
+    background:
+      radial-gradient(2px 2px at 8% 12%, var(--cr-yellow), transparent 50%),
+      radial-gradient(2px 2px at 22% 88%, var(--cr-pink), transparent 50%),
+      radial-gradient(2px 2px at 78% 8%, var(--cr-mint), transparent 50%),
+      radial-gradient(2px 2px at 92% 92%, var(--cr-secondary), transparent 50%),
+      radial-gradient(2px 2px at 55% 50%, var(--cr-orange), transparent 50%),
+      radial-gradient(2px 2px at 35% 28%, var(--cr-primary), transparent 50%),
+      radial-gradient(2px 2px at 68% 72%, var(--cr-yellow), transparent 50%),
+      var(--cr-cream);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 12px;
+  }
+
+  /* ===== TOP NAV ===== */
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .brand__mark {
+    width: 24px; height: 24px;
+    background: var(--cr-yellow);
+    border: 2.5px solid var(--cr-ink);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--cr-ink);
+    box-shadow: var(--cr-shadow-hard-sm);
+    transform: rotate(-8deg);
+  }
+  .brand__mark svg { width: 13px; height: 13px; }
+  .brand__name {
+    font-family: var(--cr-font-display);
+    font-size: 18px;
+    letter-spacing: 0.04em;
+    color: var(--cr-ink);
+  }
+  .brand__name span { color: var(--cr-primary); }
+
+  .nav__items {
+    display: flex;
+    gap: 4px;
+  }
+  .nav__item {
+    padding: 3px 9px;
+    border: 2px solid transparent;
+    border-radius: 99px;
+    font-family: var(--cr-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--cr-ink-2);
+    text-decoration: none;
+    transition: all .15s ease;
+  }
+  .nav__item:hover {
+    border-color: var(--cr-ink);
+    background: var(--cr-yellow);
+  }
+  .nav__item--active {
+    background: var(--cr-ink);
+    color: var(--cr-yellow);
+  }
+
+  /* ===== STAGE ===== */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 10px;
+    align-items: center;
+  }
+
+  /* LEFT — giant comic headline */
+  .hero {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--cr-pink);
+    color: #fff;
+    border: 2px solid var(--cr-ink);
+    border-radius: 99px;
+    font-family: var(--cr-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: var(--cr-shadow-hard-sm);
+    transform: rotate(-2deg);
+    margin-bottom: 4px;
+  }
+
+  .hero__title {
+    font-family: var(--cr-font-display);
+    font-size: 64px;
+    line-height: 0.82;
+    letter-spacing: 0.02em;
+    color: var(--cr-ink);
+    margin: 0;
+    word-break: break-word;
+  }
+  .hero__title-row {
+    display: block;
+    line-height: 0.82;
+  }
+  .hero__title--yellow {
+    color: var(--cr-yellow);
+    -webkit-text-stroke: 2.5px var(--cr-ink);
+    text-shadow: 4px 4px 0 var(--cr-ink);
+  }
+  .hero__title--blue {
+    color: #fff;
+    -webkit-text-stroke: 2.5px var(--cr-ink);
+    text-shadow: 4px 4px 0 var(--cr-primary);
+  }
+  .hero__title--pink {
+    color: var(--cr-pink);
+    -webkit-text-stroke: 2.5px var(--cr-ink);
+    text-shadow: 4px 4px 0 var(--cr-ink);
+  }
+
+  .hero__sub {
+    font-family: var(--cr-font-ui);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    color: var(--cr-ink-2);
+    max-width: 30ch;
+    margin-top: 6px;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  /* Comic buttons — chunky with hard shadow */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 14px;
+    border: 2.5px solid var(--cr-ink);
+    border-radius: 99px;
+    font-family: var(--cr-font-display);
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease;
+    color: var(--cr-ink);
+    background: var(--cr-surface);
+  }
+  .btn--primary {
+    background: var(--cr-yellow);
+    box-shadow: var(--cr-shadow-hard);
+  }
+  .btn--primary:hover {
+    transform: translate(-2px,-2px);
+    box-shadow: 7px 7px 0 var(--cr-ink);
+  }
+  .btn--primary:active {
+    transform: translate(2px,2px);
+    box-shadow: 1px 1px 0 var(--cr-ink);
+  }
+  .btn--pink {
+    background: var(--cr-pink);
+    color: #fff;
+    box-shadow: var(--cr-shadow-hard);
+  }
+  .btn svg { width: 13px; height: 13px; }
+
+  /* Star burst decorative element */
+  .burst {
+    position: absolute;
+    width: 60px; height: 60px;
+    top: -10px; right: -8px;
+    z-index: 0;
+    transform: rotate(12deg);
+  }
+  .burst svg { width: 100%; height: 100%; }
+
+  /* RIGHT — playful card stack */
+  .cards {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 6px;
+  }
+  .card {
+    background: var(--cr-surface);
+    border: 2.5px solid var(--cr-ink);
+    border-radius: 14px;
+    padding: 8px 11px;
+    box-shadow: var(--cr-shadow-hard-sm);
+    position: relative;
+  }
+  .card--yellow {
+    background: var(--cr-yellow);
+    transform: rotate(-1.5deg);
+  }
+  .card--mint {
+    background: var(--cr-mint);
+    transform: rotate(1.2deg);
+  }
+  .card--pink {
+    background: var(--cr-pink);
+    color: #fff;
+    transform: rotate(-0.8deg);
+  }
+
+  .card__label {
+    font-family: var(--cr-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: inherit;
+    opacity: 0.7;
+  }
+  .card--pink .card__label { opacity: 0.9; }
+  .card__value {
+    font-family: var(--cr-font-display);
+    font-size: 22px;
+    letter-spacing: 0.03em;
+    color: var(--cr-ink);
+    line-height: 1;
+    margin-top: 2px;
+  }
+  .card--pink .card__value { color: #fff; }
+  .card__sub {
+    font-family: var(--cr-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--cr-ink-2);
+    margin-top: 1px;
+  }
+  .card--pink .card__sub { color: rgba(255,255,255,0.85); }
+
+  /* Sticker badge */
+  .sticker {
+    position: absolute;
+    top: -8px; right: -10px;
+    background: var(--cr-secondary);
+    color: #fff;
+    border: 2px solid var(--cr-ink);
+    border-radius: 50%;
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    font-family: var(--cr-font-display);
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    box-shadow: var(--cr-shadow-hard-sm);
+    transform: rotate(15deg);
+    z-index: 2;
+  }
+
+  /* ===== FOOTER ===== */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 2px dashed var(--cr-ink);
+  }
+  .footer__left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--cr-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--cr-ink-2);
+    letter-spacing: 0.06em;
+  }
+  .footer__zap {
+    color: var(--cr-orange);
+  }
+  .footer__right {
+    display: flex;
+    gap: 6px;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border: 1.5px solid var(--cr-ink);
+    border-radius: 50%;
+  }
+  .dot--yellow { background: var(--cr-yellow); }
+  .dot--pink { background: var(--cr-pink); }
+  .dot--mint { background: var(--cr-mint); }
+  .dot--blue { background: var(--cr-primary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Creative design language preview">
+
+  <!-- ===== TOP NAV ===== -->
+  <header class="nav">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-3 7h4l-3 7"/></svg>
+      </span>
+      <span class="brand__name">ZAP!<span>.</span>io</span>
+    </div>
+    <div class="nav__items">
+      <a href="#" class="nav__item nav__item--active">Fun</a>
+      <a href="#" class="nav__item">Work</a>
+      <a href="#" class="nav__item">Shop</a>
+    </div>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: giant comic headline -->
+    <article class="hero">
+
+      <!-- star burst behind headline -->
+      <div class="burst" aria-hidden="true">
+        <svg viewBox="0 0 100 100" fill="#FFD93D" stroke="#111827" stroke-width="3" stroke-linejoin="round">
+          <polygon points="50,5 60,35 92,38 66,58 76,90 50,72 24,90 34,58 8,38 40,35"/>
+        </svg>
+      </div>
+
+      <span class="hero__eyebrow">★ new · v1 ★</span>
+      <h1 class="hero__title">
+        <span class="hero__title-row hero__title--yellow">MAKE</span>
+        <span class="hero__title-row hero__title--blue">A SPLASH!</span>
+      </h1>
+      <p class="hero__sub">Bold, bright, and unmissable. Built for makers who refuse to blend in.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Let's go
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--pink" type="button">Try free</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: playful card stack -->
+    <aside class="cards">
+
+      <div class="card card--yellow">
+        <div class="card__label">Creators</div>
+        <div class="card__value">48K+</div>
+        <div class="card__sub">making things</div>
+      </div>
+
+      <div class="card card--mint">
+        <div class="card__label">Avg rating</div>
+        <div class="card__value">4.9★</div>
+        <div class="card__sub">2,318 reviews</div>
+      </div>
+
+      <div class="card card--pink">
+        <div class="sticker">NEW</div>
+        <div class="card__label">Made today</div>
+        <div class="card__value">1,284</div>
+        <div class="card__sub">and counting →</div>
+      </div>
+
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span class="footer__left">
+      <span class="footer__zap">⚡</span>
+      creative · bold · playful · comic
+    </span>
+    <span class="footer__right" aria-hidden="true">
+      <span class="dot dot--yellow"></span>
+      <span class="dot dot--pink"></span>
+      <span class="dot dot--mint"></span>
+      <span class="dot dot--blue"></span>
+    </span>
+  </footer>
+
+</main>
+
+</body>
+</html>

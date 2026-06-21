@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Notification icon for Claude Code WebUI (24dp, white/transparent only).
+  Notification icon for Plum Code WebUI (24dp, white/transparent only).
   Android requires notification icons to be single-color (white) on transparent.
   Design: simplified "C" arc matching the launcher icon aesthetic.
 -->

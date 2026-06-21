@@ -8,12 +8,13 @@ import { config } from '../config';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { rateLimiters } from '../middleware/rateLimiter';
 import { getDatabase } from '../db';
-import type { User } from '@claude-code-webui/shared';
+import type { User } from '@plum-code-webui/shared';
 import { isProviderAvailable } from '../services/cli-providers';
 import { generateUserToken } from '../utils/authTokens';
 import { upsertSharedCliUser } from '../utils/cliUser';
+import { upsertProxyUser } from '../utils/proxyUser';
 import { stampLogin } from '../utils/auditLog';
-import { EmailNotAllowedError, OAuthEmailCollisionError } from '../auth/passport';
+import { EmailNotAllowedError, OAuthEmailCollisionError, isEmailAllowed } from '../auth/passport';
 
 const router = Router();
 
@@ -50,6 +51,80 @@ function oauthCallbackHandler(
     })(req, res, next);
   };
 }
+
+function getHeaderValue(req: Request, headers: string[]): string | null {
+  for (const header of headers) {
+    const value = req.headers[header.toLowerCase()];
+    if (Array.isArray(value)) {
+      const first = value.find((item) => item.trim().length > 0);
+      if (first) return first.trim();
+      continue;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function safeReturnTo(value: unknown): string {
+  if (typeof value !== 'string') return '/';
+  if (!value.startsWith('/') || value.startsWith('//')) return '/';
+  return value;
+}
+
+function redirectProxyError(res: Response, error: string): void {
+  const params = new URLSearchParams({ proxy_error: error });
+  res.redirect(`${config.frontendUrl}/login?${params.toString()}`);
+}
+
+router.get('/proxy/status', (_req, res) => {
+  res.json({
+    success: true,
+    data: {
+      enabled: config.proxyAuth.enabled,
+      emailHeaders: config.proxyAuth.emailHeaders,
+      userHeaders: config.proxyAuth.userHeaders,
+      nameHeaders: config.proxyAuth.nameHeaders,
+    },
+  });
+});
+
+router.get('/proxy', async (req, res, next) => {
+  if (!config.proxyAuth.enabled) {
+    return redirectProxyError(res, 'disabled');
+  }
+
+  const proxyUser = getHeaderValue(req, config.proxyAuth.userHeaders);
+  const proxyName = getHeaderValue(req, config.proxyAuth.nameHeaders);
+  const proxyEmail =
+    getHeaderValue(req, config.proxyAuth.emailHeaders) ||
+    (proxyUser?.includes('@') ? proxyUser : null);
+
+  if (!proxyEmail) {
+    return redirectProxyError(res, 'missing_email_header');
+  }
+
+  if (!isEmailAllowed(proxyEmail)) {
+    return redirectProxyError(res, 'email_not_allowed');
+  }
+
+  try {
+    const user = upsertProxyUser(proxyEmail, proxyName, proxyUser);
+    await new Promise<void>((resolve, reject) => {
+      req.logIn(user, (err) => (err ? reject(err) : resolve()));
+    });
+    stampLogin(user.id, 'proxy', req);
+
+    const params = new URLSearchParams({
+      token: generateUserToken(user.id),
+      returnTo: safeReturnTo(req.query.returnTo),
+    });
+    res.redirect(`${config.frontendUrl}/auth/callback?${params.toString()}`);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GitHub OAuth (only if configured)
 if (config.github.clientId && config.github.clientSecret && config.github.callbackUrl) {
@@ -401,6 +476,7 @@ router.get('/providers', async (_req, res) => {
       codex: codexAvailable,
       opencode: opencodeAvailable,
       vibe: vibeAvailable,
+      proxy: config.proxyAuth.enabled,
     },
   });
 });

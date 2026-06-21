@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { ApiResponse, Session } from '@claude-code-webui/shared';
+import type { ApiResponse, Session } from '@plum-code-webui/shared';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,

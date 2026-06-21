@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bold — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     BOLD DESIGN SYSTEM — 400×300 THUMBNAIL PREVIEW
+     Heavyweight type · high-contrast · commanding layout
+     ============================================================ */
+  :root {
+    --bd-primary: #0077BC;       /* ocean blue */
+    --bd-secondary: #009866;     /* emerald green */
+    --bd-success: #16A34A;
+    --bd-warning: #D97706;
+    --bd-danger: #DC2626;
+
+    --bd-surface: #111111;       /* dark dominant surface */
+    --bd-surface-2: #1A1A1A;
+    --bd-paper: #FFFFFF;
+    --bd-ink: #111827;
+    --bd-ink-on-dark: #FFFFFF;
+    --bd-ink-muted: rgba(255,255,255,0.62);
+    --bd-ink-faint: rgba(255,255,255,0.38);
+    --bd-line: rgba(255,255,255,0.10);
+
+    --bd-font-display: 'Archivo Black', 'Arial Black', sans-serif;
+    --bd-font-ui: 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
+    --bd-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--bd-font-ui);
+    color: var(--bd-ink-on-dark);
+    background: var(--bd-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    background: var(--bd-surface);
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+  }
+
+  /* ============ LEFT: dominant headline block ============ */
+  .stage {
+    position: relative;
+    padding: 14px 14px 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-right: 2px solid var(--bd-primary);
+  }
+
+  /* Top eyebrow */
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--bd-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--bd-primary);
+  }
+  .eyebrow::before {
+    content: "";
+    width: 22px; height: 2px;
+    background: var(--bd-primary);
+  }
+
+  /* MASSIVE headline — signature of the bold style */
+  .headline {
+    font-family: var(--bd-font-display);
+    font-size: 60px;
+    line-height: 0.85;
+    letter-spacing: -0.045em;
+    color: var(--bd-ink-on-dark);
+    text-transform: uppercase;
+    margin: 8px 0 4px;
+    word-break: break-word;
+  }
+  .headline__accent {
+    color: var(--bd-secondary);
+  }
+  .headline__stroke {
+    -webkit-text-stroke: 1.5px var(--bd-primary);
+    color: transparent;
+  }
+
+  .tagline {
+    font-family: var(--bd-font-display);
+    font-size: 14px;
+    line-height: 1;
+    color: var(--bd-primary);
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  /* Bottom CTA row */
+  .actions {
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+    margin-top: 6px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    padding: 0 11px;
+    border: none;
+    font-family: var(--bd-font-display);
+    font-size: 11px;
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: #fff;
+    transition: transform .15s ease;
+  }
+  .btn--primary {
+    background: var(--bd-primary);
+  }
+  .btn--primary:hover { background: #008FD8; transform: translateY(-1px); }
+  .btn--secondary {
+    background: var(--bd-secondary);
+  }
+  .btn--secondary:hover { background: #00B07A; transform: translateY(-1px); }
+  .btn svg { width: 11px; height: 11px; }
+
+  /* Decorative diagonal accent */
+  .accent-block {
+    position: absolute;
+    bottom: 0; left: 0;
+    width: 90px; height: 8px;
+    background: var(--bd-secondary);
+  }
+  .accent-block--top {
+    bottom: auto; top: 28px; left: auto; right: 14px;
+    width: 50px; height: 4px;
+    background: var(--bd-primary);
+  }
+
+  /* ============ RIGHT: stat panel ============ */
+  .panel {
+    background: var(--bd-surface-2);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+  }
+
+  .panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--bd-line);
+  }
+  .panel__brand {
+    font-family: var(--bd-font-display);
+    font-size: 13px;
+    letter-spacing: -0.02em;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .panel__brand::before {
+    content: "";
+    width: 9px; height: 9px;
+    background: var(--bd-primary);
+    display: inline-block;
+  }
+  .panel__tag {
+    font-family: var(--bd-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--bd-ink-faint);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* Big stat */
+  .stat {
+    padding: 8px 0 6px;
+    border-bottom: 1px solid var(--bd-line);
+  }
+  .stat__label {
+    font-family: var(--bd-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--bd-ink-faint);
+    margin-bottom: 2px;
+  }
+  .stat__value {
+    font-family: var(--bd-font-display);
+    font-size: 38px;
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    color: #fff;
+  }
+  .stat__value--blue { color: var(--bd-primary); }
+  .stat__value--green { color: var(--bd-secondary); }
+  .stat__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--bd-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    margin-top: 3px;
+  }
+  .delta { display: inline-flex; align-items: center; gap: 2px; }
+  .delta svg { width: 8px; height: 8px; }
+  .delta--up { color: var(--bd-secondary); }
+  .delta--down { color: var(--bd-danger); }
+  .delta-text { color: var(--bd-ink-faint); font-weight: 400; }
+
+  /* Mini bars */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 32px;
+    margin-top: 4px;
+  }
+  .bar {
+    flex: 1;
+    background: var(--bd-primary);
+    border-radius: 1px 1px 0 0;
+    min-height: 3px;
+  }
+  .bar--peak { background: var(--bd-secondary); }
+  .bar--mid { background: rgba(0,119,188,0.55); }
+
+  /* Footer strip */
+  .panel__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: auto;
+    padding-top: 6px;
+    border-top: 1px solid var(--bd-line);
+    font-family: var(--bd-font-mono);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--bd-ink-faint);
+  }
+  .panel__footer__dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--bd-secondary);
+    margin-right: 4px;
+  }
+
+  /* Bottom corner decoration */
+  .corner {
+    position: absolute;
+    bottom: 0; right: 0;
+    width: 0; height: 0;
+    border-left: 26px solid transparent;
+    border-bottom: 26px solid var(--bd-secondary);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Bold design language preview">
+
+  <!-- ============ LEFT: HEADLINE STAGE ============ -->
+  <section class="stage">
+
+    <div class="accent-block--top" aria-hidden="true"></div>
+
+    <div>
+      <div class="eyebrow">Bold · v1</div>
+      <h1 class="headline">GO<br><span class="headline__stroke">BIG</span><br><span class="headline__accent">NOW</span></h1>
+      <div class="tagline">— or stay home</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn--primary" type="button">
+        Begin
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+      <button class="btn btn--secondary" type="button">Watch</button>
+    </div>
+
+    <div class="accent-block" aria-hidden="true"></div>
+  </section>
+
+  <!-- ============ RIGHT: STAT PANEL ============ -->
+  <aside class="panel">
+
+    <header class="panel__header">
+      <span class="panel__brand">AXIS</span>
+      <span class="panel__tag">live</span>
+    </header>
+
+    <!-- Headline stat -->
+    <div class="stat">
+      <div class="stat__label">Reach</div>
+      <div class="stat__value stat__value--blue">8.4<span style="font-size:18px;color:var(--bd-ink-muted);">M</span></div>
+      <div class="stat__sub">
+        <span class="delta delta--up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          24%
+        </span>
+        <span class="delta-text">vs 30d</span>
+      </div>
+    </div>
+
+    <!-- Second stat -->
+    <div class="stat" style="padding-top:6px;">
+      <div class="stat__label">Conversion</div>
+      <div class="stat__value stat__value--green">42<span style="font-size:18px;color:var(--bd-ink-muted);">%</span></div>
+      <!-- mini bars -->
+      <div class="bars" aria-hidden="true">
+        <div class="bar bar--mid" style="height:35%"></div>
+        <div class="bar bar--mid" style="height:55%"></div>
+        <div class="bar" style="height:45%"></div>
+        <div class="bar" style="height:72%"></div>
+        <div class="bar bar--peak" style="height:100%"></div>
+        <div class="bar" style="height:68%"></div>
+        <div class="bar bar--mid" style="height:48%"></div>
+      </div>
+    </div>
+
+    <footer class="panel__footer">
+      <span><span class="panel__footer__dot"></span>bold · heavy · dark</span>
+      <span>WCAG AA</span>
+    </footer>
+
+    <div class="corner" aria-hidden="true"></div>
+  </aside>
+
+</main>
+
+</body>
+</html>

@@ -50,6 +50,7 @@ All four CLIs ship inside the container; their config dirs are bind-mounted from
 - OpenCode handles GLM, Kimi, and other LLMs through its own model routing — there is no separate GLM provider in the WebUI
 - Default model: `z-ai/glm-5.1` (override with `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL`)
 - Available model menu: empty = auto-discover from the installed CLI (override with `CLI_PROVIDER_OPENCODE_MODELS=…`)
+- WebUI defaults OpenCode sessions to the native `build` primary agent (`CLI_PROVIDER_OPENCODE_DEFAULT_AGENT`) and injects a Codex-like communication contract via the managed `build.prompt`; override with `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`, or set it to `0`/`false` to disable
 - Debug stream events with `OPENCODE_DEBUG_EVENTS=1`
 
 ## Mistral Vibe notes
@@ -207,7 +208,7 @@ badge, and forwards `additional_rate_limits` as an `additional` array.
 
 ## Built-in MCP servers
 
-Both registered in `config/claude/settings.json` → `mcpServers`. Loaded at CLI spawn — only available in **new** sessions.
+Claude-backed MCP servers are registered in `config/claude/settings.json` → `mcpServers` and mirrored into Codex at startup. Codex also appends a local `oracle` MCP server in `~/.codex/config.toml` for second-opinion consults. Loaded at CLI spawn — only available in **new** sessions.
 
 ## Image generation paths
 
@@ -245,6 +246,20 @@ The WebUI talks to ComfyUI **directly** — no LoRA Tester sidecar. Workflow def
 - Persistent device registry: pair a phone once via `adb_pair_wifi` + `adb_connect_wifi`, the backend stores it in `/app/data/known-devices.json` and auto-reconnects on startup
 - See `~/.claude/skills/android-build/SKILL.md` for the full workflow — never call `adb` or `gradle` from `Bash`
 
+### `godot`
+
+- Script: `scripts/mcp-servers/godot.mjs`
+- Tools: `godot_info`, `godot_create_project`, `godot_list_project`, `godot_validate_project`, `godot_run_gdscript`, `godot_export_project`
+- Project scaffolding and inspection work without a Godot binary. Validation, scripted editor tasks, and export require `GODOT_BIN` or `godot`/`godot4` on `PATH`.
+- Use the `game-engine-godot` skill for scene/resource/input/export architecture; use `android-builder` for Android device verification.
+
+### `blender`
+
+- Script: `scripts/mcp-servers/blender.mjs`
+- Tools: `blender_info`, `blender_run_python`, `blender_create_asset`, `blender_inspect_file`, `blender_render_preview`
+- Runtime image installs `blender-headless` and defaults `BLENDER_BIN=blender-headless`.
+- Agents can create procedural `.blend`, `.glb`, `.gltf`, `.obj`, `.stl`, or `.fbx` assets with Blender Python and render PNG previews in background mode.
+
 ## Auth allowlist
 
 `AUTH_ALLOWED_EMAILS` (comma-separated) is the single source of truth for who can log in:
@@ -256,7 +271,7 @@ The WebUI talks to ComfyUI **directly** — no LoRA Tester sidecar. Workflow def
 
 ## Paths and mounts (container)
 
-- Logos: `LOGOS_DIR=/app/logos` (override file mounts `/mnt/user/appdata/claude-code-webui/logos`)
+- Logos: `LOGOS_DIR=/app/logos` (override file mounts `/mnt/cache/appdata/plum-code-webui/logos`)
 - CLI homes (mounted from `${CONFIG_DIR}/<cli>`):
   - Codex → `/home/node/.codex` (primary)
   - OpenCode → `/home/node/.opencode` (with symlinks into `~/.config/opencode` and `~/.local/share/opencode`)
@@ -271,6 +286,7 @@ The WebUI talks to ComfyUI **directly** — no LoRA Tester sidecar. Workflow def
 - `WEBUI_SKILLS_DIRS` or `CLAUDE_SKILLS_DIRS`: extra skill pack folders
 - `CLI_PROVIDER_CODEX_MODELS`, `CLI_PROVIDER_OPENCODE_MODELS`, `CLI_PROVIDER_VIBE_MODELS`, `CLI_PROVIDER_CLAUDE_MODELS`: override the model menu per provider (empty = auto-discover for codex/claude, hardcoded fallback for opencode/vibe)
 - `CLI_PROVIDER_CODEX_DEFAULT_MODEL` (default `gpt-5.5`), `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL` (default `z-ai/glm-5.1`), `CLI_PROVIDER_VIBE_DEFAULT_MODEL` (default `mistral-vibe-cli-latest`), `CLI_PROVIDER_CLAUDE_DEFAULT_MODEL` (default `sonnet`)
+- `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` (default `build`) and `CLI_PROVIDER_OPENCODE_STYLE_PROMPT` (empty = Codex-like WebUI default; `0`/`false` disables the style prompt)
 - `ADMIN_LLM_PROVIDER`: pin the admin/helper LLM choice for commit messages etc. (default order: `codex` → `opencode` → `vibe` → `claude`)
 - `OPENCODE_DEBUG_EVENTS=1`: log raw OpenCode events to backend logs
 
@@ -300,7 +316,7 @@ Flags: `--no-cache` (clean rebuild), `--no-wait` (submit and return), `--timeout
 ### Why the sidecar architecture is mandatory
 
 The `repair-bot` container (defined in `docker-compose.override.yml`) shares
-`/mnt/user/appdata/claude-code-webui` as `/webui`. Watcher script
+`/mnt/cache/appdata/plum-code-webui` as `/webui`. Watcher script
 `scripts/rebuild-robot-sidecar.sh` polls every 5s, executes
 `build → stop → rm -f → up -d --no-deps` against the **main** container from
 **outside**, then waits for the health gate. Because the rebuild runs in a

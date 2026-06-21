@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 
 interface AgentData {
   name: string;

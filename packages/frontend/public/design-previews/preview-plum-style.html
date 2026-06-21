@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>Plum Style Preview</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: #020403;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    color: #f4f7f5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .frame {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(120% 100% at 0% 0%, rgba(99,244,213,0.045) 0%, rgba(99,244,213,0) 45%),
+      radial-gradient(80% 80% at 100% 100%, rgba(116,216,255,0.03) 0%, rgba(116,216,255,0) 50%),
+      linear-gradient(180deg, #060808 0%, #020403 100%);
+    overflow: hidden;
+  }
+
+  .rail {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 0;
+    background: linear-gradient(90deg, rgba(255,255,255,0.018) 0%, rgba(255,255,255,0) 100%);
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.06);
+    z-index: 3;
+  }
+
+  .brand {
+    width: 30px; height: 30px;
+    border-radius: 999px;
+    display: grid; place-items: center;
+    margin-bottom: 6px;
+    background: rgba(255,255,255,0.04);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 0 14px rgba(99,244,213,0.18);
+    color: #63f4d5;
+  }
+  .brand svg { width: 16px; height: 16px; }
+
+  .icon-btn {
+    width: 30px; height: 30px;
+    border-radius: 999px;
+    display: grid; place-items: center;
+    color: rgba(244,247,245,0.55);
+    cursor: pointer; position: relative;
+    transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  }
+  .icon-btn svg { width: 15px; height: 15px; }
+  .icon-btn:hover { color: #f4f7f5; background: rgba(255,255,255,0.05); }
+  .icon-btn.active {
+    color: #020403;
+    background: linear-gradient(135deg, #63f4d5 0%, #74d8ff 100%);
+    box-shadow: 0 0 0 1px rgba(99,244,213,0.4), 0 0 16px rgba(99,244,213,0.32);
+  }
+  .icon-btn .dot {
+    position: absolute; top: 4px; right: 4px;
+    width: 6px; height: 6px; border-radius: 999px;
+    background: #f7b955;
+    box-shadow: 0 0 6px rgba(247,185,85,0.7);
+  }
+
+  .rail-spacer { flex: 1; }
+
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #2a3535 0%, #161b1b 100%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1);
+    display: grid; place-items: center;
+    color: rgba(244,247,245,0.7);
+    font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+  }
+
+  .stage {
+    position: absolute;
+    left: 48px; top: 0; right: 0; bottom: 0;
+    padding: 14px 16px 14px 18px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .title-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .eyebrow {
+    font-size: 8.5px; font-weight: 600;
+    letter-spacing: 1.4px; text-transform: uppercase;
+    color: rgba(244,247,245,0.42);
+  }
+  .title {
+    font-size: 14px; font-weight: 600; letter-spacing: -0.2px;
+    color: #f4f7f5;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .title .dim { color: rgba(244,247,245,0.42); font-weight: 500; }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 18px; padding: 0 8px 0 6px;
+    border-radius: 999px;
+    background: rgba(53,227,154,0.1);
+    box-shadow: inset 0 0 0 1px rgba(53,227,154,0.28);
+    font-size: 9px; font-weight: 600; letter-spacing: 0.3px;
+    color: #35e39a;
+  }
+  .status .pulse {
+    width: 5px; height: 5px; border-radius: 999px;
+    background: #35e39a;
+    box-shadow: 0 0 6px rgba(53,227,154,0.8);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .panel {
+    position: relative;
+    border-radius: 14px;
+    padding: 11px 12px 12px;
+    background: rgba(18,22,22,0.6);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+  .panel-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+    color: rgba(244,247,245,0.68); text-transform: uppercase;
+  }
+  .chip-row { display: flex; gap: 4px; }
+  .chip {
+    height: 16px; padding: 0 6px; border-radius: 999px;
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.3px;
+    color: rgba(244,247,245,0.55);
+    background: rgba(255,255,255,0.04);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    display: inline-flex; align-items: center;
+  }
+  .chip.on {
+    color: #74d8ff;
+    background: rgba(116,216,255,0.1);
+    box-shadow: inset 0 0 0 1px rgba(116,216,255,0.3);
+  }
+
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .metric {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 7px 8px; border-radius: 10px;
+    background: rgba(255,255,255,0.025);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+  }
+  .metric .k {
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.6px;
+    text-transform: uppercase; color: rgba(244,247,245,0.42);
+  }
+  .metric .v {
+    font-size: 14px; font-weight: 600; letter-spacing: -0.3px;
+    color: #f4f7f5; font-feature-settings: "tnum" 1;
+  }
+  .metric .d { font-size: 8.5px; font-weight: 600; color: #35e39a; }
+  .metric .d.warn { color: #f7b955; }
+
+  .spark { margin-top: 10px; height: 28px; width: 100%; display: block; }
+
+  .actions { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 24px; padding: 0 10px; border-radius: 999px;
+    font-size: 9.5px; font-weight: 600; letter-spacing: 0.2px;
+    color: rgba(244,247,245,0.78);
+    background: rgba(255,255,255,0.04);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07);
+    cursor: pointer;
+    transition: background 140ms ease, box-shadow 140ms ease, color 140ms ease;
+  }
+  .pill svg { width: 11px; height: 11px; }
+  .pill:hover {
+    color: #f4f7f5;
+    background: rgba(255,255,255,0.07);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.13);
+  }
+  .pill.primary {
+    color: #020403;
+    background: linear-gradient(135deg, #63f4d5 0%, #74d8ff 100%);
+    box-shadow: 0 0 0 1px rgba(99,244,213,0.35), 0 0 14px rgba(99,244,213,0.22);
+  }
+  .pill.primary:hover { filter: brightness(1.06); }
+
+  .icon-pill {
+    width: 24px; height: 24px; border-radius: 999px;
+    display: grid; place-items: center;
+    color: rgba(244,247,245,0.5);
+    background: rgba(255,255,255,0.03);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+  }
+  .icon-pill:hover { color: #f4f7f5; background: rgba(255,255,255,0.07); }
+  .icon-pill svg { width: 12px; height: 12px; }
+
+  .actions .spacer { flex: 1; }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <nav class="rail" aria-label="Werkzeuge">
+      <div class="brand" title="Plum">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2 4 7v6c0 4.4 3.4 8.4 8 9 4.6-.6 8-4.6 8-9V7l-8-5z"/>
+        </svg>
+      </div>
+      <button class="icon-btn active" title="Overview" aria-label="Overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+      </button>
+      <button class="icon-btn" title="Editor" aria-label="Editor">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+        </svg>
+        <span class="dot"></span>
+      </button>
+      <button class="icon-btn" title="Signals" aria-label="Signals">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h4l3 8 4-16 3 8h4"/>
+        </svg>
+      </button>
+      <button class="icon-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+        </svg>
+      </button>
+      <div class="rail-spacer"></div>
+      <div class="avatar" title="Benutzer">VA</div>
+    </nav>
+
+    <main class="stage">
+      <div class="top">
+        <div class="title-block">
+          <span class="eyebrow">Plum Workbench</span>
+          <h1 class="title">Session <span class="dim">/ nsGg-IXK</span></h1>
+        </div>
+        <span class="status"><span class="pulse"></span>Live</span>
+      </div>
+
+      <section class="panel">
+        <header class="panel-head">
+          <span class="panel-title">Durchsatz</span>
+          <div class="chip-row">
+            <span class="chip on">24h</span><span class="chip">7d</span><span class="chip">30d</span>
+          </div>
+        </header>
+        <div class="metrics">
+          <div class="metric"><span class="k">Tokens</span><span class="v">128.4k</span><span class="d">+12.3%</span></div>
+          <div class="metric"><span class="k">Latenz</span><span class="v">42ms</span><span class="d">−8ms</span></div>
+          <div class="metric"><span class="k">Fehler</span><span class="v">0.4%</span><span class="d warn">+0.1%</span></div>
+        </div>
+        <svg class="spark" viewBox="0 0 280 28" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#63f4d5" stop-opacity="0.35"/>
+              <stop offset="100%" stop-color="#63f4d5" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0,22 L20,18 L40,20 L60,12 L80,15 L100,9 L120,13 L140,7 L160,11 L180,5 L200,10 L220,4 L240,9 L260,3 L280,6 L280,28 L0,28 Z" fill="url(#sparkFill)"/>
+          <path d="M0,22 L20,18 L40,20 L60,12 L80,15 L100,9 L120,13 L140,7 L160,11 L180,5 L200,10 L220,4 L240,9 L260,3 L280,6" fill="none" stroke="#63f4d5" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </section>
+
+      <div class="actions">
+        <button class="pill primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          Fortsetzen
+        </button>
+        <button class="pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Kommentar
+        </button>
+        <div class="spacer"></div>
+        <button class="icon-pill" title="Teilen" aria-label="Teilen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+        </button>
+        <button class="icon-pill" title="Mehr" aria-label="Mehr">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+        </button>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

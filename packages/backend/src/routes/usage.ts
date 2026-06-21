@@ -5,6 +5,19 @@ import path from 'path';
 import os from 'os';
 import { getDatabase } from '../db';
 import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
+import {
+  getOpenCodeCredentialEnvVars,
+  readOpenCodeProvidersForUser,
+} from '../utils/opencodeProviderKeys';
+import { getOpenCodeProviderCatalog } from '../utils/opencodeCatalog';
+import {
+  fetchCodexUsage,
+  getCodexAuth,
+  isCodexUsageAuthError,
+  mapCodexUsage,
+  refreshCodexToken,
+} from '../utils/codexUsage';
+import { safeDecrypt } from '../utils/encryption';
 import { safeJsonParse } from '../utils/json';
 
 const router = Router();
@@ -13,8 +26,6 @@ const credentialsPath = path.join(
   claudeCredentialsRoot.replace('~', os.homedir()),
   '.credentials.json'
 );
-const codexCredentialsRoot = CLI_PROVIDERS.codex.credentialsPath;
-const codexAuthPath = path.join(codexCredentialsRoot.replace('~', os.homedir()), 'auth.json');
 interface ClaudeCredentials {
   claudeAiOauth?: {
     accessToken: string;
@@ -24,48 +35,6 @@ interface ClaudeCredentials {
     subscriptionType: string;
     rateLimitTier: string;
   };
-}
-
-interface CodexAuthTokens {
-  access_token?: string;
-  id_token?: string;
-  refresh_token?: string;
-  // account_id is sometimes stored directly in tokens by recent codex versions;
-  // older versions only carry it inside the id_token JWT claims.
-  account_id?: string;
-}
-
-interface CodexAuth {
-  OPENAI_API_KEY?: string | null;
-  tokens?: CodexAuthTokens;
-  last_refresh?: string;
-}
-
-// OAuth client id used by the codex CLI for token refresh. Matches the upstream
-// `wakamex/codex-cli-usage` reference implementation. Using the JWT `aud` claim
-// instead (our previous approach) fails because Codex's refresh endpoint
-// rejects mismatched client IDs.
-const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-
-// Real Codex usage response shape from /backend-api/codex/usage.
-interface CodexWindow {
-  used_percent?: number;
-  reset_at?: number; // unix epoch seconds
-  limit_window_seconds?: number;
-}
-
-interface CodexAdditionalLimit {
-  limit_name?: string;
-  rate_limit?: CodexWindow;
-}
-
-interface CodexUsageApiResponse {
-  plan_type?: string;
-  rate_limit?: {
-    primary_window?: CodexWindow;
-    secondary_window?: CodexWindow;
-  };
-  additional_rate_limits?: CodexAdditionalLimit[];
 }
 
 interface UsageLimitResponse {
@@ -90,6 +59,124 @@ interface LocalUsageBudget {
   weeklyUsd?: number;
 }
 
+type UsageProviderId = CLIProvider | 'z-ai' | 'opencode-go';
+
+interface NormalizedUsageWindow {
+  utilization: number;
+  resetsAt: string | null;
+  windowSeconds?: number | null;
+  used?: number | null;
+  limit?: number | null;
+  remaining?: number | null;
+  unit?: 'tokens' | 'requests' | 'usd' | string;
+}
+
+interface UsageLimitPayload {
+  subscriptionType?: string;
+  rateLimitTier?: string;
+  fiveHour: NormalizedUsageWindow | null;
+  sevenDay: NormalizedUsageWindow | null;
+  sevenDaySonnet: NormalizedUsageWindow | null;
+  additional?: Array<{ name: string } & NormalizedUsageWindow>;
+  localBudget?: {
+    dailyUsd: number | null;
+    weeklyUsd: number | null;
+    dailySpendUsd: number;
+    weeklySpendUsd: number;
+    dailyTokens: number;
+    weeklyTokens: number;
+    dailyRequests: number;
+    weeklyRequests: number;
+  };
+  source?: 'upstream' | 'local-budget' | 'local-estimate';
+}
+
+interface UsageLimitResult {
+  success: boolean;
+  supported: boolean;
+  provider: UsageProviderId;
+  data: UsageLimitPayload | null;
+  error?: { code: string; message: string };
+}
+
+interface ZaiApiEnvelope {
+  success?: boolean;
+  code?: number | string;
+  msg?: string;
+  message?: string;
+  data?: unknown;
+}
+
+interface ZaiSubscriptionItem {
+  productName?: string;
+  status?: string;
+  inCurrentPeriod?: boolean;
+  nextRenewTime?: string;
+}
+
+interface ZaiQuotaLimit {
+  type?: string;
+  unit?: number;
+  number?: number;
+  usage?: number;
+  limit?: number;
+  currentValue?: number;
+  remaining?: number;
+  percentage?: number;
+  nextResetTime?: number | string;
+  usageDetails?: Array<{ modelCode?: string; usage?: number }>;
+}
+
+interface ZaiQuotaPayload {
+  limits?: ZaiQuotaLimit[];
+}
+
+interface OpenCodeConfigProvider {
+  env?: unknown;
+  options?: unknown;
+}
+
+interface OpenCodeGoCredentials {
+  authCookie: string;
+  workspaceId: string;
+}
+
+interface OpenCodeGoQuotaWindow {
+  status: 'ok' | 'error' | 'unknown';
+  usagePercent: number;
+  resetsInSeconds: number;
+}
+
+interface OpenCodeGoQuotaSnapshot {
+  rolling: OpenCodeGoQuotaWindow;
+  weekly: OpenCodeGoQuotaWindow;
+  monthly: OpenCodeGoQuotaWindow;
+  source: 'api' | 'scraping';
+}
+
+interface UsageSpendWindow {
+  cost: number;
+  tokens: number;
+  requests: number;
+  oldest: string | null;
+}
+
+function unavailableUsageData(
+  subscriptionType: string,
+  rateLimitTier: string,
+  source: UsageLimitPayload['source'] = 'upstream'
+): UsageLimitPayload {
+  return {
+    subscriptionType,
+    rateLimitTier,
+    fiveHour: null,
+    sevenDay: null,
+    sevenDaySonnet: null,
+    additional: [],
+    source,
+  };
+}
+
 // Get Claude credentials from ~/.claude/.credentials.json
 async function getClaudeCredentials(): Promise<ClaudeCredentials | null> {
   try {
@@ -98,137 +185,6 @@ async function getClaudeCredentials(): Promise<ClaudeCredentials | null> {
   } catch {
     return null;
   }
-}
-
-async function getCodexAuth(): Promise<CodexAuth | null> {
-  try {
-    const content = await fs.readFile(codexAuthPath, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return null;
-  }
-}
-
-function normalizePercent(value?: number): number {
-  if (value === undefined || value === null) return 0;
-  if (value < 1) return Math.round(value * 100);
-  return Math.round(value);
-}
-
-function decodeJwtPayload(token?: string): Record<string, unknown> | null {
-  if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length < 2) return null;
-  try {
-    const base64 = parts[1]!.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
-    const payload = Buffer.from(padded, 'base64').toString('utf-8');
-    return JSON.parse(payload) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-async function refreshCodexToken(auth: CodexAuth): Promise<CodexAuth | null> {
-  if (!auth.tokens?.refresh_token) {
-    return null;
-  }
-
-  try {
-    const response = await fetch('https://auth.openai.com/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: auth.tokens.refresh_token,
-        client_id: CODEX_OAUTH_CLIENT_ID,
-      }),
-    });
-
-    if (!response.ok) {
-      console.error('Codex token refresh failed:', response.status, await response.text());
-      return null;
-    }
-
-    const tokens = (await response.json()) as {
-      access_token: string;
-      id_token?: string;
-      refresh_token?: string;
-    };
-
-    const updated: CodexAuth = {
-      ...auth,
-      tokens: {
-        ...auth.tokens,
-        access_token: tokens.access_token,
-        id_token: tokens.id_token || auth.tokens.id_token,
-        refresh_token: tokens.refresh_token || auth.tokens.refresh_token,
-      },
-      last_refresh: new Date().toISOString(),
-    };
-
-    await fs.writeFile(codexAuthPath, JSON.stringify(updated, null, 2), 'utf-8');
-    return updated;
-  } catch (err) {
-    console.error('Codex token refresh error:', err);
-    return null;
-  }
-}
-
-/**
- * Derive the ChatGPT account id required by the usage endpoint. Prefers the
- * literal `tokens.account_id` field (set by recent codex versions); falls back
- * to the JWT `chatgpt_account_id` claim under
- * `https://api.openai.com/auth.chatgpt_account_id` in the id_token.
- */
-function getCodexAccountId(auth: CodexAuth): string | null {
-  if (auth.tokens?.account_id) return auth.tokens.account_id;
-  const payload = decodeJwtPayload(auth.tokens?.id_token);
-  if (!payload) return null;
-  const authClaim = payload['https://api.openai.com/auth'] as
-    | { chatgpt_account_id?: string }
-    | undefined;
-  return authClaim?.chatgpt_account_id || null;
-}
-
-function mapCodexWindow(
-  window?: CodexWindow
-): { utilization: number; resetsAt: string | null } | null {
-  if (!window) return null;
-  const pct = normalizePercent(window.used_percent);
-  const resetsAt =
-    typeof window.reset_at === 'number' ? new Date(window.reset_at * 1000).toISOString() : null;
-  return { utilization: pct, resetsAt };
-}
-
-function mapCodexUsage(data: CodexUsageApiResponse | null): {
-  plan: string | null;
-  fiveHour: { utilization: number; resetsAt: string | null } | null;
-  sevenDay: { utilization: number; resetsAt: string | null } | null;
-  additional: Array<{ name: string; utilization: number; resetsAt: string | null }>;
-} {
-  if (!data) {
-    return { plan: null, fiveHour: null, sevenDay: null, additional: [] };
-  }
-  const rl = data.rate_limit;
-  const additional = (data.additional_rate_limits || [])
-    .map((item) => {
-      const window = mapCodexWindow(item.rate_limit);
-      if (!window) return null;
-      return {
-        name: item.limit_name || 'limit',
-        utilization: window.utilization,
-        resetsAt: window.resetsAt,
-      };
-    })
-    .filter((x): x is { name: string; utilization: number; resetsAt: string | null } => x !== null);
-
-  return {
-    plan: data.plan_type ?? null,
-    fiveHour: mapCodexWindow(rl?.primary_window),
-    sevenDay: mapCodexWindow(rl?.secondary_window),
-    additional,
-  };
 }
 
 function normalizeBudgetValue(value: unknown): number | undefined {
@@ -268,6 +224,129 @@ function getLocalUsageBudget(userId: string, provider: CLIProvider): LocalUsageB
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function expandHome(value: string): string {
+  return value.replace(/^~/, os.homedir());
+}
+
+function normalizeApiKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '***') return null;
+  return trimmed.replace(/^Bearer\s+/i, '').trim() || null;
+}
+
+function configuredEnvKey(envNames: string[]): string | null {
+  for (const name of envNames) {
+    const value = normalizeApiKey(process.env[name]);
+    if (value) return value;
+  }
+  return null;
+}
+
+async function readOpenCodeConfig(): Promise<Record<string, OpenCodeConfigProvider>> {
+  const explicitPath =
+    process.env.OPENCODE_CONFIG_PATH || process.env.CLI_PROVIDER_OPENCODE_CONFIG_PATH;
+  const configPath = explicitPath
+    ? expandHome(explicitPath)
+    : path.join(
+        expandHome(process.env.OPENCODE_CONFIG_DIR || '~/.config/opencode'),
+        'opencode.json'
+      );
+
+  try {
+    const parsed = JSON.parse(await fs.readFile(configPath, 'utf-8')) as unknown;
+    const providerBlock = asRecord(asRecord(parsed)?.provider);
+    if (!providerBlock) return {};
+
+    const providers: Record<string, OpenCodeConfigProvider> = {};
+    for (const [id, value] of Object.entries(providerBlock)) {
+      const provider = asRecord(value);
+      if (!provider) continue;
+      providers[id] = {
+        env: provider.env,
+        options: provider.options,
+      };
+    }
+    return providers;
+  } catch {
+    return {};
+  }
+}
+
+function readApiKeyFromOpenCodeProviderConfig(
+  config: Record<string, OpenCodeConfigProvider>,
+  providerIds: string[]
+): string | null {
+  for (const providerId of providerIds) {
+    const provider = config[providerId];
+    const env = Array.isArray(provider?.env)
+      ? provider.env.filter((item): item is string => typeof item === 'string')
+      : [];
+    const envKey = configuredEnvKey(env);
+    if (envKey) return envKey;
+
+    const options = asRecord(provider?.options);
+    const apiKey = normalizeApiKey(options?.apiKey);
+    if (apiKey) return apiKey;
+  }
+  return null;
+}
+
+function readOpenCodeStoredProviderKey(userId: string, providerIds: string[]): string | null {
+  const providers = readOpenCodeProvidersForUser(userId).filter(
+    (provider) => provider.enabled && providerIds.includes(provider.id)
+  );
+
+  for (const provider of providers) {
+    const key = normalizeApiKey(safeDecrypt(provider.apiKey));
+    if (key) return key;
+  }
+  return null;
+}
+
+async function getZaiApiKey(userId: string): Promise<string | null> {
+  return (
+    configuredEnvKey(['ZAI_API_KEY', 'GLM_API_KEY', 'ZHIPU_API_KEY', 'Z_AI_API_KEY']) ||
+    readOpenCodeStoredProviderKey(userId, ['z-ai', 'zai']) ||
+    readApiKeyFromOpenCodeProviderConfig(await readOpenCodeConfig(), ['z-ai', 'zai'])
+  );
+}
+
+async function hasConfiguredOpenCodeProvider(
+  providerIds: string[],
+  userId: string
+): Promise<boolean> {
+  const catalog = getOpenCodeProviderCatalog();
+  const equivalentIds = new Set(providerIds);
+  if (providerIds.includes('opencode-go')) {
+    // The OpenCode Go provider uses the same OPENCODE_API_KEY env slot as the
+    // main OpenCode provider in current OpenCode catalogs.
+    equivalentIds.add('opencode');
+  }
+
+  const stored = readOpenCodeProvidersForUser(userId).some(
+    (provider) =>
+      provider.enabled &&
+      equivalentIds.has(provider.id) &&
+      (Boolean(provider.apiKey) || Boolean(provider.baseUrl))
+  );
+  if (stored) return true;
+
+  const config = await readOpenCodeConfig();
+  for (const providerId of equivalentIds) {
+    if (config[providerId]) return true;
+    if (configuredEnvKey(getOpenCodeCredentialEnvVars(providerId, catalog))) return true;
+  }
+
+  return false;
+}
+
 function providerSqlPredicate(provider: CLIProvider): string {
   switch (provider) {
     case 'codex':
@@ -285,9 +364,729 @@ function nextLocalReset(days: number): string {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function toSqlTimestamp(date: Date): string {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function getLocalWeekWindow(now = new Date()): { startsAt: Date; resetsAt: Date } {
+  const local = new Date(now);
+  const daysSinceMonday = (local.getDay() + 6) % 7;
+  const startsAt = new Date(local);
+  startsAt.setDate(local.getDate() - daysSinceMonday);
+  startsAt.setHours(0, 0, 0, 0);
+
+  const resetsAt = new Date(startsAt);
+  resetsAt.setDate(startsAt.getDate() + 7);
+  return { startsAt, resetsAt };
+}
+
 function pct(spend: number, budget?: number): number {
   if (!budget || budget <= 0) return 0;
   return Math.min(999, Math.round((spend / budget) * 100));
+}
+
+function clampUtilization(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(999, Math.round(value)));
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function epochMillisToIso(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    const millis = value < 1_000_000_000_000 ? value * 1000 : value;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      const millis = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+      const date = new Date(millis);
+      return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    }
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+
+  return null;
+}
+
+function parseDateLikeToIso(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+function zaiWindowSeconds(limit: ZaiQuotaLimit): number | null {
+  if (limit.unit === 3 && limit.number === 5) return 5 * 60 * 60;
+  if (limit.unit === 6 && limit.number === 7) return 7 * 24 * 60 * 60;
+  if (limit.unit === 5 && limit.number === 1) return 30 * 24 * 60 * 60;
+  return null;
+}
+
+function mapZaiWindow(limit?: ZaiQuotaLimit, unit = 'tokens'): NormalizedUsageWindow | null {
+  if (!limit) return null;
+  const used = finiteNumber(limit.currentValue);
+  const total = finiteNumber(limit.usage) ?? finiteNumber(limit.limit);
+  const remaining =
+    finiteNumber(limit.remaining) ??
+    (used !== null && total !== null ? Math.max(0, total - used) : null);
+  const utilization =
+    finiteNumber(limit.percentage) ??
+    (used !== null && total && total > 0 ? Math.round((used / total) * 100) : 0);
+
+  return {
+    utilization: clampUtilization(utilization),
+    resetsAt: epochMillisToIso(limit.nextResetTime),
+    windowSeconds: zaiWindowSeconds(limit),
+    used,
+    limit: total,
+    remaining,
+    unit,
+  };
+}
+
+function selectZaiTokenLimit(
+  limits: ZaiQuotaLimit[],
+  unit: number,
+  number: number,
+  fallbackIndex: number
+): ZaiQuotaLimit | undefined {
+  const tokenLimits = limits.filter((limit) => limit.type === 'TOKENS_LIMIT');
+  return (
+    tokenLimits.find((limit) => limit.unit === unit && limit.number === number) ||
+    tokenLimits[fallbackIndex]
+  );
+}
+
+export function mapZaiUsage(
+  quota: ZaiQuotaPayload | null,
+  subscription: ZaiSubscriptionItem[] | null
+): UsageLimitPayload | null {
+  const limits = quota?.limits || [];
+  if (!Array.isArray(limits) || limits.length === 0) return null;
+
+  const activePlan =
+    subscription?.find((item) => item.inCurrentPeriod || item.status === 'VALID') ||
+    subscription?.[0];
+  const fiveHour = selectZaiTokenLimit(limits, 3, 5, 0);
+  const weekly = selectZaiTokenLimit(limits, 6, 7, 1);
+  const searchLimit = limits.find((limit) => limit.type === 'TIME_LIMIT');
+  const searchReset =
+    epochMillisToIso(searchLimit?.nextResetTime) || parseDateLikeToIso(activePlan?.nextRenewTime);
+
+  return {
+    subscriptionType: activePlan?.productName || 'GLM Coding Plan',
+    rateLimitTier: activePlan?.productName || 'Z.ai',
+    fiveHour: mapZaiWindow(fiveHour, 'tokens'),
+    sevenDay: mapZaiWindow(weekly, 'tokens'),
+    sevenDaySonnet: null,
+    additional: searchLimit
+      ? [
+          {
+            name: 'Web search',
+            ...mapZaiWindow(
+              { ...searchLimit, nextResetTime: searchReset || searchLimit.nextResetTime },
+              'requests'
+            )!,
+          },
+        ]
+      : [],
+    source: 'upstream',
+  };
+}
+
+function zaiStatusFromCode(code: unknown): number | null {
+  if (typeof code === 'number' && Number.isFinite(code)) return code;
+  if (typeof code === 'string' && code.trim()) {
+    const parsed = Number(code);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isAuthStatus(status: number | null | undefined): boolean {
+  return status === 401 || status === 403;
+}
+
+function zaiEnvelopeMessage(body: unknown, fallback: string): string {
+  const parsed = asRecord(body);
+  const message = parsed?.msg || parsed?.message;
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback;
+}
+
+function unwrapZaiEnvelope<T>(body: unknown): T {
+  const parsed = asRecord(body);
+  if (parsed && Object.prototype.hasOwnProperty.call(parsed, 'data')) {
+    return parsed.data as T;
+  }
+  return body as T;
+}
+
+async function fetchZaiJson<T>(apiKey: string, pathname: string): Promise<T> {
+  const baseUrl = (process.env.ZAI_USAGE_BASE_URL || 'https://api.z.ai').replace(/\/+$/, '');
+  const authHeaders = [...new Set([apiKey, `Bearer ${apiKey}`])];
+  let authError: (Error & { status?: number }) | null = null;
+
+  for (const authorization of authHeaders) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Accept-Language': 'en-US,en',
+        'Content-Type': 'application/json',
+        Authorization: authorization,
+        'User-Agent': 'plum-code-webui/1.0',
+      },
+    });
+    const rawBody = await response.text();
+
+    if (isAuthStatus(response.status)) {
+      authError = new Error(`Z.ai credentials rejected: HTTP ${response.status}`) as Error & {
+        status?: number;
+      };
+      authError.status = response.status;
+      continue;
+    }
+
+    if (!response.ok) {
+      const err = new Error(`Z.ai usage error: HTTP ${response.status}`) as Error & {
+        status?: number;
+      };
+      err.status = response.status;
+      throw err;
+    }
+
+    let body: unknown;
+    try {
+      body = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      const err = new Error('Z.ai usage response was not JSON') as Error & { status?: number };
+      err.status = response.status;
+      throw err;
+    }
+
+    const envelope = asRecord(body) as ZaiApiEnvelope | null;
+    const status = zaiStatusFromCode(envelope?.code);
+    if (isAuthStatus(status)) {
+      authError = new Error(zaiEnvelopeMessage(body, 'Z.ai credentials rejected')) as Error & {
+        status?: number;
+      };
+      authError.status = status ?? undefined;
+      continue;
+    }
+
+    if (envelope?.success === false) {
+      const err = new Error(
+        zaiEnvelopeMessage(body, 'Z.ai usage response reported failure')
+      ) as Error & {
+        status?: number;
+      };
+      err.status = status ?? undefined;
+      throw err;
+    }
+
+    return unwrapZaiEnvelope<T>(body);
+  }
+
+  throw authError ?? new Error('Z.ai authentication failed');
+}
+
+function formatZaiDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function zaiModelUsagePath(days: number): string {
+  const now = new Date();
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 0, 0, 0, 0);
+  const params = new URLSearchParams({
+    startTime: formatZaiDateTime(start),
+    endTime: formatZaiDateTime(end),
+  });
+  return `/api/monitor/usage/model-usage?${params.toString()}`;
+}
+
+async function fetchZaiUsageLimits(userId: string): Promise<UsageLimitResult> {
+  const apiKey = await getZaiApiKey(userId);
+  if (!apiKey) {
+    const configured = await hasConfiguredOpenCodeProvider(['z-ai', 'zai'], userId);
+    return {
+      success: configured,
+      supported: configured,
+      provider: 'z-ai',
+      data: configured ? unavailableUsageData('Z.ai Coding Plan', 'No API key') : null,
+      error: { code: 'NO_CREDENTIALS', message: 'Z.ai API key not found' },
+    };
+  }
+
+  try {
+    const [quota, subscription] = await Promise.all([
+      fetchZaiJson<ZaiQuotaPayload>(apiKey, '/api/monitor/usage/quota/limit'),
+      fetchZaiJson<ZaiSubscriptionItem[]>(apiKey, '/api/biz/subscription/list').catch(() => null),
+      // Warm the same official monitor endpoint used by zai-usage-tracker. The
+      // quota card is still driven by quota/limit because model-usage has totals
+      // but no upstream quota denominator.
+      fetchZaiJson(apiKey, zaiModelUsagePath(7)).catch(() => null),
+    ]);
+    const mapped = mapZaiUsage(quota, subscription);
+    return {
+      success: Boolean(mapped),
+      supported: Boolean(mapped),
+      provider: 'z-ai',
+      data: mapped,
+      error: mapped
+        ? undefined
+        : { code: 'UNSUPPORTED_RESPONSE', message: 'Z.ai usage response did not include limits' },
+    };
+  } catch (err) {
+    const status = (err as Error & { status?: number }).status;
+    if (status === 401 || status === 403) {
+      return {
+        success: true,
+        supported: true,
+        provider: 'z-ai',
+        data: unavailableUsageData('Z.ai Coding Plan', 'Credentials need refresh'),
+        error: { code: 'NO_CREDENTIALS', message: 'Z.ai API key is missing or expired' },
+      };
+    }
+    console.error('Z.ai usage fetch error:', err);
+    return {
+      success: false,
+      supported: false,
+      provider: 'z-ai',
+      data: null,
+      error: { code: 'ZAI_USAGE_ERROR', message: 'Failed to fetch Z.ai usage limits' },
+    };
+  }
+}
+
+function normalizeOpenCodeGoCookie(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith('auth=') ? trimmed : `auth=${trimmed}`;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function getOpenCodeGoConfigFilePaths(): string[] {
+  const explicit = normalizeApiKey(process.env.OPENCODE_GO_CONFIG_PATH);
+  const home = os.homedir();
+  const configDirs = uniqueStrings(
+    [
+      process.env.OPENCODE_CONFIG_DIR,
+      process.env.CLI_PROVIDER_OPENCODE_CONFIG_PATH,
+      path.join(home, '.opencode', 'config'),
+      path.join(home, '.config', 'opencode'),
+      path.join(home, '.local', 'share', 'opencode'),
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map(expandHome)
+  );
+
+  return uniqueStrings([
+    ...(explicit ? [expandHome(explicit)] : []),
+    ...configDirs.map((dir) => path.join(dir, 'opencode-quota', 'opencode-go.json')),
+  ]);
+}
+
+function openCodeGoCredentialsFromRecord(record: Record<string, unknown> | null) {
+  const authCookie = normalizeApiKey(record?.authCookie);
+  const workspaceId = normalizeApiKey(record?.workspaceId);
+  return authCookie && workspaceId ? { authCookie, workspaceId } : null;
+}
+
+async function readOpenCodeGoCredentialsFile(): Promise<OpenCodeGoCredentials | null> {
+  for (const configPath of getOpenCodeGoConfigFilePaths()) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(configPath, 'utf-8')) as unknown;
+      const credentials = openCodeGoCredentialsFromRecord(asRecord(parsed));
+      if (credentials) return credentials;
+    } catch {
+      // Missing or invalid optional quota config; try the next candidate.
+    }
+  }
+  return null;
+}
+
+async function getOpenCodeGoCredentials(userId: string): Promise<OpenCodeGoCredentials | null> {
+  const settingsRow = getDatabase()
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
+  const settings = safeJsonParse<Record<string, unknown>>(settingsRow?.settings_json, {});
+  const quotaSettings = asRecord(settings.opencodeGoQuota);
+
+  const envCredentials = openCodeGoCredentialsFromRecord({
+    authCookie: process.env.OPENCODE_GO_AUTH_COOKIE || process.env.OPENCODE_AUTH_COOKIE,
+    workspaceId: process.env.OPENCODE_GO_WORKSPACE_ID || process.env.OPENCODE_WORKSPACE_ID,
+  });
+  if (envCredentials) return envCredentials;
+
+  const settingsCredentials = openCodeGoCredentialsFromRecord(quotaSettings);
+  if (settingsCredentials) return settingsCredentials;
+
+  return readOpenCodeGoCredentialsFile();
+}
+
+function addSecondsToNow(seconds: number): string | null {
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+function mapOpenCodeGoWindow(window: OpenCodeGoQuotaWindow): NormalizedUsageWindow {
+  return {
+    utilization: clampUtilization(window.usagePercent),
+    resetsAt: addSecondsToNow(window.resetsInSeconds),
+    windowSeconds: window.resetsInSeconds > 0 ? window.resetsInSeconds : null,
+    used: window.usagePercent,
+    limit: 100,
+    remaining: Math.max(0, 100 - clampUtilization(window.usagePercent)),
+    unit: 'percent',
+  };
+}
+
+function mapOpenCodeGoWindowOrNull(window: OpenCodeGoQuotaWindow): NormalizedUsageWindow | null {
+  return window.status === 'unknown' ? null : mapOpenCodeGoWindow(window);
+}
+
+function parseHumanDurationSeconds(value: string): number | null {
+  const normalized = value.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (['reset-now', 'reset now', 'now', 'resets now'].includes(normalized)) return 0;
+
+  let seconds = 0;
+  let matched = false;
+  const units: Array<[RegExp, number]> = [
+    [/(\d+(?:\.\d+)?)\s*days?/, 24 * 60 * 60],
+    [/(\d+(?:\.\d+)?)\s*hours?/, 60 * 60],
+    [/(\d+(?:\.\d+)?)\s*minutes?/, 60],
+    [/(\d+(?:\.\d+)?)\s*seconds?/, 1],
+  ];
+
+  for (const [pattern, multiplier] of units) {
+    const match = normalized.match(pattern);
+    if (!match) continue;
+    matched = true;
+    seconds += Number(match[1]) * multiplier;
+  }
+
+  return matched && Number.isFinite(seconds) ? seconds : null;
+}
+
+function stripSolidComments(value: string): string {
+  return value
+    .replace(/<!--\$-->/g, '')
+    .replace(/<!--\/-->/g, '')
+    .trim();
+}
+
+function parseOpenCodeGoDataSlotHtml(
+  html: string
+): Partial<Record<'rolling' | 'weekly' | 'monthly', OpenCodeGoQuotaWindow>> {
+  const windows: Partial<Record<'rolling' | 'weekly' | 'monthly', OpenCodeGoQuotaWindow>> = {};
+  const items = html.split(/data-slot="usage-item"/);
+
+  for (let i = 1; i < items.length; i++) {
+    const content = items[i] || '';
+    const labelMatch = content.match(/data-slot="usage-label">([^<]+)</);
+    const usageMatch = content.match(/data-slot="usage-value">[^0-9]*(\d+(?:\.\d+)?)/);
+    const resetMatch = content.match(/data-slot="(reset-time|reset-now)">([\s\S]*?)<\/span>/);
+    if (!labelMatch?.[1] || !usageMatch?.[1] || !resetMatch?.[1] || resetMatch[2] === undefined) {
+      continue;
+    }
+
+    const label = labelMatch[1].trim().toLowerCase();
+    const usagePercent = Number(usageMatch[1]);
+    const resetText = stripSolidComments(resetMatch[2])
+      .replace(/Resets?\s*in\s*/i, '')
+      .trim();
+    const resetsInSeconds =
+      resetMatch[1] === 'reset-now' ? 0 : parseHumanDurationSeconds(resetText);
+
+    if (!Number.isFinite(usagePercent) || resetsInSeconds === null) continue;
+
+    const key = label.includes('rolling')
+      ? 'rolling'
+      : label.includes('weekly')
+        ? 'weekly'
+        : label.includes('monthly')
+          ? 'monthly'
+          : null;
+    if (!key) continue;
+
+    windows[key] = {
+      status: 'ok',
+      usagePercent,
+      resetsInSeconds,
+    };
+  }
+
+  return windows;
+}
+
+export function parseOpenCodeGoQuotaHtml(html: string): OpenCodeGoQuotaSnapshot | null {
+  const extractWindow = (name: string): OpenCodeGoQuotaWindow => {
+    const numberPattern = String.raw`(-?\d+(?:\.\d+)?)`;
+    const patterns = [
+      new RegExp(
+        String.raw`${name}:\$R\[\d+\]=\{[^}]*usagePercent:${numberPattern}[^}]*resetInSec:${numberPattern}[^}]*\}`
+      ),
+      new RegExp(
+        String.raw`${name}:\$R\[\d+\]=\{[^}]*resetInSec:${numberPattern}[^}]*usagePercent:${numberPattern}[^}]*\}`
+      ),
+      new RegExp(
+        String.raw`${name}=\{[^}]*usagePercent:${numberPattern}[^}]*resetInSec:${numberPattern}[^}]*\}`
+      ),
+      new RegExp(
+        String.raw`${name}=\{[^}]*resetInSec:${numberPattern}[^}]*usagePercent:${numberPattern}[^}]*\}`
+      ),
+    ];
+
+    for (let index = 0; index < patterns.length; index++) {
+      const pattern = patterns[index]!;
+      const match = pattern.exec(html);
+      if (!match) continue;
+      const pctFirst = index % 2 === 0;
+      const usagePercent = Number(match[pctFirst ? 1 : 2]);
+      const resetsInSeconds = Number(match[pctFirst ? 2 : 1]);
+      const statusMatch = match[0].match(/status:"([^"]+)"/);
+      const statusValue = statusMatch?.[1];
+      const status = statusValue === 'ok' || statusValue === 'error' ? statusValue : 'ok';
+      return {
+        status,
+        resetsInSeconds,
+        usagePercent,
+      };
+    }
+
+    return { status: 'unknown', resetsInSeconds: 0, usagePercent: 0 };
+  };
+
+  const snapshot: OpenCodeGoQuotaSnapshot = {
+    rolling: extractWindow('rollingUsage'),
+    weekly: extractWindow('weeklyUsage'),
+    monthly: extractWindow('monthlyUsage'),
+    source: 'scraping',
+  };
+
+  if (snapshot.rolling.status !== 'unknown') return snapshot;
+  if (snapshot.weekly.status !== 'unknown') return snapshot;
+  if (snapshot.monthly.status !== 'unknown') return snapshot;
+
+  const dataSlot = parseOpenCodeGoDataSlotHtml(html);
+  if (dataSlot.rolling || dataSlot.weekly || dataSlot.monthly) {
+    return {
+      rolling: dataSlot.rolling ?? snapshot.rolling,
+      weekly: dataSlot.weekly ?? snapshot.weekly,
+      monthly: dataSlot.monthly ?? snapshot.monthly,
+      source: 'scraping',
+    };
+  }
+
+  return null;
+}
+
+function mapOpenCodeGoLiveUsage(snapshot: OpenCodeGoQuotaSnapshot): UsageLimitPayload {
+  const monthly = mapOpenCodeGoWindowOrNull(snapshot.monthly);
+  return {
+    subscriptionType: 'OpenCode Go',
+    rateLimitTier: 'Go subscription',
+    fiveHour: mapOpenCodeGoWindowOrNull(snapshot.rolling),
+    sevenDay: mapOpenCodeGoWindowOrNull(snapshot.weekly),
+    sevenDaySonnet: null,
+    additional: monthly ? [{ name: 'Monthly', ...monthly }] : [],
+    source: 'upstream',
+  };
+}
+
+async function fetchOpenCodeGoLiveQuota(
+  credentials: OpenCodeGoCredentials
+): Promise<UsageLimitPayload> {
+  const url = `https://opencode.ai/workspace/${encodeURIComponent(credentials.workspaceId)}/go`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Cookie: normalizeOpenCodeGoCookie(credentials.authCookie),
+      'User-Agent':
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      Referer: `https://opencode.ai/workspace/${encodeURIComponent(credentials.workspaceId)}`,
+    },
+    redirect: 'follow',
+  });
+
+  if (!response.ok) {
+    const err = new Error(`OpenCode Go dashboard error: HTTP ${response.status}`) as Error & {
+      status?: number;
+    };
+    err.status = response.status;
+    throw err;
+  }
+
+  const snapshot = parseOpenCodeGoQuotaHtml(await response.text());
+  if (!snapshot) {
+    throw new Error('OpenCode Go dashboard response did not include quota windows');
+  }
+
+  return mapOpenCodeGoLiveUsage(snapshot);
+}
+
+function addMsToSqlTimestamp(sqlTimestamp: string | null, ms: number): string | null {
+  if (!sqlTimestamp) return null;
+  const iso = sqlTimestamp.includes('T') ? sqlTimestamp : `${sqlTimestamp.replace(' ', 'T')}Z`;
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed + ms).toISOString();
+}
+
+function rollingWindowSpend(userId: string, predicate: string, windowMs: number): UsageSpendWindow {
+  const db = getDatabase();
+  const startsAt = new Date(Date.now() - windowMs);
+  return db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) as cost,
+              COALESCE(SUM(total_tokens), 0) as tokens,
+              COUNT(*) as requests,
+              MIN(created_at) as oldest
+       FROM usage_history
+       WHERE user_id = ? AND created_at >= ? AND ${predicate}`
+    )
+    .get(userId, toSqlTimestamp(startsAt)) as UsageSpendWindow;
+}
+
+export function hasOpenCodeGoLocalUsage(windows: Array<{ requests: number }>): boolean {
+  return windows.some((window) => Number.isFinite(window.requests) && window.requests > 0);
+}
+
+function planWindow(
+  spend: UsageSpendWindow,
+  budgetUsd: number,
+  windowMs: number
+): NormalizedUsageWindow {
+  return {
+    utilization: pct(spend.cost, budgetUsd),
+    resetsAt: addMsToSqlTimestamp(spend.oldest, windowMs),
+    windowSeconds: Math.round(windowMs / 1000),
+    used: spend.cost,
+    limit: budgetUsd,
+    remaining: Math.max(0, budgetUsd - spend.cost),
+    unit: 'usd',
+  };
+}
+
+function envUsd(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function fetchOpenCodeGoUsage(userId: string): Promise<UsageLimitResult> {
+  const credentials = await getOpenCodeGoCredentials(userId);
+  let liveQuotaError: { code: string; message: string } | undefined;
+  if (credentials) {
+    try {
+      return {
+        success: true,
+        supported: true,
+        provider: 'opencode-go',
+        data: await fetchOpenCodeGoLiveQuota(credentials),
+      };
+    } catch (err) {
+      console.error('OpenCode Go live quota fetch error:', err);
+      liveQuotaError = {
+        code: 'OPENCODE_GO_LIVE_QUOTA_ERROR',
+        message: 'OpenCode Go live quota unavailable; showing local WebUI estimate',
+      };
+    }
+  }
+
+  const predicate = "(lower(model) LIKE 'opencode-go/%')";
+  const fiveHourMs = 5 * 60 * 60 * 1000;
+  const weeklyMs = 7 * 24 * 60 * 60 * 1000;
+  const monthlyMs = 30 * 24 * 60 * 60 * 1000;
+  const fiveHour = rollingWindowSpend(userId, predicate, fiveHourMs);
+  const weekly = rollingWindowSpend(userId, predicate, weeklyMs);
+  const monthly = rollingWindowSpend(userId, predicate, monthlyMs);
+  const configured = await hasConfiguredOpenCodeProvider(['opencode-go'], userId);
+
+  if (!hasOpenCodeGoLocalUsage([fiveHour, weekly, monthly])) {
+    if (credentials) {
+      return {
+        success: true,
+        supported: true,
+        provider: 'opencode-go',
+        data: unavailableUsageData('OpenCode Go', 'Dashboard unavailable'),
+        error: liveQuotaError,
+      };
+    }
+
+    if (configured) {
+      return {
+        success: true,
+        supported: true,
+        provider: 'opencode-go',
+        data: unavailableUsageData('OpenCode Go', 'Quota setup required'),
+        error: {
+          code: 'NO_LIVE_QUOTA_CREDENTIALS',
+          message:
+            'OpenCode Go live quota needs workspace ID and auth cookie; no local opencode-go usage history exists yet',
+        },
+      };
+    }
+
+    return {
+      success: true,
+      supported: false,
+      provider: 'opencode-go',
+      data: null,
+      error: {
+        code: 'NOT_CONFIGURED',
+        message: 'OpenCode Go provider is not configured',
+      },
+    };
+  }
+
+  const fiveHourBudget = envUsd('OPENCODE_GO_5H_BUDGET_USD', 12);
+  const weeklyBudget = envUsd('OPENCODE_GO_WEEKLY_BUDGET_USD', 30);
+  const monthlyBudget = envUsd('OPENCODE_GO_MONTHLY_BUDGET_USD', 60);
+
+  return {
+    success: true,
+    supported: true,
+    provider: 'opencode-go',
+    data: {
+      subscriptionType: 'OpenCode Go',
+      rateLimitTier: credentials ? 'Dashboard unavailable' : 'Go subscription',
+      fiveHour: planWindow(fiveHour, fiveHourBudget, fiveHourMs),
+      sevenDay: planWindow(weekly, weeklyBudget, weeklyMs),
+      sevenDaySonnet: null,
+      additional: [
+        {
+          name: 'Monthly',
+          ...planWindow(monthly, monthlyBudget, monthlyMs),
+        },
+      ],
+      source: 'local-estimate',
+    },
+    error: liveQuotaError,
+  };
 }
 
 function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
@@ -298,6 +1097,7 @@ function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
 
   const db = getDatabase();
   const predicate = providerSqlPredicate(provider);
+  const localWeek = getLocalWeekWindow();
   const daily = db
     .prepare(
       `SELECT COALESCE(SUM(cost_usd), 0) as cost, COALESCE(SUM(total_tokens), 0) as tokens, COUNT(*) as requests
@@ -309,9 +1109,13 @@ function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
     .prepare(
       `SELECT COALESCE(SUM(cost_usd), 0) as cost, COALESCE(SUM(total_tokens), 0) as tokens, COUNT(*) as requests
        FROM usage_history
-       WHERE user_id = ? AND created_at >= datetime('now', '-7 days') AND ${predicate}`
+       WHERE user_id = ? AND created_at >= ? AND created_at < ? AND ${predicate}`
     )
-    .get(userId) as { cost: number; tokens: number; requests: number };
+    .get(userId, toSqlTimestamp(localWeek.startsAt), toSqlTimestamp(localWeek.resetsAt)) as {
+    cost: number;
+    tokens: number;
+    requests: number;
+  };
 
   return {
     subscriptionType: 'local-budget',
@@ -320,7 +1124,10 @@ function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
       ? { utilization: pct(daily.cost, budget.dailyUsd), resetsAt: nextLocalReset(1) }
       : null,
     sevenDay: budget.weeklyUsd
-      ? { utilization: pct(weekly.cost, budget.weeklyUsd), resetsAt: nextLocalReset(7) }
+      ? {
+          utilization: pct(weekly.cost, budget.weeklyUsd),
+          resetsAt: localWeek.resetsAt.toISOString(),
+        }
       : null,
     sevenDaySonnet: null,
     localBudget: {
@@ -334,40 +1141,6 @@ function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
       weeklyRequests: weekly.requests,
     },
   };
-}
-
-async function fetchCodexUsage(auth: CodexAuth): Promise<CodexUsageApiResponse | null> {
-  const accessToken = auth.tokens?.access_token;
-  if (!accessToken) return null;
-
-  const accountId = getCodexAccountId(auth);
-  // Cloudflare in front of chatgpt.com flags some Linux/Firefox UAs as bots
-  // and serves a JS challenge page. A current Mac Safari UA reliably passes.
-  // Override via `CODEX_USER_AGENT` env if needed.
-  const userAgent =
-    process.env.CODEX_USER_AGENT ||
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
-  const url = process.env.CODEX_USAGE_URL || 'https://chatgpt.com/backend-api/codex/usage';
-
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-    Authorization: `Bearer ${accessToken}`,
-    'User-Agent': userAgent,
-  };
-  if (accountId) {
-    // Header name is lowercase in the upstream Python reference and that's what
-    // the backend matches against. Some HTTP clients lowercase headers anyway,
-    // but be explicit.
-    headers['chatgpt-account-id'] = accountId;
-  }
-
-  const response = await fetch(url, { method: 'GET', headers });
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Codex usage error: ${response.status} ${errorText}`);
-  }
-
-  return (await response.json()) as CodexUsageApiResponse;
 }
 
 // Refresh Claude OAuth token
@@ -438,7 +1211,7 @@ async function fetchUsage(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
         'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'claude-code-webui/1.0',
+        'User-Agent': 'plum-code-webui/1.0',
       },
     });
 
@@ -455,14 +1228,30 @@ async function fetchUsage(
   }
 }
 
-// Fetch usage limits (Claude only)
+// Fetch usage limits for the selected provider.
 router.get('/limits', requireAuth, async (req, res) => {
   try {
-    const providerParam = String(req.query.provider || 'claude').toLowerCase();
-    const allowedProviders: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
-    const provider = allowedProviders.includes(providerParam as CLIProvider)
-      ? (providerParam as CLIProvider)
-      : 'claude';
+    const providerParam = String(req.query.provider || 'codex').toLowerCase();
+    const allowedProviders: UsageProviderId[] = [
+      'claude',
+      'codex',
+      'opencode',
+      'opencode-go',
+      'vibe',
+      'z-ai',
+    ];
+    const provider = allowedProviders.includes(providerParam as UsageProviderId)
+      ? (providerParam as UsageProviderId)
+      : 'codex';
+    const userId = (req as AuthenticatedRequest).userId;
+
+    if (provider === 'z-ai') {
+      return res.json(await fetchZaiUsageLimits(userId));
+    }
+
+    if (provider === 'opencode-go') {
+      return res.json(await fetchOpenCodeGoUsage(userId));
+    }
 
     if (provider === 'codex') {
       const codexAuth = await getCodexAuth();
@@ -505,7 +1294,7 @@ router.get('/limits', requireAuth, async (req, res) => {
         return res.json(buildCodexResponse(mapCodexUsage(usage)));
       } catch (err) {
         const errorText = String(err);
-        const isAuthError = errorText.includes('401') || errorText.includes('403');
+        const isAuthError = isCodexUsageAuthError(err);
         if (isAuthError) {
           const refreshed = await refreshCodexToken(codexAuth);
           if (refreshed?.tokens?.access_token) {
@@ -537,7 +1326,6 @@ router.get('/limits', requireAuth, async (req, res) => {
     }
 
     if (provider === 'opencode' || provider === 'vibe') {
-      const userId = (req as AuthenticatedRequest).userId;
       const localUsage = fetchLocalBudgetUsage(userId, provider);
       if (localUsage) {
         return res.json({

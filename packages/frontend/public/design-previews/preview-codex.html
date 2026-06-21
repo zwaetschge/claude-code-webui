@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Codex — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CODEX DESIGN SYSTEM — 400×300 THUMBNAIL
+     Radically minimal · black-only · typography carries weight
+     No shadows · no gradients · pill interactions · precise card radius
+     ============================================================ */
+  :root {
+    /* Strict two-tone palette — black is the ONLY filled color */
+    --cx-black: #000000;
+    --cx-white: #FFFFFF;
+    --cx-paper: #FAFAFA;        /* near-white canvas, still achromatic */
+    --cx-ink: #111827;          /* near-black text */
+    --cx-ink-2: #2B2B2B;
+    --cx-ink-3: #6B6B6B;
+    --cx-ink-4: #9A9A9A;
+    --cx-ink-5: #C8C8C8;
+    --cx-line: #E5E5E5;
+    --cx-line-soft: #F0F0F0;
+
+    /* Semantic tokens — used ONLY for state, never decorative */
+    --cx-success: #16A34A;
+    --cx-warning: #D97706;
+    --cx-danger: #DC2626;
+
+    --cx-font: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --cx-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cx-font);
+    font-size: 12px;
+    color: var(--cx-ink);
+    background: var(--cx-white);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--cx-white);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 20px 28px;
+    gap: 16px;
+    position: relative;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--cx-black); /* black is the only divider */
+  }
+  .brand {
+    font-family: var(--cx-font);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--cx-black);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .brand__mark {
+    width: 16px; height: 16px;
+    background: var(--cx-black);
+    display: inline-block;
+    border-radius: 3px; /* precise small radius */
+  }
+  .brand__name { font-weight: 800; }
+  .brand__sub {
+    font-family: var(--cx-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--cx-ink-3);
+    letter-spacing: 0.04em;
+  }
+
+  /* Pill nav — signature interactive geometry */
+  .nav-pills {
+    display: flex;
+    gap: 4px;
+    background: var(--cx-line-soft);
+    padding: 3px;
+    border-radius: 999px;
+  }
+  .nav-pill {
+    padding: 5px 12px;
+    border: none;
+    background: transparent;
+    color: var(--cx-ink-3);
+    font-family: var(--cx-font);
+    font-size: 10.5px;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .nav-pill:hover { color: var(--cx-ink); }
+  .nav-pill.is-active {
+    background: var(--cx-black);
+    color: var(--cx-white);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 24px;
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  /* LEFT — headline + CTA (typography carries weight) */
+  .editorial {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .editorial__index {
+    font-family: var(--cx-font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cx-ink-3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .editorial__index::before {
+    content: "";
+    width: 18px; height: 1px;
+    background: var(--cx-black);
+  }
+
+  .editorial__headline {
+    font-family: var(--cx-font);
+    font-size: 28px;
+    font-weight: 300;       /* light weight, large size — typography weight via scale */
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    color: var(--cx-black);
+  }
+  .editorial__headline strong {
+    font-weight: 800;       /* contrast weight inside same headline */
+  }
+  .editorial__headline em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--cx-ink-3);
+  }
+
+  .editorial__lede {
+    font-family: var(--cx-font);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--cx-ink-3);
+    max-width: 32ch;
+    font-weight: 400;
+  }
+
+  /* CTA pills — pure geometry, no shadow */
+  .editorial__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .pill-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 14px;
+    border: none;
+    border-radius: 999px;
+    font-family: var(--cx-font);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .pill-btn--primary {
+    background: var(--cx-black);
+    color: var(--cx-white);
+  }
+  .pill-btn--primary:hover { background: var(--cx-ink-2); }
+  .pill-btn--ghost {
+    background: transparent;
+    color: var(--cx-ink);
+    padding: 0 6px;
+    height: auto;
+    font-weight: 600;
+  }
+  .pill-btn--ghost:hover { color: var(--cx-ink-3); }
+  .pill-btn--ghost::after {
+    content: "→";
+    margin-left: 2px;
+    transition: transform .15s ease;
+    display: inline-block;
+  }
+  .pill-btn--ghost:hover::after { transform: translateX(2px); }
+
+  /* RIGHT — black card (signature: black as sole card surface) */
+  .card {
+    background: var(--cx-black);
+    color: var(--cx-white);
+    border-radius: 6px;   /* precise near-flat radius per spec */
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+  }
+  .card__label {
+    font-family: var(--cx-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cx-ink-5);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card__live {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--cx-white);
+  }
+  .card__live::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--cx-white);
+  }
+
+  .card__value {
+    font-family: var(--cx-font);
+    font-size: 32px;
+    font-weight: 300;
+    line-height: 1;
+    letter-spacing: -0.035em;
+    color: var(--cx-white);
+    margin: 8px 0 2px;
+  }
+  .card__value strong { font-weight: 700; }
+  .card__value span {
+    font-family: var(--cx-font-mono);
+    font-size: 12px;
+    color: var(--cx-ink-5);
+    font-weight: 500;
+  }
+  .card__delta {
+    font-family: var(--cx-font-mono);
+    font-size: 10px;
+    color: var(--cx-ink-5);
+    font-weight: 500;
+  }
+  .card__delta strong { color: var(--cx-white); font-weight: 700; }
+
+  /* Mini horizontal bar list inside dark card */
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.15);
+  }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--cx-font-mono);
+    font-size: 8.5px;
+    color: var(--cx-ink-5);
+  }
+  .bar-label { width: 28px; }
+  .bar-track {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,0.10);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--cx-white);
+    border-radius: 2px;
+  }
+  .bar-pct { width: 22px; text-align: right; color: var(--cx-white); font-weight: 600; }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 12px;
+    border-top: 1px solid var(--cx-line);
+    font-family: var(--cx-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--cx-ink-4);
+    text-transform: uppercase;
+  }
+  .footer__center { color: var(--cx-ink); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Codex design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">codex</span>
+      <span class="brand__sub">/ journal</span>
+    </div>
+    <nav class="nav-pills" aria-label="Primary">
+      <button class="nav-pill is-active" type="button">Read</button>
+      <button class="nav-pill" type="button">Write</button>
+      <button class="nav-pill" type="button">Archive</button>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: editorial headline -->
+    <article class="editorial">
+      <span class="editorial__index">Issue 04 · Essay</span>
+      <h1 class="editorial__headline">
+        <strong>Less,</strong><br>
+        but <em>better.</em>
+      </h1>
+      <p class="editorial__lede">
+        A blank surface, set in type. No ornament, no shadow, no second color — the page speaks for itself.
+      </p>
+      <div class="editorial__actions">
+        <button class="pill-btn pill-btn--primary" type="button">Read essay</button>
+        <button class="pill-btn pill-btn--ghost" type="button">Index</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: black stat card -->
+    <aside class="card">
+      <div class="card__label">
+        <span>Reach · 30d</span>
+        <span class="card__live">live</span>
+      </div>
+      <div>
+        <div class="card__value"><strong>48</strong><span>.2k</span></div>
+        <div class="card__delta"><strong>+12%</strong> vs last cycle</div>
+      </div>
+      <div class="bars" aria-hidden="true">
+        <div class="bar-row">
+          <span class="bar-label">Mon</span>
+          <div class="bar-track"><div class="bar-fill" style="width:55%"></div></div>
+          <span class="bar-pct">55</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Wed</span>
+          <div class="bar-track"><div class="bar-fill" style="width:78%"></div></div>
+          <span class="bar-pct">78</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label">Fri</span>
+          <div class="bar-track"><div class="bar-fill" style="width:42%"></div></div>
+          <span class="bar-pct">42</span>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span>vol. 04 · no. 12</span>
+    <span class="footer__center">— black on white —</span>
+    <span>WCAG AA · v1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

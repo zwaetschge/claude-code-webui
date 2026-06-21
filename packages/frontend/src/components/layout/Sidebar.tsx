@@ -1,13 +1,8 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
-  MessageSquare,
   Settings,
-  Plus,
-  FolderOpen,
-  LogOut,
-  User,
   Star,
   BarChart3,
   Search,
@@ -20,16 +15,24 @@ import {
   Clock,
   CalendarPlus,
   Folder,
+  ChevronDown,
+  ImageIcon,
+  Upload,
+  FolderInput,
+  RotateCcw,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useAuthStore } from '@/stores/authStore';
-import { useProviderStore } from '@/stores/providerStore';
 import { useCategoryStore } from '@/stores/categoryStore';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
-import { CLI_PROVIDER_LABEL, UI_PROVIDER_META, toUiProvider } from '@/lib/providers';
+import { SessionIcon } from '@/components/session/SessionIcon';
+import { ContextPopover } from '@/components/session/SessionControls';
+import { CLI_PROVIDER_LABEL, UI_PROVIDER_META } from '@/lib/providers';
+import { getSessionRunState } from '@/lib/sessionRunState';
 import { api, ApiError } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -43,21 +46,21 @@ import {
   DropdownMenuTrigger,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
-import type { Session } from '@claude-code-webui/shared';
+import type { ApiResponse, Session } from '@plum-code-webui/shared';
+import type { UsageData } from '@plum-code-webui/shared';
 
 const baseNavItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
   { icon: BarChart3, label: 'Analytics', path: '/analytics' },
-  { icon: Settings, label: 'Settings', path: '/settings' },
+  { icon: Settings, label: 'General Settings', path: '/settings' },
 ];
 
-type SortMode = 'updated' | 'created' | 'name' | 'starred';
+type SortMode = 'updated' | 'created' | 'name';
 
 const SORT_OPTIONS: { value: SortMode; label: string; icon: typeof Clock }[] = [
   { value: 'updated', label: 'Recently active', icon: Clock },
   { value: 'created', label: 'Newest', icon: CalendarPlus },
   { value: 'name', label: 'Name (A-Z)', icon: ArrowDownAZ },
-  { value: 'starred', label: 'Starred first', icon: Star },
 ];
 
 const COLOR_VALUES: Record<string, string> = {
@@ -71,28 +74,67 @@ const COLOR_VALUES: Record<string, string> = {
   teal: '#14b8a6',
 };
 
+const UNCATEGORIZED_GROUP_ID = '__uncategorized__';
+const FAVORITES_GROUP_ID = '__favorites__';
+const RECENT_GROUP_ID = '__recent__';
+
 interface SidebarProps {
   onNavigate?: () => void;
   mobile?: boolean;
+  contextUsage?: UsageData;
+  contextStats?: {
+    contextSnapshots: number;
+    compactEvents: number;
+  };
+  contextSession?: Session | null;
 }
 
-export function Sidebar({ onNavigate, mobile }: SidebarProps) {
+export function Sidebar({
+  onNavigate,
+  mobile,
+  contextUsage,
+  contextStats,
+  contextSession,
+}: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { sessions, updateSession, removeSession } = useSessionStore();
-  const { user, logout } = useAuthStore();
-  const { uiProvider } = useProviderStore();
+  const {
+    sessions,
+    setSessions,
+    updateSession,
+    removeSession,
+    activity,
+    activeAgent,
+    agentRuns,
+    streamingContent,
+    toolExecutions,
+    queueState,
+  } = useSessionStore();
   const { categories, fetchCategories } = useCategoryStore();
-  const activeMeta = UI_PROVIDER_META[uiProvider];
+  const activeMeta = UI_PROVIDER_META.plum;
+  const iconUploadInputRef = useRef<HTMLInputElement>(null);
 
   const [collapsed, setCollapsed] = useState(false);
-  const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('updated');
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Record<string, boolean>>({});
+  const [collapsedSessionFlyout, setCollapsedSessionFlyout] = useState<{
+    id: string;
+    name: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [collapsedCategoryFlyout, setCollapsedCategoryFlyout] = useState<{
+    id: string;
+    name: string;
+    top: number;
+    left: number;
+  } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [iconUploadSessionId, setIconUploadSessionId] = useState<string | null>(null);
+  const [iconBusySessionId, setIconBusySessionId] = useState<string | null>(null);
 
   // On mobile, never collapse (full width in sheet)
   const isCollapsed = mobile ? false : collapsed;
@@ -101,15 +143,43 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
     fetchCategories();
   }, [fetchCategories]);
 
+  useEffect(() => {
+    if (!isCollapsed) {
+      setCollapsedSessionFlyout(null);
+      setCollapsedCategoryFlyout(null);
+    }
+  }, [isCollapsed]);
+
   const activeMatch = location.pathname.match(/^\/session\/([^/]+)/);
   const activeId = activeMatch ? activeMatch[1] : null;
+  const activeSession = useMemo(
+    () =>
+      activeId
+        ? contextSession?.id === activeId
+          ? contextSession
+          : (sessions.find((session) => session.id === activeId) ?? null)
+        : null,
+    [activeId, contextSession, sessions]
+  );
+  const activeSessionRunState = useMemo(
+    () =>
+      activeSession
+        ? getSessionRunState(activeSession, {
+            activity: activity[activeSession.id],
+            activeAgent: activeAgent[activeSession.id],
+            agentRuns: agentRuns[activeSession.id],
+            streamingContent: streamingContent[activeSession.id],
+            tools: toolExecutions[activeSession.id],
+            queue: queueState[activeSession.id],
+          })
+        : null,
+    [activeAgent, activeSession, activity, agentRuns, queueState, streamingContent, toolExecutions]
+  );
 
   const filteredSessions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     let list = sessions;
 
-    if (showStarredOnly) list = list.filter((s) => s.starred);
-    if (categoryFilter) list = list.filter((s) => s.category === categoryFilter);
     if (q) {
       list = list.filter(
         (s) =>
@@ -127,21 +197,164 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
       case 'created':
         sorted.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
         break;
-      case 'starred':
-        sorted.sort((a, b) => {
-          if (a.starred !== b.starred) return a.starred ? -1 : 1;
-          return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
-        });
-        break;
       case 'updated':
       default:
         sorted.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
         break;
     }
-    return sorted;
-  }, [sessions, showStarredOnly, categoryFilter, searchQuery, sortMode]);
 
-  const starredCount = useMemo(() => sessions.filter((s) => s.starred).length, [sessions]);
+    sorted.sort((a, b) => {
+      const aWorking = getSessionRunState(a, {
+        activity: activity[a.id],
+        activeAgent: activeAgent[a.id],
+        agentRuns: agentRuns[a.id],
+        streamingContent: streamingContent[a.id],
+        tools: toolExecutions[a.id],
+        queue: queueState[a.id],
+      }).isWorking;
+      const bWorking = getSessionRunState(b, {
+        activity: activity[b.id],
+        activeAgent: activeAgent[b.id],
+        agentRuns: agentRuns[b.id],
+        streamingContent: streamingContent[b.id],
+        tools: toolExecutions[b.id],
+        queue: queueState[b.id],
+      }).isWorking;
+
+      if (aWorking !== bWorking) return aWorking ? -1 : 1;
+      return 0;
+    });
+
+    return sorted;
+  }, [
+    activeAgent,
+    activity,
+    agentRuns,
+    queueState,
+    searchQuery,
+    sessions,
+    sortMode,
+    streamingContent,
+    toolExecutions,
+  ]);
+
+  const sessionGroups = useMemo(() => {
+    const knownCategoryIds = new Set(categories.map((category) => category.id));
+    const usedSessionIds = new Set<string>();
+    const grouped = new Map<string, Session[]>();
+    const getHasWorking = (groupSessions: Session[]) =>
+      groupSessions.some(
+        (session) =>
+          getSessionRunState(session, {
+            activity: activity[session.id],
+            activeAgent: activeAgent[session.id],
+            agentRuns: agentRuns[session.id],
+            streamingContent: streamingContent[session.id],
+            tools: toolExecutions[session.id],
+            queue: queueState[session.id],
+          }).isWorking
+      );
+
+    const priorityGroups: Array<{
+      id: string;
+      label: string;
+      sessions: Session[];
+      hasWorking: boolean;
+    }> = [];
+
+    const favoriteSessions = filteredSessions.filter((session) => session.starred);
+    if (favoriteSessions.length > 0) {
+      priorityGroups.push({
+        id: FAVORITES_GROUP_ID,
+        label: 'Favorites',
+        sessions: favoriteSessions,
+        hasWorking: getHasWorking(favoriteSessions),
+      });
+      favoriteSessions.forEach((session) => usedSessionIds.add(session.id));
+    }
+
+    const recentSessions = [...filteredSessions]
+      .filter((session) => !usedSessionIds.has(session.id))
+      .sort((a, b) =>
+        (b.updatedAt ?? b.createdAt ?? '').localeCompare(a.updatedAt ?? a.createdAt ?? '')
+      )
+      .slice(0, 5);
+
+    if (recentSessions.length > 0) {
+      priorityGroups.push({
+        id: RECENT_GROUP_ID,
+        label: 'Recent Sessions',
+        sessions: recentSessions,
+        hasWorking: getHasWorking(recentSessions),
+      });
+      recentSessions.forEach((session) => usedSessionIds.add(session.id));
+    }
+
+    for (const session of filteredSessions) {
+      if (usedSessionIds.has(session.id)) continue;
+      const groupId =
+        session.category && knownCategoryIds.has(session.category)
+          ? session.category
+          : UNCATEGORIZED_GROUP_ID;
+      const groupSessions = grouped.get(groupId) ?? [];
+      groupSessions.push(session);
+      grouped.set(groupId, groupSessions);
+    }
+
+    const groups = categories
+      .map((category) => {
+        const groupSessions = grouped.get(category.id) ?? [];
+        return {
+          id: category.id,
+          label: category.name,
+          sessions: groupSessions,
+          hasWorking: getHasWorking(groupSessions),
+        };
+      })
+      .filter((group) => group.sessions.length > 0);
+
+    const uncategorized = grouped.get(UNCATEGORIZED_GROUP_ID) ?? [];
+    if (uncategorized.length > 0) {
+      groups.push({
+        id: UNCATEGORIZED_GROUP_ID,
+        label: 'Uncategorized',
+        sessions: uncategorized,
+        hasWorking: getHasWorking(uncategorized),
+      });
+    }
+
+    const remainingGroups = groups.sort((a, b) => {
+      if (a.hasWorking !== b.hasWorking) return a.hasWorking ? -1 : 1;
+      return 0;
+    });
+
+    return [...priorityGroups, ...remainingGroups];
+  }, [
+    activeAgent,
+    activity,
+    agentRuns,
+    categories,
+    filteredSessions,
+    queueState,
+    streamingContent,
+    toolExecutions,
+  ]);
+
+  const workingCount = useMemo(
+    () =>
+      sessions.filter(
+        (session) =>
+          getSessionRunState(session, {
+            activity: activity[session.id],
+            activeAgent: activeAgent[session.id],
+            agentRuns: agentRuns[session.id],
+            streamingContent: streamingContent[session.id],
+            tools: toolExecutions[session.id],
+            queue: queueState[session.id],
+          }).isWorking
+      ).length,
+    [activity, activeAgent, agentRuns, queueState, sessions, streamingContent, toolExecutions]
+  );
 
   const handleLinkClick = () => {
     if (onNavigate) onNavigate();
@@ -225,6 +438,119 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
     }
   };
 
+  const getErrorMessage = (err: unknown, fallback: string) =>
+    err instanceof ApiError ? err.message : err instanceof Error ? err.message : fallback;
+
+  const refreshSessions = async () => {
+    const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
+    if (response.data.success && response.data.data) {
+      setSessions(response.data.data);
+    }
+  };
+
+  const applyIconSession = async (session: Session | undefined) => {
+    if (session) updateSession(session.id, session);
+    await refreshSessions().catch(() => undefined);
+  };
+
+  const handleGenerateIcon = async (session: Session) => {
+    if (iconBusySessionId) return;
+    setIconBusySessionId(session.id);
+    toast({
+      title: 'Generating icon',
+      description: 'This can take a moment.',
+    });
+    try {
+      const response = await api.post<ApiResponse<Session>>(
+        `/api/sessions/${session.id}/icon/generate`
+      );
+      await applyIconSession(response.data.data);
+      toast({ title: 'Session icon updated' });
+    } catch (err) {
+      toast({
+        title: 'Icon generation failed',
+        description: getErrorMessage(err, 'Failed to generate icon'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIconBusySessionId(null);
+    }
+  };
+
+  const handleUseProjectIcon = async (session: Session) => {
+    if (iconBusySessionId) return;
+    setIconBusySessionId(session.id);
+    try {
+      const response = await api.post<ApiResponse<Session>>(
+        `/api/sessions/${session.id}/icon/project`
+      );
+      await applyIconSession(response.data.data);
+      toast({ title: 'Project icon applied' });
+    } catch (err) {
+      toast({
+        title: 'Project icon not found',
+        description: getErrorMessage(err, 'No usable icon was found in this project'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIconBusySessionId(null);
+    }
+  };
+
+  const startIconUpload = (sessionId: string) => {
+    setIconUploadSessionId(sessionId);
+    if (iconUploadInputRef.current) {
+      iconUploadInputRef.current.value = '';
+      iconUploadInputRef.current.click();
+    }
+  };
+
+  const handleIconUploadFile = async (file: File | undefined) => {
+    if (!file || !iconUploadSessionId || iconBusySessionId) {
+      if (!file) setIconUploadSessionId(null);
+      return;
+    }
+    setIconBusySessionId(iconUploadSessionId);
+    const formData = new FormData();
+    formData.append('icon', file);
+    try {
+      const response = await api.post<ApiResponse<Session>>(
+        `/api/sessions/${iconUploadSessionId}/icon/upload`,
+        formData
+      );
+      await applyIconSession(response.data.data);
+      toast({ title: 'Session icon uploaded' });
+    } catch (err) {
+      toast({
+        title: 'Icon upload failed',
+        description: getErrorMessage(err, 'Failed to upload icon'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIconBusySessionId(null);
+      setIconUploadSessionId(null);
+      if (iconUploadInputRef.current) iconUploadInputRef.current.value = '';
+    }
+  };
+
+  const handleResetIcon = async (session: Session) => {
+    if (iconBusySessionId) return;
+    setIconBusySessionId(session.id);
+    try {
+      const response = await api.delete<ApiResponse<Session>>(`/api/sessions/${session.id}/icon`);
+      await applyIconSession(response.data.data);
+      toast({ title: 'Session icon reset' });
+    } catch (err) {
+      toast({
+        title: 'Failed to reset icon',
+        description: getErrorMessage(err, 'Failed to reset icon'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIconBusySessionId(null);
+    }
+  };
+
   const handleRenameKey = (e: KeyboardEvent<HTMLInputElement>, id: string) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -235,39 +561,373 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
     }
   };
 
+  const toggleSessionGroup = (groupId: string) => {
+    setCollapsedCategoryIds((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  const getCategoryAbbreviation = (label: string) => {
+    if (label === 'Favorites') return '★';
+    if (label === 'Recent Sessions') return 'R';
+    if (label === 'Uncategorized') return '•';
+    const initials = label
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase();
+    return initials || '•';
+  };
+
+  const showCollapsedSessionFlyout = (session: Session, target: HTMLElement) => {
+    if (!isCollapsed) return;
+    const icon = target.querySelector<HTMLElement>('.sidebar-session-provider-icon');
+    const rect = icon?.getBoundingClientRect() ?? target.getBoundingClientRect();
+    setCollapsedCategoryFlyout(null);
+    setCollapsedSessionFlyout({
+      id: session.id,
+      name: session.name,
+      top: rect.top + rect.height / 2,
+      left: rect.right + 4,
+    });
+  };
+
+  const hideCollapsedSessionFlyout = (sessionId: string) => {
+    setCollapsedSessionFlyout((current) => (current?.id === sessionId ? null : current));
+  };
+
+  const showCollapsedCategoryFlyout = (
+    category: { id: string; label: string },
+    target: HTMLElement
+  ) => {
+    if (!isCollapsed) return;
+    const bubble = target.querySelector<HTMLElement>('.sidebar-session-group-bubble');
+    const rect = bubble?.getBoundingClientRect() ?? target.getBoundingClientRect();
+    setCollapsedSessionFlyout(null);
+    setCollapsedCategoryFlyout({
+      id: category.id,
+      name: category.label,
+      top: rect.top + rect.height / 2,
+      left: rect.right + 4,
+    });
+  };
+
+  const hideCollapsedCategoryFlyout = (categoryId: string) => {
+    setCollapsedCategoryFlyout((current) => (current?.id === categoryId ? null : current));
+  };
+
+  const renderSessionRow = (session: Session) => {
+    const isActive = location.pathname === `/session/${session.id}`;
+    const isEditing = editingId === session.id;
+    const sessionProviderLabel = session.cliProvider
+      ? CLI_PROVIDER_LABEL[session.cliProvider] || session.cliProvider
+      : activeMeta.productName;
+    const sessionRunState = getSessionRunState(session, {
+      activity: activity[session.id],
+      activeAgent: activeAgent[session.id],
+      agentRuns: agentRuns[session.id],
+      streamingContent: streamingContent[session.id],
+      tools: toolExecutions[session.id],
+      queue: queueState[session.id],
+    });
+
+    if (isEditing && !isCollapsed) {
+      return (
+        <div key={session.id} className="sidebar-session-row is-editing">
+          <span className="sidebar-session-provider-icon" aria-label={sessionProviderLabel}>
+            <SessionIcon
+              session={session}
+              className="shrink-0"
+              logoClassName="h-5 w-5"
+              imageClassName="h-6 w-6 rounded-full"
+            />
+            {iconBusySessionId === session.id && (
+              <span className="session-icon-busy-overlay">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </span>
+            )}
+          </span>
+          <Input
+            autoFocus
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onKeyDown={(e) => handleRenameKey(e, session.id)}
+            onBlur={() => commitRename(session.id)}
+            className="h-6 px-1.5 text-xs"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={session.id}
+        className={cn(
+          'sidebar-session-row group/session relative flex items-center',
+          isActive && 'is-active',
+          sessionRunState.isWorking && 'is-working',
+          isCollapsed && 'is-collapsed'
+        )}
+        onMouseEnter={(e) => showCollapsedSessionFlyout(session, e.currentTarget)}
+        onMouseLeave={() => hideCollapsedSessionFlyout(session.id)}
+        onFocus={(e) => showCollapsedSessionFlyout(session, e.currentTarget)}
+        onBlur={() => hideCollapsedSessionFlyout(session.id)}
+      >
+        <Link
+          to={`/session/${session.id}`}
+          onClick={handleLinkClick}
+          aria-label={isCollapsed ? session.name : undefined}
+          className={cn(
+            'flex flex-1 items-center gap-2.5 px-3 py-2 text-sm min-w-0',
+            isCollapsed && 'justify-center px-2'
+          )}
+        >
+          <span className="sidebar-session-provider-icon" aria-label={sessionProviderLabel}>
+            <SessionIcon
+              session={session}
+              className="shrink-0"
+              logoClassName="h-5 w-5"
+              imageClassName="h-6 w-6 rounded-full"
+            />
+            {iconBusySessionId === session.id && (
+              <span className="session-icon-busy-overlay">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </span>
+            )}
+          </span>
+          {!isCollapsed && (
+            <span className="flex min-w-0 flex-1 items-center text-xs">
+              <span className="min-w-0 truncate font-medium">{session.name}</span>
+              <span
+                className={cn('sidebar-session-run-dot', `is-${sessionRunState.tone}`)}
+                title={sessionRunState.detail}
+                aria-hidden="true"
+              />
+            </span>
+          )}
+        </Link>
+
+        {!isCollapsed && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="sidebar-session-options"
+                onClick={(e) => e.stopPropagation()}
+                title="Session options"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem onClick={() => startRename(session)} className="cursor-pointer">
+                <Pencil className="mr-2 h-3.5 w-3.5" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleToggleStar(session.id, session.starred)}
+                className="cursor-pointer"
+              >
+                <Star
+                  className={cn(
+                    'mr-2 h-3.5 w-3.5',
+                    session.starred && 'fill-amber-500 text-amber-500'
+                  )}
+                />
+                {session.starred ? 'Unstar' : 'Star'}
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="cursor-pointer">
+                  <ImageIcon className="mr-2 h-3.5 w-3.5" />
+                  Icon
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-52">
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void handleGenerateIcon(session);
+                    }}
+                    disabled={!!iconBusySessionId}
+                    className="cursor-pointer"
+                  >
+                    {iconBusySessionId === session.id ? (
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-2 h-3.5 w-3.5" />
+                    )}
+                    {iconBusySessionId === session.id ? 'Generating...' : 'Generate'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      startIconUpload(session.id);
+                    }}
+                    disabled={!!iconBusySessionId}
+                    className="cursor-pointer"
+                  >
+                    <Upload className="mr-2 h-3.5 w-3.5" />
+                    Upload image
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void handleUseProjectIcon(session);
+                    }}
+                    disabled={!!iconBusySessionId}
+                    className="cursor-pointer"
+                  >
+                    <FolderInput className="mr-2 h-3.5 w-3.5" />
+                    Use project icon
+                  </DropdownMenuItem>
+                  {session.iconUrl && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          void handleResetIcon(session);
+                        }}
+                        disabled={!!iconBusySessionId}
+                        className="cursor-pointer"
+                      >
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        Reset icon
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="cursor-pointer">
+                  <Folder className="mr-2 h-3.5 w-3.5" />
+                  Category
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-48">
+                  <DropdownMenuItem
+                    onClick={() => handleAssignCategory(session.id, null)}
+                    className="cursor-pointer"
+                  >
+                    <span className="mr-2 h-2.5 w-2.5 rounded-full border border-muted-foreground/40" />
+                    None
+                    {!session.category && <span className="ml-auto text-primary">•</span>}
+                  </DropdownMenuItem>
+                  {categories.length > 0 && <DropdownMenuSeparator />}
+                  {categories.map((cat) => (
+                    <DropdownMenuItem
+                      key={cat.id}
+                      onClick={() => handleAssignCategory(session.id, cat.id)}
+                      className="cursor-pointer"
+                    >
+                      <span
+                        className="mr-2 h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: COLOR_VALUES[cat.color] ?? cat.color }}
+                      />
+                      <span className="flex-1 truncate">{cat.name}</span>
+                      {session.category === cat.id && (
+                        <span className="ml-auto text-primary">•</span>
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => handleDelete(session.id, session.name)}
+                className="cursor-pointer text-destructive focus:text-destructive"
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       className={cn(
-        'flex flex-col h-full bg-card/50 backdrop-blur-sm transition-all duration-300',
-        mobile ? 'w-full' : 'border-r',
+        'app-sidebar-shell flex flex-col h-full transition-all duration-300',
+        mobile ? 'app-sidebar-mobile w-full' : '',
         !mobile && (isCollapsed ? 'w-16' : 'w-64')
       )}
     >
-      {/* Logo */}
+      {/* Active session identity */}
       <div
         className={cn(
-          'flex items-center border-b transition-all duration-300',
-          isCollapsed ? 'h-14 justify-center px-2' : 'h-14 px-4'
+          'flex items-center transition-all duration-300',
+          isCollapsed
+            ? 'h-14 justify-center px-2'
+            : activeSession && !mobile
+              ? 'min-h-[3.5rem] px-4 py-2'
+              : 'h-14 px-4'
         )}
       >
         {mobile ? (
           <Link to="/" onClick={handleLinkClick} className="flex items-center gap-3">
-            <ProviderLogo provider={uiProvider} className="h-7 w-7 text-primary" />
+            <ProviderLogo provider="plum" className="h-7 w-7 text-primary" />
             <span className="text-sm font-semibold text-foreground">
               {activeMeta.productName}{' '}
               <span className="text-muted-foreground font-normal">{activeMeta.tagline}</span>
             </span>
           </Link>
+        ) : activeSession ? (
+          <button
+            onClick={() => setCollapsed(!isCollapsed)}
+            onMouseEnter={(e) => showCollapsedSessionFlyout(activeSession, e.currentTarget)}
+            onMouseLeave={() => hideCollapsedSessionFlyout(activeSession.id)}
+            onFocus={(e) => showCollapsedSessionFlyout(activeSession, e.currentTarget)}
+            onBlur={() => hideCollapsedSessionFlyout(activeSession.id)}
+            className={cn(
+              'sidebar-identity-button min-w-0 transition-colors cursor-pointer',
+              isCollapsed
+                ? 'is-collapsed flex items-center justify-center'
+                : 'flex w-full flex-col items-start gap-1 px-1 py-1 text-left'
+            )}
+            aria-label={isCollapsed ? activeSession.name : 'Collapse sidebar'}
+          >
+            <span className="flex w-full min-w-0 items-center gap-2">
+              <span className="sidebar-session-provider-icon sidebar-identity-provider-icon">
+                <SessionIcon
+                  session={activeSession}
+                  className="shrink-0 text-primary"
+                  logoClassName="h-5 w-5"
+                  imageClassName="h-6 w-6 rounded-full"
+                />
+                {iconBusySessionId === activeSession.id && (
+                  <span className="session-icon-busy-overlay">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  </span>
+                )}
+              </span>
+              {!isCollapsed && (
+                <>
+                  <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+                    {activeSession.name}
+                  </span>
+                  <span
+                    className={cn(
+                      'session-header-run-dot shrink-0',
+                      activeSessionRunState && `is-${activeSessionRunState.tone}`
+                    )}
+                    title={activeSessionRunState?.detail}
+                  />
+                </>
+              )}
+            </span>
+          </button>
         ) : (
           <button
             onClick={() => setCollapsed(!isCollapsed)}
             className={cn(
-              'flex items-center gap-3 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer',
-              isCollapsed ? 'p-1.5' : ''
+              'sidebar-identity-button flex items-center gap-3 transition-colors cursor-pointer',
+              isCollapsed ? 'is-collapsed' : ''
             )}
-            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={isCollapsed ? activeMeta.productName : 'Collapse sidebar'}
           >
-            <ProviderLogo provider={uiProvider} className="h-7 w-7 text-primary" />
+            <span className="sidebar-session-provider-icon sidebar-identity-provider-icon">
+              <ProviderLogo provider="plum" className="h-5 w-5 text-primary" />
+            </span>
             {!isCollapsed && (
               <span className="text-sm font-semibold text-foreground">
                 {activeMeta.productName}{' '}
@@ -278,7 +938,7 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
         )}
       </div>
 
-      <nav className="flex-1 flex flex-col min-h-0 p-2 overflow-hidden">
+      <nav className="flex-1 flex flex-col min-h-0 px-2 pt-2 pb-0 overflow-visible">
         {/* Top nav */}
         <div className="space-y-1 shrink-0">
           {baseNavItems.map((item) => {
@@ -293,13 +953,11 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
                 key={item.path}
                 to={item.path}
                 onClick={handleLinkClick}
-                title={isCollapsed ? item.label : undefined}
+                aria-label={isCollapsed ? item.label : undefined}
                 className={cn(
-                  'flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-200',
-                  isActive
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  isCollapsed && 'justify-center px-2'
+                  'sidebar-nav-item flex items-center gap-3 px-3 py-2 text-sm font-medium',
+                  isActive && 'is-active',
+                  isCollapsed && 'is-collapsed'
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0" />
@@ -309,12 +967,28 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
           })}
         </div>
 
+        {contextUsage && (
+          <div className={cn('sidebar-context-slot shrink-0', isCollapsed && 'is-collapsed')}>
+            <ContextPopover
+              usage={contextUsage}
+              contextStats={contextStats}
+              triggerVariant="sidebarUsageBar"
+              placement="right"
+              collapsed={isCollapsed}
+              sessionId={activeSession?.id ?? activeId}
+              sessionProvider={activeSession?.cliProvider}
+              sessionModel={activeSession?.cliModel}
+              sessionRuntimeModel={activeSession?.runtime?.model}
+            />
+          </div>
+        )}
+
         {/* Sessions section */}
         <div className="pt-3 flex flex-col flex-1 min-h-0">
           <div
             className={cn(
               'flex items-center px-3 py-1.5 shrink-0',
-              isCollapsed ? 'justify-center' : 'justify-between'
+              isCollapsed ? 'hidden' : 'justify-between'
             )}
           >
             {!isCollapsed && (
@@ -322,19 +996,10 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Sessions
                 </span>
-                {starredCount > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className={cn(
-                      'h-5 w-5 rounded-md',
-                      showStarredOnly && 'bg-amber-500/10 text-amber-500'
-                    )}
-                    onClick={() => setShowStarredOnly(!showStarredOnly)}
-                    title={showStarredOnly ? 'Show all sessions' : 'Show starred only'}
-                  >
-                    <Star className={cn('h-3 w-3', showStarredOnly && 'fill-amber-500')} />
-                  </Button>
+                {workingCount > 0 && (
+                  <span className="session-run-count" title={`${workingCount} sessions working`}>
+                    {workingCount}
+                  </span>
                 )}
               </div>
             )}
@@ -371,297 +1036,117 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 rounded-lg"
-                asChild
-                title="New Session"
-              >
-                <Link to="/?new=true" onClick={handleLinkClick}>
-                  <Plus className="h-3.5 w-3.5" />
-                </Link>
-              </Button>
             </div>
           </div>
 
-          {/* Search + Category filter (only when expanded) */}
+          {/* Search (only when expanded) */}
           {!isCollapsed && (
             <div className="px-2 pb-1 space-y-1.5 shrink-0">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <div className="sidebar-session-search relative">
+                <Search className="absolute left-3 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search sessions..."
-                  className="h-7 pl-7 pr-7 text-xs rounded-lg"
+                  className="h-9 rounded-full border-0 bg-transparent pl-8 pr-8 text-xs shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-sm hover:bg-muted flex items-center justify-center"
+                    className="absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full hover:bg-muted"
                     title="Clear search"
                   >
                     <X className="h-3 w-3 text-muted-foreground" />
                   </button>
                 )}
               </div>
-
-              {categories.length > 0 && (
-                <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
-                  <button
-                    onClick={() => setCategoryFilter(null)}
-                    className={cn(
-                      'shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium border transition-colors',
-                      categoryFilter === null
-                        ? 'bg-primary/15 text-foreground border-primary/30'
-                        : 'bg-muted/40 text-muted-foreground border-transparent hover:bg-muted'
-                    )}
-                  >
-                    <Folder className="h-2.5 w-2.5" />
-                    All
-                  </button>
-                  {categories.map((cat) => {
-                    const isActive = categoryFilter === cat.id;
-                    const colorValue = COLOR_VALUES[cat.color] ?? cat.color;
-                    return (
-                      <button
-                        key={cat.id}
-                        onClick={() => setCategoryFilter(isActive ? null : cat.id)}
-                        className={cn(
-                          'shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium border transition-colors',
-                          isActive
-                            ? 'text-foreground border-foreground/30'
-                            : 'bg-muted/40 text-muted-foreground border-transparent hover:bg-muted'
-                        )}
-                        style={isActive ? { backgroundColor: `${colorValue}20` } : undefined}
-                        title={cat.name}
-                      >
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: colorValue }}
-                        />
-                        <span className="truncate max-w-[8ch]">{cat.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           )}
 
           {/* Session list — scrollable, no slice */}
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="space-y-0.5 mt-1">
+          <div
+            className="sidebar-session-scroll flex-1 min-h-0 overflow-y-auto"
+            onScroll={() => {
+              setCollapsedSessionFlyout(null);
+              setCollapsedCategoryFlyout(null);
+            }}
+          >
+            <div className="sidebar-session-scroll-content mt-1">
               {filteredSessions.length === 0
                 ? !isCollapsed && (
                     <div className="px-3 py-3 text-center">
                       <p className="text-xs text-muted-foreground/70">
-                        {searchQuery
-                          ? 'No matches'
-                          : showStarredOnly
-                            ? 'No starred sessions'
-                            : categoryFilter
-                              ? 'No sessions in this category'
-                              : 'No sessions'}
+                        {searchQuery ? 'No matches' : 'No sessions'}
                       </p>
-                      {(showStarredOnly || categoryFilter || searchQuery) && (
+                      {searchQuery && (
                         <Button
                           variant="link"
                           size="sm"
                           className="text-xs mt-1 h-auto p-0"
-                          onClick={() => {
-                            setShowStarredOnly(false);
-                            setCategoryFilter(null);
-                            setSearchQuery('');
-                          }}
+                          onClick={() => setSearchQuery('')}
                         >
                           Clear filters
                         </Button>
                       )}
                     </div>
                   )
-                : filteredSessions.map((session) => {
-                    const isActive = location.pathname === `/session/${session.id}`;
-                    const isEditing = editingId === session.id;
-                    const sessionCategory = session.category
-                      ? categories.find((c) => c.id === session.category)
-                      : null;
-
-                    if (isEditing && !isCollapsed) {
-                      return (
-                        <div
-                          key={session.id}
-                          className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-muted/40"
-                        >
-                          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <Input
-                            autoFocus
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            onKeyDown={(e) => handleRenameKey(e, session.id)}
-                            onBlur={() => commitRename(session.id)}
-                            className="h-6 px-1.5 text-xs"
-                          />
-                        </div>
-                      );
-                    }
-
+                : sessionGroups.map((group) => {
+                    const isGroupCollapsed = searchQuery.trim()
+                      ? false
+                      : (collapsedCategoryIds[group.id] ?? false);
                     return (
                       <div
-                        key={session.id}
+                        key={group.id}
                         className={cn(
-                          'group/session relative flex items-center rounded-xl transition-all duration-200',
-                          isActive
-                            ? 'bg-primary/15 text-foreground font-medium shadow-[inset_2px_0_0_0_hsl(var(--primary))]'
-                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                          'sidebar-session-group',
+                          isCollapsed && 'is-collapsed',
+                          group.hasWorking && 'has-working'
                         )}
                       >
-                        <Link
-                          to={`/session/${session.id}`}
-                          onClick={handleLinkClick}
-                          title={isCollapsed ? session.name : undefined}
+                        <button
+                          type="button"
                           className={cn(
-                            'flex flex-1 items-center gap-2.5 px-3 py-2 text-sm min-w-0',
-                            isCollapsed && 'justify-center px-2'
+                            'sidebar-session-group-trigger',
+                            isCollapsed && 'is-collapsed'
                           )}
+                          onClick={() => toggleSessionGroup(group.id)}
+                          onMouseEnter={(e) => showCollapsedCategoryFlyout(group, e.currentTarget)}
+                          onMouseLeave={() => hideCollapsedCategoryFlyout(group.id)}
+                          onFocus={(e) => showCollapsedCategoryFlyout(group, e.currentTarget)}
+                          onBlur={() => hideCollapsedCategoryFlyout(group.id)}
+                          aria-expanded={!isGroupCollapsed}
+                          aria-label={
+                            isCollapsed ? `${group.label} (${group.sessions.length})` : undefined
+                          }
                         >
-                          <div className="relative shrink-0">
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            <div
-                              className={cn(
-                                'absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-card',
-                                session.status === 'running' && 'bg-green-500',
-                                session.status === 'stopped' && 'bg-gray-400',
-                                session.status === 'error' && 'bg-red-500'
-                              )}
-                            />
-                          </div>
-                          {!isCollapsed && (
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 truncate text-xs">
-                                {session.starred && (
-                                  <Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 shrink-0" />
-                                )}
-                                {sessionCategory && (
-                                  <span
-                                    className="h-2 w-2 rounded-full shrink-0"
-                                    style={{
-                                      backgroundColor:
-                                        COLOR_VALUES[sessionCategory.color] ??
-                                        sessionCategory.color,
-                                    }}
-                                    title={sessionCategory.name}
-                                  />
-                                )}
-                                <span className="truncate font-medium">{session.name}</span>
-                                {session.cliProvider && (
-                                  <span
-                                    className="inline-flex h-4 w-4 items-center justify-center rounded bg-muted/60 p-0.5 shrink-0"
-                                    title={
-                                      CLI_PROVIDER_LABEL[session.cliProvider] || session.cliProvider
-                                    }
-                                  >
-                                    <ProviderLogo
-                                      provider={toUiProvider(session.cliProvider)}
-                                      className="h-3 w-3"
-                                      alt=""
-                                    />
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1 text-[9px] opacity-50">
-                                <FolderOpen className="h-2 w-2" />
-                                <span className="truncate">
-                                  {session.workingDirectory.split('/').pop()}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </Link>
-
-                        {!isCollapsed && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
+                          {isCollapsed ? (
+                            <>
+                              <span className="sidebar-session-group-bubble">
+                                {getCategoryAbbreviation(group.label)}
+                              </span>
+                              <span className="sidebar-session-group-count">
+                                {group.sessions.length}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown
                                 className={cn(
-                                  'mr-1 h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground transition-opacity',
-                                  'opacity-0 group-hover/session:opacity-100 focus:opacity-100 hover:bg-muted-foreground/10',
-                                  'data-[state=open]:opacity-100 data-[state=open]:bg-muted-foreground/10'
+                                  'sidebar-session-group-chevron',
+                                  isGroupCollapsed && 'is-collapsed'
                                 )}
-                                onClick={(e) => e.stopPropagation()}
-                                title="Session options"
-                              >
-                                <MoreHorizontal className="h-3.5 w-3.5" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-52">
-                              <DropdownMenuItem
-                                onClick={() => startRename(session)}
-                                className="cursor-pointer"
-                              >
-                                <Pencil className="mr-2 h-3.5 w-3.5" />
-                                Rename
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => handleToggleStar(session.id, session.starred)}
-                                className="cursor-pointer"
-                              >
-                                <Star
-                                  className={cn(
-                                    'mr-2 h-3.5 w-3.5',
-                                    session.starred && 'fill-amber-500 text-amber-500'
-                                  )}
-                                />
-                                {session.starred ? 'Unstar' : 'Star'}
-                              </DropdownMenuItem>
-                              <DropdownMenuSub>
-                                <DropdownMenuSubTrigger className="cursor-pointer">
-                                  <Folder className="mr-2 h-3.5 w-3.5" />
-                                  Category
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent className="w-48">
-                                  <DropdownMenuItem
-                                    onClick={() => handleAssignCategory(session.id, null)}
-                                    className="cursor-pointer"
-                                  >
-                                    <span className="mr-2 h-2.5 w-2.5 rounded-full border border-muted-foreground/40" />
-                                    None
-                                    {!session.category && (
-                                      <span className="ml-auto text-primary">•</span>
-                                    )}
-                                  </DropdownMenuItem>
-                                  {categories.length > 0 && <DropdownMenuSeparator />}
-                                  {categories.map((cat) => (
-                                    <DropdownMenuItem
-                                      key={cat.id}
-                                      onClick={() => handleAssignCategory(session.id, cat.id)}
-                                      className="cursor-pointer"
-                                    >
-                                      <span
-                                        className="mr-2 h-2.5 w-2.5 rounded-full"
-                                        style={{
-                                          backgroundColor: COLOR_VALUES[cat.color] ?? cat.color,
-                                        }}
-                                      />
-                                      <span className="flex-1 truncate">{cat.name}</span>
-                                      {session.category === cat.id && (
-                                        <span className="ml-auto text-primary">•</span>
-                                      )}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </DropdownMenuSubContent>
-                              </DropdownMenuSub>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => handleDelete(session.id, session.name)}
-                                className="cursor-pointer text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                              />
+                              <span className="sidebar-session-group-title">{group.label}</span>
+                              <span className="sidebar-session-group-count">
+                                {group.sessions.length}
+                              </span>
+                            </>
+                          )}
+                        </button>
+                        {!isGroupCollapsed && (
+                          <div className="sidebar-session-group-items">
+                            {group.sessions.map(renderSessionRow)}
+                          </div>
                         )}
                       </div>
                     );
@@ -670,60 +1155,37 @@ export function Sidebar({ onNavigate, mobile }: SidebarProps) {
           </div>
         </div>
       </nav>
-
-      {/* Account */}
-      <div className="p-2 border-t">
-        {user && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 h-auto hover:bg-muted/50 rounded-xl',
-                  isCollapsed && 'justify-center px-2'
-                )}
-              >
-                {user.avatarUrl ? (
-                  <img
-                    src={user.avatarUrl}
-                    alt={user.name || 'User'}
-                    className="h-7 w-7 rounded-full ring-2 ring-background shrink-0"
-                  />
-                ) : (
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0">
-                    <User className="h-3.5 w-3.5" />
-                  </div>
-                )}
-                {!isCollapsed && (
-                  <div className="flex-1 text-left min-w-0">
-                    <div className="text-xs font-medium truncate">{user.name || 'User'}</div>
-                  </div>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align={isCollapsed ? 'center' : 'end'} side="top" className="w-48">
-              <DropdownMenuItem asChild>
-                <Link
-                  to="/settings"
-                  onClick={handleLinkClick}
-                  className="flex items-center cursor-pointer"
-                >
-                  <Settings className="mr-2 h-4 w-4" />
-                  Settings
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={logout}
-                className="text-destructive cursor-pointer focus:text-destructive"
-              >
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
+      {collapsedSessionFlyout && (
+        <div
+          className="sidebar-session-flyout"
+          style={{
+            top: collapsedSessionFlyout.top,
+            left: collapsedSessionFlyout.left,
+          }}
+          aria-hidden="true"
+        >
+          <span className="sidebar-session-flyout-name">{collapsedSessionFlyout.name}</span>
+        </div>
+      )}
+      {collapsedCategoryFlyout && (
+        <div
+          className="sidebar-session-flyout"
+          style={{
+            top: collapsedCategoryFlyout.top,
+            left: collapsedCategoryFlyout.left,
+          }}
+          aria-hidden="true"
+        >
+          <span className="sidebar-session-flyout-name">{collapsedCategoryFlyout.name}</span>
+        </div>
+      )}
+      <input
+        ref={iconUploadInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.ico"
+        className="hidden"
+        onChange={(event) => handleIconUploadFile(event.target.files?.[0])}
+      />
     </div>
   );
 }

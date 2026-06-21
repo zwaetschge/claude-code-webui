@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Sketch — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Delicious+Handrawn&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     SKETCH DESIGN SYSTEM — 400×300 THUMBNAIL
+     Hand-drawn · pencil on cream paper · soft teal accents
+     Delicious Handrawn display · dashed borders · offset pencil shadow
+     ============================================================ */
+  :root {
+    --sk-primary:    #1DAD97;   /* soft teal */
+    --sk-primary-2:  #168F7D;
+    --sk-primary-3:  #B3E3DA;   /* teal tint */
+    --sk-primary-soft: rgba(29,173,151,0.12);
+    --sk-secondary:  #F4EDE0;   /* warm cream paper */
+    --sk-secondary-2:#EFE6D2;
+    --sk-secondary-3:#E7DBC0;
+    --sk-success:    #16A34A;
+    --sk-warning:    #D97706;
+    --sk-danger:     #DC2626;
+
+    --sk-paper:      #FBF6EC;
+    --sk-paper-2:    #F6EFE0;
+    --sk-paper-3:    #EFE5D0;
+
+    --sk-ink:        #2B2438;   /* pencil graphite-violet */
+    --sk-ink-2:      #4A3F5C;
+    --sk-ink-3:      #7A6E8A;
+    --sk-ink-4:      #A99FB7;
+    --sk-line:       #C9BFAE;   /* warm rule */
+
+    --sk-font-d:  'Delicious Handrawn', 'Comic Sans MS', cursive;
+    --sk-font-m:  'JetBrains Mono', ui-monospace, monospace;
+
+    /* chunky offset "pencil-drawn" shadow */
+    --sk-shadow-hard: 4px 4px 0 var(--sk-ink);
+    --sk-shadow-hard-t: 4px 4px 0 var(--sk-primary);
+    --sk-shadow-sm: 2px 2px 0 var(--sk-ink);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--sk-font-m);
+    font-size: 12px;
+    color: var(--sk-ink);
+    background: var(--sk-secondary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — warm cream paper with notebook grid + paper grain
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: var(--sk-secondary);
+    background-image:
+      /* faint notebook grid */
+      linear-gradient(var(--sk-line) 0.5px, transparent 0.5px),
+      linear-gradient(90deg, var(--sk-line) 0.5px, transparent 0.5px);
+    background-size: 20px 20px;
+    background-position: -1px -1px;
+    background-color: var(--sk-paper);
+    isolation: isolate;
+  }
+  /* soften the grid with a paper gradient + vignette */
+  .poster::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 40%, rgba(251,246,236,0.85) 0%, transparent 80%);
+  }
+  /* paper grain */
+  .grain {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.45;
+    background-image: radial-gradient(rgba(43,36,56,0.04) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+  /* pencil doodles in corners */
+  .doodle {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    color: var(--sk-primary);
+    opacity: 0.6;
+  }
+  .doodle--tr { top: 14px; right: 14px; }
+  .doodle--bl { bottom: 14px; left: 14px; transform: rotate(-12deg); }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 14px 18px 12px;
+    gap: 12px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 2px dashed var(--sk-ink);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--sk-primary);
+    border: 2px solid var(--sk-ink);
+    box-shadow: var(--sk-shadow-sm);
+    display: grid;
+    place-items: center;
+    color: var(--sk-paper);
+    font-family: var(--sk-font-d);
+    font-size: 18px;
+    line-height: 1;
+    position: relative;
+  }
+  .brand__mark::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border: 1.5px dashed var(--sk-primary);
+    border-radius: 50%;
+    opacity: 0.6;
+  }
+  .brand__name {
+    font-family: var(--sk-font-d);
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--sk-ink);
+    letter-spacing: 0.01em;
+    line-height: 1;
+  }
+  .brand__name em {
+    font-style: normal;
+    color: var(--sk-primary-2);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--sk-font-d);
+    font-size: 15px;
+    color: var(--sk-ink-2);
+    letter-spacing: 0.01em;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    padding: 2px 8px;
+    border-radius: 999px;
+    transition: background .15s ease, color .15s ease;
+  }
+  .nav a:hover {
+    background: var(--sk-primary-soft);
+    color: var(--sk-primary-2);
+  }
+  .nav a.is-active {
+    color: var(--sk-paper);
+    background: var(--sk-ink);
+    border: 1.5px solid var(--sk-ink);
+    box-shadow: var(--sk-shadow-sm);
+    padding: 1px 7px;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 16px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--sk-primary-soft);
+    border: 1.5px dashed var(--sk-primary);
+    border-radius: 999px;
+    font-family: var(--sk-font-d);
+    font-size: 13px;
+    color: var(--sk-primary-2);
+    line-height: 1.2;
+  }
+  .hero__title {
+    font-family: var(--sk-font-d);
+    font-size: 34px;
+    font-weight: 400;
+    line-height: 1.02;
+    letter-spacing: 0.005em;
+    color: var(--sk-ink);
+    margin-top: 2px;
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--sk-primary-2);
+    position: relative;
+    display: inline-block;
+  }
+  .hero__title em::after {
+    content: "";
+    position: absolute;
+    left: -2px; right: -2px; bottom: 2px;
+    height: 5px;
+    background: var(--sk-primary-3);
+    border-radius: 3px;
+    z-index: -1;
+    transform: rotate(-1deg);
+  }
+  .hero__sub {
+    font-family: var(--sk-font-m);
+    font-size: 9.5px;
+    font-weight: 500;
+    line-height: 1.5;
+    color: var(--sk-ink-2);
+    max-width: 32ch;
+    margin-top: 2px;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 16px;
+    border: 2px solid var(--sk-ink);
+    border-radius: 999px;
+    font-family: var(--sk-font-d);
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn--primary {
+    background: var(--sk-primary);
+    color: var(--sk-paper);
+    box-shadow: var(--sk-shadow-sm);
+  }
+  .btn--primary:hover {
+    background: var(--sk-primary-2);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--sk-ink);
+  }
+  .btn--ghost {
+    background: var(--sk-paper);
+    color: var(--sk-ink);
+    border-style: dashed;
+    box-shadow: none;
+  }
+  .btn--ghost:hover { background: var(--sk-primary-soft); color: var(--sk-primary-2); }
+
+  /* ============================================================
+     RIGHT: SKETCH NOTE CARD
+     Signature — dashed border, offset pencil shadow, hand-feel,
+     checkmarks, doodled accents, tape strip on top.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 14px 13px 12px;
+    background: var(--sk-paper);
+    border: 2px dashed var(--sk-ink);
+    border-radius: 14px;
+    box-shadow: var(--sk-shadow-hard);
+  }
+  /* washi-tape strip at top — the notebook tell */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-2deg);
+    width: 70px;
+    height: 14px;
+    background:
+      repeating-linear-gradient(45deg,
+        var(--sk-primary) 0 4px,
+        var(--sk-primary-2) 4px 8px
+      );
+    opacity: 0.7;
+    border-left: 1px dashed rgba(43,36,56,0.3);
+    border-right: 1px dashed rgba(43,36,56,0.3);
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 9px;
+  }
+  .card__title {
+    font-family: var(--sk-font-d);
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--sk-ink);
+    line-height: 1;
+  }
+  .card__title span { color: var(--sk-primary-2); }
+  .card__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    background: var(--sk-primary-soft);
+    border: 1.5px dashed var(--sk-primary);
+    border-radius: 999px;
+    font-family: var(--sk-font-d);
+    font-size: 12px;
+    color: var(--sk-primary-2);
+  }
+  .card__badge::before { content: "✦"; }
+
+  .todo {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 10px;
+  }
+  .todo__item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--sk-font-d);
+    font-size: 15px;
+    color: var(--sk-ink);
+    line-height: 1.2;
+  }
+  .todo__item.done {
+    color: var(--sk-ink-3);
+    text-decoration: line-through;
+    text-decoration-color: var(--sk-primary);
+    text-decoration-thickness: 1.5px;
+  }
+  .check {
+    flex: 0 0 auto;
+    width: 16px; height: 16px;
+    border: 1.5px solid var(--sk-ink);
+    border-radius: 4px;
+    display: grid;
+    place-items: center;
+    background: var(--sk-paper);
+    font-family: var(--sk-font-d);
+    font-size: 14px;
+    color: var(--sk-primary-2);
+    line-height: 1;
+  }
+  .check.done {
+    background: var(--sk-primary);
+    border-color: var(--sk-primary);
+    color: var(--sk-paper);
+  }
+
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 9px;
+    font-family: var(--sk-font-d);
+    font-size: 13px;
+    color: var(--sk-ink-2);
+  }
+  .progress__bar {
+    flex: 1;
+    height: 8px;
+    background: var(--sk-paper-3);
+    border: 1.5px solid var(--sk-ink);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+  }
+  .progress__fill {
+    height: 100%;
+    width: 66%;
+    background: repeating-linear-gradient(45deg,
+      var(--sk-primary) 0 4px,
+      var(--sk-primary-2) 4px 8px
+    );
+    border-right: 1.5px solid var(--sk-ink);
+  }
+  .progress__txt {
+    font-family: var(--sk-font-d);
+    font-size: 14px;
+    color: var(--sk-primary-2);
+    font-weight: 700;
+  }
+
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 8px;
+    border-top: 1.5px dashed var(--sk-line);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--sk-primary);
+    color: var(--sk-paper);
+    border: 1.5px solid var(--sk-ink);
+    border-radius: 999px;
+    font-family: var(--sk-font-d);
+    font-size: 12px;
+    box-shadow: 1.5px 1.5px 0 var(--sk-ink);
+  }
+  .meta {
+    font-family: var(--sk-font-d);
+    font-size: 13px;
+    color: var(--sk-ink-3);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 2px dashed var(--sk-ink);
+    padding-top: 8px;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 14px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0px;
+    line-height: 1.05;
+  }
+  .stat__k {
+    font-family: var(--sk-font-d);
+    font-size: 20px;
+    font-weight: 400;
+    color: var(--sk-ink);
+    line-height: 1;
+  }
+  .stat__k span {
+    font-size: 12px;
+    color: var(--sk-ink-3);
+    margin-left: 2px;
+  }
+  .stat__l {
+    font-family: var(--sk-font-m);
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--sk-ink-3);
+  }
+  .footer__meta {
+    font-family: var(--sk-font-d);
+    font-size: 14px;
+    color: var(--sk-ink-3);
+  }
+  .footer__meta b { color: var(--sk-primary-2); font-weight: 400; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Sketch design language preview — hand-drawn">
+
+  <div class="grain" aria-hidden="true"></div>
+  <svg class="doodle doodle--tr" width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+    <path d="M8 32 C8 18, 18 8, 32 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 4"/>
+    <path d="M28 6 L32 8 L30 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </svg>
+  <svg class="doodle doodle--bl" width="44" height="44" viewBox="0 0 44 44" fill="none" aria-hidden="true">
+    <path d="M6 30 C12 22, 22 22, 30 28 C34 31, 38 30, 40 26" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <circle cx="36" cy="20" r="2.5" fill="currentColor"/>
+    <path d="M14 36 L18 36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </svg>
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">s</span>
+        <span class="brand__name">Sketch<em>pad</em></span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Notes</a>
+        <a href="#">Doodles</a>
+        <a href="#">Share</a>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">★ fresh notebook</span>
+        <h1 class="hero__title">Jot down <em>anything</em>.</h1>
+        <p class="hero__sub">A cozy place for half-formed ideas, lists, and doodles. No pressure, just paper.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Start sketching</button>
+          <button class="btn btn--ghost" type="button">Take a tour</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: sketch note card -->
+      <div class="card" aria-label="Today's list">
+        <div class="card__head">
+          <div class="card__title">Today's <span>list</span></div>
+          <span class="card__badge">draft</span>
+        </div>
+
+        <div class="todo">
+          <div class="todo__item done">
+            <span class="check done" aria-hidden="true">✓</span>
+            <span>Sketch the logo</span>
+          </div>
+          <div class="todo__item done">
+            <span class="check done" aria-hidden="true">✓</span>
+            <span>Write intro copy</span>
+          </div>
+          <div class="todo__item">
+            <span class="check" aria-hidden="true"></span>
+            <span>Ship the preview</span>
+          </div>
+        </div>
+
+        <div class="progress">
+          <div class="progress__bar"><div class="progress__fill"></div></div>
+          <span class="progress__txt">2/3</span>
+        </div>
+
+        <div class="card__row">
+          <span class="chip">+ add</span>
+          <span class="meta">edited 2m ago</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">12<span>notes</span></span>
+          <span class="stat__l">This week</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">∞<span></span></span>
+          <span class="stat__l">Pages</span>
+        </div>
+      </div>
+      <span class="footer__meta">Sketch · <b>#1DAD97</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

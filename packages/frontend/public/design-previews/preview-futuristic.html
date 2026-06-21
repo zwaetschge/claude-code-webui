@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Futuristic — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Audiowide&family=Roboto:wght@300;400;500;700;900&family=Anonymous+Pro:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     FUTURISTIC DESIGN SYSTEM — 400×300 THUMBNAIL
+     Tech-inspired · Audiowide display · sleek · innovation-driven
+     ============================================================ */
+  :root {
+    --fu-primary: #3B82F6;
+    --fu-primary-deep: #1D4ED8;
+    --fu-primary-light: #60A5FA;
+    --fu-secondary: #8B5CF6;
+    --fu-secondary-deep: #6D28D9;
+    --fu-secondary-light: #A78BFA;
+    --fu-success: #16A34A;
+    --fu-warning: #D97706;
+    --fu-danger: #DC2626;
+
+    /* Tech accents */
+    --fu-cyan: #06B6D4;
+    --fu-mint: #10B981;
+
+    --fu-surface: #FFFFFF;
+    --fu-surface-2: #FAFBFF;
+    --fu-surface-3: #F0F4FF;
+    --fu-ink: #0A0E1A;
+    --fu-ink-2: #1F2937;
+    --fu-ink-3: #6B7280;
+    --fu-ink-4: #9CA3AF;
+    --fu-line: #E5E7EB;
+    --fu-line-2: #F3F4F6;
+
+    --fu-font-display: 'Audiowide', 'Roboto', sans-serif;
+    --fu-font-ui: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+    --fu-font-mono: 'Anonymous Pro', ui-monospace, monospace;
+
+    --fu-r-sm: 4px;
+    --fu-r-md: 8px;
+    --fu-r-lg: 12px;
+    --fu-r-xl: 16px;
+    --fu-r-pill: 999px;
+
+    --fu-sh-1: 0 1px 2px rgba(10,14,26,0.04);
+    --fu-sh-2: 0 8px 28px -8px rgba(59,130,246,0.18), 0 2px 6px -1px rgba(10,14,26,0.04);
+    --fu-sh-blue: 0 8px 28px -6px rgba(59,130,246,0.35);
+    --fu-sh-violet: 0 8px 28px -6px rgba(139,92,246,0.30);
+
+    --fu-grad-tech: linear-gradient(135deg, var(--fu-primary) 0%, var(--fu-secondary) 100%);
+    --fu-grad-cyan: linear-gradient(135deg, var(--fu-cyan) 0%, var(--fu-primary) 100%);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--fu-font-ui);
+    font-size: 12px;
+    color: var(--fu-ink);
+    background:
+      /* subtle tech grid */
+      linear-gradient(to right, rgba(59,130,246,0.04) 1px, transparent 1px) 0 0 / 40px 100%,
+      linear-gradient(to bottom, rgba(139,92,246,0.03) 1px, transparent 1px) 0 0 / 100% 40px,
+      radial-gradient(200px 130px at 90% 0%, rgba(59,130,246,0.08), transparent 60%),
+      radial-gradient(200px 130px at 10% 100%, rgba(139,92,246,0.06), transparent 60%),
+      var(--fu-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame {
+    width: 400px;
+    height: 300px;
+    padding: 12px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--fu-surface);
+    border: 1px solid var(--fu-line);
+    border-radius: var(--fu-r-lg);
+    box-shadow: var(--fu-sh-1);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: var(--fu-grad-tech);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--fu-sh-blue);
+    position: relative;
+  }
+  .brand__mark svg { width: 13px; height: 13px; }
+  .brand__name {
+    font-family: var(--fu-font-display);
+    font-size: 14px;
+    letter-spacing: 0.03em;
+    color: var(--fu-ink);
+  }
+  .brand__name span {
+    color: var(--fu-primary);
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+    background: var(--fu-surface-3);
+    padding: 3px;
+    border-radius: var(--fu-r-pill);
+  }
+  .nav a {
+    padding: 4px 11px;
+    border-radius: var(--fu-r-pill);
+    text-decoration: none;
+    font-family: var(--fu-font-ui);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--fu-ink-3);
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--fu-ink); }
+  .nav a.is-active {
+    background: var(--fu-grad-tech);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: var(--fu-sh-blue);
+  }
+
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--fu-grad-tech);
+    display: grid; place-items: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 9px;
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 12px;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  /* LEFT — hero with Audiowide */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    position: relative;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--fu-surface-3);
+    color: var(--fu-primary-deep);
+    border: 1px solid rgba(59,130,246,0.20);
+    border-radius: var(--fu-r-pill);
+    font-family: var(--fu-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--fu-primary);
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.20);
+  }
+
+  .hero__title {
+    font-family: var(--fu-font-display);
+    font-size: 32px;
+    line-height: 0.95;
+    letter-spacing: 0.005em;
+    color: var(--fu-ink);
+    margin: 4px 0;
+  }
+  .hero__title-grad {
+    background: var(--fu-grad-tech);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .hero__sub {
+    font-family: var(--fu-font-ui);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: var(--fu-ink-3);
+    max-width: 30ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  /* Sleek futuristic buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 14px;
+    border: none;
+    border-radius: var(--fu-r-md);
+    font-family: var(--fu-font-ui);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .2s ease, box-shadow .2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn--primary {
+    background: var(--fu-grad-tech);
+    color: #fff;
+    box-shadow: var(--fu-sh-blue);
+  }
+  .btn--primary:hover { transform: translateY(-1px); }
+  /* Subtle shine overlay */
+  .btn--primary::after {
+    content: "";
+    position: absolute;
+    top: 0; left: -100%;
+    width: 60%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.30), transparent);
+    transition: left .6s ease;
+  }
+  .btn--primary:hover::after { left: 120%; }
+  .btn--ghost {
+    background: transparent;
+    color: var(--fu-ink-2);
+    padding: 0 4px;
+    height: auto;
+    border: 1px solid transparent;
+  }
+  .btn--ghost:hover { color: var(--fu-primary); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — sleek gradient-bordered tech cards */
+  .cards {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 6px;
+    min-height: 0;
+  }
+  .card {
+    padding: 8px 12px;
+    border-radius: var(--fu-r-lg);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    overflow: hidden;
+    position: relative;
+    background: var(--fu-surface);
+    border: 1px solid var(--fu-line);
+    box-shadow: var(--fu-sh-1);
+  }
+  /* Signature: gradient border via padding+bg technique */
+  .card--accent {
+    background:
+      linear-gradient(var(--fu-surface), var(--fu-surface)) padding-box,
+      var(--fu-grad-tech) border-box;
+    border: 1.5px solid transparent;
+    box-shadow: var(--fu-sh-2);
+  }
+  .card--cyan {
+    background:
+      linear-gradient(var(--fu-surface), var(--fu-surface)) padding-box,
+      var(--fu-grad-cyan) border-box;
+    border: 1.5px solid transparent;
+  }
+
+  .card__icon {
+    width: 30px; height: 30px;
+    border-radius: var(--fu-r-md);
+    display: grid; place-items: center;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .card__icon--grad { background: var(--fu-grad-tech); }
+  .card__icon--cyan { background: var(--fu-grad-cyan); }
+  .card__icon--violet { background: linear-gradient(135deg, var(--fu-secondary), var(--fu-secondary-light)); }
+  .card__icon svg { width: 15px; height: 15px; }
+  .card__body { flex: 1; min-width: 0; }
+  .card__label {
+    font-family: var(--fu-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fu-ink-3);
+    line-height: 1;
+  }
+  .card__value {
+    font-family: var(--fu-font-display);
+    font-size: 18px;
+    color: var(--fu-ink);
+    line-height: 1.1;
+    margin-top: 2px;
+    letter-spacing: 0.01em;
+  }
+  .card__value span {
+    font-family: var(--fu-font-ui);
+    font-size: 11px;
+    color: var(--fu-ink-3);
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .card__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--fu-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--fu-success);
+    margin-top: 1px;
+  }
+  .card__sub svg { width: 8px; height: 8px; }
+
+  /* Sparkline in violet card */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 14px;
+    margin-top: 3px;
+  }
+  .spark__bar {
+    flex: 1;
+    background: var(--fu-secondary);
+    opacity: 0.4;
+    border-radius: 1.5px 1.5px 0 0;
+    min-height: 2px;
+  }
+  .spark__bar--peak { opacity: 1; background: var(--fu-grad-tech); }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Futuristic design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/></svg>
+      </span>
+      <span class="brand__name">NEXUS<span>.</span>ai</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Platform</a>
+      <a href="#">Models</a>
+      <a href="#">Docs</a>
+    </nav>
+    <div class="avatar" aria-label="User">AC</div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">v3.0 · now live</span>
+      <h1 class="hero__title">
+        Build the<br>
+        <span class="hero__title-grad">future</span>, today.
+      </h1>
+      <p class="hero__sub">A next-gen platform for AI-native products. Ship intelligent features in minutes, not months.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Get API key
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">View docs →</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: sleek tech cards -->
+    <aside class="cards">
+
+      <div class="card card--accent">
+        <div class="card__icon card__icon--grad">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Inference</div>
+          <div class="card__value">42<span>ms</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            3× faster
+          </div>
+        </div>
+      </div>
+
+      <div class="card card--cyan">
+        <div class="card__icon card__icon--cyan">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Uptime</div>
+          <div class="card__value">99.99<span>%</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            global edge
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__icon card__icon--violet">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-5"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Requests</div>
+          <div class="card__value">8.4<span>M / day</span></div>
+          <div class="spark" aria-hidden="true">
+            <div class="spark__bar" style="height:35%"></div>
+            <div class="spark__bar" style="height:52%"></div>
+            <div class="spark__bar" style="height:45%"></div>
+            <div class="spark__bar" style="height:68%"></div>
+            <div class="spark__bar spark__bar--peak" style="height:100%"></div>
+            <div class="spark__bar" style="height:72%"></div>
+            <div class="spark__bar" style="height:58%"></div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Paper — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Montserrat:wght@400;500;600;700;800&family=PT+Mono&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     PAPER DESIGN SYSTEM — 400×300 THUMBNAIL
+     Print-inspired · paper texture · serif/sans · violet accent
+     ============================================================ */
+  :root {
+    --pp-primary: #111111;
+    --pp-secondary: #8B5CF6;
+    --pp-secondary-light: #A78BFA;
+    --pp-success: #16A34A;
+    --pp-warning: #D97706;
+    --pp-danger: #DC2626;
+
+    --pp-surface: #FFFFFF;
+    --pp-paper: #FDFBF7;        /* warm paper white */
+    --pp-paper-2: #F8F5EE;
+    --pp-ink: #111827;
+    --pp-ink-2: #374151;
+    --pp-ink-3: #6B7280;
+    --pp-ink-4: #9CA3AF;
+    --pp-line: #E5E0D5;
+    --pp-line-2: #EDE8DC;
+    --pp-line-soft: #F0EBDF;
+
+    --pp-font: 'Roboto', -apple-system, sans-serif;
+    --pp-font-display: 'Montserrat', sans-serif;
+    --pp-font-mono: 'PT Mono', monospace;
+
+    --pp-r-sm: 2px;
+    --pp-r-md: 4px;
+    --pp-r-lg: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--pp-font);
+    font-size: 12px;
+    color: var(--pp-ink);
+    background: var(--pp-paper);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    /* Paper texture: subtle dot grain + warm tint */
+    background:
+      radial-gradient(circle at 25% 30%, rgba(17,17,17,0.015) 0.5px, transparent 1px) 0 0 / 4px 4px,
+      radial-gradient(circle at 75% 70%, rgba(17,17,17,0.012) 0.5px, transparent 1px) 0 0 / 5px 5px,
+      radial-gradient(circle at 50% 50%, rgba(139,92,246,0.008) 0.5px, transparent 1px) 0 0 / 6px 6px,
+      var(--pp-paper);
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    border-right: 1px solid var(--pp-line);
+  }
+
+  /* Subtle paper fold/crease effect */
+  .poster::before {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, rgba(17,17,17,0.04) 20%, rgba(17,17,17,0.04) 80%, transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    padding: 4px 14px;
+    border-bottom: 1px solid var(--pp-ink);
+    font-family: var(--pp-font-mono);
+    font-size: 8px;
+    font-weight: 400;
+    color: var(--pp-ink-3);
+    position: relative;
+    z-index: 2;
+  }
+  .masthead__accent { color: var(--pp-secondary); font-weight: 700; }
+  .masthead__sep { color: var(--pp-ink-4); }
+
+  /* ============ TITLE BAR ============ */
+  .titlebar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 8px 14px 8px;
+    border-bottom: 2px solid var(--pp-ink);
+    position: relative;
+    z-index: 2;
+  }
+  .wordmark {
+    font-family: var(--pp-font-display);
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    color: var(--pp-ink);
+    line-height: 1;
+  }
+  .wordmark span { color: var(--pp-secondary); }
+  .wordmark__sub {
+    display: block;
+    font-family: var(--pp-font);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 9px;
+    color: var(--pp-ink-3);
+    margin-top: 3px;
+  }
+  .titlebar__nav {
+    display: flex;
+    gap: 12px;
+    font-family: var(--pp-font);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--pp-ink-3);
+  }
+  .titlebar__nav a {
+    text-decoration: none;
+    color: inherit;
+    padding-bottom: 2px;
+    border-bottom: 2px solid transparent;
+    transition: border-color .15s ease;
+  }
+  .titlebar__nav a:hover { color: var(--pp-ink); }
+  .titlebar__nav a.is-active {
+    color: var(--pp-ink);
+    border-bottom-color: var(--pp-secondary);
+    font-weight: 700;
+  }
+
+  /* ============ MAIN (2-column print layout) ============ */
+  .body {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    overflow: hidden;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* LEFT — feature article */
+  .article {
+    padding: 10px 14px 8px;
+    border-right: 1px solid var(--pp-line);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    overflow: hidden;
+  }
+  .article__meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--pp-font-mono);
+    font-size: 8px;
+    font-weight: 400;
+    color: var(--pp-ink-3);
+    letter-spacing: 0.04em;
+  }
+  .article__section {
+    color: var(--pp-secondary);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .article__sep { color: var(--pp-ink-4); }
+
+  /* Montserrat bold headline */
+  .article__headline {
+    font-family: var(--pp-font-display);
+    font-weight: 700;
+    font-size: 22px;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    color: var(--pp-ink);
+    margin: 2px 0;
+  }
+  .article__headline em {
+    font-style: italic;
+    font-weight: 600;
+    color: var(--pp-secondary);
+  }
+
+  .article__lede {
+    font-family: var(--pp-font);
+    font-size: 10.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--pp-ink-2);
+    max-width: 32ch;
+  }
+
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: auto;
+    padding-top: 4px;
+    border-top: 1px solid var(--pp-line-soft);
+    font-family: var(--pp-font-mono);
+    font-size: 8px;
+    font-weight: 400;
+    color: var(--pp-ink-3);
+  }
+  .byline__author { color: var(--pp-ink); font-weight: 700; }
+
+  .article__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin-top: 3px;
+    padding: 4px 0;
+    font-family: var(--pp-font);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--pp-ink);
+    border-bottom: 2px solid var(--pp-secondary);
+    cursor: pointer;
+  }
+  .article__cta::after { content: " →"; color: var(--pp-secondary); }
+
+  /* RIGHT — sidebar with pull-quote + stats */
+  .sidebar {
+    padding: 10px 14px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+  }
+  .sidebar__label {
+    font-family: var(--pp-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--pp-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* Pull quote — print sidebar */
+  .pullquote {
+    padding: 6px 0;
+    border-top: 2px solid var(--pp-ink);
+    border-bottom: 1px solid var(--pp-line);
+  }
+  .pullquote__mark {
+    font-family: var(--pp-font-display);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--pp-secondary);
+    line-height: 0.6;
+    margin-bottom: 2px;
+  }
+  .pullquote__text {
+    font-family: var(--pp-font);
+    font-style: italic;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--pp-ink);
+  }
+  .pullquote__author {
+    font-family: var(--pp-font-mono);
+    font-size: 8px;
+    color: var(--pp-ink-3);
+    margin-top: 3px;
+  }
+
+  /* Stat list */
+  .statlist {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .statitem {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 3px 0;
+    border-bottom: 1px dotted var(--pp-line);
+    font-family: var(--pp-font);
+  }
+  .statitem:last-child { border-bottom: none; }
+  .statitem__label {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--pp-ink-2);
+  }
+  .statitem__value {
+    font-family: var(--pp-font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--pp-ink);
+  }
+  .statitem__value--violet { color: var(--pp-secondary); }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    border-top: 1px solid var(--pp-ink);
+    font-family: var(--pp-font-mono);
+    font-size: 7.5px;
+    font-weight: 400;
+    color: var(--pp-ink-3);
+    position: relative;
+    z-index: 2;
+  }
+  .footer__left, .footer__right {
+    padding: 4px 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .footer__center {
+    padding: 4px 14px;
+    background: var(--pp-ink);
+    color: var(--pp-paper);
+    display: flex;
+    align-items: center;
+  }
+  .footer__accent { color: var(--pp-secondary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Paper design language preview">
+
+  <!-- ===== MASTHEAD ===== -->
+  <header class="masthead">
+    <span>Vol. 12 · No. 04</span>
+    <span><span class="masthead__accent">★</span> Paper Edition <span class="masthead__accent">★</span></span>
+    <span>$8.00</span>
+  </header>
+
+  <!-- ===== TITLE BAR ===== -->
+  <section class="titlebar">
+    <div>
+      <h1 class="wordmark">The <span>Press</span></h1>
+      <span class="wordmark__sub">ideas in print · est. 2019</span>
+    </div>
+    <nav class="titlebar__nav" aria-label="Primary">
+      <a href="#" class="is-active">Current</a>
+      <a href="#">Archive</a>
+      <a href="#">Shop</a>
+    </nav>
+  </section>
+
+  <!-- ===== BODY ===== -->
+  <section class="body">
+
+    <!-- LEFT: feature article -->
+    <article class="article">
+      <div class="article__meta">
+        <span class="article__section">Essay</span>
+        <span class="article__sep">—</span>
+        <span>The Cover</span>
+      </div>
+      <h2 class="article__headline">
+        The weight of<br>
+        <em>paper</em> ideas.
+      </h2>
+      <p class="article__lede">
+        In a world of infinite scrolls, the printed page still asks something different of you: to slow down, hold still, and read with your hands.
+      </p>
+      <a href="#" class="article__cta">Continue reading</a>
+      <div class="byline">
+        <span>By</span>
+        <span class="byline__author">E. Vance</span>
+        <span class="article__sep">·</span>
+        <span>8 min</span>
+        <span class="article__sep">·</span>
+        <span>p. 14</span>
+      </div>
+    </article>
+
+    <!-- RIGHT: sidebar -->
+    <aside class="sidebar">
+      <div class="pullquote">
+        <div class="pullquote__mark">"</div>
+        <p class="pullquote__text">Paper remembers what screens forget.</p>
+        <p class="pullquote__author">— A. Moreau, Editor</p>
+      </div>
+
+      <span class="sidebar__label">In this issue</span>
+      <div class="statlist">
+        <div class="statitem">
+          <span class="statitem__label">Pages</span>
+          <span class="statitem__value">48</span>
+        </div>
+        <div class="statitem">
+          <span class="statitem__label">Articles</span>
+          <span class="statitem__value statitem__value--violet">12</span>
+        </div>
+        <div class="statitem">
+          <span class="statitem__label">Contributors</span>
+          <span class="statitem__value">9</span>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span class="footer__left">
+      <span class="footer__accent">●</span>
+      paper · print · texture
+    </span>
+    <span class="footer__center">— thepress.co —</span>
+    <span class="footer__right">v1 · WCAG AA</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

@@ -6,8 +6,13 @@ import type {
   SocketData,
   BufferedMessage,
   SessionMode,
-} from '@claude-code-webui/shared';
-import { estimateModelCost } from '@claude-code-webui/shared';
+  ActiveFollowupMode,
+  SubagentRun,
+  SubagentRunStatus,
+  TodoItem,
+  ToolActionSummary,
+} from '@plum-code-webui/shared';
+import { estimateModelCost } from '@plum-code-webui/shared';
 import { getDatabase } from '../../db';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
@@ -17,32 +22,38 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { ChildProcess, spawn as cpSpawn } from 'child_process';
 import { EventEmitter } from 'events';
+import SQLiteDatabase from 'better-sqlite3';
 import { config } from '../../config';
 import {
   CLI_PROVIDERS,
   getCLIArgs,
   formatInputMessage,
   getVibeModelAlias,
+  resolveCliProviderSelectedModel,
   type CLIProvider,
 } from '../cli-providers.js';
-import type { CodexServiceTier, CodexWebSearchMode } from '@claude-code-webui/shared';
+import type { CodexWebSearchMode } from '@plum-code-webui/shared';
 import { opencodeServer, type OpencodeEvent } from '../opencode/OpencodeServer.js';
 import { resolveConfigHome } from '../../utils/configPaths.js';
-import { syncExternalSkills } from '../../utils/skillSync.js';
+import { listSkillLibrary, readSkillLibraryItem } from '../../utils/skillLibrary.js';
 import { scanProject, formatProjectContext } from '../../utils/projectScanner.js';
 import { safeJsonParse } from '../../utils/json.js';
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  resolveContextWindow as contextWindowFor,
+} from '../../utils/contextWindow.js';
 import { getMistralApiKeyForUser } from '../../routes/settings.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
 import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerLinks.js';
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
 import { recordAudit } from '../../utils/auditLog.js';
+import { getFallbackToolActionSummary } from '../tool-action-summarizer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Circular buffer for storing messages for reconnection
 const BUFFER_SIZE = 5000;
-const DISCONNECT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const HANDOFF_CONTEXT_MAX_CHARS = 60000;
 const HANDOFF_CONTEXT_MAX_MESSAGES = 80;
 const WEBUI_MANAGED_MARKER = '<!-- webui-managed: shared-config -->';
@@ -50,6 +61,7 @@ const WEBUI_MANAGED_BLOCK_START = '<!-- webui-managed: shared-config:start -->';
 const WEBUI_MANAGED_BLOCK_END = '<!-- webui-managed: shared-config:end -->';
 const PROJECT_CONTEXT_BLOCK_START = '<!-- webui-managed: project-context:start -->';
 const PROJECT_CONTEXT_BLOCK_END = '<!-- webui-managed: project-context:end -->';
+const STYLE_TEMPLATE_MAX_CHARS = 12000;
 
 interface SharedAgent {
   name: string;
@@ -65,6 +77,15 @@ interface SharedAgent {
 interface ThoughtStripState {
   inside: boolean;
   pending: string;
+}
+
+interface OpenCodePartStreamEntry {
+  type: 'text' | 'reasoning';
+  messageId: string;
+  text: string;
+  cleaned?: string;
+  thoughtState?: ThoughtStripState;
+  savedCleanedLength?: number;
 }
 
 const THOUGHT_OPEN = '<|channel>thought';
@@ -147,62 +168,49 @@ interface SharedPlugin {
   marketplace?: string;
 }
 
-async function getCliModelForUser(userId: string, provider: CLIProvider): Promise<string | null> {
+async function getCliModelForSession(
+  userId: string,
+  provider: CLIProvider,
+  sessionId?: string
+): Promise<string | null> {
   const db = getDatabase();
+
+  let sessionSelectedModel: string | null = null;
+  if (sessionId) {
+    const sessionRow = db
+      .prepare('SELECT cli_model FROM sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, userId) as { cli_model?: string | null } | undefined;
+    sessionSelectedModel =
+      typeof sessionRow?.cli_model === 'string' && sessionRow.cli_model.trim()
+        ? sessionRow.cli_model.trim()
+        : null;
+  }
+
   const row = db
     .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
     .get(userId) as { settings_json?: string | null } | undefined;
-
   const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
-  const models = settingsJson.cliProviderModels;
-  if (!models || typeof models !== 'object') {
-    return null;
-  }
+  const modelLists =
+    settingsJson.cliProviderModelLists && typeof settingsJson.cliProviderModelLists === 'object'
+      ? (settingsJson.cliProviderModelLists as Record<string, unknown>)
+      : {};
+  const configuredModels = Array.isArray(modelLists.opencode)
+    ? modelLists.opencode
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter((entry) => entry.length > 0)
+    : [];
 
-  const model = (models as Record<string, unknown>)[provider];
-  return typeof model === 'string' && model.trim() ? model.trim() : null;
+  return resolveCliProviderSelectedModel(provider, null, configuredModels, sessionSelectedModel);
 }
 
-const VALID_REASONING_LEVELS = new Set(['low', 'medium', 'high', 'extra_high', 'max']);
+const REASONING_LEVELS_BY_PROVIDER: Record<CLIProvider, Set<string>> = {
+  claude: new Set(['low', 'medium', 'high', 'max']),
+  codex: new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
+  opencode: new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
+  vibe: new Set(['off', 'low', 'medium', 'high', 'max']),
+};
 
-const DEFAULT_CONTEXT_WINDOW = 200_000;
-const ONE_MILLION_CONTEXT = 1_000_000;
-
-// Map a Claude model identifier to its context window. Anthropic ships 1M-token
-// context for all current 4.x and 5.x Claude families (Opus, Sonnet, Haiku).
-// Older 3.x models remain at 200k. The CLI reports the actual window via
-// modelUsage when available; this helper is the fallback so the frontend
-// tracker stops claiming 200k for a 1M-capable model.
-function contextWindowFor(model: string | null | undefined): number {
-  if (!model) return DEFAULT_CONTEXT_WINDOW;
-  const id = model.toLowerCase();
-  if (/(opus|sonnet|haiku)-?(4|5)/.test(id)) {
-    return ONE_MILLION_CONTEXT;
-  }
-  // Codex / GPT-5.x — context windows observed in `model_context_window` events
-  // from codex session logs: gpt-5.5 → 258400, gpt-5.4 → 196k, gpt-5.4-mini → 128k.
-  // The actual window can be overwritten when codex reports `model_context_window`
-  // in a token_count event. Without this, codex sessions defaulted to 200k Claude
-  // rates which made the context-used % calculation wrong on long sessions.
-  if (id.startsWith('gpt-5.4-mini')) {
-    return 128_000;
-  }
-  if (id.startsWith('gpt-5.4')) {
-    return 196_000;
-  }
-  if (id.startsWith('gpt-5.3-codex')) {
-    return 400_000;
-  }
-  if (id.startsWith('gpt-5.5')) {
-    return 256_000;
-  }
-  if (id.startsWith('gpt-5')) {
-    return 256_000;
-  }
-  return DEFAULT_CONTEXT_WINDOW;
-}
-
-function normalizeReasoningLevel(value: unknown): string | null {
+function normalizeReasoningLevel(provider: CLIProvider, value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -213,45 +221,50 @@ function normalizeReasoningLevel(value: unknown): string | null {
   if (!normalized) {
     return null;
   }
-  return VALID_REASONING_LEVELS.has(normalized) ? normalized : null;
+  return REASONING_LEVELS_BY_PROVIDER[provider].has(normalized) ? normalized : null;
 }
 
-async function getCliReasoningForUser(
+async function getCliReasoningForSession(
   userId: string,
-  provider: CLIProvider
+  provider: CLIProvider,
+  sessionId?: string
 ): Promise<string | null> {
-  const db = getDatabase();
-  const row = db
-    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
-    .get(userId) as { settings_json?: string | null } | undefined;
-
-  const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
-  const levels = settingsJson.cliProviderReasoning;
-  if (!levels || typeof levels !== 'object') {
+  if (!sessionId) {
     return null;
   }
 
-  const level = (levels as Record<string, unknown>)[provider];
-  return normalizeReasoningLevel(level);
+  const db = getDatabase();
+  const row = db
+    .prepare('SELECT cli_reasoning FROM sessions WHERE id = ? AND user_id = ?')
+    .get(sessionId, userId) as { cli_reasoning?: string | null } | undefined;
+
+  return normalizeReasoningLevel(provider, row?.cli_reasoning);
 }
 
-function getCliServiceTierForUser(userId: string, provider: CLIProvider): CodexServiceTier | null {
-  if (provider !== 'codex') {
+function normalizeCodexServiceTier(value: unknown): 'fast' | null {
+  return typeof value === 'string' && value.trim().toLowerCase() === 'fast' ? 'fast' : null;
+}
+
+async function getCliServiceTierForSession(
+  userId: string,
+  provider: CLIProvider,
+  sessionId?: string
+): Promise<'fast' | null> {
+  if (provider !== 'codex' || !sessionId) {
     return null;
   }
 
   const db = getDatabase();
   const row = db
-    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
-    .get(userId) as { settings_json?: string | null } | undefined;
+    .prepare('SELECT cli_service_tier, cli_reasoning FROM sessions WHERE id = ? AND user_id = ?')
+    .get(sessionId, userId) as
+    | { cli_service_tier?: string | null; cli_reasoning?: string | null }
+    | undefined;
 
-  const settingsJson = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
-  const tiers = settingsJson.cliProviderServiceTiers;
-  if (!tiers || typeof tiers !== 'object') {
-    return null;
-  }
-
-  return (tiers as Record<string, unknown>).codex === 'fast' ? 'fast' : null;
+  return (
+    normalizeCodexServiceTier(row?.cli_service_tier) ??
+    normalizeCodexServiceTier(row?.cli_reasoning)
+  );
 }
 
 function getCodexWebSearchForUser(userId: string): CodexWebSearchMode {
@@ -267,10 +280,353 @@ function getCodexWebSearchForUser(userId: string): CodexWebSearchMode {
     : 'auto';
 }
 
-function getCodexUsageBaselineFromDatabase(
+type CodexUsageCounters = { input: number; cached: number; output: number };
+type CodexThreadState = {
+  id: string;
+  tokensUsed: number;
+  rolloutPath?: string;
+  updatedAt?: number;
+  updatedAtMs?: number;
+  model?: string;
+  match?: 'thread-id' | 'prompt' | 'cwd';
+};
+export type CodexContextSnapshot = {
+  counters: CodexUsageCounters;
+  contextWindow: number;
+  model?: string;
+  recordedAt?: string;
+  recordedAtMs?: number;
+  threadId?: string;
+  rolloutPath?: string;
+};
+
+function normalizeCodexUsageCounters(value: unknown): CodexUsageCounters | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const candidate = value as Record<string, unknown>;
+  const firstFiniteNumber = (...values: unknown[]): number | undefined => {
+    for (const raw of values) {
+      const value = Number(raw);
+      if (Number.isFinite(value)) return value;
+    }
+    return undefined;
+  };
+  const input = firstFiniteNumber(
+    candidate.input,
+    candidate.input_tokens,
+    candidate.total_tokens,
+    candidate.tokens_used,
+    candidate.tokensUsed,
+    candidate.context_tokens,
+    candidate.retained_tokens,
+    candidate.compacted_tokens
+  );
+  const cached = firstFiniteNumber(candidate.cached, candidate.cached_input_tokens) ?? 0;
+  const output =
+    firstFiniteNumber(
+      candidate.output,
+      candidate.output_tokens,
+      candidate.reasoning_output_tokens
+    ) ?? 0;
+  if (!Number.isFinite(input) || !Number.isFinite(cached) || !Number.isFinite(output)) {
+    return undefined;
+  }
+  const inputValue = input as number;
+  if (inputValue < 0 || cached < 0 || output < 0) return undefined;
+  if (inputValue <= 0 && cached <= 0 && output <= 0) return undefined;
+  return { input: inputValue, cached, output };
+}
+
+function extractCodexContextUsageCounters(value: unknown): CodexUsageCounters | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const data = value as Record<string, unknown>;
+  const info =
+    data.info && typeof data.info === 'object' ? (data.info as Record<string, unknown>) : null;
+  const candidates = [
+    info?.last_token_usage,
+    data.last_token_usage,
+    data.context_usage,
+    data.context,
+    data.compacted_context,
+    data.compacted,
+    data.usage,
+    data,
+  ];
+
+  for (const candidate of candidates) {
+    const counters = normalizeCodexUsageCounters(candidate);
+    if (counters) return counters;
+  }
+  return undefined;
+}
+
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+function findLatestCodexStateDatabase(codexHome: string): string | null {
+  try {
+    const candidates = fsSync
+      .readdirSync(codexHome, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /^state_\d+\.sqlite$/.test(entry.name))
+      .map((entry) => {
+        const filePath = path.join(codexHome, entry.name);
+        const stat = fsSync.statSync(filePath);
+        return { filePath, mtimeMs: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return candidates[0]?.filePath || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCodexThreadStateRow(value: unknown): CodexThreadState | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const id = typeof row.id === 'string' ? row.id.trim() : '';
+  const tokensUsed = Number(row.tokensUsed);
+  if (!id || !Number.isFinite(tokensUsed) || tokensUsed <= 0) return null;
+
+  const updatedAt = Number(row.updatedAt);
+  const updatedAtMs = Number(row.updatedAtMs);
+  const rolloutPath = typeof row.rolloutPath === 'string' ? row.rolloutPath : undefined;
+  const model = typeof row.model === 'string' ? row.model : undefined;
+
+  return {
+    id,
+    tokensUsed,
+    rolloutPath,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : undefined,
+    updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : undefined,
+    model,
+  };
+}
+
+export function readCodexThreadState(
+  codexHome: string,
+  opts: {
+    threadId?: string | null;
+    cwd?: string | null;
+    sinceMs?: number | null;
+    promptPrefix?: string | null;
+  }
+): CodexThreadState | null {
+  const dbPath = findLatestCodexStateDatabase(codexHome);
+  if (!dbPath) return null;
+
+  let db: SQLiteDatabase.Database | null = null;
+  try {
+    db = new SQLiteDatabase(dbPath, { readonly: true, fileMustExist: true });
+    const hasThreads = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads'")
+      .get();
+    if (!hasThreads) return null;
+
+    const selectThread = `
+      SELECT
+        id,
+        tokens_used as tokensUsed,
+        rollout_path as rolloutPath,
+        updated_at as updatedAt,
+        updated_at_ms as updatedAtMs,
+        model
+      FROM threads
+    `;
+
+    const threadId = opts.threadId?.trim();
+    if (threadId) {
+      const row = db.prepare(`${selectThread} WHERE id = ? LIMIT 1`).get(threadId);
+      const state = normalizeCodexThreadStateRow(row);
+      if (state) return { ...state, match: 'thread-id' };
+    }
+
+    const cwd = opts.cwd?.trim();
+    if (!cwd) return null;
+
+    const sinceMs = Number(opts.sinceMs);
+    const lowerBoundMs = Number.isFinite(sinceMs) && sinceMs > 0 ? sinceMs - 120_000 : 0;
+    const lowerBoundSec = lowerBoundMs > 0 ? Math.floor(lowerBoundMs / 1000) : 0;
+    const promptPrefix = opts.promptPrefix?.trim();
+    const promptPattern =
+      promptPrefix && promptPrefix.length >= 16
+        ? `${escapeSqlLike(promptPrefix.slice(0, 180))}%`
+        : null;
+
+    const queryLatest = (requirePromptMatch: boolean): CodexThreadState | null => {
+      const params: unknown[] = [cwd];
+      let sql = `
+        ${selectThread}
+        WHERE cwd = ?
+          AND tokens_used > 0
+      `;
+
+      if (lowerBoundSec > 0) {
+        sql += `
+          AND (
+            updated_at >= ?
+            OR COALESCE(updated_at_ms, 0) >= ?
+            OR created_at >= ?
+            OR COALESCE(created_at_ms, 0) >= ?
+          )
+        `;
+        params.push(lowerBoundSec, lowerBoundMs, lowerBoundSec, lowerBoundMs);
+      }
+
+      if (requirePromptMatch && promptPattern) {
+        sql += `
+          AND (
+            title LIKE ? ESCAPE '\\'
+            OR first_user_message LIKE ? ESCAPE '\\'
+            OR preview LIKE ? ESCAPE '\\'
+          )
+        `;
+        params.push(promptPattern, promptPattern, promptPattern);
+      }
+
+      sql += `
+        ORDER BY
+          COALESCE(updated_at_ms, updated_at * 1000, 0) DESC,
+          updated_at DESC
+        LIMIT 1
+      `;
+
+      const state = normalizeCodexThreadStateRow(db!.prepare(sql).get(...params));
+      return state ? { ...state, match: requirePromptMatch ? 'prompt' : 'cwd' } : null;
+    };
+
+    return (promptPattern ? queryLatest(true) : null) || queryLatest(false);
+  } catch (error) {
+    console.warn('[CODEX] Failed to read Codex thread state:', error);
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // ignore close failures
+    }
+  }
+}
+
+function normalizeCodexRolloutEvent(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') return null;
+  const envelope = value as Record<string, unknown>;
+  const payload =
+    envelope.payload && typeof envelope.payload === 'object'
+      ? (envelope.payload as Record<string, unknown>)
+      : null;
+  if (!payload) return envelope;
+
+  const envelopeType = typeof envelope.type === 'string' ? envelope.type : '';
+  if (envelopeType === 'event_msg' || envelopeType === 'response_item') {
+    return payload;
+  }
+  return { ...payload, type: envelopeType || payload.type };
+}
+
+function normalizeCodexTokenCountUsage(value: unknown): CodexUsageCounters | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const candidate = value as Record<string, unknown>;
+  const input = Number(candidate.input_tokens ?? candidate.input ?? 0);
+  const cached = Number(candidate.cached_input_tokens ?? candidate.cached ?? 0);
+  const output = Number(candidate.output_tokens ?? candidate.output ?? 0);
+  if (!Number.isFinite(input) || !Number.isFinite(cached) || !Number.isFinite(output)) {
+    return undefined;
+  }
+  if (input < 0 || cached < 0 || output < 0) return undefined;
+  return { input, cached, output };
+}
+
+export function readLatestCodexContextSnapshot(
+  codexHome: string,
+  opts: {
+    threadId?: string | null;
+    cwd?: string | null;
+    sinceMs?: number | null;
+    promptPrefix?: string | null;
+  }
+): CodexContextSnapshot | null {
+  const threadState = readCodexThreadState(codexHome, opts);
+  if (!threadState?.rolloutPath) return null;
+
+  let raw = '';
+  try {
+    raw = fsSync.readFileSync(threadState.rolloutPath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  let latest: CodexContextSnapshot | null = null;
+  const lines = raw.trim().split(/\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const event = normalizeCodexRolloutEvent(parsed);
+    const eventType =
+      typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+    if (eventType !== 'token_count') continue;
+    if (!event) continue;
+
+    const envelope = parsed as Record<string, unknown>;
+    const timestamp = typeof envelope.timestamp === 'string' ? envelope.timestamp : undefined;
+    const recordedAtMs = timestamp ? Date.parse(timestamp) : undefined;
+    const info =
+      event.info && typeof event.info === 'object' ? (event.info as Record<string, unknown>) : null;
+    const counters = normalizeCodexTokenCountUsage(info?.last_token_usage);
+    if (!counters) continue;
+
+    const reportedWindow = Number(info?.model_context_window ?? event.model_context_window);
+    const contextWindow =
+      contextWindowFor(threadState.model) !== DEFAULT_CONTEXT_WINDOW
+        ? contextWindowFor(threadState.model)
+        : Number.isFinite(reportedWindow) && reportedWindow > 0
+          ? reportedWindow
+          : DEFAULT_CONTEXT_WINDOW;
+
+    latest = {
+      counters,
+      contextWindow,
+      model: threadState.model,
+      recordedAt: timestamp,
+      recordedAtMs: Number.isFinite(recordedAtMs) ? recordedAtMs : undefined,
+      threadId: threadState.id,
+      rolloutPath: threadState.rolloutPath,
+    };
+  }
+
+  return latest;
+}
+
+export function getCodexUsageBaselineFromDatabase(
   sessionId: string
-): { input: number; cached: number; output: number } | undefined {
+): CodexUsageCounters | undefined {
   const db = getDatabase();
+
+  const latestSnapshot = db
+    .prepare(
+      `
+      SELECT metadata_json as metadataJson
+      FROM session_events
+      WHERE session_id = ?
+        AND event_type = 'context_snapshot'
+        AND provider = 'codex'
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `
+    )
+    .get(sessionId) as { metadataJson?: string | null } | undefined;
+
+  const metadata = safeJsonParse<Record<string, unknown>>(latestSnapshot?.metadataJson, {});
+  const persistedBaseline = normalizeCodexUsageCounters(metadata.codexUsageBaseline);
+  if (persistedBaseline) {
+    return persistedBaseline;
+  }
+
   const row = db
     .prepare(
       `
@@ -292,7 +648,72 @@ function getCodexUsageBaselineFromDatabase(
   if (input <= 0 && cached <= 0 && output <= 0) {
     return undefined;
   }
+
+  const latestContext = db
+    .prepare(
+      `
+      SELECT total_tokens as totalTokens, context_window as contextWindow
+      FROM session_events
+      WHERE session_id = ?
+        AND event_type = 'context_snapshot'
+        AND provider = 'codex'
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `
+    )
+    .get(sessionId) as { totalTokens?: number; contextWindow?: number } | undefined;
+  const contextWindow = Number(latestContext?.contextWindow) || DEFAULT_CONTEXT_WINDOW;
+  const contextTokens = Number(latestContext?.totalTokens) || 0;
+  const reconstructedTotal = input + output;
+
+  // Old builds wrote clamped/polluted rows into usage_history. Do not let those
+  // rows become a fake Codex cumulative baseline after a backend restart.
+  if (contextTokens > 0 && reconstructedTotal > Math.max(contextWindow * 4, contextTokens * 20)) {
+    return undefined;
+  }
+
   return { input, cached, output };
+}
+
+function getAndroidDeviceSerialForSession(sessionId: string, userId?: string): string | null {
+  try {
+    const db = getDatabase();
+    const row = userId
+      ? (db
+          .prepare(
+            'SELECT android_device_serial as serial FROM sessions WHERE id = ? AND user_id = ?'
+          )
+          .get(sessionId, userId) as { serial?: string | null } | undefined)
+      : (db
+          .prepare('SELECT android_device_serial as serial FROM sessions WHERE id = ?')
+          .get(sessionId) as { serial?: string | null } | undefined);
+    return row?.serial?.trim() || null;
+  } catch {
+    // Older test schemas and first-boot migrations may not have this column yet.
+    return null;
+  }
+}
+
+function buildAndroidDeviceEnvForSession(
+  sessionId: string,
+  userId?: string
+): Record<string, string> {
+  const serial = getAndroidDeviceSerialForSession(sessionId, userId);
+  return serial
+    ? {
+        WEBUI_ANDROID_DEVICE_SERIAL: serial,
+        ANDROID_SERIAL: serial,
+      }
+    : {};
+}
+
+function buildAndroidDeviceContext(sessionId: string, userId: string): string | null {
+  const serial = getAndroidDeviceSerialForSession(sessionId, userId);
+  if (!serial) return null;
+  return `<system-reminder>
+Android test device selected for this Plum session: ${serial}
+Use the android-builder MCP tools for Android app build/install/launch/testing. Do not run raw adb or gradle from Bash. When an MCP tool accepts a serial, pass this selected serial unless the user explicitly chooses another device.
+</system-reminder>`;
 }
 
 /**
@@ -415,38 +836,13 @@ async function readSharedAgents(configHome: string): Promise<SharedAgent[]> {
 }
 
 async function readSharedSkills(configHome: string): Promise<SharedSkill[]> {
-  await syncExternalSkills(configHome);
-  const skillsDir = path.join(configHome, 'skills');
-  const skills: SharedSkill[] = [];
-  let entries: Array<{ name: string; isDirectory: () => boolean }> = [];
-
-  try {
-    entries = await fs.readdir(skillsDir, { withFileTypes: true });
-  } catch {
-    return skills;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.endsWith('.disabled')) continue;
-
-    const skillDir = path.join(skillsDir, entry.name);
-    const skillFile = path.join(skillDir, 'SKILL.md');
-    try {
-      const content = await fs.readFile(skillFile, 'utf-8');
-      const { frontmatter, body } = parseMarkdownFrontmatter(content);
-      skills.push({
-        name: frontmatter.name || entry.name,
-        content: body,
-        allowedTools: frontmatter['allowed-tools']?.split(',').map((tool) => tool.trim()),
-        model: frontmatter.model,
-      });
-    } catch {
-      // Skip missing or unreadable skills
-    }
-  }
-
-  return skills;
+  const skills = await listSkillLibrary(configHome, { kind: 'skill', enabledOnly: true });
+  return skills.map((skill) => ({
+    name: skill.name,
+    content: `---\ndescription: ${skill.description}\n---`,
+    allowedTools: skill.allowedTools,
+    model: skill.model,
+  }));
 }
 
 async function readSharedPlugins(configHome: string): Promise<SharedPlugin[]> {
@@ -833,6 +1229,93 @@ function formatSkillsSummary(skills: SharedSkill[], agents: SharedAgent[]): stri
   return parts.join('\n');
 }
 
+function truncateStyleTemplate(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.length <= STYLE_TEMPLATE_MAX_CHARS) return trimmed;
+  return `${trimmed.slice(0, STYLE_TEMPLATE_MAX_CHARS).trimEnd()}\n\n[Template truncated by WebUI: continue following the visible guidance and load the skill file if more detail is needed.]`;
+}
+
+async function buildSessionStyleContext(
+  sessionId: string,
+  userId: string,
+  cliProvider: CLIProvider
+): Promise<string | null> {
+  const db = getDatabase();
+  const selection = db
+    .prepare(
+      `SELECT design_style_skill as designStyleSkill,
+              writing_style_skill as writingStyleSkill
+       FROM sessions
+       WHERE id = ? AND user_id = ?`
+    )
+    .get(sessionId, userId) as
+    | { designStyleSkill: string | null; writingStyleSkill: string | null }
+    | undefined;
+
+  if (!selection?.designStyleSkill && !selection?.writingStyleSkill) {
+    return null;
+  }
+
+  const configHome = resolveConfigHome(cliProvider);
+  const lines: string[] = [];
+  lines.push('<session-style-library>');
+  lines.push(
+    'The following templates are active for this WebUI session. They override generic style defaults but do not override explicit user instructions in the current prompt.'
+  );
+
+  if (selection.designStyleSkill) {
+    const style = await readSkillLibraryItem(configHome, selection.designStyleSkill);
+    if (style?.enabled && style.libraryKind === 'design') {
+      lines.push('');
+      lines.push(`## Active UI Style Template: ${style.name}`);
+      lines.push(`Source: ~/.claude/skills/${style.baseName}/SKILL.md`);
+      if (style.description) lines.push(`Description: ${style.description}`);
+      lines.push(
+        'Apply this template whenever the user asks for frontend, WebUI, interface, visual design, layout, component, page, app, or styling work.'
+      );
+      lines.push('');
+      lines.push(truncateStyleTemplate(style.content));
+    }
+  }
+
+  if (selection.writingStyleSkill) {
+    const style = await readSkillLibraryItem(configHome, selection.writingStyleSkill);
+    if (style?.enabled && style.libraryKind === 'writing') {
+      const styleType = style.writingStyleType || 'persona';
+      lines.push('');
+      lines.push(
+        `## Active ${
+          styleType === 'author'
+            ? 'Author Style'
+            : styleType === 'prose'
+              ? 'Writing Style'
+              : 'Persona'
+        } Template: ${style.name}`
+      );
+      lines.push(`Source: ~/.claude/skills/${style.baseName}/SKILL.md`);
+      if (style.description) lines.push(`Description: ${style.description}`);
+      if (styleType === 'author') {
+        lines.push(
+          'Apply this template as an authorial prose influence for narrative, copy, and longer explanations. Do not claim to be the author, do not quote or recreate existing passages, and keep code, commands, filenames, and technical facts precise.'
+        );
+      } else if (styleType === 'prose') {
+        lines.push(
+          'Apply this template to prose quality, tone, copy, emails, explanations, and narrative text. Keep code, commands, filenames, and technical facts precise.'
+        );
+      } else {
+        lines.push(
+          'Apply this template as the assistant persona or voice for prose, explanations, copy, and narrative text. Keep code, commands, filenames, and technical facts precise.'
+        );
+      }
+      lines.push('');
+      lines.push(truncateStyleTemplate(style.content));
+    }
+  }
+
+  lines.push('</session-style-library>');
+  return lines.length > 3 ? lines.join('\n') : null;
+}
+
 /**
  * Write lightweight project context to the project's CLAUDE.md.
  * For Claude provider: just project info (skills are in global CLAUDE.md).
@@ -1089,6 +1572,65 @@ async function maybeCodexChatGptAuthArg(codexHome: string): Promise<string[]> {
   return [];
 }
 
+type CodexSessionIdentityEvent = {
+  type?: string;
+  id?: string;
+  sessionId?: string;
+  session_id?: string;
+  threadId?: string;
+  thread?: { id?: string };
+  payload?: {
+    id?: string;
+    sessionId?: string;
+    session_id?: string;
+    threadId?: string;
+    thread?: { id?: string };
+  };
+};
+
+export function extractCodexSessionId(event: CodexSessionIdentityEvent): string | null {
+  const eventType = (event.type || '').replace(/\//g, '.').toLowerCase();
+  const pickSessionId = (...values: Array<string | undefined>): string | null => {
+    for (const value of values) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) return trimmed;
+      }
+    }
+    return null;
+  };
+
+  if (eventType === 'session_meta') {
+    return pickSessionId(
+      event.id,
+      event.sessionId,
+      event.session_id,
+      event.thread?.id,
+      event.threadId,
+      event.payload?.id,
+      event.payload?.sessionId,
+      event.payload?.session_id,
+      event.payload?.thread?.id,
+      event.payload?.threadId
+    );
+  }
+
+  if (eventType === 'thread.started') {
+    return pickSessionId(
+      event.thread?.id,
+      event.threadId,
+      event.sessionId,
+      event.session_id,
+      event.payload?.thread?.id,
+      event.payload?.threadId,
+      event.payload?.sessionId,
+      event.payload?.session_id
+    );
+  }
+
+  return null;
+}
+
 async function describeImagesWithCodex(opts: {
   imagePaths: string[];
   userPrompt: string;
@@ -1311,6 +1853,57 @@ function isCodexNativeSlashCommand(message: string): boolean {
   return /^\/(?:goal|compact)(?:\s|$)/i.test(message.trim());
 }
 
+type OpenCodeSlashCommand =
+  | { type: 'command'; command: 'init' | 'review' | 'security-review'; args: string }
+  | { type: 'plan'; args: string }
+  | { type: 'compact' };
+
+function parseOpenCodeSlashCommand(message: string): OpenCodeSlashCommand | null {
+  const trimmed = message.trim();
+  const match = trimmed.match(/^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+
+  const name = match[1]?.toLowerCase();
+  const args = (match[2] ?? '').trim();
+  if (name === 'init' || name === 'review' || name === 'security-review') {
+    return { type: 'command', command: name, args };
+  }
+  if (name === 'plan') {
+    return { type: 'plan', args };
+  }
+  if (name === 'compact') {
+    return { type: 'compact' };
+  }
+  return null;
+}
+
+function normalizeOpenCodeTodoStatus(status: unknown): 'pending' | 'in_progress' | 'completed' {
+  if (status === 'in_progress') return 'in_progress';
+  if (status === 'completed' || status === 'cancelled' || status === 'canceled') return 'completed';
+  return 'pending';
+}
+
+function summarizeOpenCodeDiff(diff: unknown): string {
+  if (!Array.isArray(diff) || diff.length === 0) return 'No file changes reported.';
+  const files = diff
+    .map((item) => {
+      const entry = item as {
+        file?: unknown;
+        status?: unknown;
+        additions?: unknown;
+        deletions?: unknown;
+      };
+      const file = typeof entry.file === 'string' ? entry.file : 'unknown';
+      const status = typeof entry.status === 'string' ? entry.status : 'modified';
+      const additions = typeof entry.additions === 'number' ? entry.additions : 0;
+      const deletions = typeof entry.deletions === 'number' ? entry.deletions : 0;
+      return `${file} (${status}, +${additions}/-${deletions})`;
+    })
+    .slice(0, 12);
+  const suffix = diff.length > files.length ? `\n...and ${diff.length - files.length} more` : '';
+  return `OpenCode diff updated:\n${files.map((file) => `- ${file}`).join('\n')}${suffix}`;
+}
+
 interface UsageInfo {
   input_tokens?: number;
   output_tokens?: number;
@@ -1427,6 +2020,7 @@ interface ClaudeProcess {
   contextInputTokens?: number;
   contextCacheReadTokens?: number;
   contextCacheCreationTokens?: number;
+  contextOutputTokens?: number;
   userId: string;
   workingDirectory: string;
   claudeSessionId: string | null;
@@ -1439,9 +2033,12 @@ interface ClaudeProcess {
   currentToolName: string | null;
   currentToolId: string | null; // Tool use ID from Claude
   currentToolInput: string; // Accumulates JSON input during tool use
+  currentActivitySummary: string | null;
   pendingToolResults: Map<string, { toolName: string; input: unknown }>; // Track tools awaiting results
   // Agent tracking
   currentAgentType: string | null;
+  currentAgentDescription: string | null;
+  subagentRuns: Map<string, SubagentRun>;
   // Usage tracking
   model: string;
   contextWindow: number;
@@ -1452,6 +2049,13 @@ interface ClaudeProcess {
   totalCostUsd: number;
   previousTotalCostUsd: number; // For calculating per-turn cost
   turnCostUsd?: number;
+  lastContextSnapshot?: {
+    totalTokens: number;
+    contextWindow: number;
+    contextUsedPercentRaw: number;
+    model: string;
+    recordedAt: number;
+  };
   // Context reminder flag for resumed sessions
   needsWorkingDirReminder: boolean;
   contextReminder: {
@@ -1468,11 +2072,13 @@ interface ClaudeProcess {
   pendingPermissionDenials: PermissionDenial[] | null;
   sharedContextInjected: boolean;
   modePromptInjected: SessionMode | null;
+  androidDeviceSerialInjected?: string | null;
   lastContextLimitAt?: number;
   codexIdle?: boolean; // True when codex process exited after turn.completed, awaiting respawn
   // Codex CLI 0.130+ persists sessions at ~/.codex/sessions/<uuid>.jsonl. Once captured
-  // from the first `thread.started` event, we use `codex exec resume <id>` on respawn
-  // for native context continuity instead of transcript replay.
+  // from the first `session_meta` (or older `thread.started`) event, we use
+  // `codex exec resume <id>` on respawn for native context continuity instead
+  // of transcript replay.
   codexSessionId?: string;
   // Image paths to attach via `--image` on the next codex respawn. Populated by
   // sendMessage when codex is the provider, consumed (and cleared) by respawnCodexProcess.
@@ -1480,12 +2086,13 @@ interface ClaudeProcess {
   // Dedicated Codex exec workflow to use for the next respawn instead of the
   // normal chat prompt, e.g. `codex exec review`.
   codexPendingExecCommand?: { type: 'review'; args: string[]; prompt?: string };
-  // Codex `exec` cannot accept another stdin prompt after the first EOF. User
-  // messages submitted while a turn is still running are stored here and
-  // dispatched FIFO as fresh `codex exec` turns once the child exits.
-  codexQueuedTurns?: CodexPreparedTurn[];
-  codexQueueDraining?: boolean;
-  codexPreemptingForQueuedTurn?: boolean;
+  // Codex `exec` cannot accept another stdin prompt after the first EOF. A
+  // follow-up submitted while a turn is still running is held as the next turn
+  // and dispatched once the active child exits. This intentionally keeps only
+  // the latest follow-up instead of a FIFO queue.
+  codexPendingSteerTurn?: CodexPreparedTurn;
+  codexSteerDraining?: boolean;
+  codexPreemptingForSteer?: boolean;
   codexPreemptKillTimer?: ReturnType<typeof setTimeout>;
   // Track tool callIDs we've already emitted 'started' for during a codex turn, mirroring
   // the opencode emittedTools pattern. Reset at the start of each turn.
@@ -1497,8 +2104,16 @@ interface ClaudeProcess {
   // should be ~50k-per-turn API calls.
   codexLastReportedTokens?: { input: number; cached: number; output: number };
   codexLastPromptEstimateTokens?: number;
+  codexLastPromptPrefix?: string;
+  codexExecStartedAtMs?: number;
   codexSawTokenCountThisTurn?: boolean;
+  codexLastCompactAtMs?: number;
   codexLastContextSummary?: string | null;
+  codexCurrentExecUsedResume?: boolean;
+  codexLastTokenUsage?: CodexUsageCounters;
+  codexLastObservedContextUsage?: CodexUsageCounters;
+  codexLastObservedContextWindow?: number;
+  codexTotalTokenUsage?: CodexUsageCounters;
   // Mistral Vibe is per-turn like Codex, but prompt is delivered via argv (-p TEXT)
   // not stdin. We always start `idle` and spawn a fresh child for each message.
   vibeIdle?: boolean;
@@ -1515,12 +2130,16 @@ interface ClaudeProcess {
   // Server-backed providers (opencode in HTTP/SSE mode) have no child process.
   // `process` is a no-op stub; all lifecycle goes through HTTP + SSE subscription.
   serverBacked?: boolean;
+  opencodeIdle?: boolean;
+  opencodeQueuedTurns?: OpenCodePreparedTurn[];
+  opencodeQueueDraining?: boolean;
   // Accumulates content per opencode part.id so we can emit streaming deltas
-  // and a final isComplete=true when the session goes idle.
-  partStreams?: Map<
-    string,
-    { type: 'text' | 'reasoning'; text: string; cleaned?: string; thoughtState?: ThoughtStripState }
-  >;
+  // and flush each opencode assistant message as a separate WebUI message.
+  partStreams?: Map<string, OpenCodePartStreamEntry>;
+  opencodeActiveMessageId?: string | null;
+  opencodeMessageOrder?: string[];
+  opencodeLastManualCompactAt?: number;
+  opencodeCompactionText?: string;
   // Track tool callIDs we've already emitted 'started' for, so we don't
   // re-emit on every status transition (pending → running → completed).
   emittedTools?: Set<string>;
@@ -1540,6 +2159,16 @@ interface CodexPreparedTurn {
   codexNativeSlashCommand: boolean;
 }
 
+interface OpenCodePreparedTurn {
+  queueId: string;
+  queuedAt: string;
+  originalMessage: string;
+  messageForClaude: string;
+  attachments?: FileAttachmentData[];
+  updateLastMessage: boolean;
+  opencodeSlashCommand: OpenCodeSlashCommand | null;
+}
+
 export interface SessionRuntimeSnapshot {
   running: boolean;
   provider: CLIProvider | null;
@@ -1551,6 +2180,9 @@ export interface SessionRuntimeSnapshot {
   streaming: boolean;
   currentToolName: string | null;
   currentAgentType: string | null;
+  currentAgentDescription: string | null;
+  subagents: SubagentRun[];
+  activitySummary: string | null;
   queueDepth: number;
   queueItems: Array<{
     id: string;
@@ -1560,6 +2192,21 @@ export interface SessionRuntimeSnapshot {
   }>;
   lastActivityAt: string | null;
   disconnectedAt: string | null;
+  usage: {
+    sessionId: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    totalTokens: number;
+    contextWindow: number;
+    contextUsedPercent: number;
+    contextUsedPercentRaw: number;
+    contextExceeded: boolean;
+    totalCostUsd: number;
+    model: string;
+    recordedAt: string;
+  } | null;
 }
 
 export class ClaudeProcessManager {
@@ -1578,11 +2225,6 @@ export class ClaudeProcessManager {
     io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>
   ) {
     this.io = io;
-
-    // Start cleanup timer for disconnected sessions (every 60 seconds)
-    setInterval(() => {
-      this.cleanupDisconnectedSessions();
-    }, 60 * 1000);
   }
 
   // Map UI modes to Claude CLI permission flags (legacy flow)
@@ -1698,6 +2340,293 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.lastActivityAt = Date.now();
   }
 
+  private compactActivityText(value: string | null | undefined, maxLength = 120): string | null {
+    const normalized = value?.replace(/\s+/g, ' ').trim();
+    if (!normalized) return null;
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+  }
+
+  private serializeResult(value: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string') return this.compactActivityText(value, 6000) || undefined;
+    try {
+      return this.compactActivityText(JSON.stringify(value, null, 2), 6000) || undefined;
+    } catch {
+      return String(value);
+    }
+  }
+
+  private getStringField(source: unknown, keys: string[]): string | undefined {
+    if (!source || typeof source !== 'object') return undefined;
+    const record = source as Record<string, unknown>;
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return undefined;
+  }
+
+  private getStringListField(source: unknown, keys: string[]): string[] {
+    if (!source || typeof source !== 'object') return [];
+    const record = source as Record<string, unknown>;
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return [value.trim()];
+      if (Array.isArray(value)) {
+        return value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean);
+      }
+    }
+    return [];
+  }
+
+  private syncCurrentAgentState(proc: ClaudeProcess): void {
+    const active = Array.from(proc.subagentRuns.values())
+      .filter((run) => run.status === 'started')
+      .sort((a, b) => b.startedAt - a.startedAt)[0];
+    proc.currentAgentType = active?.agentType ?? null;
+    proc.currentAgentDescription = active?.description ?? null;
+    if (!active && !proc.currentToolName && !proc.isStreaming) {
+      proc.currentActivitySummary = null;
+    }
+  }
+
+  private emitSubagentRun(sessionId: string, run: SubagentRun): void {
+    const event = {
+      sessionId,
+      agentId: run.id,
+      agentType: run.agentType,
+      description: run.description,
+      status: run.status,
+      startedAt: run.startedAt,
+      completedAt: run.completedAt,
+      result: run.result,
+      error: run.error,
+      toolId: run.toolId,
+      externalAgentId: run.externalAgentId,
+      timestamp: run.completedAt ?? run.startedAt,
+    };
+    this.bufferMessage(sessionId, 'agent', event);
+    this.io.to(`session:${sessionId}`).emit('session:agent', event);
+  }
+
+  private trimSubagentRuns(proc: ClaudeProcess, keep = 30): void {
+    if (proc.subagentRuns.size <= keep) return;
+    const runs = Array.from(proc.subagentRuns.values()).sort((a, b) => {
+      if (a.status === 'started' && b.status !== 'started') return -1;
+      if (a.status !== 'started' && b.status === 'started') return 1;
+      return (b.completedAt ?? b.startedAt) - (a.completedAt ?? a.startedAt);
+    });
+    const keepIds = new Set(runs.slice(0, keep).map((run) => run.id));
+    for (const id of proc.subagentRuns.keys()) {
+      if (!keepIds.has(id)) proc.subagentRuns.delete(id);
+    }
+  }
+
+  private startSubagentRun(
+    sessionId: string,
+    proc: ClaudeProcess,
+    input: {
+      agentId?: string;
+      agentType: string;
+      description?: string;
+      toolId?: string | null;
+      externalAgentId?: string;
+      startedAt?: number;
+    }
+  ): SubagentRun {
+    const now = input.startedAt ?? Date.now();
+    const id = input.agentId || input.toolId || `${input.agentType}-${nanoid(8)}`;
+    const existing = proc.subagentRuns.get(id);
+    const run: SubagentRun = {
+      ...existing,
+      id,
+      agentType: input.agentType,
+      description: input.description || existing?.description,
+      status: 'started',
+      startedAt: existing?.startedAt ?? now,
+      toolId: input.toolId || existing?.toolId,
+      externalAgentId: input.externalAgentId || existing?.externalAgentId,
+      provider: proc.cliProvider,
+    };
+    proc.subagentRuns.set(id, run);
+    proc.currentAgentType = run.agentType;
+    proc.currentAgentDescription = run.description ?? null;
+    proc.currentActivitySummary = run.description || `Running ${run.agentType} agent`;
+    this.trimSubagentRuns(proc);
+    this.emitSubagentRun(sessionId, run);
+    return run;
+  }
+
+  private findSubagentRun(
+    proc: ClaudeProcess,
+    match?: { agentId?: string; toolId?: string; externalAgentId?: string; agentType?: string }
+  ): SubagentRun | undefined {
+    const runs = Array.from(proc.subagentRuns.values());
+    if (match?.agentId) {
+      const byId = proc.subagentRuns.get(match.agentId);
+      if (byId) return byId;
+    }
+    if (match?.toolId) {
+      const byTool = runs.find((run) => run.toolId === match.toolId);
+      if (byTool) return byTool;
+    }
+    if (match?.externalAgentId) {
+      const byExternal = runs.find((run) => run.externalAgentId === match.externalAgentId);
+      if (byExternal) return byExternal;
+    }
+    return runs
+      .filter(
+        (run) =>
+          run.status === 'started' && (!match?.agentType || run.agentType === match.agentType)
+      )
+      .sort((a, b) => b.startedAt - a.startedAt)[0];
+  }
+
+  private completeSubagentRun(
+    sessionId: string,
+    proc: ClaudeProcess,
+    match: { agentId?: string; toolId?: string; externalAgentId?: string; agentType?: string },
+    update: {
+      status?: SubagentRunStatus;
+      result?: unknown;
+      error?: unknown;
+      completedAt?: number;
+    } = {}
+  ): void {
+    const existing = this.findSubagentRun(proc, match);
+    if (!existing) return;
+    const status = update.status ?? (update.error ? 'error' : 'completed');
+    const run: SubagentRun = {
+      ...existing,
+      status,
+      completedAt: update.completedAt ?? Date.now(),
+      result: this.serializeResult(update.result) ?? existing.result,
+      error: this.serializeResult(update.error) ?? existing.error,
+    };
+    proc.subagentRuns.set(run.id, run);
+    this.emitSubagentRun(sessionId, run);
+    this.syncCurrentAgentState(proc);
+  }
+
+  private completeActiveSubagents(
+    sessionId: string,
+    proc: ClaudeProcess,
+    update: { status?: SubagentRunStatus; result?: unknown; error?: unknown } = {}
+  ): void {
+    const activeRuns = Array.from(proc.subagentRuns.values()).filter(
+      (run) => run.status === 'started'
+    );
+    for (const run of activeRuns) {
+      this.completeSubagentRun(sessionId, proc, { agentId: run.id }, update);
+    }
+  }
+
+  private snapshotSubagentRuns(proc: ClaudeProcess): SubagentRun[] {
+    return Array.from(proc.subagentRuns.values())
+      .sort((a, b) => {
+        if (a.status === 'started' && b.status !== 'started') return -1;
+        if (a.status !== 'started' && b.status === 'started') return 1;
+        return (b.completedAt ?? b.startedAt) - (a.completedAt ?? a.startedAt);
+      })
+      .slice(0, 30);
+  }
+
+  private describeToolActivity(toolName: string, input?: unknown): string {
+    const rawName = toolName || 'tool';
+    const normalized = rawName.replace(/[_\s-]/g, '').toLowerCase();
+    const inputObject =
+      input && typeof input === 'object' && !Array.isArray(input)
+        ? (input as Record<string, unknown>)
+        : null;
+    const command =
+      typeof inputObject?.command === 'string'
+        ? this.compactActivityText(inputObject.command, 72)
+        : null;
+    const path =
+      typeof inputObject?.file_path === 'string'
+        ? this.compactActivityText(inputObject.file_path.split('/').pop(), 48)
+        : typeof inputObject?.path === 'string'
+          ? this.compactActivityText(inputObject.path.split('/').pop(), 48)
+          : null;
+    const query =
+      typeof inputObject?.query === 'string'
+        ? this.compactActivityText(inputObject.query, 64)
+        : null;
+
+    if (
+      normalized.includes('bash') ||
+      normalized.includes('shell') ||
+      normalized.includes('command')
+    ) {
+      return command ? `Running command: ${command}` : 'Running command';
+    }
+    if (
+      normalized.includes('grep') ||
+      normalized.includes('search') ||
+      normalized.includes('glob')
+    ) {
+      return query ? `Searching: ${query}` : 'Searching the workspace';
+    }
+    if (normalized.includes('read')) {
+      return path ? `Reading ${path}` : 'Reading files';
+    }
+    if (
+      normalized.includes('write') ||
+      normalized.includes('edit') ||
+      normalized.includes('patch') ||
+      normalized.includes('filechange')
+    ) {
+      return path ? `Editing ${path}` : 'Editing files';
+    }
+    if (normalized.includes('todo')) {
+      return 'Updating tasks';
+    }
+    if (normalized.includes('web')) {
+      return query ? `Searching the web: ${query}` : 'Searching the web';
+    }
+    if (normalized.includes('mcp')) {
+      return `Using ${rawName}`;
+    }
+    return `Using ${rawName}`;
+  }
+
+  private getActivitySummary(
+    proc: ClaudeProcess,
+    busy: boolean,
+    queueDepth: number
+  ): string | null {
+    if (proc.currentToolName) {
+      return this.compactActivityText(
+        proc.currentActivitySummary || this.describeToolActivity(proc.currentToolName)
+      );
+    }
+    const activeSubagents = Array.from(proc.subagentRuns.values()).filter(
+      (run) => run.status === 'started'
+    );
+    if (activeSubagents.length > 1) {
+      return `${activeSubagents.length} subagents running`;
+    }
+    if (proc.currentAgentDescription) {
+      return this.compactActivityText(proc.currentAgentDescription);
+    }
+    if (proc.currentAgentType) {
+      return this.compactActivityText(`Running ${proc.currentAgentType} agent`);
+    }
+    if (proc.isStreaming) {
+      return 'Writing response';
+    }
+    if (proc.currentActivitySummary && busy) {
+      return this.compactActivityText(proc.currentActivitySummary);
+    }
+    if (queueDepth > 0) {
+      return `${queueDepth} turn${queueDepth === 1 ? '' : 's'} queued`;
+    }
+    if (busy) {
+      return proc.cliProvider === 'codex' ? 'Thinking through the turn' : 'Agent working';
+    }
+    return null;
+  }
+
   // Wrapper to emit and buffer status
   private emitStatus(
     sessionId: string,
@@ -1718,6 +2647,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       input?: unknown;
       result?: string;
       error?: string;
+      actionSummary?: ToolActionSummary;
     }
   ): void {
     // Stamp with the backend clock so the frontend can sort tools against
@@ -1725,7 +2655,33 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     // saveAssistantMessage's `createdAt`). Mixing FE Date.now() with BE
     // ISO timestamps caused the timeline to pile tools at the bottom
     // whenever the browser clock drifted ahead of the server.
-    const stamped = { ...data, timestamp: Date.now() };
+    const proc = this.processes.get(sessionId);
+    const actionSummary =
+      data.actionSummary ??
+      (data.status === 'started'
+        ? getFallbackToolActionSummary(data.toolName, data.input)
+        : undefined);
+    const stamped = {
+      ...data,
+      ...(actionSummary ? { actionSummary } : {}),
+      timestamp: Date.now(),
+    };
+
+    if (proc) {
+      if (data.status === 'started') {
+        proc.currentToolName = data.toolName;
+        proc.currentToolId = data.toolId || proc.currentToolId;
+        proc.currentActivitySummary = this.describeToolActivity(data.toolName, data.input);
+      } else if (data.status === 'error') {
+        proc.currentActivitySummary = `${data.toolName} failed`;
+        if (!proc.currentAgentType && proc.currentToolName === data.toolName) {
+          proc.currentToolName = null;
+          proc.currentToolId = null;
+        }
+      } else if (data.status === 'completed') {
+        proc.currentActivitySummary = this.describeToolActivity(data.toolName, data.input);
+      }
+    }
     this.bufferMessage(sessionId, 'tool_use', stamped);
     this.io.to(`session:${sessionId}`).emit('session:tool_use', stamped);
   }
@@ -1739,16 +2695,208 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   private emitCompact(
     sessionId: string,
     data: {
+      id?: string;
       sessionId: string;
       message: string;
       summary?: string;
       clear?: boolean;
       reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
       error?: string;
+      createdAt?: string;
     }
   ): void {
-    this.bufferMessage(sessionId, 'compact', data);
-    this.io.to(`session:${sessionId}`).emit('session:compact', data);
+    const event = {
+      ...data,
+      id: data.id || `compact-${nanoid()}`,
+      createdAt: data.createdAt || new Date().toISOString(),
+    };
+    this.persistCompactEvent(sessionId, event);
+    this.bufferMessage(sessionId, 'compact', event);
+    this.io.to(`session:${sessionId}`).emit('session:compact', event);
+  }
+
+  private toSqliteTimestamp(iso: string): string {
+    // Preserve millisecond precision so same-second events remain sortable.
+    return new Date(iso).toISOString().slice(0, 23).replace('T', ' ');
+  }
+
+  private persistCompactEvent(
+    sessionId: string,
+    event: {
+      id: string;
+      sessionId: string;
+      message: string;
+      summary?: string;
+      clear?: boolean;
+      reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+      error?: string;
+      createdAt: string;
+    }
+  ): void {
+    const proc = this.processes.get(sessionId);
+    const db = getDatabase();
+    const session =
+      proc ||
+      (db
+        .prepare('SELECT user_id as userId, cli_provider as cliProvider FROM sessions WHERE id = ?')
+        .get(sessionId) as { userId: string; cliProvider: CLIProvider | null } | undefined);
+    if (!session) return;
+
+    const userId = 'userId' in session ? session.userId : proc?.userId;
+    if (!userId) return;
+
+    const provider = proc?.cliProvider || ('cliProvider' in session ? session.cliProvider : null);
+    const model = proc?.model || null;
+    const content = `${event.message}${event.summary ? `\n\n${event.summary}` : ''}`;
+    const createdAt = this.toSqliteTimestamp(event.createdAt);
+
+    try {
+      const insertEvent = db.prepare(
+        `
+        INSERT OR IGNORE INTO session_events (
+          id, user_id, session_id, event_type, provider, model, reason, message,
+          summary, metadata_json, created_at
+        )
+        VALUES (?, ?, ?, 'compact', ?, ?, ?, ?, ?, ?, ?)
+      `
+      );
+      const insertMessage = db.prepare(
+        `
+        INSERT OR IGNORE INTO messages (id, session_id, role, content, created_at)
+        VALUES (?, ?, 'system', ?, ?)
+      `
+      );
+      const updateSession = db.prepare(
+        'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      );
+
+      db.transaction(() => {
+        insertEvent.run(
+          event.id,
+          userId,
+          sessionId,
+          provider,
+          model,
+          event.reason || null,
+          event.message,
+          event.summary || null,
+          JSON.stringify({
+            clear: !!event.clear,
+            error: event.error || null,
+          }),
+          createdAt
+        );
+        insertMessage.run(event.id, sessionId, content, createdAt);
+        updateSession.run(event.message.substring(0, 200), sessionId);
+      })();
+    } catch (error) {
+      console.error('[EVENTS] Failed to persist compact event:', error);
+    }
+  }
+
+  private recordContextSnapshot(
+    sessionId: string,
+    proc: ClaudeProcess,
+    usageData: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      totalTokens: number;
+      contextWindow: number;
+      contextUsedPercent: number;
+      contextUsedPercentRaw?: number;
+      contextExceeded?: boolean;
+      totalCostUsd: number;
+      model: string;
+    }
+  ): void {
+    if (usageData.contextWindow <= 0) return;
+
+    const now = Date.now();
+    const rawPercent = usageData.contextUsedPercentRaw ?? usageData.contextUsedPercent;
+    const last = proc.lastContextSnapshot;
+    const shouldRecord =
+      !last ||
+      usageData.model !== last.model ||
+      usageData.contextWindow !== last.contextWindow ||
+      (usageData.totalTokens === 0 && last.totalTokens > 0) ||
+      Math.abs(usageData.totalTokens - last.totalTokens) >= 1000 ||
+      Math.abs(rawPercent - last.contextUsedPercentRaw) >= 1 ||
+      (usageData.totalTokens !== last.totalTokens && now - last.recordedAt >= 30_000);
+
+    if (!shouldRecord) return;
+
+    const eventId = `ctx-${nanoid()}`;
+    const createdAt = this.toSqliteTimestamp(new Date(now).toISOString());
+
+    try {
+      const db = getDatabase();
+      db.prepare(
+        `
+        INSERT INTO session_events (
+          id, user_id, session_id, event_type, provider, model,
+          input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+          total_tokens, context_window, context_used_percent, context_exceeded,
+          metadata_json, created_at
+        )
+        VALUES (?, ?, ?, 'context_snapshot', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+      ).run(
+        eventId,
+        proc.userId,
+        sessionId,
+        proc.cliProvider,
+        usageData.model,
+        usageData.inputTokens,
+        usageData.outputTokens,
+        usageData.cacheReadTokens,
+        usageData.cacheCreationTokens,
+        usageData.totalTokens,
+        usageData.contextWindow,
+        rawPercent,
+        usageData.contextExceeded ? 1 : 0,
+        JSON.stringify({
+          cappedPercent: usageData.contextUsedPercent,
+          totalCostUsd: usageData.totalCostUsd,
+          codexUsageBaseline:
+            proc.cliProvider === 'codex' ? proc.codexLastReportedTokens || null : undefined,
+          codexLastTokenUsage:
+            proc.cliProvider === 'codex' ? proc.codexLastTokenUsage || null : undefined,
+          codexTotalTokenUsage:
+            proc.cliProvider === 'codex' ? proc.codexTotalTokenUsage || null : undefined,
+          codexUsageMode:
+            proc.cliProvider === 'codex'
+              ? proc.codexCurrentExecUsedResume
+                ? 'resume'
+                : 'fresh-exec'
+              : undefined,
+        }),
+        createdAt
+      );
+      proc.lastContextSnapshot = {
+        totalTokens: usageData.totalTokens,
+        contextWindow: usageData.contextWindow,
+        contextUsedPercentRaw: rawPercent,
+        model: usageData.model,
+        recordedAt: now,
+      };
+    } catch (error) {
+      console.error('[EVENTS] Failed to record context snapshot:', error);
+    }
+  }
+
+  private resolveObservedContextWindow(
+    model: string | null | undefined,
+    reportedWindow?: number | null
+  ): number {
+    const resolvedWindow = contextWindowFor(model);
+    if (resolvedWindow !== DEFAULT_CONTEXT_WINDOW) {
+      return resolvedWindow;
+    }
+    return typeof reportedWindow === 'number' && reportedWindow > 0
+      ? reportedWindow
+      : resolvedWindow;
   }
 
   // Get buffered messages since a timestamp for reconnection
@@ -1803,30 +2951,6 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     }
   }
 
-  // Cleanup sessions that have been disconnected too long
-  private cleanupDisconnectedSessions(): void {
-    const now = Date.now();
-    for (const [sessionId, proc] of this.processes.entries()) {
-      if (proc.disconnectedAt && now - proc.disconnectedAt > DISCONNECT_TIMEOUT_MS) {
-        console.log(`Cleaning up disconnected session ${sessionId} (timeout exceeded)`);
-        this.stopSessionInternal(sessionId);
-      }
-    }
-  }
-
-  private stopSessionInternal(sessionId: string): void {
-    const proc = this.processes.get(sessionId);
-    if (!proc) return;
-
-    proc.process.stdin?.end();
-    setTimeout(() => {
-      if (this.processes.has(sessionId)) {
-        proc.process.kill();
-        this.cleanupProcess(sessionId);
-      }
-    }, 2000);
-  }
-
   async startSession(sessionId: string, userId: string, mode?: SessionMode): Promise<void> {
     const db = getDatabase();
 
@@ -1856,9 +2980,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     const cliProvider: CLIProvider = session.cli_provider || 'codex';
     const providerConfig = CLI_PROVIDERS[cliProvider];
     const configHome = resolveConfigHome(cliProvider);
-    const selectedModel = await getCliModelForUser(userId, cliProvider);
-    const selectedReasoning = await getCliReasoningForUser(userId, cliProvider);
-    const selectedServiceTier = getCliServiceTierForUser(userId, cliProvider);
+    const selectedModel = await getCliModelForSession(userId, cliProvider, sessionId);
+    const selectedReasoning = await getCliReasoningForSession(userId, cliProvider, sessionId);
+    const selectedServiceTier = await getCliServiceTierForSession(userId, cliProvider, sessionId);
 
     console.log(
       `[MODE] Starting session ${sessionId} with mode ${effectiveMode}, provider ${cliProvider}`
@@ -1881,7 +3005,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       // Server-backed path: opencode HTTP/SSE via the singleton `opencode serve`.
       // Unlike claude/codex, there is no per-session child process to own; events
       // arrive over the shared SSE subscription and are demultiplexed by sessionID.
-      await opencodeServer.ensureStarted();
+      await opencodeServer.ensureStarted(userId);
 
       let remoteId = isResuming && session.claude_session_id ? session.claude_session_id : null;
       if (remoteId && !(await opencodeServer.sessionExists(remoteId))) {
@@ -1894,6 +3018,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           mode: effectiveMode,
           variant: selectedReasoning,
           allowedDirectories: allowedDirs,
+          userId,
         });
         db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(
           remoteId,
@@ -1925,8 +3050,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         currentToolName: null,
         currentToolId: null,
         currentToolInput: '',
+        currentActivitySummary: null,
         pendingToolResults: new Map(),
         currentAgentType: null,
+        currentAgentDescription: null,
+        subagentRuns: new Map(),
         model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
         contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
         turnInputTokens: 0,
@@ -1951,7 +3079,10 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         serverBacked: true,
+        opencodeIdle: true,
         partStreams: new Map(),
+        opencodeActiveMessageId: null,
+        opencodeMessageOrder: [],
         emittedTools: new Set(),
       };
 
@@ -2013,8 +3144,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         currentToolName: null,
         currentToolId: null,
         currentToolInput: '',
+        currentActivitySummary: null,
         pendingToolResults: new Map(),
         currentAgentType: null,
+        currentAgentDescription: null,
+        subagentRuns: new Map(),
         model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
         contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
         turnInputTokens: 0,
@@ -2090,8 +3224,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         currentToolName: null,
         currentToolId: null,
         currentToolInput: '',
+        currentActivitySummary: null,
         pendingToolResults: new Map(),
         currentAgentType: null,
+        currentAgentDescription: null,
+        subagentRuns: new Map(),
         model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
         contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
         turnInputTokens: 0,
@@ -2226,13 +3363,14 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     extraEnv.WEBUI_SESSION_MODE = effectiveMode;
     extraEnv.WEBUI_CONFIG_HOME = configHome;
     Object.assign(extraEnv, buildIntegrationEnv());
+    Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, userId));
     // Use regular spawn for CLI providers
     const proc: ChildProcess = cpSpawn(providerConfig.command, args, {
       cwd: session.working_directory,
       env: {
         ...process.env,
         ...extraEnv,
-        // Pass session ID so Claude can use it for image generation and permissions
+        // Pass session ID so provider integrations can attribute image generation and permissions.
         WEBUI_SESSION_ID: sessionId,
         // Pass backend URL for permission-prompt script
         WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
@@ -2261,9 +3399,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       currentToolName: null,
       currentToolId: null,
       currentToolInput: '',
+      currentActivitySummary: null,
       pendingToolResults: new Map(),
       // Agent tracking
       currentAgentType: null,
+      currentAgentDescription: null,
+      subagentRuns: new Map(),
       // Usage tracking defaults
       model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
       contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
@@ -2443,6 +3584,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       // shared id / thread context
       threadId?: string;
       turnId?: string;
+      agentId?: string;
+      agentType?: string;
+      subagentType?: string;
+      description?: string;
+      result?: unknown;
+      error?: unknown;
       // item payloads
       item?: {
         id?: string;
@@ -2526,19 +3673,20 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
     switch (eventType) {
       // ── Thread lifecycle ────────────────────────────────────────────────
+      case 'session_meta':
       case 'thread.started': {
-        const threadId = data.thread?.id || data.threadId;
-        if (threadId) {
+        const codexSessionId = extractCodexSessionId(data);
+        if (codexSessionId) {
           const proc = this.processes.get(sessionId);
           if (proc && proc.cliProvider === 'codex' && !proc.codexSessionId) {
-            proc.codexSessionId = threadId;
-            proc.claudeSessionId = threadId;
+            proc.codexSessionId = codexSessionId;
+            proc.claudeSessionId = codexSessionId;
             const db = getDatabase();
             db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(
-              threadId,
+              codexSessionId,
               sessionId
             );
-            console.log(`[CODEX] Captured session id ${threadId} for ${sessionId}`);
+            console.log(`[CODEX] Captured session id ${codexSessionId} for ${sessionId}`);
           }
         }
         return null;
@@ -2552,7 +3700,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           const codexProc = this.processes.get(sessionId);
           const reportedWindow = data.model_context_window;
           if (codexProc && typeof reportedWindow === 'number' && reportedWindow > 0) {
-            codexProc.contextWindow = reportedWindow;
+            codexProc.contextWindow = this.resolveObservedContextWindow(
+              codexProc.model,
+              reportedWindow
+            );
+          }
+          if (codexProc) {
+            codexProc.currentActivitySummary = 'Thinking through the turn';
           }
         }
         this.io.to(`session:${sessionId}`).emit('session:thinking', {
@@ -2571,14 +3725,14 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           }
 
           const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
-          if (summary && summary !== 'none' && summary !== codexProc.codexLastContextSummary) {
-            codexProc.codexLastContextSummary = summary;
-            this.resetCurrentContextUsage(codexProc);
-            this.emitUsage(sessionId, codexProc);
+          const compactSummary = this.normalizeCodexCompactSummary(summary);
+          if (compactSummary && compactSummary !== codexProc.codexLastContextSummary) {
+            codexProc.codexLastContextSummary = compactSummary;
+            this.applyCodexCompactContextUsage(sessionId, codexProc, data);
             this.emitCompact(sessionId, {
               sessionId,
               message: 'Codex compacted prior context and resumed from a summary.',
-              summary,
+              summary: compactSummary,
               reason: 'auto-compact',
             });
           } else if (summary) {
@@ -2596,23 +3750,86 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
         const reportedWindow = data.info?.model_context_window ?? data.model_context_window;
         if (typeof reportedWindow === 'number' && reportedWindow > 0) {
-          codexProc.contextWindow = reportedWindow;
+          codexProc.contextWindow = this.resolveObservedContextWindow(
+            codexProc.model,
+            reportedWindow
+          );
         }
 
         // `last_token_usage` is the current model-call prompt, which is what a
         // context window meter should show. `total_token_usage` is summed across
         // all model calls in the Codex exec turn and can legitimately exceed the
         // model context window; that belongs in analytics/cost, not the context bar.
+        const totalUsage = data.info?.total_token_usage;
+        if (totalUsage) {
+          codexProc.codexTotalTokenUsage = {
+            input: totalUsage.input_tokens ?? 0,
+            cached: totalUsage.cached_input_tokens ?? 0,
+            output: (totalUsage.output_tokens ?? 0) + (totalUsage.reasoning_output_tokens ?? 0),
+          };
+        }
         const lastUsage = data.info?.last_token_usage;
         if (lastUsage) {
           const contextInputTotal = lastUsage.input_tokens ?? 0;
           const contextCached = Math.min(lastUsage.cached_input_tokens ?? 0, contextInputTotal);
-          codexProc.contextInputTokens = Math.max(contextInputTotal - contextCached, 0);
-          codexProc.contextCacheReadTokens = contextCached;
-          codexProc.contextCacheCreationTokens = 0;
+          const contextOutput = lastUsage.output_tokens ?? 0;
+          const nextContextUsage = {
+            input: contextInputTotal,
+            cached: contextCached,
+            output: contextOutput,
+          };
+          this.maybeDetectCodexImplicitCompaction(sessionId, codexProc, nextContextUsage);
+          this.applyCodexContextUsage(codexProc, {
+            input: contextInputTotal,
+            cached: contextCached,
+            output: contextOutput,
+          });
+          codexProc.codexLastTokenUsage = nextContextUsage;
+          codexProc.codexLastObservedContextUsage = nextContextUsage;
+          codexProc.codexLastObservedContextWindow = this.resolveObservedContextWindow(
+            codexProc.model,
+            codexProc.contextWindow
+          );
           codexProc.codexSawTokenCountThisTurn = true;
           this.emitUsage(sessionId, codexProc);
         }
+        return null;
+      }
+
+      case 'agent.started':
+      case 'subagent.started': {
+        const codexProc = this.processes.get(sessionId);
+        if (!codexProc) return null;
+        this.startSubagentRun(sessionId, codexProc, {
+          agentId: data.agentId,
+          agentType: data.agentType || data.subagentType || 'subagent',
+          description: data.description || data.message,
+          externalAgentId: data.agentId,
+        });
+        return null;
+      }
+
+      case 'agent.completed':
+      case 'subagent.completed':
+      case 'agent.failed':
+      case 'subagent.failed': {
+        const codexProc = this.processes.get(sessionId);
+        if (!codexProc) return null;
+        const failed = eventType.endsWith('.failed');
+        this.completeSubagentRun(
+          sessionId,
+          codexProc,
+          {
+            agentId: data.agentId,
+            externalAgentId: data.agentId,
+            agentType: data.agentType || data.subagentType,
+          },
+          {
+            status: failed ? 'error' : 'completed',
+            result: data.result || data.message,
+            error: failed ? data.error || data.message || 'Subagent failed' : undefined,
+          }
+        );
         return null;
       }
 
@@ -2621,6 +3838,15 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         const codexProc = this.processes.get(sessionId);
         if (codexProc && codexProc.cliProvider === 'codex') {
           console.log(`[CODEX] ${eventType} received [${sessionId}]`);
+          this.completeActiveSubagents(sessionId, codexProc, {
+            status: eventType === 'turn.failed' ? 'error' : 'completed',
+            error: eventType === 'turn.failed' ? data.message || 'Codex turn failed' : undefined,
+          });
+          codexProc.currentToolName = null;
+          codexProc.currentToolId = null;
+          codexProc.currentAgentType = null;
+          codexProc.currentAgentDescription = null;
+          codexProc.currentActivitySummary = null;
         }
         if (data.usage && codexProc) {
           // Codex's `turn.completed.usage` reports CUMULATIVE counts in resume
@@ -2629,8 +3855,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           // tokens 10-100x and produced single rows with 5M+ cached_input_tokens
           // (impossible for a single 256k-context API call).
           //
-          // Solution: track the last-reported totals per session and compute
-          // per-turn deltas. Edge cases:
+          // Solution in native resume mode: track the last-reported totals for
+          // the same Codex session and compute per-turn deltas. Plain `codex exec`
+          // starts a fresh Codex session, so its usage is already per exec turn
+          // and must not be delta-adjusted against the previous WebUI turn.
+          // Edge cases:
           //   - First call (no snapshot): use raw values
           //   - Any counter decrease (counter reset / fresh codex spawn after
           //     session detach): use raw values (don't write a negative delta)
@@ -2651,10 +3880,19 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
             (data.usage.output_tokens ?? 0) + (data.usage.reasoning_output_tokens ?? 0);
 
           const prev = codexProc.codexLastReportedTokens;
+          const useResumeDelta = !!codexProc.codexCurrentExecUsedResume;
           let deltaInput: number;
           let deltaCached: number;
           let deltaOutput: number;
-          if (
+          if (!useResumeDelta) {
+            // Plain `codex exec` starts a fresh Codex CLI session. Its usage is
+            // already scoped to this exec turn, so subtracting the prior WebUI
+            // turn corrupts analytics. Only native `exec resume <id>` reports
+            // monotonically cumulative counters for the same Codex session.
+            deltaInput = totalInput;
+            deltaCached = totalCached;
+            deltaOutput = totalOutput;
+          } else if (
             !prev ||
             totalInput < prev.input ||
             totalCached < prev.cached ||
@@ -2693,21 +3931,68 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           codexProc.turnCacheReadTokens = deltaCached;
           codexProc.turnCacheCreationTokens = 0; // Codex doesn't surface cache writes.
 
-          // If this Codex version did not emit token_count.last_token_usage, keep
-          // the live context meter bounded. The turn totals are billing totals
-          // across all model calls and may exceed the model context window.
+          // If this Codex version did not emit token_count.last_token_usage, use
+          // Codex's own persisted thread meter before falling back to billing
+          // counters. The old prompt-length estimate badly under-reported long
+          // transcript-prefix exec turns (for example 13K shown while Codex had
+          // ~250K tokens in its thread state).
           if (!codexProc.codexSawTokenCountThisTurn) {
-            const estimatedInput =
-              typeof codexProc.codexLastPromptEstimateTokens === 'number'
-                ? codexProc.codexLastPromptEstimateTokens
-                : deltaInput <= codexProc.contextWindow
-                  ? deltaInput
-                  : Math.round(codexProc.contextWindow * 0.9);
-            const boundedContextInput = Math.min(estimatedInput, codexProc.contextWindow);
-            const boundedContextCached = Math.min(deltaCached, boundedContextInput);
-            codexProc.contextInputTokens = Math.max(boundedContextInput - boundedContextCached, 0);
-            codexProc.contextCacheReadTokens = boundedContextCached;
-            codexProc.contextCacheCreationTokens = 0;
+            const contextWindow = this.resolveObservedContextWindow(
+              codexProc.model,
+              codexProc.contextWindow
+            );
+            const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+            const threadState = readCodexThreadState(codexHome, {
+              threadId: codexProc.codexSessionId || codexProc.claudeSessionId,
+              cwd: codexProc.workingDirectory,
+              sinceMs: codexProc.codexExecStartedAtMs,
+              promptPrefix: codexProc.codexLastPromptPrefix,
+            });
+
+            if (threadState) {
+              if (!codexProc.codexSessionId && threadState.match !== 'cwd') {
+                codexProc.codexSessionId = threadState.id;
+                codexProc.claudeSessionId = threadState.id;
+                try {
+                  getDatabase()
+                    .prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?')
+                    .run(threadState.id, sessionId);
+                  console.log(
+                    `[CODEX] Captured session id ${threadState.id} from Codex state for ${sessionId}`
+                  );
+                } catch (error) {
+                  console.warn('[CODEX] Failed to persist Codex session id from state:', error);
+                }
+              }
+
+              const threadContextUsage = {
+                input: threadState.tokensUsed,
+                cached: 0,
+                output: 0,
+              };
+              this.maybeDetectCodexImplicitCompaction(sessionId, codexProc, threadContextUsage);
+              this.applyCodexContextUsage(codexProc, threadContextUsage);
+              codexProc.codexLastObservedContextUsage = threadContextUsage;
+              codexProc.codexLastObservedContextWindow = this.resolveObservedContextWindow(
+                codexProc.model,
+                codexProc.contextWindow
+              );
+            } else {
+              const promptEstimate =
+                typeof codexProc.codexLastPromptEstimateTokens === 'number'
+                  ? codexProc.codexLastPromptEstimateTokens
+                  : 0;
+              const billingInputEstimate = deltaInput > 0 ? Math.min(deltaInput, contextWindow) : 0;
+              const estimatedInput = Math.max(promptEstimate, billingInputEstimate);
+              const boundedContextInput = estimatedInput > 0 ? estimatedInput : deltaOutput;
+              const boundedContextCached = Math.min(deltaCached, boundedContextInput);
+              const estimatedContextUsage = {
+                input: boundedContextInput,
+                cached: boundedContextCached,
+                output: deltaOutput,
+              };
+              this.applyCodexContextUsage(codexProc, estimatedContextUsage);
+            }
           }
 
           const turnCostUsd = this.calculateTurnCost(codexProc);
@@ -2749,6 +4034,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         if (proc) {
           proc.streamingText = (proc.streamingText || '') + chunk;
           proc.isStreaming = true;
+          proc.currentActivitySummary = 'Writing response';
         }
         this.io.to(`session:${sessionId}`).emit('session:output', {
           sessionId,
@@ -2768,6 +4054,10 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         if (!chunk) return null;
         const summary = this.formatCodexReasoning(chunk);
         if (summary) {
+          const proc = this.processes.get(sessionId);
+          if (proc) {
+            proc.currentActivitySummary = summary;
+          }
           this.io.to(`session:${sessionId}`).emit('session:thinking', {
             sessionId,
             isThinking: true,
@@ -2840,8 +4130,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       case 'compacted': {
         const codexProc = this.processes.get(sessionId);
         if (codexProc && codexProc.cliProvider === 'codex') {
-          this.resetCurrentContextUsage(codexProc);
-          this.emitUsage(sessionId, codexProc);
+          this.applyCodexCompactContextUsage(sessionId, codexProc, data);
         }
         this.emitCompact(sessionId, {
           sessionId,
@@ -3018,6 +4307,62 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       case 'mcptoolcall':
       case 'mcp_tool_call': {
         const toolName = `${item.server || 'mcp'}.${item.tool || 'tool'}`;
+        const normalizedToolName = toolName.replace(/[^a-z0-9]/gi, '').toLowerCase();
+        const isSpawnAgentTool = normalizedToolName.includes('spawnagent');
+        const isWaitAgentTool = normalizedToolName.includes('waitagent');
+        const isCloseAgentTool = normalizedToolName.includes('closeagent');
+        if (isSpawnAgentTool && proc) {
+          const agentType =
+            this.getStringField(item.arguments, [
+              'agent_type',
+              'agentType',
+              'agent',
+              'agent_type_name',
+              'name',
+              'type',
+            ]) || 'subagent';
+          const description =
+            this.getStringField(item.arguments, ['description', 'message', 'prompt', 'task']) ||
+            `Running ${agentType} agent`;
+          const externalAgentId = isCompleted
+            ? this.getStringField(item.result, ['agent_id', 'agentId', 'id', 'target'])
+            : undefined;
+          this.startSubagentRun(sessionId, proc, {
+            agentId: itemId,
+            agentType,
+            description,
+            toolId: itemId,
+            externalAgentId,
+          });
+        }
+        if (isCompleted && proc && (isWaitAgentTool || isCloseAgentTool)) {
+          const targets = this.getStringListField(item.arguments, [
+            'targets',
+            'target',
+            'ids',
+            'id',
+          ]);
+          if (targets.length > 0) {
+            for (const target of targets) {
+              this.completeSubagentRun(
+                sessionId,
+                proc,
+                { externalAgentId: target },
+                {
+                  result: item.result,
+                  error: item.error,
+                  status: item.error ? 'error' : 'completed',
+                }
+              );
+            }
+          } else {
+            this.completeActiveSubagents(sessionId, proc, {
+              result: item.result,
+              error: item.error,
+              status: item.error ? 'error' : 'completed',
+            });
+          }
+        }
         if (!isCompleted) {
           if (proc && !proc.codexEmittedTools?.has(itemId)) {
             proc.codexEmittedTools?.add(itemId);
@@ -3171,6 +4516,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     // Reasoning content → thinking indicator with summary
     if (typeof data.reasoning_content === 'string' && data.reasoning_content.trim()) {
       const summary = this.formatCodexReasoning(data.reasoning_content);
+      proc.currentActivitySummary = summary || 'Thinking';
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: true,
@@ -3180,6 +4526,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
     // Assistant text → emit as assistant content
     if (data.role === 'assistant' && typeof data.content === 'string' && data.content) {
+      proc.currentActivitySummary = 'Writing response';
       emissions.push({
         type: 'assistant',
         message: {
@@ -3254,20 +4601,90 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
    * boundaries. `session.idle` marks the turn's end, at which point we finalize
    * the streaming buffer and persist the assistant message.
    */
+  private rememberOpenCodeMessage(proc: ClaudeProcess, messageId: string): void {
+    const order = (proc.opencodeMessageOrder ??= []);
+    if (!order.includes(messageId)) order.push(messageId);
+  }
+
+  private flushOpenCodeAssistantMessage(
+    sessionId: string,
+    proc: ClaudeProcess,
+    messageId: string
+  ): boolean {
+    const streams = proc.partStreams;
+    if (!streams) return false;
+
+    const chunks: string[] = [];
+    const flushedEntries: OpenCodePartStreamEntry[] = [];
+    for (const entry of streams.values()) {
+      if (entry.type !== 'text' || entry.messageId !== messageId) continue;
+      const cleaned = entry.cleaned ?? entry.text;
+      const previousLength = entry.savedCleanedLength ?? 0;
+      if (cleaned.length <= previousLength) continue;
+      const unsaved = cleaned.slice(previousLength).trim();
+      if (unsaved) chunks.push(unsaved);
+      flushedEntries.push(entry);
+    }
+
+    for (const entry of flushedEntries) {
+      entry.savedCleanedLength = (entry.cleaned ?? entry.text).length;
+    }
+
+    const content = chunks.join('\n').trim();
+    if (!content) return false;
+
+    this.io.to(`session:${sessionId}`).emit('session:output', {
+      sessionId,
+      content: '',
+      isComplete: true,
+    });
+    this.saveAssistantMessage(sessionId, content);
+    if (proc.opencodeActiveMessageId === messageId) {
+      proc.opencodeActiveMessageId = null;
+    }
+    return true;
+  }
+
+  private flushAllOpenCodeAssistantMessages(sessionId: string, proc: ClaudeProcess): void {
+    const streams = proc.partStreams;
+    if (!streams || streams.size === 0) return;
+
+    const ordered = proc.opencodeMessageOrder ?? [];
+    const seen = new Set<string>();
+    for (const messageId of ordered) {
+      seen.add(messageId);
+      this.flushOpenCodeAssistantMessage(sessionId, proc, messageId);
+    }
+    for (const entry of streams.values()) {
+      if (seen.has(entry.messageId)) continue;
+      seen.add(entry.messageId);
+      this.flushOpenCodeAssistantMessage(sessionId, proc, entry.messageId);
+    }
+  }
+
   private processOpencodeTextChunk(
     sessionId: string,
     proc: ClaudeProcess,
     partId: string,
+    messageId: string,
     rawChunk: string
   ): void {
     if (!rawChunk) return;
+    this.rememberOpenCodeMessage(proc, messageId);
+    if (proc.opencodeActiveMessageId && proc.opencodeActiveMessageId !== messageId) {
+      this.flushOpenCodeAssistantMessage(sessionId, proc, proc.opencodeActiveMessageId);
+    }
+    proc.opencodeActiveMessageId = messageId;
+
     const streams = (proc.partStreams ??= new Map());
     const existing = streams.get(partId);
     const entry = existing ?? {
       type: 'text' as const,
+      messageId,
       text: '',
       thoughtState: { inside: false, pending: '' },
     };
+    entry.messageId = entry.messageId || messageId;
     entry.thoughtState ??= { inside: false, pending: '' };
 
     entry.text += rawChunk;
@@ -3282,6 +4699,8 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     });
 
     if (emit) {
+      proc.isStreaming = true;
+      proc.currentActivitySummary = 'Writing response';
       if (process.env.OPENCODE_DEBUG_EVENTS === '1') {
         console.log(
           `[OC-EMIT] session=${sessionId} partId=${partId} chunk=${JSON.stringify(emit).slice(0, 80)} totalCleaned=${entry.cleaned.length}`
@@ -3311,51 +4730,56 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       case 'session.status': {
         const status = props.status as { type?: string } | undefined;
         if (status?.type === 'busy') {
-          this.io
-            .to(`session:${sessionId}`)
-            .emit('session:thinking', { sessionId, isThinking: true });
+          proc.opencodeIdle = false;
+          proc.currentActivitySummary = proc.currentActivitySummary || 'OpenCode is starting';
+          this.io.to(`session:${sessionId}`).emit('session:thinking', {
+            sessionId,
+            isThinking: true,
+            message: proc.currentActivitySummary,
+          });
         } else if (status?.type === 'idle') {
+          proc.opencodeIdle = true;
+          proc.currentToolName = null;
+          proc.currentToolId = null;
+          proc.currentActivitySummary = null;
           this.io
             .to(`session:${sessionId}`)
             .emit('session:thinking', { sessionId, isThinking: false });
+          this.emitQueueState(sessionId, proc);
         }
         return;
       }
 
       case 'session.idle': {
-        // Turn complete: flush accumulated text parts as final, persist assistant
-        // message, and drop any partial streams so the next turn starts clean.
+        // Turn complete: flush every unsaved OpenCode assistant message
+        // separately, then drop partial streams so the next turn starts clean.
         const streams = proc.partStreams;
         if (streams && streams.size > 0) {
-          const finalText: string[] = [];
-          for (const entry of streams.values()) {
-            if (entry.type !== 'text') continue;
-            const out = (entry.cleaned ?? entry.text).trim();
-            if (out) finalText.push(out);
-          }
-          if (finalText.length > 0) {
-            const joined = finalText.join('\n');
-            this.io.to(`session:${sessionId}`).emit('session:output', {
-              sessionId,
-              content: '',
-              isComplete: true,
-            });
-            this.saveAssistantMessage(sessionId, joined);
-          }
+          this.flushAllOpenCodeAssistantMessages(sessionId, proc);
           streams.clear();
         }
+        proc.opencodeActiveMessageId = null;
+        proc.opencodeMessageOrder = [];
         this.saveUsageToDatabase(sessionId, proc);
         proc.streamingText = '';
         proc.isStreaming = false;
         proc.emittedTools?.clear();
+        proc.opencodeIdle = true;
+        proc.currentToolName = null;
+        proc.currentToolId = null;
+        proc.currentActivitySummary = null;
         this.io
           .to(`session:${sessionId}`)
           .emit('session:thinking', { sessionId, isThinking: false });
+        this.emitQueueState(sessionId, proc);
+        void this.drainOpenCodeQueuedTurns(sessionId, proc);
         return;
       }
 
       case 'permission.asked': {
         const requestId = typeof props.id === 'string' ? props.id : undefined;
+        const providerSessionId =
+          typeof props.sessionID === 'string' ? (props.sessionID as string) : undefined;
         const permission = typeof props.permission === 'string' ? props.permission : 'tool';
         const patterns = Array.isArray(props.patterns)
           ? props.patterns.filter((item): item is string => typeof item === 'string')
@@ -3377,11 +4801,175 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         this.io.to(`session:${sessionId}`).emit('session:permission_request', {
           sessionId,
           requestId,
+          providerSessionId,
           toolName: permission,
           toolInput: metadata,
           description: `OpenCode requests ${permission}${patterns[0] ? `: ${patterns[0]}` : ''}`,
           suggestedPattern: patterns[0] || `${permission}:*`,
         });
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
+        return;
+      }
+
+      case 'permission.v2.asked': {
+        const requestId = typeof props.id === 'string' ? props.id : undefined;
+        const providerSessionId =
+          typeof props.sessionID === 'string' ? (props.sessionID as string) : undefined;
+        const action = typeof props.action === 'string' ? props.action : 'permission';
+        const resources = Array.isArray(props.resources)
+          ? props.resources.filter((item): item is string => typeof item === 'string')
+          : [];
+        const metadata = props.metadata ?? {};
+        if (!requestId) return;
+        recordAudit({
+          actorUserId: proc.userId,
+          action: 'permission.request',
+          resourceType: 'session',
+          resourceId: sessionId,
+          metadata: {
+            provider: 'opencode',
+            requestId,
+            toolName: action,
+            pattern: resources[0] || null,
+          },
+        });
+        this.io.to(`session:${sessionId}`).emit('session:permission_request', {
+          sessionId,
+          requestId,
+          providerSessionId,
+          toolName: action,
+          toolInput: { action, resources, metadata, source: props.source ?? null },
+          description: `OpenCode requests ${action}${resources[0] ? `: ${resources[0]}` : ''}`,
+          suggestedPattern: resources[0] || `${action}:*`,
+        });
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
+        return;
+      }
+
+      case 'question.asked':
+      case 'question.v2.asked': {
+        const requestId = typeof props.id === 'string' ? props.id : undefined;
+        const providerSessionId =
+          typeof props.sessionID === 'string' ? (props.sessionID as string) : undefined;
+        const rawQuestions = Array.isArray(props.questions) ? props.questions : [];
+        if (!requestId || rawQuestions.length === 0) return;
+        const questions = rawQuestions.map((item, index) => {
+          const question = item as Record<string, unknown>;
+          const options = Array.isArray(question.options)
+            ? question.options.map((option, optionIndex) => {
+                const opt = option as Record<string, unknown>;
+                return {
+                  label:
+                    typeof opt.label === 'string' && opt.label.trim()
+                      ? opt.label
+                      : `Option ${optionIndex + 1}`,
+                  description: typeof opt.description === 'string' ? opt.description : undefined,
+                };
+              })
+            : [];
+          return {
+            question:
+              typeof question.question === 'string' ? question.question : 'OpenCode needs input.',
+            header:
+              typeof question.header === 'string' && question.header.trim()
+                ? question.header
+                : `Question ${index + 1}`,
+            options,
+            multiple: question.multiple === true,
+            custom: question.custom === true,
+          };
+        });
+        const questionEvent = {
+          sessionId,
+          requestId,
+          providerSessionId,
+          questions,
+        };
+        this.bufferMessage(sessionId, 'question', questionEvent);
+        this.io.to(`session:${sessionId}`).emit('session:question_request', questionEvent);
+        this.io
+          .to(`session:${sessionId}`)
+          .emit('session:thinking', { sessionId, isThinking: false });
+        return;
+      }
+
+      case 'todo.updated': {
+        const todos = Array.isArray(props.todos)
+          ? props.todos.reduce<TodoItem[]>((acc, todo) => {
+              const item = todo as Record<string, unknown>;
+              const content = typeof item.content === 'string' ? item.content : '';
+              if (!content.trim()) return acc;
+              const next: TodoItem = {
+                content,
+                status: normalizeOpenCodeTodoStatus(item.status),
+              };
+              if (typeof item.activeForm === 'string') next.activeForm = item.activeForm;
+              acc.push(next);
+              return acc;
+            }, [])
+          : [];
+        this.io.to(`session:${sessionId}`).emit('session:todos', { sessionId, todos });
+        this.bufferMessage(sessionId, 'todos', { sessionId, todos });
+        return;
+      }
+
+      case 'session.diff': {
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName: 'OpenCodeDiff',
+          status: 'completed',
+          toolId: typeof event.id === 'string' ? event.id : `opencode-diff-${Date.now()}`,
+          input: { files: Array.isArray(props.diff) ? props.diff.length : 0 },
+          result: summarizeOpenCodeDiff(props.diff),
+        });
+        return;
+      }
+
+      case 'session.next.compaction.started': {
+        proc.opencodeCompactionText = '';
+        proc.currentActivitySummary = 'Compacting context';
+        this.io.to(`session:${sessionId}`).emit('session:thinking', {
+          sessionId,
+          isThinking: true,
+          message: proc.currentActivitySummary,
+        });
+        return;
+      }
+
+      case 'session.next.compaction.delta': {
+        const text = typeof props.text === 'string' ? props.text : '';
+        if (text) proc.opencodeCompactionText = `${proc.opencodeCompactionText ?? ''}${text}`;
+        return;
+      }
+
+      case 'session.next.compaction.ended':
+      case 'session.compacted': {
+        proc.totalInputTokens = 0;
+        proc.totalOutputTokens = 0;
+        proc.cacheReadTokens = 0;
+        proc.cacheCreationTokens = 0;
+        this.resetCurrentContextUsage(proc);
+        this.emitUsage(sessionId, proc);
+        const compactText =
+          typeof props.text === 'string' && props.text.trim()
+            ? props.text
+            : proc.opencodeCompactionText;
+        proc.opencodeCompactionText = '';
+        const justEmittedManual =
+          proc.opencodeLastManualCompactAt &&
+          Date.now() - proc.opencodeLastManualCompactAt < 10_000;
+        if (!justEmittedManual) {
+          this.emitCompact(sessionId, {
+            sessionId,
+            message: 'OpenCode compacted session context.',
+            summary: compactText || undefined,
+            reason: 'auto-compact',
+          });
+        }
         this.io
           .to(`session:${sessionId}`)
           .emit('session:thinking', { sessionId, isThinking: false });
@@ -3408,6 +4996,10 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         if (!part) return;
         const partType = part.type as string;
         const partId = part.id as string;
+        const messageId =
+          (typeof part.messageID === 'string' ? (part.messageID as string) : undefined) ||
+          (typeof part.messageId === 'string' ? (part.messageId as string) : undefined) ||
+          partId;
 
         if (partType === 'text') {
           let rawChunk = delta ?? '';
@@ -3418,7 +5010,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
               rawChunk = fullText.slice(existing?.text?.length ?? 0);
             }
           }
-          this.processOpencodeTextChunk(sessionId, proc, partId, rawChunk);
+          this.processOpencodeTextChunk(sessionId, proc, partId, messageId, rawChunk);
           return;
         }
 
@@ -3426,10 +5018,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           const fullText = (part.text as string) ?? '';
           if (!fullText.trim()) return;
           const summary = this.formatCodexReasoning(fullText);
+          proc.currentActivitySummary = summary || 'Thinking through the turn';
           this.io.to(`session:${sessionId}`).emit('session:thinking', {
             sessionId,
             isThinking: true,
-            message: summary || undefined,
+            message: proc.currentActivitySummary,
           });
           return;
         }
@@ -3444,6 +5037,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           const emittedTools = (proc.emittedTools ??= new Set());
 
           if (state.status === 'pending' || state.status === 'running') {
+            this.flushOpenCodeAssistantMessage(
+              sessionId,
+              proc,
+              proc.opencodeActiveMessageId || messageId
+            );
             if (!emittedTools.has(callId)) {
               emittedTools.add(callId);
               this.emitToolUse(sessionId, {
@@ -3486,9 +5084,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         }
 
         if (partType === 'step-start') {
-          this.io
-            .to(`session:${sessionId}`)
-            .emit('session:thinking', { sessionId, isThinking: true });
+          this.rememberOpenCodeMessage(proc, messageId);
+          proc.currentActivitySummary = 'Working through the next step';
+          this.io.to(`session:${sessionId}`).emit('session:thinking', {
+            sessionId,
+            isThinking: true,
+            message: proc.currentActivitySummary,
+          });
           return;
         }
 
@@ -3518,6 +5120,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
             proc.turnCostUsd = (proc.turnCostUsd ?? 0) + cost;
           }
           this.emitUsage(sessionId, proc);
+          this.flushOpenCodeAssistantMessage(
+            sessionId,
+            proc,
+            proc.opencodeActiveMessageId || messageId
+          );
           return;
         }
         return;
@@ -3529,9 +5136,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         const field = typeof props.field === 'string' ? (props.field as string) : undefined;
         if (field !== 'text') return;
         const partId = typeof props.partID === 'string' ? (props.partID as string) : undefined;
+        const messageId =
+          (typeof props.messageID === 'string' ? (props.messageID as string) : undefined) ||
+          (typeof props.messageId === 'string' ? (props.messageId as string) : undefined) ||
+          partId;
         const delta = typeof props.delta === 'string' ? (props.delta as string) : undefined;
-        if (!partId || !delta) return;
-        this.processOpencodeTextChunk(sessionId, proc, partId, delta);
+        if (!partId || !messageId || !delta) return;
+        this.processOpencodeTextChunk(sessionId, proc, partId, messageId, delta);
         return;
       }
 
@@ -3553,9 +5164,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
    */
   private async respawnCodexProcess(sessionId: string, proc: ClaudeProcess): Promise<void> {
     const providerConfig = CLI_PROVIDERS.codex;
-    const selectedModel = proc.model || providerConfig.defaultModel;
-    const selectedReasoning = await getCliReasoningForUser(proc.userId, 'codex');
-    const selectedServiceTier = getCliServiceTierForUser(proc.userId, 'codex');
+    const selectedModel = await getCliModelForSession(proc.userId, 'codex', sessionId);
+    const selectedReasoning = await getCliReasoningForSession(proc.userId, 'codex', sessionId);
+    const selectedServiceTier = await getCliServiceTierForSession(proc.userId, 'codex', sessionId);
     const webSearchMode = getCodexWebSearchForUser(proc.userId);
 
     const db = getDatabase();
@@ -3571,6 +5182,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       ? JSON.parse(session.allowed_directories)
       : [];
 
+    const resumeSessionId = proc.codexPendingExecCommand ? undefined : proc.codexSessionId;
     const args = getCLIArgs('codex', {
       mode: proc.mode,
       allowedDirectories: allowedDirs,
@@ -3580,8 +5192,8 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       serviceTier: selectedServiceTier ?? undefined,
       webSearchMode,
       codexExecCommand: proc.codexPendingExecCommand,
-      // Use native codex resume once we've captured a sessionId from `thread.started`.
-      resumeSessionId: proc.codexPendingExecCommand ? undefined : proc.codexSessionId,
+      // Use native codex resume once we've captured a sessionId from Codex session metadata.
+      resumeSessionId,
     });
     proc.codexPendingExecCommand = undefined;
 
@@ -3610,7 +5222,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       // Ignore
     }
     Object.assign(extraEnv, buildIntegrationEnv());
+    Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, proc.userId));
 
+    const execStartedAtMs = Date.now();
     const newChildProc = cpSpawn(providerConfig.command, args, {
       cwd: session.working_directory,
       env: {
@@ -3627,6 +5241,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     // Replace process reference and reset state
     proc.process = newChildProc;
     proc.codexIdle = false;
+    proc.codexExecStartedAtMs = execStartedAtMs;
     proc.buffer = '';
     proc.streamingText = '';
     proc.isStreaming = false;
@@ -3637,7 +5252,11 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.contextInputTokens = undefined;
     proc.contextCacheReadTokens = undefined;
     proc.contextCacheCreationTokens = undefined;
+    proc.contextOutputTokens = undefined;
     proc.codexSawTokenCountThisTurn = false;
+    proc.codexCurrentExecUsedResume = !!resumeSessionId;
+    proc.codexLastTokenUsage = undefined;
+    proc.codexTotalTokenUsage = undefined;
 
     // Re-attach output handlers
     newChildProc.stdout?.on('data', (data: Buffer) => {
@@ -3657,32 +5276,31 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           managedProc.codexPreemptKillTimer = undefined;
         }
 
-        const hasQueuedTurns = (managedProc.codexQueuedTurns?.length ?? 0) > 0;
+        const hasPendingSteerTurn = !!managedProc.codexPendingSteerTurn;
 
-        // Clean exit, or an intentional queued-input interruption, means the
-        // manager should keep the session alive and immediately run the FIFO.
-        if (exitCode === 0 || hasQueuedTurns) {
+        // Clean exit, or an intentional follow-up steering interruption, means
+        // the manager should keep the session alive and immediately run the
+        // latest pending follow-up.
+        if (exitCode === 0 || hasPendingSteerTurn) {
           if (exitCode === 0) {
             console.log(`[CODEX] Respawned process exited cleanly, marking idle [${sessionId}]`);
           } else {
             console.log(
-              `[CODEX] Respawned process exited with code ${exitCode}; draining queued input [${sessionId}], depth=${managedProc.codexQueuedTurns?.length ?? 0}`
+              `[CODEX] Respawned process exited with code ${exitCode}; dispatching steered follow-up [${sessionId}]`
             );
           }
           if (managedProc.streamingText?.trim().length) {
-            const suffix = exitCode === 0 ? '' : '\n\n[Interrupted by newer user message]';
+            const suffix = exitCode === 0 ? '' : '\n\n[Steered by newer user message]';
             this.saveAssistantMessage(sessionId, `${managedProc.streamingText.trim()}${suffix}`);
           }
           managedProc.codexIdle = true;
-          managedProc.codexPreemptingForQueuedTurn = false;
+          managedProc.codexPreemptingForSteer = false;
           managedProc.streamingText = '';
           managedProc.isStreaming = false;
           managedProc.buffer = '';
-          if (hasQueuedTurns) {
-            console.log(
-              `[CODEX] Draining queued turn after process exit [${sessionId}], depth=${managedProc.codexQueuedTurns?.length ?? 0}`
-            );
-            void this.drainCodexQueuedTurns(sessionId, managedProc);
+          if (hasPendingSteerTurn) {
+            console.log(`[CODEX] Dispatching steered follow-up after process exit [${sessionId}]`);
+            void this.drainCodexSteeredTurn(sessionId, managedProc);
           } else {
             this.io
               .to(`session:${sessionId}`)
@@ -3721,7 +5339,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   ): Promise<void> {
     const providerConfig = CLI_PROVIDERS.vibe;
     const selectedModel = proc.model || providerConfig.defaultModel;
-    const selectedReasoning = await getCliReasoningForUser(proc.userId, 'vibe');
+    const selectedReasoning = await getCliReasoningForSession(proc.userId, 'vibe', sessionId);
 
     const db = getDatabase();
     const session = db
@@ -3805,6 +5423,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       return;
     }
     Object.assign(extraEnv, buildIntegrationEnv());
+    Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, proc.userId));
     extraEnv.WEBUI_SESSION_MODE = proc.mode;
     extraEnv.WEBUI_CONFIG_HOME = resolveConfigHome(proc.cliProvider);
 
@@ -3943,38 +5562,176 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     );
   }
 
-  private emitUsage(sessionId: string, proc: ClaudeProcess): void {
+  private normalizeCodexCompactSummary(value: string): string | undefined {
+    const summary = value.trim();
+    if (!summary) return undefined;
+    const normalized = summary.toLowerCase();
+    if (
+      normalized === 'none' ||
+      normalized === 'auto' ||
+      normalized === 'manual' ||
+      normalized === 'disabled'
+    ) {
+      return undefined;
+    }
+    return summary;
+  }
+
+  private getCodexContextUsageTotal(counters: CodexUsageCounters): number {
+    return Math.max(counters.input, 0) + Math.max(counters.output, 0);
+  }
+
+  private maybeDetectCodexImplicitCompaction(
+    sessionId: string,
+    proc: ClaudeProcess,
+    nextUsage: CodexUsageCounters
+  ): boolean {
+    const previousUsage = proc.codexLastObservedContextUsage;
+    if (!previousUsage) return false;
+
+    const contextWindow = this.resolveObservedContextWindow(proc.model, proc.contextWindow);
+    const previousWindow = proc.codexLastObservedContextWindow || contextWindow;
+    if (contextWindow <= 0 || previousWindow <= 0) return false;
+
+    const windowShift = Math.abs(contextWindow - previousWindow);
+    if (windowShift > Math.max(1000, contextWindow * 0.1)) return false;
+
+    const previousTotal = this.getCodexContextUsageTotal(previousUsage);
+    const nextTotal = this.getCodexContextUsageTotal(nextUsage);
+    if (previousTotal <= nextTotal) return false;
+
+    const previousPercent = previousTotal / previousWindow;
+    const nextPercent = nextTotal / contextWindow;
+    const droppedTokens = previousTotal - nextTotal;
+    const minDropTokens = Math.max(16_000, Math.round(contextWindow * 0.15));
+    const maxPostCompactPercent = Math.min(0.5, previousPercent - 0.2);
+    const recentlyCompacted =
+      proc.codexLastCompactAtMs && Date.now() - proc.codexLastCompactAtMs < 30_000;
+
+    if (
+      previousPercent >= 0.75 &&
+      nextPercent <= maxPostCompactPercent &&
+      droppedTokens >= minDropTokens &&
+      !recentlyCompacted
+    ) {
+      proc.codexLastCompactAtMs = Date.now();
+      proc.codexLastPromptEstimateTokens = undefined;
+      proc.codexLastPromptPrefix = undefined;
+      this.emitCompact(sessionId, {
+        sessionId,
+        message: 'Codex compacted prior context and resumed from a reduced context window.',
+        reason: 'auto-compact',
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  private applyCodexContextUsage(proc: ClaudeProcess, counters: CodexUsageCounters): void {
+    const contextWindow = this.resolveObservedContextWindow(proc.model, proc.contextWindow);
+    const inputTotalRaw = Math.max(counters.input, 0);
+    const outputRaw = Math.max(counters.output, 0);
+    const inputTotal = contextWindow > 0 ? Math.min(inputTotalRaw, contextWindow) : inputTotalRaw;
+    const remainingForOutput =
+      contextWindow > 0 ? Math.max(contextWindow - inputTotal, 0) : outputRaw;
+    const output = contextWindow > 0 ? Math.min(outputRaw, remainingForOutput) : outputRaw;
+    const cached = Math.min(Math.max(counters.cached, 0), inputTotal);
+
+    proc.contextInputTokens = Math.max(inputTotal - cached, 0);
+    proc.contextCacheReadTokens = cached;
+    proc.contextCacheCreationTokens = 0;
+    proc.contextOutputTokens = output;
+  }
+
+  private applyCodexCompactContextUsage(
+    sessionId: string,
+    proc: ClaudeProcess,
+    data: unknown
+  ): void {
+    const compactCounters = extractCodexContextUsageCounters(data);
+    if (compactCounters) {
+      this.applyCodexContextUsage(proc, compactCounters);
+      proc.codexLastObservedContextUsage = compactCounters;
+    } else {
+      this.resetCurrentContextUsage(proc);
+      proc.codexLastObservedContextUsage = { input: 0, cached: 0, output: 0 };
+    }
+    proc.codexLastObservedContextWindow = this.resolveObservedContextWindow(
+      proc.model,
+      proc.contextWindow
+    );
+
+    proc.codexSawTokenCountThisTurn = true;
+    proc.codexLastCompactAtMs = Date.now();
+    proc.codexLastPromptEstimateTokens = undefined;
+    proc.codexLastPromptPrefix = undefined;
+    this.emitUsage(sessionId, proc);
+  }
+
+  private buildUsageSnapshot(
+    sessionId: string,
+    proc: ClaudeProcess
+  ): {
+    sessionId: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    totalTokens: number;
+    contextWindow: number;
+    contextUsedPercent: number;
+    contextUsedPercentRaw: number;
+    contextExceeded: boolean;
+    totalCostUsd: number;
+    model: string;
+    recordedAt: string;
+  } {
+    const contextWindow = this.resolveObservedContextWindow(proc.model, proc.contextWindow);
     const contextInputTokens = proc.contextInputTokens ?? proc.turnInputTokens;
     const contextCacheReadTokens = proc.contextCacheReadTokens ?? proc.turnCacheReadTokens;
     const contextCacheCreationTokens =
       proc.contextCacheCreationTokens ?? proc.turnCacheCreationTokens;
+    const contextOutputTokens = proc.contextOutputTokens ?? proc.turnOutputTokens;
 
-    // Context usage only counts INPUT tokens (including cache), NOT output tokens.
-    // Prefer current model-call context usage over summed turn billing usage when
-    // a provider reports both.
-    const contextTokens = contextInputTokens + contextCacheReadTokens + contextCacheCreationTokens;
+    // The context bar should reflect the full transcript footprint currently
+    // carried by the session, so include the assistant output that will be
+    // carried forward into the next turn.
+    const rawContextTokens =
+      contextInputTokens +
+      contextCacheReadTokens +
+      contextCacheCreationTokens +
+      contextOutputTokens;
+    const contextTokens =
+      contextWindow > 0 ? Math.min(rawContextTokens, contextWindow) : rawContextTokens;
     const contextUsedPercentRaw =
-      proc.contextWindow > 0 ? Math.round((contextTokens / proc.contextWindow) * 100) : 0;
+      contextWindow > 0 ? Math.round((contextTokens / contextWindow) * 100) : 0;
     const contextUsedPercent = Math.max(0, Math.min(100, contextUsedPercentRaw));
 
-    const usageData = {
+    return {
       sessionId,
       // Current context values for display
       inputTokens: contextInputTokens,
-      outputTokens: proc.turnOutputTokens,
+      outputTokens: contextOutputTokens,
       cacheReadTokens: contextCacheReadTokens,
       cacheCreationTokens: contextCacheCreationTokens,
-      totalTokens: contextTokens, // Context tokens only (no output) for display
-      contextWindow: proc.contextWindow,
+      totalTokens: contextTokens, // Live session context footprint for display
+      contextWindow,
       contextUsedPercent,
       contextUsedPercentRaw,
-      contextExceeded: contextUsedPercentRaw > 100,
+      contextExceeded: false,
       // Cumulative session cost
       totalCostUsd: proc.totalCostUsd,
       model: proc.model,
+      recordedAt: new Date().toISOString(),
     };
+  }
+
+  private emitUsage(sessionId: string, proc: ClaudeProcess): void {
+    const usageData = this.buildUsageSnapshot(sessionId, proc);
     this.bufferMessage(sessionId, 'usage', usageData);
     this.io.to(`session:${sessionId}`).emit('session:usage', usageData);
+    this.recordContextSnapshot(sessionId, proc, usageData);
     // Note: DB saving moved to saveUsageToDatabase() called only on turn completion
   }
 
@@ -3986,6 +5743,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     proc.contextInputTokens = 0;
     proc.contextCacheReadTokens = 0;
     proc.contextCacheCreationTokens = 0;
+    proc.contextOutputTokens = 0;
     proc.turnCostUsd = undefined;
   }
 
@@ -4154,6 +5912,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       // message_start contains initial usage and model - also means new response is starting
       if (event.type === 'message_start') {
         console.log(`[MSG] message_start - new response beginning`);
+        proc.currentActivitySummary = 'Writing response';
         // A new message is starting, Claude is responding
         this.io.to(`session:${sessionId}`).emit('session:thinking', {
           sessionId,
@@ -4231,19 +5990,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           // Text block - start streaming
           proc.isStreaming = true;
           proc.streamingText = '';
+          proc.currentActivitySummary = 'Writing response';
           proc.currentToolName = null;
           proc.currentToolId = null;
           proc.currentToolInput = '';
-          // Clear any active agent when text response starts
-          if (proc.currentAgentType) {
-            console.log(`[AGENT] Agent completed: ${proc.currentAgentType}`);
-            this.io.to(`session:${sessionId}`).emit('session:agent', {
-              sessionId,
-              agentType: proc.currentAgentType,
-              status: 'completed',
-            });
-            proc.currentAgentType = null;
-          }
+          // Safety net: if a provider did not send a tool_result for an agent,
+          // mark outstanding subagent work complete when assistant text resumes.
+          this.completeActiveSubagents(sessionId, proc);
           this.io.to(`session:${sessionId}`).emit('session:thinking', {
             sessionId,
             isThinking: false,
@@ -4381,12 +6134,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
                 console.log(
                   `[AGENT] Agent starting: ${taskInput.subagent_type} - ${taskInput.description || ''}`
                 );
-                proc.currentAgentType = taskInput.subagent_type;
-                this.io.to(`session:${sessionId}`).emit('session:agent', {
-                  sessionId,
+                this.startSubagentRun(sessionId, proc, {
+                  agentId: proc.currentToolId || undefined,
                   agentType: taskInput.subagent_type,
                   description: taskInput.description,
-                  status: 'started',
+                  toolId: proc.currentToolId,
                 });
               }
             } catch (err) {
@@ -4440,15 +6192,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       }
 
       // Clear any active agent on result (safety net)
-      if (proc.currentAgentType) {
-        console.log(`[AGENT] Agent completed (on result): ${proc.currentAgentType}`);
-        this.io.to(`session:${sessionId}`).emit('session:agent', {
-          sessionId,
-          agentType: proc.currentAgentType,
-          status: 'completed',
-        });
-        proc.currentAgentType = null;
-      }
+      this.completeActiveSubagents(sessionId, proc);
 
       if (msg.total_cost_usd !== undefined) {
         proc.totalCostUsd = msg.total_cost_usd;
@@ -4579,6 +6323,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       if (userMsg.message?.content && Array.isArray(userMsg.message.content)) {
         for (const block of userMsg.message.content) {
           if (block.type === 'tool_result' && block.tool_use_id) {
+            const pendingTool = proc.pendingToolResults?.get(block.tool_use_id);
             // Extract result text
             let resultText = '';
             if (typeof block.content === 'string') {
@@ -4595,10 +6340,21 @@ The planning phase is complete. You are now in Auto-Accept mode.
               console.log(
                 `[TOOL] Result for ${block.tool_use_id}: ${resultText.substring(0, 100)}...`
               );
+              const normalizedPendingTool = (pendingTool?.toolName || '')
+                .replace(/[_-]/g, '')
+                .toLowerCase();
+              if (normalizedPendingTool === 'task' || normalizedPendingTool === 'agent') {
+                this.completeSubagentRun(
+                  sessionId,
+                  proc,
+                  { toolId: block.tool_use_id },
+                  { result: resultText }
+                );
+              }
               this.io.to(`session:${sessionId}`).emit('session:tool_use', {
                 sessionId,
                 toolId: block.tool_use_id,
-                toolName: proc.pendingToolResults?.get(block.tool_use_id)?.toolName || 'Unknown',
+                toolName: pendingTool?.toolName || 'Unknown',
                 status: 'completed',
                 result: resultText,
               });
@@ -4649,6 +6405,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
         sessionId,
         isThinking: false,
       });
+      proc.currentToolName = null;
+      proc.currentToolId = null;
+      this.completeActiveSubagents(sessionId, proc);
+      proc.currentAgentType = null;
+      proc.currentAgentDescription = null;
+      proc.currentActivitySummary = null;
       // Emit turnComplete for external consumers
       this.events.emit('turnComplete', sessionId, {
         inputTokens: proc.turnInputTokens,
@@ -4704,22 +6466,48 @@ The planning phase is complete. You are now in Auto-Accept mode.
     console.log(`Saved assistant message [${sessionId}]: ${content.substring(0, 100)}...`);
   }
 
-  private queueCodexTurn(sessionId: string, proc: ClaudeProcess, turn: CodexPreparedTurn): void {
-    proc.codexQueuedTurns ??= [];
-    proc.codexQueuedTurns.push(turn);
+  private steerCodexTurn(sessionId: string, proc: ClaudeProcess, turn: CodexPreparedTurn): void {
+    const replacedPendingTurn = !!proc.codexPendingSteerTurn;
+    proc.codexPendingSteerTurn = turn;
     console.log(
-      `[CODEX] Queued user turn while current turn is running [${sessionId}], depth=${proc.codexQueuedTurns.length}`
+      replacedPendingTurn
+        ? `[CODEX] Replaced pending queued follow-up [${sessionId}]`
+        : `[CODEX] Queued follow-up while active turn is running [${sessionId}]`
     );
     this.emitQueueState(sessionId, proc);
   }
 
+  private queueOpenCodeTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: OpenCodePreparedTurn
+  ): void {
+    proc.opencodeQueuedTurns ??= [];
+    proc.opencodeQueuedTurns.push(turn);
+    console.log(
+      `[OPENCODE] Queued user turn while current turn is running [${sessionId}], depth=${proc.opencodeQueuedTurns.length}`
+    );
+    this.emitQueueState(sessionId, proc);
+  }
+
+  private getQueuedTurnItems(proc: ClaudeProcess): Array<CodexPreparedTurn | OpenCodePreparedTurn> {
+    if (proc.cliProvider === 'codex') {
+      return proc.codexPendingSteerTurn ? [proc.codexPendingSteerTurn] : [];
+    }
+    if (proc.cliProvider === 'opencode') {
+      return proc.opencodeQueuedTurns ?? [];
+    }
+    return [];
+  }
+
   private emitQueueState(sessionId: string, proc: ClaudeProcess): void {
-    const items = (proc.codexQueuedTurns ?? []).map((turn) => ({
+    const items = this.getQueuedTurnItems(proc).map((turn) => ({
       id: turn.queueId,
       preview: turn.originalMessage.slice(0, 240),
       createdAt: turn.queuedAt,
       attachments: turn.attachments?.length,
     }));
+    const hasPendingCodexSteer = proc.cliProvider === 'codex' && !!proc.codexPendingSteerTurn;
     this.io.to(`session:${sessionId}`).emit('session:queue', {
       sessionId,
       provider: proc.cliProvider,
@@ -4727,16 +6515,18 @@ The planning phase is complete. You are now in Auto-Accept mode.
       items,
       busy:
         proc.cliProvider === 'codex'
-          ? !proc.codexIdle || items.length > 0
-          : proc.cliProvider === 'vibe'
-            ? !proc.vibeIdle
-            : proc.isStreaming || !!proc.currentToolName,
-      preempting: !!proc.codexPreemptingForQueuedTurn,
+          ? !proc.codexIdle || hasPendingCodexSteer
+          : proc.cliProvider === 'opencode'
+            ? !proc.opencodeIdle || items.length > 0
+            : proc.cliProvider === 'vibe'
+              ? !proc.vibeIdle
+              : proc.isStreaming || !!proc.currentToolName,
+      preempting: !!proc.codexPreemptingForSteer,
     });
   }
 
-  private requestCodexQueuePreemption(sessionId: string, proc: ClaudeProcess): void {
-    if (proc.cliProvider !== 'codex' || proc.codexIdle || proc.codexPreemptingForQueuedTurn) {
+  private requestCodexSteeringPreemption(sessionId: string, proc: ClaudeProcess): void {
+    if (proc.cliProvider !== 'codex' || proc.codexIdle || proc.codexPreemptingForSteer) {
       return;
     }
 
@@ -4745,14 +6535,14 @@ The planning phase is complete. You are now in Auto-Accept mode.
       return;
     }
 
-    proc.codexPreemptingForQueuedTurn = true;
-    console.log(`[CODEX] Interrupting active turn to drain queued input [${sessionId}]`);
+    proc.codexPreemptingForSteer = true;
+    console.log(`[CODEX] Interrupting active turn for steered follow-up [${sessionId}]`);
     this.emitQueueState(sessionId, proc);
 
     if (proc.streamingText.trim().length > 0) {
       this.saveAssistantMessage(
         sessionId,
-        `${proc.streamingText.trim()}\n\n[Interrupted by newer user message]`
+        `${proc.streamingText.trim()}\n\n[Steered by newer user message]`
       );
       proc.streamingText = '';
       proc.isStreaming = false;
@@ -4762,11 +6552,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
     proc.codexPreemptKillTimer = setTimeout(() => {
       const latest = this.processes.get(sessionId);
-      if (latest !== proc || latest.process !== child || !latest.codexPreemptingForQueuedTurn) {
+      if (latest !== proc || latest.process !== child || !latest.codexPreemptingForSteer) {
         return;
       }
 
-      console.warn(`[CODEX] Queued-input interrupt did not exit; sending SIGTERM [${sessionId}]`);
+      console.warn(`[CODEX] Steering interrupt did not exit; sending SIGTERM [${sessionId}]`);
       child.kill('SIGTERM');
 
       latest.codexPreemptKillTimer = setTimeout(() => {
@@ -4774,12 +6564,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
         if (
           stillLatest !== proc ||
           stillLatest.process !== child ||
-          !stillLatest.codexPreemptingForQueuedTurn
+          !stillLatest.codexPreemptingForSteer
         ) {
           return;
         }
 
-        console.warn(`[CODEX] Queued-input SIGTERM did not exit; sending SIGKILL [${sessionId}]`);
+        console.warn(`[CODEX] Steering SIGTERM did not exit; sending SIGKILL [${sessionId}]`);
         child.kill('SIGKILL');
       }, 5000);
     }, 5000);
@@ -4823,7 +6613,8 @@ The planning phase is complete. You are now in Auto-Accept mode.
     let payloadForProvider = turn.messageForClaude;
     if (!turn.codexExecCommand && !turn.codexNativeSlashCommand && !proc.codexSessionId) {
       // First turn or session id not yet captured — prepend prior conversation
-      // so the fresh codex process has continuity. Once `thread.started` lands
+      // so the fresh codex process has continuity. Once `session_meta` (or older
+      // `thread.started`) lands
       // and proc.codexSessionId is set, subsequent respawns use native
       // `codex exec resume <id>` and we skip the manual prefix entirely.
       const contextPrefix = this.buildCodexContextPrefix(sessionId, turn.originalMessage);
@@ -4836,6 +6627,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.process.stdin?.end();
     } else {
       proc.codexLastPromptEstimateTokens = Math.ceil(payloadForProvider.length / 4);
+      proc.codexLastPromptPrefix = payloadForProvider.trim().slice(0, 512);
       proc.process.stdin?.end(formatInputMessage(proc.cliProvider, payloadForProvider));
     }
 
@@ -4844,36 +6636,196 @@ The planning phase is complete. You are now in Auto-Accept mode.
     );
   }
 
-  private async drainCodexQueuedTurns(sessionId: string, proc: ClaudeProcess): Promise<void> {
-    if (proc.cliProvider !== 'codex' || proc.codexQueueDraining || !proc.codexIdle) {
+  private async drainCodexSteeredTurn(sessionId: string, proc: ClaudeProcess): Promise<void> {
+    if (proc.cliProvider !== 'codex' || proc.codexSteerDraining || !proc.codexIdle) {
       return;
     }
 
-    const nextTurn = proc.codexQueuedTurns?.shift();
+    const nextTurn = proc.codexPendingSteerTurn;
     if (!nextTurn) {
       this.emitQueueState(sessionId, proc);
       return;
     }
 
-    proc.codexQueueDraining = true;
+    proc.codexPendingSteerTurn = undefined;
+    proc.codexSteerDraining = true;
     this.emitQueueState(sessionId, proc);
     try {
       await this.dispatchCodexTurn(sessionId, proc, nextTurn);
     } catch (err) {
-      proc.codexQueuedTurns?.unshift(nextTurn);
+      proc.codexPendingSteerTurn = nextTurn;
       this.emitQueueState(sessionId, proc);
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[CODEX] Failed to dispatch queued turn [${sessionId}]:`, err);
+      console.error(`[CODEX] Failed to dispatch steered follow-up [${sessionId}]:`, err);
       this.io.to(`session:${sessionId}`).emit('session:error', {
         sessionId,
-        error: `Failed to start queued Codex message: ${message}`,
+        error: `Failed to start steered Codex message: ${message}`,
       });
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: false,
       });
     } finally {
-      proc.codexQueueDraining = false;
+      proc.codexSteerDraining = false;
+    }
+  }
+
+  private async dispatchOpenCodeTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: OpenCodePreparedTurn
+  ): Promise<void> {
+    if (proc.cliProvider !== 'opencode' || !proc.serverBacked || !proc.claudeSessionId) {
+      throw new Error('OpenCode session is not ready');
+    }
+
+    if (turn.updateLastMessage) {
+      proc.lastUserMessage = turn.originalMessage;
+      proc.lastAttachments = turn.attachments || null;
+    }
+    proc.pendingPermissionDenials = null;
+    proc.opencodeIdle = false;
+    this.emitQueueState(sessionId, proc);
+    this.io.to(`session:${sessionId}`).emit('session:thinking', {
+      sessionId,
+      isThinking: true,
+    });
+
+    try {
+      const selectedReasoning = await getCliReasoningForSession(proc.userId, 'opencode', sessionId);
+      this.resetCurrentContextUsage(proc);
+
+      if (turn.opencodeSlashCommand?.type === 'compact') {
+        const compacted = await opencodeServer.compactSession(proc.claudeSessionId, {
+          model: proc.model,
+          mode: proc.mode,
+          variant: selectedReasoning,
+          directory: proc.workingDirectory,
+          webuiSessionId: sessionId,
+          userId: proc.userId,
+        });
+        if (!compacted) throw new Error('OpenCode compact endpoint is not available');
+        proc.opencodeLastManualCompactAt = Date.now();
+        proc.totalInputTokens = 0;
+        proc.totalOutputTokens = 0;
+        proc.cacheReadTokens = 0;
+        proc.cacheCreationTokens = 0;
+        this.resetCurrentContextUsage(proc);
+        this.emitUsage(sessionId, proc);
+        this.emitCompact(sessionId, {
+          sessionId,
+          message: 'OpenCode compacted session context.',
+        });
+        proc.opencodeIdle = true;
+        this.emitQueueState(sessionId, proc);
+        this.io.to(`session:${sessionId}`).emit('session:thinking', {
+          sessionId,
+          isThinking: false,
+        });
+        console.log(`Compacted opencode session [${sessionId}] via HTTP`);
+        if (!proc.opencodeQueueDraining) {
+          void this.drainOpenCodeQueuedTurns(sessionId, proc);
+        }
+        return;
+      }
+
+      if (turn.opencodeSlashCommand?.type === 'command') {
+        await opencodeServer.sendCommand(proc.claudeSessionId, {
+          command: turn.opencodeSlashCommand.command,
+          arguments: turn.opencodeSlashCommand.args,
+          model: proc.model,
+          mode: proc.mode,
+          variant: selectedReasoning,
+          directory: proc.workingDirectory,
+          webuiSessionId: sessionId,
+          userId: proc.userId,
+        });
+        console.log(
+          `Sent command [${sessionId}] via opencode HTTP: /${turn.opencodeSlashCommand.command}`
+        );
+        return;
+      }
+
+      if (turn.opencodeSlashCommand?.type === 'plan') {
+        await opencodeServer.sendPrompt(proc.claudeSessionId, {
+          text:
+            turn.opencodeSlashCommand.args ||
+            'Create a plan for the next work in this session. Do not edit files until the plan is accepted.',
+          model: proc.model,
+          agent: 'plan',
+          mode: proc.mode,
+          variant: selectedReasoning,
+          directory: proc.workingDirectory,
+          webuiSessionId: sessionId,
+          userId: proc.userId,
+        });
+        console.log(`Sent plan request [${sessionId}] via opencode plan agent`);
+        return;
+      }
+
+      await opencodeServer.sendPrompt(proc.claudeSessionId, {
+        text: turn.messageForClaude,
+        model: proc.model,
+        mode: proc.mode,
+        variant: selectedReasoning,
+        directory: proc.workingDirectory,
+        webuiSessionId: sessionId,
+        userId: proc.userId,
+      });
+      console.log(
+        `Sent message [${sessionId}] via opencode HTTP: ${turn.messageForClaude.substring(0, 100)}...`
+      );
+    } catch (err) {
+      proc.opencodeIdle = true;
+      this.emitQueueState(sessionId, proc);
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+      throw err;
+    }
+  }
+
+  private async drainOpenCodeQueuedTurns(sessionId: string, proc: ClaudeProcess): Promise<void> {
+    if (proc.cliProvider !== 'opencode' || proc.opencodeQueueDraining || !proc.opencodeIdle) {
+      return;
+    }
+
+    const nextTurn = proc.opencodeQueuedTurns?.shift();
+    if (!nextTurn) {
+      this.emitQueueState(sessionId, proc);
+      return;
+    }
+
+    proc.opencodeQueueDraining = true;
+    let dispatchedSuccessfully = false;
+    this.emitQueueState(sessionId, proc);
+    try {
+      await this.dispatchOpenCodeTurn(sessionId, proc, nextTurn);
+      dispatchedSuccessfully = true;
+    } catch (err) {
+      proc.opencodeQueuedTurns?.unshift(nextTurn);
+      proc.opencodeIdle = true;
+      this.emitQueueState(sessionId, proc);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[OPENCODE] Failed to dispatch queued turn [${sessionId}]:`, err);
+      this.io.to(`session:${sessionId}`).emit('session:error', {
+        sessionId,
+        error: `Failed to start queued OpenCode message: ${message}`,
+      });
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+    } finally {
+      proc.opencodeQueueDraining = false;
+      if (
+        dispatchedSuccessfully &&
+        proc.opencodeIdle &&
+        (proc.opencodeQueuedTurns?.length ?? 0) > 0
+      ) {
+        void this.drainOpenCodeQueuedTurns(sessionId, proc);
+      }
     }
   }
 
@@ -4882,7 +6834,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
     userId: string,
     message: string,
     attachments?: FileAttachmentData[],
-    options?: { recordMessage?: boolean; updateLastMessage?: boolean }
+    options?: {
+      recordMessage?: boolean;
+      updateLastMessage?: boolean;
+      activeFollowupMode?: ActiveFollowupMode;
+    }
   ): Promise<void> {
     let proc = this.processes.get(sessionId);
 
@@ -4913,6 +6869,9 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.cliProvider === 'codex' ? parseCodexReviewCommand(message) : null;
     const codexNativeSlashCommand =
       proc.cliProvider === 'codex' && !codexReviewCommand && isCodexNativeSlashCommand(message);
+    const opencodeSlashCommand =
+      proc.cliProvider === 'opencode' ? parseOpenCodeSlashCommand(message) : null;
+    const providerNativeSlashCommand = codexNativeSlashCommand || Boolean(opencodeSlashCommand);
     let codexExecCommandForTurn: CodexPreparedTurn['codexExecCommand'];
     const codexImagePathsForTurn: string[] = [];
     if (codexReviewCommand) {
@@ -4925,7 +6884,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
     }
 
     // Add working directory reminder for resumed sessions (only once)
-    if (proc.needsWorkingDirReminder && !codexNativeSlashCommand) {
+    if (proc.needsWorkingDirReminder && !providerNativeSlashCommand) {
       const workingDirReminder = `<system-reminder>
 IMPORTANT: Your current working directory is: ${proc.workingDirectory}
 This is the project you should be working on. All file operations should be relative to this directory.
@@ -4937,7 +6896,7 @@ This is the project you should be working on. All file operations should be rela
       console.log(`Added working directory reminder for resumed session [${sessionId}]`);
     }
 
-    if (proc.contextReminder && !codexNativeSlashCommand) {
+    if (proc.contextReminder && !providerNativeSlashCommand) {
       let label = 'Context from previous session';
       if (proc.contextReminder.reason === 'provider-switch') {
         label = 'Provider switch handoff (detailed)';
@@ -4960,7 +6919,7 @@ ${proc.contextReminder.summary}
     if (
       proc.cliProvider === 'codex' &&
       !codexReviewCommand &&
-      !codexNativeSlashCommand &&
+      !providerNativeSlashCommand &&
       !proc.sharedContextInjected
     ) {
       const configHome = resolveConfigHome(proc.cliProvider);
@@ -4978,7 +6937,7 @@ ${proc.contextReminder.summary}
 
     if (
       !codexReviewCommand &&
-      !codexNativeSlashCommand &&
+      !providerNativeSlashCommand &&
       (proc.cliProvider === 'codex' || proc.cliProvider === 'opencode') &&
       proc.modePromptInjected !== proc.mode
     ) {
@@ -4986,6 +6945,31 @@ ${proc.contextReminder.summary}
       if (modePrompt) {
         messageForClaude = `${modePrompt}\n\n${messageForClaude}`;
         proc.modePromptInjected = proc.mode;
+      }
+    }
+
+    if (!codexReviewCommand && !providerNativeSlashCommand) {
+      const androidDeviceSerial = getAndroidDeviceSerialForSession(sessionId, userId);
+      if (androidDeviceSerial && proc.androidDeviceSerialInjected !== androidDeviceSerial) {
+        const androidContext = buildAndroidDeviceContext(sessionId, userId);
+        if (androidContext) {
+          messageForClaude = `${androidContext}\n\n${messageForClaude}`;
+          proc.androidDeviceSerialInjected = androidDeviceSerial;
+        }
+      } else if (!androidDeviceSerial && proc.androidDeviceSerialInjected) {
+        messageForClaude = `<system-reminder>\nNo Android test device is currently selected for this Plum session.\n</system-reminder>\n\n${messageForClaude}`;
+        proc.androidDeviceSerialInjected = null;
+      }
+    }
+
+    if (!codexReviewCommand && !providerNativeSlashCommand) {
+      const sessionStyleContext = await buildSessionStyleContext(
+        sessionId,
+        userId,
+        proc.cliProvider
+      );
+      if (sessionStyleContext) {
+        messageForClaude = `${sessionStyleContext}\n\n${messageForClaude}`;
       }
     }
 
@@ -5142,13 +7126,38 @@ ${proc.contextReminder.summary}
         codexNativeSlashCommand,
       };
 
-      if (!proc.codexIdle || proc.codexQueueDraining) {
-        this.queueCodexTurn(sessionId, proc, codexTurn);
-        this.requestCodexQueuePreemption(sessionId, proc);
+      if (!proc.codexIdle || proc.codexSteerDraining) {
+        this.steerCodexTurn(sessionId, proc, codexTurn);
+        const activeFollowupMode =
+          options?.activeFollowupMode ??
+          (process.env.CODEX_PREEMPT_FOLLOWUPS === '1' ? 'steer' : 'queue');
+        if (activeFollowupMode === 'steer') {
+          this.requestCodexSteeringPreemption(sessionId, proc);
+        }
         return;
       }
 
       await this.dispatchCodexTurn(sessionId, proc, codexTurn);
+      return;
+    }
+
+    if (proc.cliProvider === 'opencode' && proc.serverBacked && proc.claudeSessionId) {
+      const opencodeTurn: OpenCodePreparedTurn = {
+        queueId: recordedMessageId,
+        queuedAt: recordedCreatedAt,
+        originalMessage: message,
+        messageForClaude,
+        attachments,
+        updateLastMessage,
+        opencodeSlashCommand,
+      };
+
+      if (proc.opencodeIdle === false || proc.opencodeQueueDraining) {
+        this.queueOpenCodeTurn(sessionId, proc, opencodeTurn);
+        return;
+      }
+
+      await this.dispatchOpenCodeTurn(sessionId, proc, opencodeTurn);
       return;
     }
 
@@ -5176,28 +7185,11 @@ ${proc.contextReminder.summary}
       return;
     }
 
-    // Dispatch: server-backed opencode uses HTTP/SSE; claude uses stdin.
-    if (proc.cliProvider === 'opencode' && proc.serverBacked && proc.claudeSessionId) {
-      const selectedReasoning = await getCliReasoningForUser(proc.userId, 'opencode');
-      this.resetCurrentContextUsage(proc);
-      await opencodeServer.sendPrompt(proc.claudeSessionId, {
-        text: messageForClaude,
-        model: proc.model,
-        mode: proc.mode,
-        variant: selectedReasoning,
-        directory: proc.workingDirectory,
-        webuiSessionId: sessionId,
-      });
-      console.log(
-        `Sent message [${sessionId}] via opencode HTTP: ${messageForClaude.substring(0, 100)}...`
-      );
-    } else {
-      const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
-      proc.process.stdin?.write(formattedMessage);
-      console.log(
-        `Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`
-      );
-    }
+    const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
+    proc.process.stdin?.write(formattedMessage);
+    console.log(
+      `Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`
+    );
   }
 
   interrupt(sessionId: string, userId: string): void {
@@ -5291,7 +7283,12 @@ ${proc.contextReminder.summary}
         throw new Error('Unauthorized');
       }
 
-      proc.codexQueuedTurns = [];
+      proc.codexPendingSteerTurn = undefined;
+      proc.codexSteerDraining = false;
+      proc.codexPreemptingForSteer = false;
+      proc.opencodeQueuedTurns = [];
+      proc.opencodeQueueDraining = false;
+      proc.opencodeIdle = true;
       this.emitQueueState(sessionId, proc);
       // Kill the process immediately
       proc.process.kill('SIGTERM');
@@ -5500,25 +7497,36 @@ ${proc.contextReminder.summary}
         streaming: false,
         currentToolName: null,
         currentAgentType: null,
+        currentAgentDescription: null,
+        subagents: [],
+        activitySummary: null,
         queueDepth: 0,
         queueItems: [],
         lastActivityAt: null,
         disconnectedAt: null,
+        usage: null,
       };
     }
 
-    const queueItems = (proc.codexQueuedTurns ?? []).map((turn) => ({
+    const queueItems = this.getQueuedTurnItems(proc).map((turn) => ({
       id: turn.queueId,
       preview: turn.originalMessage.slice(0, 240),
       createdAt: turn.queuedAt,
       attachments: turn.attachments?.length,
     }));
+    const hasActiveSubagents = Array.from(proc.subagentRuns.values()).some(
+      (run) => run.status === 'started'
+    );
+    const hasPendingCodexSteer = proc.cliProvider === 'codex' && !!proc.codexPendingSteerTurn;
     const busy =
       proc.cliProvider === 'codex'
-        ? !proc.codexIdle || queueItems.length > 0
-        : proc.cliProvider === 'vibe'
-          ? !proc.vibeIdle
-          : proc.isStreaming || !!proc.currentToolName;
+        ? !proc.codexIdle || hasPendingCodexSteer || hasActiveSubagents
+        : proc.cliProvider === 'opencode'
+          ? !proc.opencodeIdle || queueItems.length > 0 || hasActiveSubagents
+          : proc.cliProvider === 'vibe'
+            ? !proc.vibeIdle || hasActiveSubagents
+            : proc.isStreaming || !!proc.currentToolName || hasActiveSubagents;
+    const activitySummary = this.getActivitySummary(proc, busy, queueItems.length);
 
     return {
       running: true,
@@ -5531,10 +7539,14 @@ ${proc.contextReminder.summary}
       streaming: proc.isStreaming,
       currentToolName: proc.currentToolName,
       currentAgentType: proc.currentAgentType,
+      currentAgentDescription: proc.currentAgentDescription,
+      subagents: this.snapshotSubagentRuns(proc),
+      activitySummary,
       queueDepth: queueItems.length,
       queueItems,
       lastActivityAt: new Date(proc.lastActivityAt).toISOString(),
       disconnectedAt: proc.disconnectedAt ? new Date(proc.disconnectedAt).toISOString() : null,
+      usage: this.buildUsageSnapshot(sessionId, proc),
     };
   }
 
@@ -5648,11 +7660,13 @@ ${proc.contextReminder.summary}
 
     let args: string[] = [];
     const requestedModel =
-      proc.model && proc.model !== 'unknown'
-        ? proc.model
-        : await getCliModelForUser(userId, cliProvider);
-    const requestedReasoning = await getCliReasoningForUser(userId, cliProvider);
-    const requestedServiceTier = getCliServiceTierForUser(userId, cliProvider);
+      cliProvider === 'opencode'
+        ? await getCliModelForSession(userId, cliProvider, sessionId)
+        : proc.model && proc.model !== 'unknown'
+          ? proc.model
+          : await getCliModelForSession(userId, cliProvider, sessionId);
+    const requestedReasoning = await getCliReasoningForSession(userId, cliProvider, sessionId);
+    const requestedServiceTier = await getCliServiceTierForSession(userId, cliProvider, sessionId);
     if (cliProvider === 'claude') {
       args = [
         '--print',
@@ -5707,6 +7721,7 @@ ${proc.contextReminder.summary}
       cwd: workingDirectory,
       env: {
         ...process.env,
+        ...buildAndroidDeviceEnvForSession(sessionId, userId),
         WEBUI_SESSION_ID: sessionId,
         WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
         WEBUI_PROJECT_PATH: workingDirectory,
@@ -5731,10 +7746,13 @@ ${proc.contextReminder.summary}
       currentToolName: null,
       currentToolId: null,
       currentToolInput: '',
+      currentActivitySummary: null,
       pendingToolResults: new Map(),
       currentAgentType: null,
+      currentAgentDescription: null,
+      subagentRuns: new Map(),
       model: proc.model || 'unknown',
-      contextWindow: proc.contextWindow || contextWindowFor(proc.model),
+      contextWindow: this.resolveObservedContextWindow(proc.model, proc.contextWindow),
       turnInputTokens: 0,
       turnCacheReadTokens: 0,
       turnCacheCreationTokens: 0,

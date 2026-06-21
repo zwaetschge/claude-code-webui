@@ -110,7 +110,7 @@ fun OrchestrationConfigSheet(
             if (draft.workers.size < 6) {
                 OutlinedButton(
                     onClick = {
-                        val newWorker = WorkerConfig(provider = CLIProvider.CLAUDE)
+                        val newWorker = WorkerConfig(provider = CLIProvider.CODEX)
                         onDraftChange(draft.copy(workers = draft.workers + newWorker))
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -272,7 +272,12 @@ private fun ProviderSelector(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            CLIProvider.entries.filter { it != CLIProvider.MULTI }.forEach { provider ->
+            listOf(
+                CLIProvider.CODEX,
+                CLIProvider.OPENCODE,
+                CLIProvider.VIBE,
+                CLIProvider.CLAUDE,
+            ).forEach { provider ->
                 val pTheme = ProviderThemes.get(mapCLIToCliProvider(provider))
                 val pColor = if (isDark) pTheme.colorDark else pTheme.color
                 DropdownMenuItem(

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Minimal — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&family=Open+Sans:wght@300;400;500;600&family=Inconsolata:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MINIMAL DESIGN SYSTEM — 400×300 THUMBNAIL
+     Stripped-back · whitespace · warm off-white · restrained color
+     ============================================================ */
+  :root {
+    --mn-primary: #0C0C09;       /* near-black ink */
+    --mn-secondary: #312C85;     /* deep indigo */
+    --mn-secondary-light: #4D47B0;
+    --mn-success: #16A34A;
+    --mn-warning: #D97706;
+    --mn-danger: #DC2626;
+
+    --mn-surface: #F4F4F1;       /* warm off-white */
+    --mn-surface-2: #EEEEEA;
+    --mn-surface-3: #E5E5E0;
+    --mn-ink: #0C0C09;
+    --mn-ink-2: #3A3A33;
+    --mn-ink-3: #6B6B62;
+    --mn-ink-4: #9C9C92;
+    --mn-line: #D8D8D2;
+    --mn-line-2: #E8E8E2;
+
+    --mn-font: 'Open Sans', -apple-system, sans-serif;
+    --mn-font-display: 'Inter', 'Open Sans', sans-serif;
+    --mn-font-mono: 'Inconsolata', ui-monospace, monospace;
+
+    --mn-r: 2px;                /* minimal = sharp */
+    --mn-r-pill: 999px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--mn-font);
+    font-size: 12px;
+    color: var(--mn-ink);
+    background: var(--mn-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--mn-surface);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 28px 36px;
+    gap: 24px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    font-family: var(--mn-font-display);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--mn-ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--mn-secondary);
+    display: inline-block;
+  }
+  .nav {
+    display: flex;
+    gap: 20px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--mn-ink-3);
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--mn-ink); }
+  .nav a.is-active {
+    color: var(--mn-ink);
+    font-weight: 600;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 32px;
+    align-items: center;
+  }
+
+  /* LEFT — ultra-minimal headline */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    font-family: var(--mn-font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--mn-secondary);
+  }
+
+  .hero__title {
+    font-family: var(--mn-font-display);
+    font-size: 30px;
+    font-weight: 300;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    color: var(--mn-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .hero__sub {
+    font-family: var(--mn-font);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.65;
+    color: var(--mn-ink-3);
+    max-width: 28ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 20px;
+    border: none;
+    border-radius: var(--mn-r);
+    font-family: var(--mn-font-display);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s ease;
+  }
+  .btn--primary {
+    background: var(--mn-ink);
+    color: var(--mn-surface);
+  }
+  .btn--primary:hover { background: var(--mn-secondary); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--mn-ink-2);
+    padding: 0 4px;
+    height: auto;
+    font-weight: 500;
+  }
+  .btn--ghost:hover { color: var(--mn-secondary); }
+  .btn--ghost::after {
+    content: " →";
+    transition: color .15s ease;
+  }
+
+  /* RIGHT — minimal stat card */
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-left: 1px solid var(--mn-line);
+    padding-left: 24px;
+  }
+  .card__label {
+    font-family: var(--mn-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mn-ink-4);
+  }
+  .card__value {
+    font-family: var(--mn-font-display);
+    font-size: 28px;
+    font-weight: 300;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--mn-ink);
+  }
+  .card__value span {
+    font-size: 13px;
+    color: var(--mn-ink-3);
+    font-weight: 400;
+  }
+  .card__delta {
+    font-family: var(--mn-font-mono);
+    font-size: 10px;
+    color: var(--mn-ink-3);
+  }
+  .card__delta strong {
+    color: var(--mn-secondary);
+    font-weight: 700;
+  }
+
+  /* Subtle bar chart */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 36px;
+    margin-top: 4px;
+  }
+  .bar {
+    flex: 1;
+    background: var(--mn-ink);
+    opacity: 0.15;
+    border-radius: 1px;
+    min-height: 2px;
+  }
+  .bar--peak {
+    opacity: 1;
+    background: var(--mn-secondary);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--mn-line);
+    padding-top: 16px;
+    font-family: var(--mn-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--mn-ink-4);
+    letter-spacing: 0.02em;
+  }
+  .footer__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .footer__group { display: flex; gap: 16px; }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Minimal design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__dot"></span>
+      <span>monolith</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Work</a>
+      <a href="#">Studio</a>
+      <a href="#">Notes</a>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: ultra-minimal hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">studio · est. 2019</span>
+      <h1 class="hero__title">Design is<br>the <em>silence</em><br>between.</h1>
+      <p class="hero__sub">We build software that says less, and means more.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">See our work</button>
+        <button class="btn btn--ghost" type="button">Contact</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: minimal stat -->
+    <aside class="card">
+      <span class="card__label">This year</span>
+      <div class="card__value">14<span> projects shipped</span></div>
+      <div class="card__delta"><strong>+4</strong> from last year</div>
+      <div class="bars" aria-hidden="true">
+        <div class="bar" style="height:30%"></div>
+        <div class="bar" style="height:45%"></div>
+        <div class="bar" style="height:38%"></div>
+        <div class="bar" style="height:55%"></div>
+        <div class="bar" style="height:48%"></div>
+        <div class="bar bar--peak" style="height:92%"></div>
+        <div class="bar" style="height:62%"></div>
+        <div class="bar" style="height:50%"></div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="footer__group">
+      <span class="footer__item">© 2025</span>
+      <span class="footer__item">monolith studio</span>
+    </div>
+    <span class="footer__item">v1 · WCAG AA</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

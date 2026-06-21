@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claymorphism — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CLAYMORPHISM DESIGN SYSTEM — 400×300 THUMBNAIL
+     Soft · puffy · 3D-clay · dual shadows · glossy highlights
+     ============================================================ */
+  :root {
+    --cl-primary: #3B82F6;        /* electric blue */
+    --cl-primary-light: #60A5FA;
+    --cl-primary-deep: #2563EB;
+    --cl-secondary: #FFFFFF;
+    --cl-success: #16A34A;
+    --cl-warning: #D97706;
+    --cl-danger: #DC2626;
+
+    --cl-surface: #FFFFFF;
+    --cl-bg: #E8F0FE;             /* soft pastel blue background */
+    --cl-bg-2: #DCE7FB;
+    --cl-ink: #1C398E;            /* deep navy text */
+    --cl-ink-2: #3B5BAA;
+    --cl-ink-3: #7A8DC7;
+    --cl-ink-4: #B0BFE0;
+
+    /* Playful accent colors for variety */
+    --cl-pink: #F472B6;
+    --cl-yellow: #FBBF24;
+    --cl-mint: #34D399;
+    --cl-violet: #A78BFA;
+
+    --cl-font: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+    --cl-font-display: 'Poppins', 'Montserrat', sans-serif;
+    --cl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    /* ============ CLAY SHADOWS — the signature ============ */
+    /* Dark outer drop + light inner top highlight = "puffy" 3D effect */
+    --cl-clay-sm:
+      6px 6px 12px rgba(28,57,142,0.18),
+      -6px -6px 12px rgba(255,255,255,0.95),
+      inset 1px 1px 1px rgba(255,255,255,0.6);
+    --cl-clay-md:
+      8px 8px 18px rgba(28,57,142,0.20),
+      -8px -8px 18px rgba(255,255,255,0.90),
+      inset 2px 2px 2px rgba(255,255,255,0.7);
+    --cl-clay-lg:
+      10px 10px 24px rgba(28,57,142,0.22),
+      -10px -10px 24px rgba(255,255,255,0.85),
+      inset 2px 2px 3px rgba(255,255,255,0.75);
+    --cl-clay-pressed:
+      inset 4px 4px 8px rgba(28,57,142,0.25),
+      inset -4px -4px 8px rgba(255,255,255,0.85);
+    --cl-clay-blue:
+      8px 8px 18px rgba(37,99,235,0.40),
+      -4px -4px 12px rgba(96,165,250,0.50),
+      inset 2px 2px 3px rgba(255,255,255,0.40);
+
+    --cl-r-sm: 12px;
+    --cl-r-md: 18px;
+    --cl-r-lg: 24px;
+    --cl-r-xl: 32px;
+    --cl-r-pill: 999px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cl-font);
+    font-size: 12px;
+    color: var(--cl-ink);
+    background:
+      radial-gradient(circle at 20% 20%, rgba(96,165,250,0.25), transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(167,139,250,0.18), transparent 55%),
+      linear-gradient(135deg, var(--cl-bg) 0%, var(--cl-bg-2) 100%);
+    -webkit-font-smoothing: antialiased;
+    padding: 12px;
+  }
+
+  .frame {
+    width: 376px;
+    height: 276px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 12px;
+  }
+
+  /* ===== HEADER (puffy top bar) ===== */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--cl-surface);
+    border-radius: var(--cl-r-md);
+    box-shadow: var(--cl-clay-sm);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--cl-primary-light) 0%, var(--cl-primary-deep) 100%);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow:
+      inset 1.5px 1.5px 2px rgba(255,255,255,0.5),
+      inset -1.5px -1.5px 3px rgba(37,99,235,0.4),
+      2px 3px 6px rgba(37,99,235,0.35);
+  }
+  .brand__mark svg { width: 14px; height: 14px; }
+  .brand__name {
+    font-family: var(--cl-font-display);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--cl-ink);
+  }
+  .brand__name span { color: var(--cl-primary); }
+
+  .nav-pills {
+    display: flex;
+    gap: 4px;
+  }
+  .nav-pill {
+    height: 24px;
+    padding: 0 10px;
+    border: none;
+    border-radius: var(--cl-r-pill);
+    background: var(--cl-bg);
+    color: var(--cl-ink-2);
+    font-family: var(--cl-font);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--cl-clay-pressed);
+    transition: all .18s ease;
+  }
+  .nav-pill--active {
+    background: linear-gradient(135deg, var(--cl-primary-light), var(--cl-primary));
+    color: #fff;
+    box-shadow:
+      2px 3px 6px rgba(37,99,235,0.30),
+      inset 1px 1px 1.5px rgba(255,255,255,0.40);
+  }
+
+  .avatar {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--cl-pink), var(--cl-violet));
+    display: grid; place-items: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 10px;
+    box-shadow:
+      inset 1.5px 1.5px 2px rgba(255,255,255,0.4),
+      2px 3px 6px rgba(167,139,250,0.30);
+  }
+
+  /* ===== MAIN GRID ===== */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  /* Base clay card */
+  .card {
+    background: var(--cl-surface);
+    border-radius: var(--cl-r-lg);
+    box-shadow: var(--cl-clay-md);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    transition: transform .2s ease;
+  }
+  .card:hover { transform: translateY(-2px); }
+
+  /* Glossy highlight strip on top of every clay card */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 12%;
+    width: 76%; height: 35%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55) 0%, transparent 100%);
+    border-radius: var(--cl-r-lg) var(--cl-r-lg) 50% 50%;
+    pointer-events: none;
+  }
+
+  .card__label {
+    font-family: var(--cl-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cl-ink-3);
+    position: relative;
+    z-index: 1;
+  }
+  .card__value {
+    font-family: var(--cl-font-display);
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: var(--cl-ink);
+    line-height: 1.05;
+    margin-top: 4px;
+    position: relative;
+    z-index: 1;
+  }
+  .card__value span {
+    font-size: 12px;
+    color: var(--cl-ink-3);
+    font-weight: 600;
+  }
+  .card__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding-top: 4px;
+    font-size: 9px;
+    position: relative;
+    z-index: 1;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--cl-font-mono);
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: var(--cl-r-pill);
+    color: var(--cl-success);
+    background: rgba(52,211,153,0.18);
+  }
+  .delta svg { width: 7px; height: 7px; }
+  .delta-text { color: var(--cl-ink-4); }
+
+  /* === Featured center card: music player style === */
+  .card--feature {
+    grid-row: span 2;
+    background: linear-gradient(160deg, var(--cl-primary-light) 0%, var(--cl-primary-deep) 100%);
+    color: #fff;
+    box-shadow: var(--cl-clay-blue);
+    padding: 14px;
+    align-items: center;
+    text-align: center;
+    justify-content: space-between;
+  }
+  .card--feature::before {
+    background: linear-gradient(180deg, rgba(255,255,255,0.35) 0%, transparent 60%);
+  }
+  .card--feature .card__label { color: rgba(255,255,255,0.8); }
+  .card--feature .card__value { color: #fff; }
+
+  /* Album art disc with rotation */
+  .disc {
+    width: 70px; height: 70px;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 50%, #fff 18%, transparent 19%),
+      conic-gradient(from 0deg, var(--cl-pink), var(--cl-yellow), var(--cl-mint), var(--cl-violet), var(--cl-pink));
+    box-shadow:
+      inset 2px 2px 4px rgba(255,255,255,0.4),
+      inset -2px -2px 6px rgba(0,0,0,0.2),
+      4px 5px 12px rgba(37,99,235,0.35);
+    position: relative;
+    z-index: 1;
+    margin: 4px 0;
+  }
+  .disc::after {
+    content: "";
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--cl-primary-deep);
+    box-shadow: inset 1px 1px 2px rgba(255,255,255,0.3);
+  }
+
+  .track {
+    position: relative;
+    z-index: 1;
+  }
+  .track__title {
+    font-family: var(--cl-font-display);
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.2;
+    margin-bottom: 1px;
+  }
+  .track__artist {
+    font-family: var(--cl-font);
+    font-size: 9.5px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.75);
+  }
+
+  /* Progress bar */
+  .progress {
+    width: 100%;
+    height: 5px;
+    background: rgba(255,255,255,0.25);
+    border-radius: var(--cl-r-pill);
+    overflow: hidden;
+    margin-top: 6px;
+    position: relative;
+    z-index: 1;
+    box-shadow: inset 1px 1px 2px rgba(37,99,235,0.3);
+  }
+  .progress__fill {
+    height: 100%;
+    width: 42%;
+    background: linear-gradient(90deg, #fff, var(--cl-yellow));
+    border-radius: var(--cl-r-pill);
+    box-shadow: 0 0 4px rgba(255,255,255,0.5);
+  }
+  .progress__times {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--cl-font-mono);
+    font-size: 7.5px;
+    color: rgba(255,255,255,0.7);
+    margin-top: 2px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Play button — puffy */
+  .play-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 6px;
+    position: relative;
+    z-index: 1;
+  }
+  .play-btn {
+    width: 26px; height: 26px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    color: #fff;
+    display: grid; place-items: center;
+    cursor: pointer;
+    box-shadow:
+      inset 1px 1px 2px rgba(255,255,255,0.30),
+      inset -1px -1px 3px rgba(37,99,235,0.35);
+  }
+  .play-btn svg { width: 10px; height: 10px; }
+  .play-btn--main {
+    width: 34px; height: 34px;
+    background: #fff;
+    color: var(--cl-primary-deep);
+    box-shadow:
+      inset 1.5px 1.5px 2px rgba(255,255,255,0.7),
+      inset -1.5px -1.5px 4px rgba(96,165,250,0.4),
+      3px 4px 10px rgba(37,99,235,0.40);
+  }
+  .play-btn--main svg { width: 13px; height: 13px; }
+
+  /* === KPI icon top-right of small cards === */
+  .icon-pill {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 22px; height: 22px;
+    border-radius: 8px;
+    display: grid; place-items: center;
+    color: #fff;
+    z-index: 1;
+    box-shadow:
+      inset 1px 1px 1.5px rgba(255,255,255,0.40),
+      2px 2px 4px rgba(28,57,142,0.20);
+  }
+  .icon-pill svg { width: 11px; height: 11px; }
+  .icon-pill--blue { background: linear-gradient(135deg, var(--cl-primary-light), var(--cl-primary-deep)); }
+  .icon-pill--pink { background: linear-gradient(135deg, var(--cl-pink), #EC4899); }
+  .icon-pill--mint { background: linear-gradient(135deg, var(--cl-mint), var(--cl-success)); }
+  .icon-pill--yellow { background: linear-gradient(135deg, var(--cl-yellow), var(--cl-warning)); }
+
+  /* Donut-style chart in mini card */
+  .donut {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: conic-gradient(
+      var(--cl-mint) 0% 68%,
+      var(--cl-yellow) 68% 86%,
+      var(--cl-pink) 86% 100%
+    );
+    position: relative;
+    z-index: 1;
+    margin: 4px auto 0;
+    box-shadow:
+      inset 1.5px 1.5px 2.5px rgba(255,255,255,0.45),
+      inset -1.5px -1.5px 3px rgba(28,57,142,0.15);
+  }
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 9px;
+    background: var(--cl-surface);
+    border-radius: 50%;
+    box-shadow:
+      inset 1px 1px 2px rgba(28,57,142,0.10),
+      1px 1px 2px rgba(255,255,255,0.8);
+  }
+  .donut-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    z-index: 1;
+    margin-top: 4px;
+  }
+  .donut-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: var(--cl-font-mono);
+    font-size: 8px;
+    color: var(--cl-ink-3);
+    font-weight: 600;
+  }
+  .legend-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+
+  /* Sparkline in storage card */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 16px;
+    margin-top: 4px;
+    position: relative;
+    z-index: 1;
+  }
+  .spark__bar {
+    flex: 1;
+    border-radius: 3px 3px 0 0;
+    min-height: 2px;
+    box-shadow: inset 1px 1px 1px rgba(255,255,255,0.4);
+  }
+
+  /* Floating decorative bubble */
+  .bubble {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.45);
+    box-shadow:
+      inset 2px 2px 4px rgba(255,255,255,0.85),
+      inset -2px -2px 6px rgba(96,165,250,0.30);
+    z-index: 0;
+  }
+  .bubble--1 {
+    width: 24px; height: 24px;
+    top: 50%; right: 6px;
+  }
+  .bubble--2 {
+    width: 14px; height: 14px;
+    bottom: 6px; left: 50%;
+  }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Claymorphism design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      </span>
+      <span class="brand__name">puffy<span>·</span>tunes</span>
+    </div>
+    <div class="nav-pills">
+      <button class="nav-pill nav-pill--active" type="button">Home</button>
+      <button class="nav-pill" type="button">Mixes</button>
+      <button class="nav-pill" type="button">Library</button>
+    </div>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN GRID ===== -->
+  <section class="main">
+
+    <!-- TOP-LEFT: Sessions KPI -->
+    <article class="card">
+      <div class="icon-pill icon-pill--blue" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+      </div>
+      <span class="card__label">Listeners</span>
+      <div class="card__value">8,432</div>
+      <div class="card__sub">
+        <span class="delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          14%
+        </span>
+        <span class="delta-text">7d</span>
+      </div>
+    </article>
+
+    <!-- CENTER FEATURED: Music Player -->
+    <article class="card card--feature">
+      <span class="card__label">Now playing</span>
+
+      <div class="disc" aria-hidden="true"></div>
+
+      <div class="track">
+        <div class="track__title">Soft Horizon</div>
+        <div class="track__artist">Pillow Talk · 2024</div>
+      </div>
+
+      <div style="width:100%;">
+        <div class="progress" aria-hidden="true"><div class="progress__fill"></div></div>
+        <div class="progress__times">
+          <span>1:24</span>
+          <span>3:18</span>
+        </div>
+      </div>
+
+      <div class="play-row">
+        <button class="play-btn" type="button" aria-label="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg>
+        </button>
+        <button class="play-btn play-btn--main" type="button" aria-label="Play">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="play-btn" type="button" aria-label="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+        </button>
+      </div>
+    </article>
+
+    <!-- TOP-RIGHT: Mood donut -->
+    <article class="card">
+      <div class="icon-pill icon-pill--pink" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      </div>
+      <span class="card__label">Mood</span>
+      <div class="donut-row">
+        <div class="donut" aria-hidden="true"></div>
+        <div class="donut-legend">
+          <span><span class="legend-dot" style="background:var(--cl-mint);"></span>68%</span>
+          <span><span class="legend-dot" style="background:var(--cl-yellow);"></span>18%</span>
+          <span><span class="legend-dot" style="background:var(--cl-pink);"></span>14%</span>
+        </div>
+      </div>
+    </article>
+
+    <!-- BOTTOM-LEFT: Storage with sparkline -->
+    <article class="card">
+      <div class="icon-pill icon-pill--mint" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+      </div>
+      <span class="card__label">Storage</span>
+      <div class="card__value">4.2<span> / 8 GB</span></div>
+      <div class="spark" aria-hidden="true">
+        <div class="spark__bar" style="height:30%;background:var(--cl-mint);"></div>
+        <div class="spark__bar" style="height:55%;background:var(--cl-mint);"></div>
+        <div class="spark__bar" style="height:42%;background:var(--cl-mint);"></div>
+        <div class="spark__bar" style="height:78%;background:var(--cl-primary-light);"></div>
+        <div class="spark__bar" style="height:60%;background:var(--cl-primary-light);"></div>
+        <div class="spark__bar" style="height:88%;background:var(--cl-primary);"></div>
+        <div class="spark__bar" style="height:50%;background:var(--cl-primary-light);"></div>
+      </div>
+    </article>
+
+    <!-- BOTTOM-RIGHT: Streak -->
+    <article class="card">
+      <div class="icon-pill icon-pill--yellow" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+      </div>
+      <span class="card__label">Streak</span>
+      <div class="card__value">23<span> days</span></div>
+      <div class="card__sub">
+        <span class="delta" style="color:var(--cl-warning);background:rgba(251,191,36,0.20);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 22h20L12 2z"/><path d="M12 9v4M12 17h.01"/></svg>
+          on fire
+        </span>
+      </div>
+      <div class="bubble bubble--1" aria-hidden="true"></div>
+      <div class="bubble bubble--2" aria-hidden="true"></div>
+    </article>
+
+  </section>
+
+</main>
+
+</body>
+</html>

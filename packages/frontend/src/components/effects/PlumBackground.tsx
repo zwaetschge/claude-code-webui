@@ -70,7 +70,7 @@ export function PlumBackground({ className, enableCursorGlow = true }: PlumBackg
             width: '520px',
             height: '180px',
             background:
-              'linear-gradient(100deg, transparent 0%, rgba(168, 85, 247, 0.32) 34%, rgba(34, 211, 238, 0.18) 54%, transparent 82%)',
+              'linear-gradient(100deg, transparent 0%, rgba(99, 244, 213, 0.26) 34%, rgba(116, 216, 255, 0.2) 56%, transparent 82%)',
             filter: 'blur(46px)',
             left: 0,
             top: 0,

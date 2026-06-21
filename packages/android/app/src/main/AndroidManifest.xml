@@ -70,7 +70,7 @@
         <!-- ── ShareReceiver ────────────────────────────────────────────────── -->
         <!--
             Transparent activity that shows a session-picker dialog when another
-            app shares content (text, images, files) into Claude Code WebUI.
+            app shares content (text, images, files) into Plum Code WebUI.
         -->
         <activity
             android:name=".core.share.ShareReceiver"

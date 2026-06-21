@@ -762,7 +762,7 @@ private fun DashboardScreenPreview() {
                         id = "1", userId = "u", name = "Build Dashboard",
                         workingDirectory = "/home", status = SessionStatus.RUNNING,
                         lastMessage = "Working on the SessionCard…",
-                        cliProvider = CLIProvider.CLAUDE,
+                        cliProvider = CLIProvider.CODEX,
                         createdAt = "2024-01-15T10:00:00Z",
                         updatedAt = "2024-01-15T10:05:00Z",
                     ),

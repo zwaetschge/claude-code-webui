@@ -275,13 +275,12 @@ private fun ProviderPickerRow(
     selected: String,
     onSelect: (String) -> Unit,
 ) {
-    val providers = listOf("claude", "gemini", "codex", "glm", "kimi")
+    val providers = listOf("codex", "opencode", "vibe", "claude")
     val labels = mapOf(
-        "claude" to "Claude",
-        "gemini" to "Gemini",
         "codex" to "Codex",
-        "glm" to "GLM",
-        "kimi" to "Kimi",
+        "opencode" to "OpenCode",
+        "vibe" to "Mistral Vibe",
+        "claude" to "Claude",
     )
 
     Row(

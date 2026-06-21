@@ -111,6 +111,8 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 
 - **comfyui-images** - text-to-image and image-edit tools backed by ComfyUI workflows, rendered inline in chat
 - **android-builder** - ~25 tools for building, installing, launching, and testing Android apps via the `android-app-creator` backend (project lifecycle, build, ADB, emulator, on-device testing)
+- **godot** - create, inspect, validate, script, and export Godot projects through a local MCP bridge
+- **blender** - create, inspect, export, and render 3D assets through Blender Python in background mode
 - Settings can also list and test global MCP servers from the provider config, such as audio or project-specific bridges
 
 ### Admin
@@ -242,24 +244,27 @@ Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on st
 
 | Variable                                                                           | Description                                                                                                                                                 | Required    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `SESSION_SECRET` / `JWT_SECRET`                                                     | Express session and JWT signing secrets (min 32 chars each). Installer auto-generates.                                                                      | Yes         |
+| `SESSION_SECRET` / `JWT_SECRET`                                                    | Express session and JWT signing secrets (min 32 chars each). Installer auto-generates.                                                                      | Yes         |
 | `AUTH_ALLOWED_EMAILS`                                                              | Comma-separated email allowlist enforced for both OAuth and basic-auth. Empty = no allowlist, only safe behind a private network or SSO proxy.              | Recommended |
 | `SEED_ADMIN_EMAIL`                                                                 | First user with this email gets `role=admin` on first login. Defaults to the first allowlist entry when unset.                                              | No          |
-| `FRONTEND_URL` / `CORS_ALLOWED_ORIGINS` / `TRUST_PROXY`                             | Public URL, extra CORS origins, and Express proxy trust. `TRUST_PROXY=true` is unsafe without a trusted reverse proxy in front.                              | No          |
-| `WEBUI_PORT` / `WEBUI_SHM_SIZE` / `TZ`                                               | Host port (default `4545`), Chromium shared memory (default `1gb`), and timezone.                                                                            | No          |
-| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR` / `ALLOWED_BASE_PATHS`                  | Host paths bind-mounted to persistent data, provider homes, and workspaces.                                                                                  | No          |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL`                 | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`.                                                                                    | No          |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL`                 | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`.                                                                                    | No          |
+| `FRONTEND_URL` / `CORS_ALLOWED_ORIGINS` / `TRUST_PROXY`                            | Public URL, extra CORS origins, and Express proxy trust. `TRUST_PROXY=true` is unsafe without a trusted reverse proxy in front.                             | No          |
+| `WEBUI_PORT` / `WEBUI_SHM_SIZE` / `TZ`                                             | Host port (default `4545`), Chromium shared memory (default `1gb`), and timezone.                                                                           | No          |
+| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR` / `ALLOWED_BASE_PATHS`                 | Host paths bind-mounted to persistent data, provider homes, and workspaces.                                                                                 | No          |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL`                | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`.                                                                                    | No          |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL`                | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`.                                                                                    | No          |
 | `ENCRYPTION_KEY`                                                                   | Enables encrypted storage for provider API keys, including the Mistral key managed in Settings.                                                             | Recommended |
-| `CLI_PROVIDER_<PROVIDER>_MODELS`                                                    | Override model menus for `CODEX`, `OPENCODE`, `VIBE`, or `CLAUDE`; empty means auto-discover or use provider fallback.                                      | No          |
-| `CLI_PROVIDER_<PROVIDER>_DEFAULT_MODEL`                                             | Override defaults such as Codex `gpt-5.5`, OpenCode `z-ai/glm-5.1`, Vibe `mistral-vibe-cli-latest`, or Claude `sonnet`.                                    | No          |
-| `MISTRAL_API_KEY`                                                                  | Enables Mistral Vibe when no user-specific key is stored in Settings.                                                                                        | No          |
-| `ADMIN_LLM_PROVIDER`                                                               | Pin admin/helper calls to `codex`, `opencode`, `vibe`, or `claude`. Default preference is Codex first.                                                       | No          |
+| `CLI_PROVIDER_<PROVIDER>_MODELS`                                                   | Override model menus for `CODEX`, `OPENCODE`, `VIBE`, or `CLAUDE`; empty means auto-discover or use provider fallback.                                      | No          |
+| `CLI_PROVIDER_<PROVIDER>_DEFAULT_MODEL`                                            | Override defaults such as Codex `gpt-5.5`, OpenCode `z-ai/glm-5.1`, Vibe `mistral-vibe-cli-latest`, or Claude `sonnet`.                                     | No          |
+| `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` / `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`       | OpenCode WebUI primary agent and Codex-like communication style. Defaults to `build`; set style prompt to `0` or `false` to disable the injected reminder.  | No          |
+| `MISTRAL_API_KEY`                                                                  | Enables Mistral Vibe when no user-specific key is stored in Settings.                                                                                       | No          |
+| `ADMIN_LLM_PROVIDER`                                                               | Pin admin/helper calls to `codex`, `opencode`, `vibe`, or `claude`. Default preference is Codex first.                                                      | No          |
 | `CODEX_WEBUI_SANDBOX_MODE` / `CODEX_WEBUI_APPROVAL_POLICY`                         | Codex Docker defaults. The image defaults to `danger-full-access` / `never` because Codex's Landlock `workspace-write` sandbox is unreliable inside Docker. | No          |
-| `CODEX_USAGE_URL` / `CODEX_USER_AGENT`                                              | Override the ChatGPT Codex usage endpoint or User-Agent used for `/api/usage/limits?provider=codex`.                                                        | No          |
-| `COMFYUI_URL`                                                                      | Fallback ComfyUI base URL. Settings can override it without restart.                                                                                         | No          |
+| `CODEX_USAGE_URL` / `CODEX_USER_AGENT`                                             | Override the ChatGPT Codex usage endpoint or User-Agent used for `/api/usage/limits?provider=codex`.                                                        | No          |
+| `COMFYUI_URL`                                                                      | Fallback ComfyUI base URL. Settings can override it without restart.                                                                                        | No          |
 | `OPENAI_API_KEY`                                                                   | Exposes OpenAI API billing to CLI sessions and `scripts/openai-image.sh` when no key is stored in app settings.                                             | No          |
-| `PREVIEW_HOSTNAME`                                                                 | Optional hostname used by the dev-server preview proxy.                                                                                                      | No          |
+| `GODOT_BIN` / `GODOT_TIMEOUT_MS`                                                   | Optional Godot 4 binary and timeout for the built-in Godot MCP. Scaffolding works without it; validation/export require it.                                 | No          |
+| `BLENDER_BIN` / `BLENDER_TIMEOUT_MS`                                               | Blender binary and timeout for the built-in Blender MCP. The runtime image defaults to `blender-headless`.                                                  | No          |
+| `PREVIEW_HOSTNAME`                                                                 | Optional hostname used by the dev-server preview proxy.                                                                                                     | No          |
 | `CHROME_BIN` / `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` / `PUPPETEER_EXECUTABLE_PATH` | System Chromium wrapper exposed to CLI sessions (default: `/usr/local/bin/plum-chromium`).                                                                  | No          |
 
 ### CLI Integration
@@ -309,7 +314,7 @@ packages/
 ├── desktop/              # Desktop shell wrapper
 ├── android/              # Native Android client
 └── scripts/
-    └── mcp-servers/      # comfyui.mjs, android-builder.mjs (stdio MCP)
+    └── mcp-servers/      # comfyui.mjs, android-builder.mjs, godot.mjs, blender.mjs (stdio MCP)
 ```
 
 ## API Endpoints

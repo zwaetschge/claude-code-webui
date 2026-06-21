@@ -21,11 +21,12 @@ interface RunOpts {
   cwd?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  model?: string;
 }
 
 interface ProviderRunner {
   command: string;
-  args: (prompt: string) => string[];
+  args: (prompt: string, opts: RunOpts) => string[];
   // Some CLIs (codex) accept the prompt as a positional arg; others
   // (claude) pass it via -p. This flag controls whether the prompt is
   // also piped on stdin as a safety net for very long prompts.
@@ -40,11 +41,12 @@ function buildRunner(provider: CLIProvider): ProviderRunner {
       // --ephemeral skips persisting to ~/.codex/sessions/ so admin calls
       // (commit messages, summaries, etc.) don't pollute the resume picker.
       return {
-        command: 'codex',
-        args: (prompt) => [
+        command: '/home/node/.npm-global/bin/codex',
+        args: (prompt, opts) => [
           'exec',
           '--skip-git-repo-check',
           '--ephemeral',
+          ...(opts.model ? ['-m', opts.model] : []),
           '--sandbox',
           getCodexWebuiSandboxMode(),
           '-c',
@@ -108,7 +110,7 @@ export async function runAdminLLM(prompt: string, opts: RunOpts = {}): Promise<A
   const timeoutMs = opts.timeoutMs ?? 60_000;
 
   return await new Promise<AdminLLMResult>((resolve, reject) => {
-    const proc = spawn(runner.command, runner.args(prompt), {
+    const proc = spawn(runner.command, runner.args(prompt, opts), {
       cwd: opts.cwd,
       env: { ...process.env },
     });

@@ -23,7 +23,6 @@ import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.ui.screens.analytics.AnalyticsScreen
-import com.claudewebui.app.ui.screens.analytics.WatchdogScreen
 import com.claudewebui.app.ui.screens.auth.LoginScreen
 import com.claudewebui.app.ui.screens.auth.ServerSetupScreen
 import com.claudewebui.app.ui.screens.chat.ChatScreen
@@ -35,8 +34,6 @@ import com.claudewebui.app.ui.screens.chat.UsageScreen
 import com.claudewebui.app.ui.screens.chat.UsageViewModel
 import com.claudewebui.app.ui.screens.dashboard.DashboardScreen
 import com.claudewebui.app.ui.screens.filemanager.FileManagerScreen
-import com.claudewebui.app.ui.screens.orchestration.OrchestrationScreen
-import com.claudewebui.app.ui.screens.ralph.RalphScreen
 import com.claudewebui.app.ui.screens.settings.AgentsScreen
 import com.claudewebui.app.ui.screens.settings.CliToolsScreen
 import com.claudewebui.app.ui.screens.settings.McpSettingsScreen
@@ -277,44 +274,6 @@ fun AppNavigation(
 
         composable(route = Routes.Analytics.route) {
             AnalyticsScreen()
-        }
-
-        // ---- Watchdog ----
-
-        composable(route = Routes.Watchdog.route) {
-            WatchdogScreen()
-        }
-
-        // ---- Orchestration ----
-
-        composable(
-            route = Routes.Orchestration.ROUTE,
-            arguments = listOf(
-                navArgument(Routes.Orchestration.ARG_SESSION_ID) { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val sessionId = backStackEntry.arguments?.getString(Routes.Orchestration.ARG_SESSION_ID)
-                ?: return@composable
-            OrchestrationScreen(
-                sessionId = sessionId,
-                onNavigateBack = { navController.popBackStack() }
-            )
-        }
-
-        // ---- Ralph ----
-
-        composable(
-            route = Routes.Ralph.ROUTE,
-            arguments = listOf(
-                navArgument(Routes.Ralph.ARG_SESSION_ID) { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val sessionId = backStackEntry.arguments?.getString(Routes.Ralph.ARG_SESSION_ID)
-                ?: return@composable
-            RalphScreen(
-                sessionId = sessionId,
-                onNavigateBack = { navController.popBackStack() }
-            )
         }
 
         // ---- Checkpoint Manager ----

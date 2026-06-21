@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Vibrant — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700;800;900&family=Fascinate&family=Fira+Code:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     VIBRANT DESIGN SYSTEM — 400×300 THUMBNAIL
+     Lively · bold · playful · purple + peach + warm
+     Noto Sans body · Fascinate display · Fira Code mono
+     ============================================================ */
+  :root {
+    --vb-primary:    #7C61D4;   /* purple */
+    --vb-primary-2:  #6344C4;
+    --vb-primary-3:  #E5DEFA;   /* purple tint */
+    --vb-primary-soft: rgba(124,97,212,0.14);
+    --vb-secondary:  #EAAE87;   /* warm peach */
+    --vb-secondary-2:#E29766;
+    --vb-secondary-3:#FBE5D2;   /* peach tint */
+    --vb-success:    #16A34A;
+    --vb-warning:    #D97706;
+    --vb-danger:     #DC2626;
+
+    --vb-surface:    #FFFFFF;
+    --vb-surface-2:  #FDF6EF;   /* warm cream tint */
+    --vb-surface-3:  #F8EDDD;
+    --vb-surface-4:  #F2E0CB;
+
+    --vb-ink:        #2F281D;   /* warm dark brown */
+    --vb-ink-2:      #4A3D2D;
+    --vb-ink-3:      #6B5A45;
+    --vb-ink-4:      #8C7860;
+    --vb-ink-5:      #B5A48B;
+
+    --vb-line:       #E8D9C4;
+    --vb-line-2:     #F2E8D9;
+
+    --vb-font:    'Noto Sans', -apple-system, sans-serif;
+    --vb-font-d:  'Fascinate', 'Noto Sans', cursive;
+    --vb-font-m:  'Fira Code', ui-monospace, monospace;
+
+    /* playful, generous radii */
+    --vb-r-sm: 8px;
+    --vb-r-md: 14px;
+    --vb-r-lg: 20px;
+    --vb-r-xl: 28px;
+    --vb-r-pill: 999px;
+
+    /* warm, soft shadows with color tint */
+    --vb-shadow-1: 0 2px 6px rgba(47,40,29,0.06);
+    --vb-shadow-2: 0 6px 16px rgba(124,97,212,0.14), 0 2px 6px rgba(47,40,29,0.06);
+    --vb-shadow-3: 0 12px 28px rgba(124,97,212,0.18), 0 4px 10px rgba(47,40,29,0.08);
+    --vb-shadow-peach: 0 8px 20px -4px rgba(226,151,102,0.40), 0 2px 6px rgba(47,40,29,0.06);
+    --vb-shadow-purple: 0 8px 20px -4px rgba(124,97,212,0.40), 0 2px 6px rgba(47,40,29,0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--vb-font);
+    font-size: 13px;
+    color: var(--vb-ink);
+    background: var(--vb-surface);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — warm cream surface with playful color blobs
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 55% 45% at 88% 14%, rgba(234,174,135,0.30) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 8% 88%, rgba(124,97,212,0.18) 0%, transparent 60%),
+      radial-gradient(ellipse 35% 30% at 50% 50%, rgba(253,246,239,0.5) 0%, transparent 70%),
+      linear-gradient(180deg, #FFFCF7 0%, var(--vb-surface-2) 100%);
+    isolation: isolate;
+  }
+  /* soft dot confetti — playful energy */
+  .confetti {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+  .confetti--1 { top: 30px; left: 200px; }
+  .confetti--2 { top: 100px; right: 12px; }
+  .confetti--3 { bottom: 70px; left: 16px; }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 16px 22px 14px;
+    gap: 14px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    position: relative;
+    width: 30px; height: 30px;
+    border-radius: var(--vb-r-sm);
+    background: linear-gradient(135deg, var(--vb-primary) 0%, var(--vb-secondary) 100%);
+    box-shadow: var(--vb-shadow-purple);
+    overflow: hidden;
+  }
+  .brand__mark::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 7px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.40) 0%, transparent 55%);
+  }
+  .brand__mark::before {
+    content: "";
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.85);
+    z-index: 1;
+  }
+  .brand__name {
+    font-family: var(--vb-font-d);
+    font-size: 24px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: var(--vb-ink);
+    line-height: 1;
+  }
+  .brand__name em {
+    font-style: normal;
+    color: var(--vb-primary);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vb-ink-3);
+    letter-spacing: -0.005em;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    padding: 6px 12px;
+    border-radius: var(--vb-r-pill);
+    transition: background .15s ease, color .15s ease;
+  }
+  .nav a:hover {
+    background: var(--vb-primary-3);
+    color: var(--vb-primary);
+  }
+  .nav a.is-active {
+    background: var(--vb-primary);
+    color: #FFFFFF;
+    box-shadow: var(--vb-shadow-purple);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 18px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 4px 12px;
+    background: var(--vb-secondary);
+    color: var(--vb-ink);
+    border-radius: var(--vb-r-pill);
+    font-family: var(--vb-font);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    box-shadow: var(--vb-shadow-peach);
+  }
+  .hero__eyebrow::before { content: "✦"; color: var(--vb-primary); }
+  .hero__title {
+    font-family: var(--vb-font-d);
+    font-size: 38px;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0.005em;
+    color: var(--vb-ink);
+    margin-top: 2px;
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--vb-primary);
+    position: relative;
+    display: inline-block;
+  }
+  .hero__title em::after {
+    content: "";
+    position: absolute;
+    left: -2px; right: -2px; bottom: 2px;
+    height: 8px;
+    background: var(--vb-secondary-3);
+    border-radius: 4px;
+    z-index: -1;
+    transform: rotate(-1.5deg);
+  }
+  .hero__sub {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: var(--vb-ink-3);
+    max-width: 32ch;
+    margin-top: 2px;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 18px;
+    border: none;
+    border-radius: var(--vb-r-pill);
+    font-family: var(--vb-font);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  .btn--primary {
+    background: var(--vb-primary);
+    color: #FFFFFF;
+    box-shadow: var(--vb-shadow-purple);
+  }
+  .btn--primary:hover {
+    background: var(--vb-primary-2);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px -4px rgba(124,97,212,0.50);
+  }
+  .btn--peach {
+    background: var(--vb-secondary);
+    color: var(--vb-ink);
+    box-shadow: var(--vb-shadow-peach);
+  }
+  .btn--peach:hover {
+    background: var(--vb-secondary-2);
+    transform: translateY(-2px);
+  }
+  .btn--ghost {
+    background: transparent;
+    color: var(--vb-ink-3);
+    padding: 0 10px;
+    height: 36px;
+  }
+  .btn--ghost:hover { color: var(--vb-primary); background: var(--vb-primary-3); }
+
+  /* ============================================================
+     RIGHT: VIBRANT FEATURE CARD
+     Playful signature — colorful, rounded, energy-forward,
+     highlight underline, warm color blocks, sparkline.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 16px;
+    background: var(--vb-surface);
+    border: 1px solid var(--vb-line);
+    border-radius: var(--vb-r-lg);
+    box-shadow: var(--vb-shadow-3);
+    overflow: hidden;
+  }
+  /* playful corner blob */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: -20px; right: -20px;
+    width: 80px; height: 80px;
+    background: radial-gradient(circle, var(--vb-secondary-3) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .card__head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .card__title {
+    font-family: var(--vb-font-d);
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--vb-ink);
+    line-height: 1;
+    letter-spacing: 0.005em;
+  }
+  .card__title span { color: var(--vb-primary); }
+  .card__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: var(--vb-primary);
+    color: #FFFFFF;
+    border-radius: var(--vb-r-pill);
+    font-size: 10px;
+    font-weight: 700;
+    box-shadow: var(--vb-shadow-purple);
+  }
+  .card__badge::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--vb-secondary);
+  }
+
+  .metric {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .metric__value {
+    font-family: var(--vb-font);
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--vb-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric__unit {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--vb-ink-3);
+  }
+  .metric__delta {
+    margin-left: auto;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 9px;
+    background: rgba(22,163,74,0.12);
+    color: #15803D;
+    border-radius: var(--vb-r-pill);
+    font-family: var(--vb-font-m);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .metric__delta::before { content: "↑"; }
+
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 32px;
+    margin-bottom: 12px;
+  }
+  .spark i {
+    flex: 1;
+    border-radius: 3px 3px 0 0;
+    min-height: 4px;
+    background: linear-gradient(180deg, var(--vb-primary) 0%, rgba(124,97,212,0.20) 100%);
+  }
+  .spark i.warm {
+    background: linear-gradient(180deg, var(--vb-secondary) 0%, rgba(234,174,135,0.25) 100%);
+  }
+  .spark i.peak {
+    background: linear-gradient(180deg, var(--vb-secondary-2) 0%, var(--vb-primary) 100%);
+  }
+
+  .card__row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 10px;
+    border-top: 1.5px dashed var(--vb-line);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: var(--vb-secondary-3);
+    color: var(--vb-secondary-2);
+    border-radius: var(--vb-r-pill);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .chip::before { content: "◆"; color: var(--vb-primary); }
+  .meta {
+    font-family: var(--vb-font-m);
+    font-size: 9.5px;
+    font-weight: 500;
+    color: var(--vb-ink-4);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1.5px dashed var(--vb-line);
+    padding-top: 10px;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 18px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.1;
+  }
+  .stat__k {
+    font-family: var(--vb-font-d);
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--vb-ink);
+    line-height: 1;
+  }
+  .stat__k span {
+    font-family: var(--vb-font);
+    font-size: 11px;
+    color: var(--vb-ink-3);
+    font-weight: 600;
+    margin-left: 3px;
+  }
+  .stat__l {
+    font-family: var(--vb-font);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--vb-ink-4);
+    letter-spacing: -0.005em;
+  }
+  .footer__meta {
+    font-family: var(--vb-font-m);
+    font-size: 9.5px;
+    font-weight: 500;
+    color: var(--vb-ink-4);
+  }
+  .footer__meta b { color: var(--vb-primary); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Vibrant design language preview — lively playful">
+
+  <!-- confetti dots -->
+  <svg class="confetti confetti--1" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <circle cx="8" cy="8" r="6" fill="#7C61D4"/>
+  </svg>
+  <svg class="confetti confetti--2" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+    <rect x="2" y="2" width="8" height="8" rx="2" fill="#EAAE87" transform="rotate(15 6 6)"/>
+  </svg>
+  <svg class="confetti confetti--3" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+    <path d="M7 1 L8.5 5.5 L13 7 L8.5 8.5 L7 13 L5.5 8.5 L1 7 L5.5 5.5 Z" fill="#16A34A"/>
+  </svg>
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Bloom<em>.</em></span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Home</a>
+        <a href="#">Explore</a>
+        <a href="#">Pricing</a>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">New · 2025</span>
+        <h1 class="hero__title">Make it <em>pop</em>.</h1>
+        <p class="hero__sub">Bold colors, playful type, and energy in every pixel. Design that doesn't whisper — it sings.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Start free</button>
+          <button class="btn btn--ghost" type="button">See demo</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: vibrant card -->
+      <div class="card" aria-label="Growth summary">
+        <div class="card__head">
+          <span class="card__title">Weekly <span>growth</span></span>
+          <span class="card__badge">Hot</span>
+        </div>
+
+        <div class="metric">
+          <span class="metric__value">2,847</span>
+          <span class="metric__unit">new users</span>
+          <span class="metric__delta">18%</span>
+        </div>
+
+        <div class="spark" aria-hidden="true">
+          <i class="warm" style="height:28%"></i>
+          <i class="warm" style="height:42%"></i>
+          <i style="height:36%"></i>
+          <i style="height:55%"></i>
+          <i class="warm" style="height:48%"></i>
+          <i style="height:68%"></i>
+          <i class="peak" style="height:94%"></i>
+          <i style="height:80%"></i>
+        </div>
+
+        <div class="card__row">
+          <span class="chip">Trending</span>
+          <span class="meta">Updated · 2m ago</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">12<span>k</span></span>
+          <span class="stat__l">Creators</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">4.9<span>★</span></span>
+          <span class="stat__l">Rating</span>
+        </div>
+      </div>
+      <span class="footer__meta">Vibrant · <b>#7C61D4</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

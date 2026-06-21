@@ -27,7 +27,7 @@ import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import type { ApiResponse, DirectoryContents, FileInfo } from '@claude-code-webui/shared';
+import type { ApiResponse, DirectoryContents, FileInfo } from '@plum-code-webui/shared';
 
 interface WorkspaceFilesProps {
   workingDirectory?: string;
@@ -89,7 +89,13 @@ type ViewerState =
   | { kind: 'empty' }
   | { kind: 'directory'; directory: FileInfo }
   | { kind: 'loading'; file: FileInfo }
-  | { kind: 'html'; file: FileInfo; target: StaticPreviewTarget }
+  | {
+      kind: 'html';
+      file: FileInfo;
+      target: StaticPreviewTarget | null;
+      inlineHtml?: string;
+      projectPath: string;
+    }
   | { kind: 'data'; file: FileInfo; data: PreviewData }
   | { kind: 'media'; file: FileInfo; url: string; mediaKind: MediaKind; contentType: string }
   | { kind: 'unsupported'; file: FileInfo; message: string }
@@ -256,6 +262,113 @@ function buildStaticUrl(hostname: string, target: StaticPreviewTarget): string {
 
 function buildStaticInitUrl(hostname: string, target: StaticPreviewTarget): string {
   return `${previewOrigin(hostname)}${target.urlPath}`;
+}
+
+function normalizeAbsoluteFilePath(value: string): string {
+  const parts: string[] = [];
+  value
+    .replace(/\\/g, '/')
+    .split('/')
+    .forEach((part) => {
+      if (!part || part === '.') return;
+      if (part === '..') {
+        parts.pop();
+        return;
+      }
+      parts.push(part);
+    });
+  return `/${parts.join('/')}`;
+}
+
+function splitReferenceSuffix(value: string): { pathPart: string; suffix: string } {
+  const index = value.search(/[?#]/);
+  if (index < 0) return { pathPart: value, suffix: '' };
+  return { pathPart: value.slice(0, index), suffix: value.slice(index) };
+}
+
+function resolveInlineAssetPath(reference: string, filePath: string, projectPath: string): string | null {
+  const trimmed = reference.trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('//') ||
+    /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+  ) {
+    return null;
+  }
+
+  const { pathPart, suffix } = splitReferenceSuffix(trimmed);
+  if (!pathPart) return null;
+
+  const basePath = pathPart.startsWith('/')
+    ? `${projectPath}/${pathPart.slice(1)}`
+    : `${parentDirectory(filePath, projectPath)}/${pathPart}`;
+  return `/api/files/binary?path=${encodeURIComponent(normalizeAbsoluteFilePath(basePath))}${suffix}`;
+}
+
+function rewriteInlineSrcSet(value: string, filePath: string, projectPath: string): string {
+  return value
+    .split(',')
+    .map((candidate) => {
+      const trimmed = candidate.trim();
+      if (!trimmed) return '';
+      const [url, ...descriptor] = trimmed.split(/\s+/);
+      const resolved = resolveInlineAssetPath(url ?? '', filePath, projectPath);
+      return [resolved ?? url, ...descriptor].filter(Boolean).join(' ');
+    })
+    .filter(Boolean)
+    .join(', ');
+}
+
+function rewriteInlineCssUrls(value: string, filePath: string, projectPath: string): string {
+  return value.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, _quote, url) => {
+    const resolved = resolveInlineAssetPath(url, filePath, projectPath);
+    if (!resolved) return match;
+    const escaped = resolved.replace(/"/g, '%22');
+    return `url("${escaped}")`;
+  });
+}
+
+function buildInlineHtmlDocument(html: string, filePath: string, projectPath: string): string {
+  if (typeof DOMParser === 'undefined') return html;
+
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const base = document.createElement('base');
+  base.target = '_blank';
+  document.head.prepend(base);
+
+  document.querySelectorAll<HTMLElement>('[src]').forEach((element) => {
+    const value = element.getAttribute('src');
+    if (!value) return;
+    const resolved = resolveInlineAssetPath(value, filePath, projectPath);
+    if (resolved) element.setAttribute('src', resolved);
+  });
+
+  document.querySelectorAll<HTMLElement>('link[href], a[href]').forEach((element) => {
+    const value = element.getAttribute('href');
+    if (!value) return;
+    const resolved = resolveInlineAssetPath(value, filePath, projectPath);
+    if (resolved) element.setAttribute('href', resolved);
+  });
+
+  document.querySelectorAll<HTMLElement>('[srcset]').forEach((element) => {
+    const value = element.getAttribute('srcset');
+    if (!value) return;
+    element.setAttribute('srcset', rewriteInlineSrcSet(value, filePath, projectPath));
+  });
+
+  document.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
+    const value = element.getAttribute('style');
+    if (!value) return;
+    element.setAttribute('style', rewriteInlineCssUrls(value, filePath, projectPath));
+  });
+
+  document.querySelectorAll<HTMLStyleElement>('style').forEach((element) => {
+    if (!element.textContent) return;
+    element.textContent = rewriteInlineCssUrls(element.textContent, filePath, projectPath);
+  });
+
+  return `<!doctype html>\n${document.documentElement.outerHTML}`;
 }
 
 function sortFiles(files: FileInfo[]): FileInfo[] {
@@ -435,16 +548,52 @@ export function WorkspaceFiles({
       setActiveSheet('');
 
       try {
-        if (isHtmlFile(file.name) && config?.enabled && config.hostname) {
-          const params = new URLSearchParams({
-            projectPath: workingDirectory,
-            filePath: file.path,
-          });
-          const { data } = await api.get<StaticPreviewTarget>(
-            `/api/preview/static-file?${params.toString()}`
-          );
-          if (requestId !== previewRequestRef.current) return;
-          setViewerState({ kind: 'html', file, target: data });
+        if (isHtmlFile(file.name)) {
+          let staticTarget: StaticPreviewTarget | null = null;
+          if (config?.enabled && config.hostname) {
+            try {
+              const params = new URLSearchParams({
+                projectPath: workingDirectory,
+                filePath: file.path,
+              });
+              const { data } = await api.get<StaticPreviewTarget>(
+                `/api/preview/static-file?${params.toString()}`
+              );
+              if (requestId !== previewRequestRef.current) return;
+              staticTarget = data;
+            } catch {
+              // Fall through to the inline preview below. Static vhost preview depends on DNS/proxy setup.
+            }
+          }
+
+          try {
+            const response = await api.get<
+              ApiResponse<{ path: string; content: string; size: number; modifiedAt: string }>
+            >(`/api/files/content?path=${encodeURIComponent(file.path)}`);
+            if (!response.data.success || !response.data.data) {
+              throw new Error(response.data.error?.message || 'Failed to load HTML preview');
+            }
+            if (requestId !== previewRequestRef.current) return;
+            setViewerState({
+              kind: 'html',
+              file,
+              target: staticTarget,
+              inlineHtml: response.data.data.content,
+              projectPath: workingDirectory,
+            });
+          } catch (contentError) {
+            if (requestId !== previewRequestRef.current) return;
+            if (staticTarget) {
+              setViewerState({
+                kind: 'html',
+                file,
+                target: staticTarget,
+                projectPath: workingDirectory,
+              });
+              return;
+            }
+            throw contentError;
+          }
           return;
         }
 
@@ -618,12 +767,24 @@ export function WorkspaceFiles({
   );
 
   const openExternal = useCallback(() => {
-    if (!config?.hostname || viewerState.kind !== 'html') return;
-    window.open(
-      buildStaticInitUrl(config.hostname, viewerState.target),
-      '_blank',
-      'noopener,noreferrer'
-    );
+    if (viewerState.kind !== 'html') return;
+    if (config?.hostname && viewerState.target) {
+      window.open(
+        buildStaticInitUrl(config.hostname, viewerState.target),
+        '_blank',
+        'noopener,noreferrer'
+      );
+      return;
+    }
+    if (viewerState.inlineHtml) {
+      const blob = new Blob(
+        [buildInlineHtmlDocument(viewerState.inlineHtml, viewerState.file.path, viewerState.projectPath)],
+        { type: 'text/html' }
+      );
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    }
   }, [config, viewerState]);
 
   const reloadActive = useCallback(() => {
@@ -668,9 +829,9 @@ export function WorkspaceFiles({
             aria-expanded={isDirectory ? isExpanded : undefined}
             aria-selected={isSelected}
             className={cn(
-              'group flex min-h-7 cursor-pointer items-center gap-1.5 rounded-sm py-0.5 pr-2 text-sm outline-none transition-colors',
+              'workspace-file-row group flex min-h-7 cursor-pointer items-center gap-1.5 rounded-sm py-0.5 pr-2 text-sm outline-none transition-colors',
               'hover:bg-muted/60 focus-visible:ring-1 focus-visible:ring-primary/50',
-              isSelected && 'bg-primary/10 text-primary'
+              isSelected && 'is-selected bg-primary/10 text-primary'
             )}
             style={{ paddingLeft }}
             title={file.path}
@@ -708,7 +869,7 @@ export function WorkspaceFiles({
           >
             <button
               type="button"
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10"
+              className="workspace-file-disclosure flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10"
               onClick={(event) => {
                 event.stopPropagation();
                 if (isDirectory) toggleDirectory(file.path);
@@ -729,9 +890,9 @@ export function WorkspaceFiles({
               filename={file.name}
               isDirectory={isDirectory}
               isOpen={isExpanded}
-              className="h-4 w-4 shrink-0"
+              className="workspace-file-icon h-4 w-4 shrink-0"
             />
-            <span className="min-w-0 flex-1 truncate">
+            <span className="workspace-file-name min-w-0 flex-1 truncate">
               {highlightMatch(file.name, searchQuery)}
             </span>
             {viewMode === 'compact' && !isDirectory && file.size > 0 && (
@@ -753,7 +914,7 @@ export function WorkspaceFiles({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                className="workspace-file-inline-action h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
                 onClick={(event) => {
                   event.stopPropagation();
                   void handleDownload(file);
@@ -807,8 +968,13 @@ export function WorkspaceFiles({
 
   if (!workingDirectory) {
     return (
-      <div className={cn('flex h-full items-center justify-center p-6', className)}>
-        <div className="max-w-md rounded-lg border bg-card p-6 text-center">
+      <div
+        className={cn(
+          'workspace-files-unavailable flex h-full items-center justify-center p-6',
+          className
+        )}
+      >
+        <div className="workspace-files-state-card max-w-md rounded-lg border bg-card p-6 text-center">
           <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
           <h3 className="mb-1 font-semibold">Workspace unavailable</h3>
           <p className="text-sm text-muted-foreground">
@@ -826,15 +992,22 @@ export function WorkspaceFiles({
   const selectedFile = selectedEntry?.type === 'file' ? selectedEntry : null;
   const canOpenEditor = Boolean(onFileOpen && selectedFile);
   const htmlUrl =
-    config?.hostname && viewerState.kind === 'html'
+    config?.hostname && viewerState.kind === 'html' && viewerState.target
       ? buildStaticUrl(config.hostname, viewerState.target)
       : null;
 
   return (
-    <div className={cn('flex h-full flex-col overflow-hidden bg-background', className)}>
-      <div className="shrink-0 border-b bg-card/95">
+    <div
+      className={cn(
+        'workspace-files-shell flex h-full flex-col overflow-hidden bg-background',
+        className
+      )}
+    >
+      <div className="workspace-files-topbar shrink-0 border-b bg-card/95">
         <div className="flex min-h-12 items-center gap-2 px-3 py-2">
-          <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="workspace-files-topbar-icon">
+            <FolderTree className="h-4 w-4 shrink-0" />
+          </span>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium">Files</div>
             <div className="truncate font-mono text-[11px] text-muted-foreground">
@@ -845,7 +1018,7 @@ export function WorkspaceFiles({
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="workspace-files-icon-button h-8 w-8"
               onClick={onManageDirectories}
               title="Manage allowed directories"
             >
@@ -855,7 +1028,7 @@ export function WorkspaceFiles({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="workspace-files-icon-button h-8 w-8"
             onClick={reloadActive}
             disabled={!selectedEntry || rootLoading}
             title="Reload selected file or folder"
@@ -865,7 +1038,7 @@ export function WorkspaceFiles({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="workspace-files-icon-button h-8 w-8"
             onClick={openExternal}
             disabled={viewerState.kind !== 'html'}
             title="Open HTML preview in new tab"
@@ -875,12 +1048,14 @@ export function WorkspaceFiles({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-80 shrink-0 flex-col border-r bg-muted/15 max-lg:w-72 max-sm:w-56">
-          <div className="shrink-0 space-y-2 border-b p-2">
+      <div className="workspace-files-layout flex min-h-0 flex-1">
+        <aside className="workspace-files-sidebar flex w-80 shrink-0 flex-col border-r bg-muted/15 max-lg:w-72 max-sm:w-56">
+          <div className="workspace-files-sidebar-toolbar shrink-0 space-y-2 border-b p-2">
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="workspace-files-mini-icon">
+                  <FolderTree className="h-4 w-4 shrink-0" />
+                </span>
                 <span className="truncate">Workspace</span>
               </div>
               <div className="flex items-center gap-1">
@@ -894,7 +1069,7 @@ export function WorkspaceFiles({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="workspace-files-mini-button h-6 w-6"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploading}
                   title="Upload files"
@@ -908,7 +1083,7 @@ export function WorkspaceFiles({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="workspace-files-mini-button h-6 w-6"
                   onClick={cycleViewMode}
                   title={`View: ${viewMode}`}
                 >
@@ -919,7 +1094,7 @@ export function WorkspaceFiles({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="workspace-files-mini-button h-6 w-6"
                   onClick={refreshRoot}
                   disabled={rootLoading}
                   title="Refresh workspace"
@@ -929,7 +1104,7 @@ export function WorkspaceFiles({
               </div>
             </div>
 
-            <div className="relative">
+            <div className="workspace-files-search relative">
               <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchQuery}
@@ -941,7 +1116,7 @@ export function WorkspaceFiles({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="absolute right-0.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                  className="workspace-files-clear-search absolute right-0.5 top-1/2 h-6 w-6 -translate-y-1/2"
                   onClick={() => setSearchQuery('')}
                   title="Clear search"
                 >
@@ -951,7 +1126,7 @@ export function WorkspaceFiles({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-auto p-1" role="tree">
+          <div className="workspace-files-tree min-h-0 flex-1 overflow-auto p-1" role="tree">
             {rootLoading && rootFiles.length === 0 ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -969,7 +1144,7 @@ export function WorkspaceFiles({
             )}
           </div>
 
-          <div className="shrink-0 border-t px-2 py-1.5">
+          <div className="workspace-files-footer shrink-0 border-t px-2 py-1.5">
             <p
               className="truncate font-mono text-[10px] text-muted-foreground"
               title={workingDirectory}
@@ -979,8 +1154,8 @@ export function WorkspaceFiles({
           </div>
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col bg-background">
-          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-2">
+        <main className="workspace-files-main flex min-w-0 flex-1 flex-col bg-background">
+          <div className="workspace-files-preview-header flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-2">
             {selectedEntry ? (
               <FileIcon
                 filename={selectedEntry.name}
@@ -1007,7 +1182,7 @@ export function WorkspaceFiles({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2"
+                  className="workspace-files-action-button h-7 px-2"
                   onClick={() => void handleOpenEditor(selectedFile)}
                   disabled={!canOpenEditor || openingEditorPath === selectedFile.path}
                   title="Open in editor"
@@ -1022,7 +1197,7 @@ export function WorkspaceFiles({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2"
+                  className="workspace-files-action-button h-7 px-2"
                   onClick={() => void handleDownload(selectedFile)}
                   title="Download file"
                 >
@@ -1032,7 +1207,7 @@ export function WorkspaceFiles({
               </>
             )}
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="workspace-files-viewer min-h-0 flex-1 overflow-auto">
             <FileViewer
               state={viewerState}
               activeSheet={activeSheet}
@@ -1059,9 +1234,9 @@ function FileViewer({
 }) {
   if (state.kind === 'empty') {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <div className="max-w-sm">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md border bg-muted/30">
+      <div className="workspace-file-empty flex h-full items-center justify-center p-6 text-center">
+        <div className="workspace-files-state-card max-w-sm">
+          <div className="workspace-file-empty-icon mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md border bg-muted/30">
             <FolderTree className="h-6 w-6 text-muted-foreground" />
           </div>
           <h3 className="mb-1 font-semibold">No file selected</h3>
@@ -1073,8 +1248,8 @@ function FileViewer({
 
   if (state.kind === 'directory') {
     return (
-      <div className="p-4">
-        <div className="rounded-md border bg-muted/20 p-4">
+      <div className="workspace-file-directory p-4">
+        <div className="workspace-file-directory-card rounded-md border bg-muted/20 p-4">
           <div className="mb-1 text-sm font-medium">{state.directory.name}</div>
           <div className="font-mono text-xs text-muted-foreground">{state.directory.path}</div>
           <div className="mt-3 text-xs text-muted-foreground">
@@ -1087,7 +1262,7 @@ function FileViewer({
 
   if (state.kind === 'loading') {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      <div className="workspace-file-loading flex h-full items-center justify-center text-sm text-muted-foreground">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         Loading {state.file.name}
       </div>
@@ -1095,11 +1270,18 @@ function FileViewer({
   }
 
   if (state.kind === 'html') {
-    const src = htmlHostname ? buildStaticInitUrl(htmlHostname, state.target) : null;
-    return src ? (
+    const src = htmlHostname && state.target ? buildStaticInitUrl(htmlHostname, state.target) : null;
+    return state.inlineHtml ? (
+      <iframe
+        srcDoc={buildInlineHtmlDocument(state.inlineHtml, state.file.path, state.projectPath)}
+        className="workspace-html-frame h-full w-full border-0 bg-white"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+        title={state.file.name}
+      />
+    ) : src ? (
       <iframe
         src={src}
-        className="h-full w-full border-0 bg-white"
+        className="workspace-html-frame h-full w-full border-0 bg-white"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
         title={state.file.name}
       />
@@ -1115,7 +1297,7 @@ function FileViewer({
   if (state.kind === 'media') {
     if (state.mediaKind === 'image') {
       return (
-        <div className="flex h-full items-center justify-center bg-muted/10 p-4">
+        <div className="workspace-file-media flex h-full items-center justify-center bg-muted/10 p-4">
           <img
             src={state.url}
             alt={state.file.name}
@@ -1187,14 +1369,14 @@ function PreviewDataView({
 
   if (data.type === 'json') {
     return (
-      <pre className="min-h-full overflow-auto bg-muted/20 p-4 font-mono text-sm">
+      <pre className="workspace-file-code-preview min-h-full overflow-auto bg-muted/20 p-4 font-mono text-sm">
         {JSON.stringify(data.content, null, 2)}
       </pre>
     );
   }
 
   return (
-    <pre className="min-h-full overflow-auto whitespace-pre-wrap bg-muted/20 p-4 font-mono text-sm">
+    <pre className="workspace-file-code-preview min-h-full overflow-auto whitespace-pre-wrap bg-muted/20 p-4 font-mono text-sm">
       {data.content}
     </pre>
   );
@@ -1225,9 +1407,9 @@ function DataTablePreview({
         };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="workspace-file-table-preview flex h-full flex-col">
       {data.type === 'xlsx' && data.sheetNames.length > 1 && (
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b bg-muted/20 p-2">
+        <div className="workspace-file-sheet-tabs flex shrink-0 gap-1 overflow-x-auto border-b bg-muted/20 p-2">
           {data.sheetNames.map((name) => (
             <button
               key={name}
@@ -1245,7 +1427,7 @@ function DataTablePreview({
           ))}
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="workspace-file-table-scroll min-h-0 flex-1 overflow-auto">
         <table className="w-full border-collapse text-sm">
           <thead className="sticky top-0 bg-muted">
             <tr>
@@ -1269,7 +1451,7 @@ function DataTablePreview({
           </tbody>
         </table>
       </div>
-      <div className="shrink-0 border-t px-3 py-2 text-xs text-muted-foreground">
+      <div className="workspace-file-table-footer shrink-0 border-t px-3 py-2 text-xs text-muted-foreground">
         <FileSpreadsheet className="mr-1 inline h-3.5 w-3.5" />
         {table.totalRows} rows{table.truncated ? ' (showing first 100)' : ''}
       </div>
@@ -1279,9 +1461,9 @@ function DataTablePreview({
 
 function InlineMessage({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center">
-      <div className="max-w-md">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
+    <div className="workspace-file-inline-message flex h-full items-center justify-center p-6 text-center">
+      <div className="workspace-files-state-card max-w-md">
+        <div className="workspace-file-empty-icon mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
           {icon}
         </div>
         <h3 className="mb-1 font-semibold">{title}</h3>

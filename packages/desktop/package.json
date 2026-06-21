@@ -1,8 +1,8 @@
 {
-  "name": "@claude-code-webui/desktop",
+  "name": "@plum-code-webui/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Desktop client for Claude Code WebUI",
+  "description": "Desktop client for Plum Code WebUI",
   "main": "dist/main/index.js",
   "type": "module",
   "scripts": {

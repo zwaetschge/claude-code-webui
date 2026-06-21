@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Simple tokens */
+      --primary: #3B82F6;         /* blue */
+      --primary-soft: #EFF6FF;
+      --secondary: #8B5CF6;       /* purple tag */
+      --secondary-soft: #F5F3FF;
+      --success: #16A34A;
+      --success-soft: #F0FDF4;
+      --warning: #D97706;
+      --warning-soft: #FFFBEB;
+      --danger: #DC2626;
+      --text: #111827;
+      --text-soft: #6B7280;
+      --text-mute: #9CA3AF;
+      --surface: #FFFFFF;
+      --rule: #E5E7EB;
+      --rule-soft: #F3F4F6;
+      --sans: 'Inter', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      background: var(--rule-soft);
+      font-family: var(--sans);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .panel {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      padding: 20px 22px 18px;
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .title-block .eyebrow {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--primary);
+      margin-bottom: 3px;
+    }
+
+    .title-block h1 {
+      font-family: var(--sans);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.15;
+      color: var(--text);
+    }
+
+    .title-block h1 .count {
+      color: var(--text-mute);
+      font-weight: 500;
+      margin-left: 2px;
+    }
+
+    .progress-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .progress-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: var(--text-soft);
+    }
+    .progress-label b { color: var(--text); font-weight: 700; }
+
+    .progress {
+      width: 84px;
+      height: 4px;
+      background: var(--rule);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress > span {
+      display: block;
+      height: 100%;
+      width: 42%;
+      background: var(--primary);
+      border-radius: 999px;
+    }
+
+    /* ---- Filter chips ---- */
+    .filters {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 22px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-soft);
+      background: var(--rule-soft);
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    .chip:hover { color: var(--text); }
+    .chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .chip.active {
+      background: var(--surface);
+      color: var(--text);
+      border-color: var(--rule);
+      font-weight: 600;
+    }
+    .chip .n {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--text-mute);
+    }
+    .chip.active .n { color: var(--primary); }
+
+    /* ---- List ---- */
+    .list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .item {
+      display: grid;
+      grid-template-columns: 18px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 6px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .item.compact { padding: 3px 6px; }
+    .item:hover { background: var(--rule-soft); }
+    .item.done .label { color: var(--text-mute); text-decoration: line-through; text-decoration-thickness: 1px; }
+
+    .check {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1.5px solid var(--rule);
+      display: grid;
+      place-items: center;
+      flex: 0 0 16px;
+      background: var(--surface);
+    }
+    .check svg {
+      width: 10px; height: 10px;
+      stroke: var(--surface);
+      stroke-width: 3;
+      fill: none;
+      opacity: 0;
+    }
+    .item.done .check {
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+    .item.done .check svg { opacity: 1; }
+
+    .label {
+      font-family: var(--sans);
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1.3;
+      letter-spacing: -0.005em;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .label .sub {
+      display: block;
+      font-family: var(--sans);
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text-soft);
+      margin-top: 1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 18px;
+      padding: 0 7px;
+      border-radius: 4px;
+      font-family: var(--sans);
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .tag.design { background: var(--secondary-soft); color: var(--secondary); }
+    .tag.bug    { background: var(--warning-soft);   color: var(--warning);   }
+    .tag.call   { background: var(--primary-soft);   color: var(--primary);   }
+    .tag.done   { background: var(--success-soft);   color: var(--success);   }
+
+    .due {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: var(--text-soft);
+      white-space: nowrap;
+    }
+    .due.urgent { color: var(--danger); font-weight: 600; }
+
+    /* Divider between done and pending */
+    .divider {
+      height: 1px;
+      background: var(--rule);
+      margin: 4px 6px;
+    }
+
+    /* ---- Footer ---- */
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-top: 12px;
+      border-top: 1px solid var(--rule);
+    }
+    .summary {
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-soft);
+    }
+    .summary b { color: var(--text); font-weight: 700; }
+
+    .add {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 28px;
+      padding: 0 11px;
+      border-radius: 6px;
+      background: var(--primary);
+      color: var(--surface);
+      font-family: var(--sans);
+      font-size: 11.5px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+    }
+    .add:hover { background: #2563eb; }
+    .add:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .add .plus { font-size: 14px; line-height: 1; font-weight: 700; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="panel">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="title-block">
+        <span class="eyebrow">Today · Tue 17 Jun</span>
+        <h1>Focus<span class="count"> · 5 tasks</span></h1>
+      </div>
+      <div class="progress-wrap">
+        <span class="progress-label"><b>2</b> of 5</span>
+        <div class="progress" aria-hidden="true"><span></span></div>
+      </div>
+    </header>
+
+    <!-- Filters -->
+    <nav class="filters" aria-label="Filter tasks">
+      <button class="chip active">All <span class="n">5</span></button>
+      <button class="chip">Today <span class="n">3</span></button>
+      <button class="chip">Bug <span class="n">1</span></button>
+      <button class="chip">Done <span class="n">2</span></button>
+    </nav>
+
+    <!-- List -->
+    <ul class="list">
+      <li class="item">
+        <span class="check" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,8 7,12 13,4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="label">Review onboarding copy<span class="sub">Marketing · landing page v3</span></span>
+        <span class="meta">
+          <span class="tag design">Design</span>
+          <span class="due urgent">11:00</span>
+        </span>
+      </li>
+
+      <li class="item">
+        <span class="check" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,8 7,12 13,4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="label">Call back Weber &amp; Co.<span class="sub">Missed yesterday · 2 voicemails</span></span>
+        <span class="meta">
+          <span class="tag call">Call</span>
+          <span class="due">14:30</span>
+        </span>
+      </li>
+
+      <li class="item">
+        <span class="check" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,8 7,12 13,4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="label">Fix autocomplete focus trap<span class="sub">Issue #214</span></span>
+        <span class="meta">
+          <span class="tag bug">Bug</span>
+          <span class="due">Today</span>
+        </span>
+      </li>
+
+      <li class="divider" aria-hidden="true"></li>
+
+      <li class="item done compact">
+        <span class="check" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,8 7,12 13,4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="label">Send invoice #0421</span>
+        <span class="meta">
+          <span class="tag done">Done</span>
+          <span class="due">09:12</span>
+        </span>
+      </li>
+
+      <li class="item done compact">
+        <span class="check" aria-hidden="true"><svg viewBox="0 0 16 16"><polyline points="3,8 7,12 13,4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="label">Standup notes &rarr; Slack</span>
+        <span class="meta">
+          <span class="tag done">Done</span>
+          <span class="due">09:45</span>
+        </span>
+      </li>
+    </ul>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span class="summary"><b>3</b> left · next at <b>11:00</b></span>
+      <button class="add"><span class="plus" aria-hidden="true">+</span> Add task</button>
+    </footer>
+
+  </main>
+</body>
+</html>

@@ -10,7 +10,7 @@ const router = Router();
 
 /**
  * Encode a working directory path to Claude's project directory format.
- * e.g., "/mnt/user/appdata/claude-code-webui" -> "-mnt-user-appdata-claude-code-webui"
+ * e.g., "/mnt/cache/appdata/plum-code-webui" -> "-mnt-cache-appdata-plum-code-webui"
  */
 function encodeClaudePath(workingDirectory: string): string {
   return workingDirectory.replace(/\//g, '-');

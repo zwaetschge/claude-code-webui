@@ -1,7 +1,11 @@
-import { useRef, useCallback } from 'react';
-import Editor, { OnMount, OnChange } from '@monaco-editor/react';
-import type { editor } from 'monaco-editor';
-import { Loader2 } from 'lucide-react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type UIEvent,
+} from 'react';
 import { getLanguageFromPath } from './language-map';
 
 interface CodeEditorProps {
@@ -13,71 +17,70 @@ interface CodeEditorProps {
 }
 
 export function CodeEditor({ path, value, onChange, onSave, readOnly = false }: CodeEditorProps) {
-  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
   const language = getLanguageFromPath(path);
+  const lineNumbers = useMemo(() => {
+    const lineCount = Math.max(1, value.split('\n').length);
+    return Array.from({ length: lineCount }, (_, index) => index + 1);
+  }, [value]);
 
-  const handleMount: OnMount = useCallback(
-    (editor) => {
-      editorRef.current = editor;
-
-      // Add Ctrl+S save shortcut
-      editor.addCommand(
-        // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KeyS
-        2048 | 49, // CtrlCmd + S
-        () => {
-          onSave?.();
-        }
-      );
-
-      // Focus the editor
-      editor.focus();
-    },
-    [onSave]
-  );
-
-  const handleChange: OnChange = useCallback(
-    (value) => {
-      if (value !== undefined) {
-        onChange?.(value);
-      }
+  const handleChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      onChange?.(event.target.value);
     },
     [onChange]
   );
 
-  return (
-    <Editor
-      height="100%"
-      language={language}
-      value={value}
-      theme="vs-dark"
-      onMount={handleMount}
-      onChange={handleChange}
-      loading={
-        <div className="flex items-center justify-center h-full">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        onSave?.();
+        return;
       }
-      options={{
-        readOnly,
-        minimap: { enabled: false },
-        fontSize: 13,
-        lineNumbers: 'on',
-        wordWrap: 'on',
-        scrollBeyondLastLine: false,
-        automaticLayout: true,
-        tabSize: 2,
-        insertSpaces: true,
-        folding: true,
-        glyphMargin: false,
-        lineDecorationsWidth: 10,
-        lineNumbersMinChars: 3,
-        renderLineHighlight: 'line',
-        cursorBlinking: 'smooth',
-        cursorSmoothCaretAnimation: 'on',
-        smoothScrolling: true,
-        padding: { top: 8, bottom: 8 },
-      }}
-    />
+
+      if (event.key === 'Tab' && !readOnly) {
+        event.preventDefault();
+        const target = event.currentTarget;
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        const nextValue = `${value.slice(0, start)}  ${value.slice(end)}`;
+        onChange?.(nextValue);
+        window.requestAnimationFrame(() => {
+          target.selectionStart = start + 2;
+          target.selectionEnd = start + 2;
+        });
+      }
+    },
+    [onChange, onSave, readOnly, value]
+  );
+
+  const handleScroll = useCallback((event: UIEvent<HTMLTextAreaElement>) => {
+    if (gutterRef.current) {
+      gutterRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+  }, []);
+
+  return (
+    <div className="code-editor-shell" data-language={language}>
+      <div ref={gutterRef} className="code-editor-gutter" aria-hidden="true">
+        {lineNumbers.map((line) => (
+          <div key={line}>{line}</div>
+        ))}
+      </div>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onScroll={handleScroll}
+        readOnly={readOnly}
+        spellCheck={false}
+        className="code-editor-textarea"
+        aria-label={`Editing ${path}`}
+      />
+    </div>
   );
 }
 

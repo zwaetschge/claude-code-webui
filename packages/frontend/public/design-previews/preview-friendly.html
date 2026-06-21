@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Friendly — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Display:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     FRIENDLY DESIGN SYSTEM — 400×300 THUMBNAIL
+     Pastel · rounded · ample whitespace · Noto Serif · approachable
+     ============================================================ */
+  :root {
+    --fd-primary: #F2D9DC;        /* soft blush pink */
+    --fd-primary-deep: #E5B8BE;
+    --fd-primary-bg: #FBF1F2;
+    --fd-secondary: #D9F2D8;      /* soft mint */
+    --fd-secondary-deep: #B5E5B3;
+    --fd-secondary-bg: #F4FBF3;
+    --fd-success: #16A34A;
+    --fd-warning: #D97706;
+    --fd-danger: #DC2626;
+
+    /* Extended pastel accents */
+    --fd-cream: #FFF8EE;
+    --fd-peach: #FFE4D6;
+    --fd-lavender: #E8E0F5;
+    --fd-sky: #DCE9F5;
+    --fd-yellow: #FFF0C9;
+
+    --fd-surface: #FFFFFF;
+    --fd-surface-2: #FAFAF8;
+    --fd-ink: #111827;
+    --fd-ink-2: #3F3F46;
+    --fd-ink-3: #71717A;
+    --fd-ink-4: #A1A1AA;
+    --fd-line: #F0E8E8;
+    --fd-line-2: #F8F4F4;
+
+    --fd-font-display: 'Noto Serif Display', Georgia, serif;
+    --fd-font-ui: 'Inter', -apple-system, sans-serif;
+    --fd-font-mono: 'Space Mono', ui-monospace, monospace;
+
+    --fd-r-sm: 10px;
+    --fd-r-md: 16px;
+    --fd-r-lg: 22px;
+    --fd-r-xl: 32px;
+    --fd-r-pill: 999px;
+
+    --fd-sh-soft: 0 4px 16px -4px rgba(17,24,39,0.06), 0 2px 4px -1px rgba(17,24,39,0.03);
+    --fd-sh-float: 0 8px 28px -6px rgba(229,184,190,0.20), 0 4px 8px -2px rgba(17,24,39,0.04);
+    --fd-sh-mint: 0 6px 20px -4px rgba(181,229,179,0.30);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--fd-font-ui);
+    font-size: 12px;
+    color: var(--fd-ink);
+    background:
+      radial-gradient(180px 120px at 100% 0%, rgba(242,217,220,0.55), transparent 60%),
+      radial-gradient(180px 120px at 0% 100%, rgba(217,242,216,0.45), transparent 60%),
+      var(--fd-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame {
+    width: 400px;
+    height: 300px;
+    padding: 14px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--fd-surface);
+    border: 1px solid var(--fd-line);
+    border-radius: var(--fd-r-pill);
+    box-shadow: var(--fd-sh-soft);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 26px; height: 26px;
+    background: var(--fd-primary);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--fd-ink);
+    box-shadow: var(--fd-sh-float);
+  }
+  .brand__mark svg { width: 14px; height: 14px; }
+  .brand__name {
+    font-family: var(--fd-font-display);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--fd-ink);
+  }
+  .brand__name em {
+    font-style: italic;
+    color: var(--fd-primary-deep);
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+    background: var(--fd-primary-bg);
+    padding: 3px;
+    border-radius: var(--fd-r-pill);
+  }
+  .nav a {
+    padding: 4px 11px;
+    border-radius: var(--fd-r-pill);
+    text-decoration: none;
+    font-family: var(--fd-font-ui);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--fd-ink-3);
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--fd-ink); }
+  .nav a.is-active {
+    background: var(--fd-surface);
+    color: var(--fd-ink);
+    box-shadow: var(--fd-sh-soft);
+    font-weight: 600;
+  }
+
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--fd-secondary);
+    color: var(--fd-ink);
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 9px;
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 12px;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  /* LEFT — hero with serif headline */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    padding: 4px 4px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--fd-secondary);
+    color: var(--fd-ink);
+    border-radius: var(--fd-r-pill);
+    font-family: var(--fd-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .hero__eyebrow::before { content: "✿"; }
+
+  .hero__title {
+    font-family: var(--fd-font-display);
+    font-size: 30px;
+    font-weight: 400;
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    color: var(--fd-ink);
+  }
+  .hero__title em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--fd-primary-deep);
+  }
+  .hero__title-strong {
+    font-weight: 600;
+  }
+
+  .hero__sub {
+    font-family: var(--fd-font-ui);
+    font-size: 11.5px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: var(--fd-ink-3);
+    max-width: 30ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 34px;
+    padding: 0 16px;
+    border: none;
+    border-radius: var(--fd-r-pill);
+    font-family: var(--fd-font-ui);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .btn--primary {
+    background: var(--fd-primary-deep);
+    color: var(--fd-surface);
+    box-shadow: var(--fd-sh-float);
+  }
+  .btn--primary:hover { transform: translateY(-1px); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--fd-ink-2);
+    padding: 0 4px;
+    height: auto;
+  }
+  .btn--ghost:hover { color: var(--fd-primary-deep); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — pastel card stack */
+  .cards {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 6px;
+    min-height: 0;
+  }
+  .card {
+    padding: 9px 12px;
+    border-radius: var(--fd-r-md);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    overflow: hidden;
+    position: relative;
+  }
+  .card--pink {
+    background: var(--fd-primary);
+    box-shadow: var(--fd-sh-float);
+  }
+  .card--mint {
+    background: var(--fd-secondary);
+    box-shadow: var(--fd-sh-mint);
+  }
+  .card--cream {
+    background: var(--fd-cream);
+    border: 1px solid var(--fd-line);
+    box-shadow: var(--fd-sh-soft);
+  }
+
+  .card__icon {
+    width: 28px; height: 28px;
+    background: rgba(255,255,255,0.65);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--fd-ink);
+    flex-shrink: 0;
+  }
+  .card__icon svg { width: 14px; height: 14px; }
+  .card__body { flex: 1; min-width: 0; }
+  .card__label {
+    font-family: var(--fd-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fd-ink-2);
+    line-height: 1;
+  }
+  .card__value {
+    font-family: var(--fd-font-display);
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--fd-ink);
+    line-height: 1.1;
+    margin-top: 2px;
+  }
+  .card__value span {
+    font-family: var(--fd-font-ui);
+    font-size: 11px;
+    color: var(--fd-ink-3);
+    font-weight: 500;
+  }
+  .card__sub {
+    font-family: var(--fd-font-ui);
+    font-size: 9.5px;
+    color: var(--fd-ink-2);
+    margin-top: 1px;
+  }
+
+  /* Mini progress in mint card */
+  .progress {
+    height: 4px;
+    background: rgba(255,255,255,0.6);
+    border-radius: var(--fd-r-pill);
+    overflow: hidden;
+    margin-top: 3px;
+  }
+  .progress__fill {
+    height: 100%;
+    background: var(--fd-secondary-deep);
+    border-radius: var(--fd-r-pill);
+  }
+
+  /* Avatar stack in cream card */
+  .avatars {
+    display: flex;
+    margin-left: auto;
+  }
+  .avatars > * {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 1.5px solid var(--fd-surface);
+    margin-left: -5px;
+    display: grid;
+    place-items: center;
+    font-size: 7px;
+    font-weight: 700;
+    color: var(--fd-ink);
+  }
+  .avatars > *:nth-child(1) { background: var(--fd-primary); margin-left: 0; }
+  .avatars > *:nth-child(2) { background: var(--fd-secondary); }
+  .avatars > *:nth-child(3) { background: var(--fd-peach); }
+  .avatars > *:nth-child(4) { background: var(--fd-lavender); }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Friendly design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-4.5-9.5-9C0.7 8.8 2 5 5.5 4.5 8 4 10 5.5 12 8c2-2.5 4-4 6.5-3.5C22 5 23.3 8.8 21.5 12 19 16.5 12 21 12 21z"/></svg>
+      </span>
+      <span class="brand__name">bloom<em>.</em></span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Today</a>
+      <a href="#">Garden</a>
+      <a href="#">Friends</a>
+    </nav>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">good morning</span>
+      <h1 class="hero__title">
+        Take care,<br>
+        <em><span class="hero__title-strong">gently</span></em>.
+      </h1>
+      <p class="hero__sub">Small steps, soft landings. A calmer way to keep up with the things — and people — you love.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Begin today
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Take a peek →</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: pastel card stack -->
+    <aside class="cards">
+
+      <div class="card card--pink">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Mood</div>
+          <div class="card__value">8.4<span>/10</span></div>
+          <div class="card__sub">feeling lovely</div>
+        </div>
+      </div>
+
+      <div class="card card--mint">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M12 22v-6M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M2 12h6M22 12h-6M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Energy</div>
+          <div class="card__value">72<span>%</span></div>
+          <div class="progress"><div class="progress__fill" style="width:72%"></div></div>
+        </div>
+      </div>
+
+      <div class="card card--cream">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Friends</div>
+          <div class="card__value">12<span>close</span></div>
+        </div>
+        <div class="avatars" aria-hidden="true">
+          <span>M</span><span>A</span><span>K</span><span>+</span>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

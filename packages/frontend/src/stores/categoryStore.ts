@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Category, CreateCategoryInput, UpdateCategoryInput } from '@claude-code-webui/shared';
+import type { Category, CreateCategoryInput, UpdateCategoryInput } from '@plum-code-webui/shared';
 import { api, ApiError } from '@/services/api';
 
 interface CategoryApiResponse<T> {

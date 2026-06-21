@@ -10,7 +10,7 @@ import { config } from '../config';
 import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize';
 import { rateLimiters } from '../middleware/rateLimiter';
 import { isAllowedBasePath } from '../utils/allowedPaths';
-import type { FileInfo, DirectoryContents } from '@claude-code-webui/shared';
+import type { FileInfo, DirectoryContents } from '@plum-code-webui/shared';
 
 // CSV parsing helper
 function parseCSV(content: string): { headers: string[]; rows: string[][] } {
@@ -649,6 +649,16 @@ router.get(
 
       // Set appropriate content type
       const contentTypes: Record<string, string> = {
+        '.html': 'text/html; charset=utf-8',
+        '.htm': 'text/html; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.js': 'text/javascript; charset=utf-8',
+        '.mjs': 'text/javascript; charset=utf-8',
+        '.cjs': 'text/javascript; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.map': 'application/json; charset=utf-8',
+        '.txt': 'text/plain; charset=utf-8',
+        '.xml': 'application/xml; charset=utf-8',
         '.pdf': 'application/pdf',
         '.png': 'image/png',
         '.jpg': 'image/jpeg',
@@ -669,6 +679,11 @@ router.get(
         '.flac': 'audio/flac',
         '.m4a': 'audio/mp4',
         '.aac': 'audio/aac',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2',
+        '.ttf': 'font/ttf',
+        '.otf': 'font/otf',
+        '.wasm': 'application/wasm',
       };
 
       const contentType = contentTypes[ext] || 'application/octet-stream';

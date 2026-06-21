@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>shadcn — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Fira+Code:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     SHADCN DESIGN SYSTEM — 400×300 THUMBNAIL
+     Minimal · monochrome · Geist · hairline borders · subtle
+     ============================================================ */
+  :root {
+    --sc-primary:    #000000;   /* near-black */
+    --sc-primary-2:  #111111;
+    --sc-secondary:  #111111;
+    --sc-success:    #16A34A;
+    --sc-warning:    #D97706;
+    --sc-danger:     #DC2626;
+
+    --sc-surface:    #FFFFFF;
+    --sc-surface-2:  #FAFAFA;   /* subtle card tint */
+    --sc-surface-3:  #F4F4F5;   /* muted */
+    --sc-surface-4:  #E4E4E7;   /* muted-strong */
+
+    --sc-ink:        #09090B;   /* foreground */
+    --sc-ink-2:      #18181B;
+    --sc-ink-3:      #3F3F46;   /* muted-foreground */
+    --sc-ink-4:      #71717A;   /* muted */
+    --sc-ink-5:      #A1A1AA;   /* light muted */
+
+    --sc-border:     #E4E4E7;   /* hairline */
+    --sc-border-2:   #F4F4F5;
+
+    --sc-font:    'Geist', -apple-system, 'Segoe UI', sans-serif;
+    --sc-font-m:  'Fira Code', ui-monospace, monospace;
+
+    --sc-r-sm: 4px;
+    --sc-r-md: 6px;
+    --sc-r-lg: 8px;
+    --sc-r-xl: 12px;
+
+    /* subtle, almost flat */
+    --sc-shadow-1: 0 1px 2px rgba(0,0,0,0.04);
+    --sc-shadow-2: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --sc-ring: 0 0 0 2px rgba(0,0,0,0.85), 0 0 0 4px #FFFFFF;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--sc-font);
+    font-size: 12px;
+    color: var(--sc-ink);
+    background: var(--sc-surface);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* ============================================================
+     POSTER — flat white, faint dot grid (the shadcn signature bg)
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: var(--sc-surface);
+    background-image:
+      radial-gradient(circle, var(--sc-border) 1px, transparent 1px);
+    background-size: 16px 16px;
+    background-position: -1px -1px;
+    isolation: isolate;
+  }
+  /* soft top sheen to kill the flat AI look */
+  .poster::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 60% 40% at 50% -5%, rgba(255,255,255,0.95) 0%, transparent 70%);
+  }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 16px 20px 14px;
+    gap: 14px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--sc-ink);
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    border-radius: var(--sc-r-md);
+    background: var(--sc-primary);
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-family: var(--sc-font-m);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--sc-ink-3);
+    letter-spacing: -0.01em;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    padding: 5px 9px;
+    border-radius: var(--sc-r-md);
+    transition: background .15s ease, color .15s ease;
+  }
+  .nav a:hover {
+    background: var(--sc-surface-3);
+    color: var(--sc-ink);
+  }
+  .nav a.is-active {
+    background: var(--sc-surface-3);
+    color: var(--sc-ink);
+  }
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 7px;
+    background: var(--sc-surface);
+    border: 1px solid var(--sc-border);
+    border-bottom-width: 2px;
+    border-radius: var(--sc-r-sm);
+    font-family: var(--sc-font-m);
+    font-size: 9.5px;
+    font-weight: 500;
+    color: var(--sc-ink-4);
+    letter-spacing: 0.02em;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 18px;
+    align-items: start;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding-top: 2px;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 9px;
+    background: var(--sc-surface-3);
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-r-pill, 999px);
+    font-family: var(--sc-font-m);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--sc-ink-3);
+    text-transform: lowercase;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--sc-success);
+  }
+  .hero__title {
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    color: var(--sc-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--sc-ink-4);
+    font-weight: 400;
+  }
+  .hero__sub {
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+    color: var(--sc-ink-3);
+    max-width: 30ch;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 14px;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-r-md);
+    font-family: var(--sc-font);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    background: var(--sc-surface);
+    color: var(--sc-ink);
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .btn:hover {
+    background: var(--sc-surface-3);
+  }
+  .btn--primary {
+    background: var(--sc-primary);
+    color: #fff;
+    border-color: var(--sc-primary);
+  }
+  .btn--primary:hover {
+    background: var(--sc-primary-2);
+    border-color: var(--sc-primary-2);
+  }
+  .btn--ghost {
+    background: transparent;
+    border-color: transparent;
+    padding: 0 8px;
+    height: 30px;
+    color: var(--sc-ink-3);
+  }
+  .btn--ghost:hover { color: var(--sc-ink); background: var(--sc-surface-3); }
+
+  /* ============================================================
+     RIGHT: SHADCN-STYLE CARD
+     Signature — bg-card, border, rounded-lg, muted-foreground,
+     tabular nums, badge, sparkline, separator.
+     ============================================================ */
+  .card {
+    padding: 14px;
+    background: var(--sc-surface);
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-r-lg);
+    box-shadow: var(--sc-shadow-1);
+  }
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .card__title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--sc-ink);
+  }
+  .card__desc {
+    font-family: var(--sc-font-m);
+    font-size: 9px;
+    font-weight: 400;
+    color: var(--sc-ink-4);
+    letter-spacing: 0.02em;
+    margin-top: 1px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 7px;
+    background: var(--sc-surface-3);
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-r-sm);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--sc-ink-3);
+    letter-spacing: -0.005em;
+  }
+  .badge::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--sc-success);
+  }
+
+  .metric {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .metric__value {
+    font-size: 28px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--sc-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric__delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--sc-font-m);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--sc-success);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric__delta::before {
+    content: "↑";
+    font-size: 11px;
+  }
+  .metric__sub {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--sc-ink-4);
+  }
+
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 28px;
+    margin-bottom: 10px;
+  }
+  .spark i {
+    flex: 1;
+    background: var(--sc-ink);
+    border-radius: 1px;
+    min-height: 2px;
+    opacity: 0.85;
+  }
+  .spark i.muted {
+    background: var(--sc-surface-4);
+    opacity: 1;
+  }
+  .spark i.peak {
+    opacity: 1;
+  }
+
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 10px;
+    border-top: 1px solid var(--sc-border);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    background: var(--sc-surface-3);
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-r-sm);
+    font-family: var(--sc-font-m);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--sc-ink-3);
+  }
+  .chip::before {
+    content: "";
+    width: 7px; height: 7px;
+    background: var(--sc-ink);
+    border-radius: 1px;
+  }
+  .meta {
+    font-family: var(--sc-font-m);
+    font-size: 9px;
+    font-weight: 400;
+    color: var(--sc-ink-4);
+    letter-spacing: 0.02em;
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--sc-border);
+    padding-top: 10px;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 18px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.1;
+  }
+  .stat__k {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--sc-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat__k span {
+    font-size: 9.5px;
+    color: var(--sc-ink-4);
+    font-weight: 400;
+    margin-left: 2px;
+  }
+  .stat__l {
+    font-family: var(--sc-font-m);
+    font-size: 8px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    color: var(--sc-ink-4);
+    text-transform: lowercase;
+  }
+  .footer__meta {
+    font-family: var(--sc-font-m);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: var(--sc-ink-4);
+  }
+  .footer__meta b { color: var(--sc-ink); font-weight: 500; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="shadcn design language preview — minimal monochrome">
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">s</span>
+        <span>shadcn/ui</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Docs</a>
+        <a href="#">Components</a>
+        <a href="#">Themes</a>
+        <span class="kbd" aria-hidden="true">⌘K</span>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">v2.0 · stable</span>
+        <h1 class="hero__title">Components <em>you own.</em></h1>
+        <p class="hero__sub">Accessible, copy-paste building blocks built with Radix and Tailwind. No registry, no lock-in.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Get started</button>
+          <button class="btn btn--ghost" type="button">Docs →</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: card -->
+      <div class="card" aria-label="Total revenue summary">
+        <div class="card__head">
+          <div>
+            <div class="card__title">Total Revenue</div>
+            <div class="card__desc">Last 30 days</div>
+          </div>
+          <span class="badge">Live</span>
+        </div>
+
+        <div class="metric">
+          <span class="metric__value">$45,231.89</span>
+          <span class="metric__delta">20.1%</span>
+          <span class="metric__sub">vs prev.</span>
+        </div>
+
+        <div class="spark" aria-hidden="true">
+          <i class="muted" style="height:32%"></i>
+          <i class="muted" style="height:48%"></i>
+          <i class="muted" style="height:40%"></i>
+          <i class="muted" style="height:60%"></i>
+          <i style="height:54%"></i>
+          <i style="height:70%"></i>
+          <i class="peak" style="height:92%"></i>
+          <i style="height:78%"></i>
+        </div>
+
+        <div class="card__row">
+          <span class="chip">desktop</span>
+          <span class="meta">Updated · just now</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">4.2<span>k</span></span>
+          <span class="stat__l">stars</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">AA</span>
+          <span class="stat__l">a11y</span>
+        </div>
+      </div>
+      <span class="footer__meta">shadcn · <b>#000000</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

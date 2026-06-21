@@ -138,7 +138,7 @@ fun ChatInput(
                     onValueChange = onTextChange,
                     placeholder = {
                         Text(
-                            text = if (isWorking) "Claude is working…" else "Message Claude…",
+                            text = if (isWorking) "Agent is working…" else "Message agent…",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         )

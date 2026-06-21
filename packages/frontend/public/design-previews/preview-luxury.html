@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Luxury — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@200;300;400;500;600;700&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     LUXURY DESIGN SYSTEM — 400×300 THUMBNAIL
+     Pure black · white text · Oswald · monochromatic · premium
+     ============================================================ */
+  :root {
+    --lx-primary: #FAFAFA;
+    --lx-primary-2: #E5E5E5;
+    --lx-surface: #000000;
+    --lx-surface-2: #0A0A0A;
+    --lx-surface-3: #141414;
+    --lx-gold: #C9A961;          /* subtle luxury accent — used sparingly */
+    --lx-gold-deep: #A88B47;
+    --lx-success: #16A34A;
+    --lx-warning: #D97706;
+    --lx-danger: #DC2626;
+
+    --lx-ink: #FFFFFF;
+    --lx-ink-2: rgba(255,255,255,0.72);
+    --lx-ink-3: rgba(255,255,255,0.48);
+    --lx-ink-4: rgba(255,255,255,0.28);
+    --lx-line: rgba(255,255,255,0.10);
+    --lx-line-2: rgba(255,255,255,0.05);
+
+    --lx-font-display: 'Oswald', -apple-system, sans-serif;
+    --lx-font-serif: 'Cormorant Garamond', Georgia, serif;
+    --lx-font-mono: 'JetBrains Mono', monospace;
+
+    --lx-r-sm: 0px;        /* sharp = luxury */
+    --lx-r-md: 2px;
+    --lx-r-lg: 4px;
+    --lx-r-pill: 999px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--lx-font-display);
+    font-size: 12px;
+    color: var(--lx-ink);
+    background: var(--lx-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    background: var(--lx-surface);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  /* Subtle texture — film grain feel */
+  .poster::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(201,169,97,0.04) 1px, transparent 1.5px) 0 0 / 4px 4px,
+      radial-gradient(circle at 70% 80%, rgba(255,255,255,0.015) 1px, transparent 1.5px) 0 0 / 5px 5px;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--lx-line);
+    font-family: var(--lx-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--lx-ink-3);
+  }
+  .masthead__left, .masthead__right {
+    padding: 5px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .masthead__center {
+    padding: 5px 14px;
+    border-left: 1px solid var(--lx-line);
+    border-right: 1px solid var(--lx-line);
+    color: var(--lx-gold);
+    letter-spacing: 0.18em;
+  }
+  .masthead__sep { color: var(--lx-ink-4); }
+
+  /* ============ TITLE BAR ============ */
+  .titlebar {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 10px 14px 10px;
+    border-bottom: 1px solid var(--lx-line);
+  }
+  .wordmark {
+    font-family: var(--lx-font-display);
+    font-weight: 300;
+    font-size: 24px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--lx-ink);
+    line-height: 1;
+  }
+  .wordmark strong { font-weight: 700; }
+  .wordmark__sub {
+    display: block;
+    font-family: var(--lx-font-serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    color: var(--lx-ink-3);
+    margin-top: 3px;
+    text-transform: none;
+  }
+  .titlebar__nav {
+    display: flex;
+    gap: 16px;
+    font-family: var(--lx-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--lx-ink-3);
+  }
+  .titlebar__nav a {
+    text-decoration: none;
+    color: inherit;
+    padding-bottom: 3px;
+    border-bottom: 1px solid transparent;
+    transition: border-color .2s ease, color .2s ease;
+  }
+  .titlebar__nav a:hover { color: var(--lx-ink); }
+  .titlebar__nav a.is-active {
+    color: var(--lx-ink);
+    border-bottom-color: var(--lx-gold);
+  }
+
+  /* ============ MAIN ============ */
+  .body {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    overflow: hidden;
+  }
+
+  /* LEFT — editorial luxury hero */
+  .article {
+    padding: 14px 16px 12px;
+    border-right: 1px solid var(--lx-line);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+  }
+  .article__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--lx-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--lx-ink-4);
+  }
+  .article__section {
+    color: var(--lx-gold);
+    font-weight: 600;
+  }
+
+  /* Big bold Oswald heading */
+  .article__headline {
+    font-family: var(--lx-font-display);
+    font-weight: 700;
+    font-size: 36px;
+    line-height: 0.95;
+    letter-spacing: -0.015em;
+    text-transform: uppercase;
+    color: var(--lx-ink);
+    margin: 6px 0 4px;
+  }
+  .article__headline em {
+    font-style: normal;
+    color: var(--lx-gold);
+    font-weight: 300;
+  }
+
+  .article__lede {
+    font-family: var(--lx-font-serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--lx-ink-2);
+    max-width: 30ch;
+    margin-top: 2px;
+  }
+
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--lx-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--lx-ink-4);
+    margin-top: 6px;
+  }
+  .byline__author { color: var(--lx-ink-2); font-weight: 600; }
+
+  .article__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    margin-top: 6px;
+    padding: 8px 18px;
+    font-family: var(--lx-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--lx-surface);
+    background: var(--lx-ink);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background .2s ease;
+  }
+  .article__cta:hover { background: var(--lx-gold); color: var(--lx-surface); }
+
+  /* RIGHT — collection / featured item */
+  .collection {
+    padding: 14px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--lx-surface-2);
+  }
+  .collection__label {
+    font-family: var(--lx-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--lx-gold);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .collection__label::before {
+    content: "";
+    width: 14px; height: 1px;
+    background: var(--lx-gold);
+  }
+
+  .collection__title {
+    font-family: var(--lx-font-serif);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 18px;
+    line-height: 1.1;
+    color: var(--lx-ink);
+    letter-spacing: -0.005em;
+  }
+  .collection__title strong {
+    font-style: normal;
+    font-weight: 600;
+    border-bottom: 1px solid var(--lx-gold);
+    padding-bottom: 1px;
+  }
+
+  /* Price list */
+  .prices {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .price {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--lx-line);
+    font-family: var(--lx-font-display);
+  }
+  .price:last-child { border-bottom: none; }
+  .price__name {
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--lx-ink-2);
+  }
+  .price__value {
+    font-family: var(--lx-font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--lx-ink);
+    letter-spacing: 0.02em;
+  }
+  .price__value--gold { color: var(--lx-gold); }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    border-top: 1px solid var(--lx-line);
+    font-family: var(--lx-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--lx-ink-3);
+  }
+  .footer__left, .footer__right {
+    padding: 5px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .footer__center {
+    padding: 5px 14px;
+    border-left: 1px solid var(--lx-line);
+    border-right: 1px solid var(--lx-line);
+    color: var(--lx-gold);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Luxury design language preview">
+
+  <!-- ===== MASTHEAD ===== -->
+  <header class="masthead">
+    <span class="masthead__left">
+      <span>MMXXV</span>
+      <span class="masthead__sep">·</span>
+      <span>Issue 47</span>
+    </span>
+    <span class="masthead__center">★ MAISON NOIR ★</span>
+    <span class="masthead__right">
+      <span>EST. 1947</span>
+      <span class="masthead__sep">·</span>
+      <span>PARIS</span>
+    </span>
+  </header>
+
+  <!-- ===== TITLE BAR ===== -->
+  <section class="titlebar">
+    <div>
+      <h1 class="wordmark"><strong>ATELIER</strong> NOIR</h1>
+      <span class="wordmark__sub">the art of restraint</span>
+    </div>
+    <nav class="titlebar__nav" aria-label="Primary">
+      <a href="#" class="is-active">Collection</a>
+      <a href="#">Atelier</a>
+      <a href="#">Heritage</a>
+    </nav>
+  </section>
+
+  <!-- ===== BODY ===== -->
+  <section class="body">
+
+    <!-- LEFT: editorial hero -->
+    <article class="article">
+      <div>
+        <div class="article__meta">
+          <span class="article__section">The Collection</span>
+          <span>—</span>
+          <span>Autumn / Winter</span>
+        </div>
+        <h2 class="article__headline">
+          LESS,<br>
+          BUT <em>better</em>.
+        </h2>
+        <p class="article__lede">
+          Each piece, considered. Each line, deliberate. The luxury of what remains when nothing more can be removed.
+        </p>
+      </div>
+
+      <div>
+        <a href="#" class="article__cta">Discover →</a>
+        <div class="byline">
+          <span>Curated by</span>
+          <span class="byline__author">A. Moreau</span>
+        </div>
+      </div>
+    </article>
+
+    <!-- RIGHT: featured collection -->
+    <aside class="collection">
+      <span class="collection__label">Featured</span>
+      <h3 class="collection__title">
+        The <strong>Noir</strong><br>
+        Edit, vol. III.
+      </h3>
+
+      <div class="prices">
+        <div class="price">
+          <span class="price__name">Cashmere Coat</span>
+          <span class="price__value">€4,800</span>
+        </div>
+        <div class="price">
+          <span class="price__name">Silk Foulard</span>
+          <span class="price__value">€480</span>
+        </div>
+        <div class="price">
+          <span class="price__name">Onyx Cufflinks</span>
+          <span class="price__value price__value--gold">€1,200</span>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span class="footer__left">ATELIER NOIR · PARIS · TOKYO · NYC</span>
+    <span class="footer__center">— by appointment —</span>
+    <span class="footer__right">WCAG AA · v1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

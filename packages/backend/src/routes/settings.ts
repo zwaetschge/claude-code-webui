@@ -9,11 +9,14 @@ import type {
   UserSettings,
   Theme,
   UiProvider,
+  BackgroundAnimation,
   CLIProvider,
   CodexWebSearchMode,
   CodexServiceTier,
   LocalUsageBudget,
-} from '@claude-code-webui/shared';
+  OracleBrowserSettings,
+} from '@plum-code-webui/shared';
+import { parseOracleBrowserSettings } from '../utils/oracleSettings';
 
 const router = Router();
 
@@ -23,6 +26,7 @@ const updateSettingsSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   customSystemPrompt: z.string().nullable().optional(),
   uiProvider: z.enum(['plum', 'claude', 'codex', 'opencode', 'vibe']).optional(),
+  backgroundAnimation: z.enum(['glass', 'aurora', 'ribbons', 'still']).optional(),
   defaultCliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']).optional(),
   cliProviderModels: z
     .object({
@@ -79,6 +83,17 @@ const updateSettingsSchema = z.object({
     })
     .partial()
     .optional(),
+  oracleBrowser: z
+    .object({
+      mode: z.enum(['profile', 'manual', 'remote']).optional(),
+      chatgptUrl: z.string().trim().max(512).nullable().optional(),
+      remoteChrome: z.string().trim().max(256).nullable().optional(),
+      chromeProfile: z.string().trim().max(120).nullable().optional(),
+      chromeCookiePath: z.string().trim().max(512).nullable().optional(),
+      manualLoginProfileDir: z.string().trim().max(512).nullable().optional(),
+    })
+    .partial()
+    .optional(),
 });
 
 function parseUiProvider(value: unknown): UiProvider {
@@ -95,6 +110,12 @@ function parseCliProvider(value: unknown): CLIProvider {
   return value === 'claude' || value === 'codex' || value === 'opencode' || value === 'vibe'
     ? value
     : 'codex';
+}
+
+function parseBackgroundAnimation(value: unknown): BackgroundAnimation {
+  return value === 'aurora' || value === 'ribbons' || value === 'still' || value === 'glass'
+    ? value
+    : 'aurora';
 }
 
 function parseCodexWebSearch(value: unknown): CodexWebSearchMode {
@@ -147,6 +168,7 @@ function parseCliProviderModelLists(
 }
 
 const VALID_REASONING_LEVELS = new Set([
+  'fast',
   'off',
   'none',
   'minimal',
@@ -195,8 +217,8 @@ function parseCliProviderReasoning(
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
-function normalizeCodexServiceTier(value: unknown): CodexServiceTier | undefined {
-  return value === 'fast' ? 'fast' : undefined;
+function normalizeCodexServiceTier(_value: unknown): CodexServiceTier | undefined {
+  return undefined;
 }
 
 function parseCliProviderServiceTiers(
@@ -248,6 +270,10 @@ function parseLocalUsageBudgets(
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
+function normalizeOracleBrowserSettings(value: unknown): OracleBrowserSettings | undefined {
+  return parseOracleBrowserSettings(value);
+}
+
 // Get user settings
 router.get('/', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
@@ -290,6 +316,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const settingsJson = safeJsonParse<Record<string, unknown>>(settings.settingsJson, {});
   const uiProvider = parseUiProvider(settingsJson.uiProvider);
+  const backgroundAnimation = parseBackgroundAnimation(settingsJson.backgroundAnimation);
   const defaultCliProvider = parseCliProvider(settingsJson.defaultCliProvider);
   const cliProviderModels = parseCliProviderModels(settingsJson.cliProviderModels);
   const cliProviderModelLists = parseCliProviderModelLists(settingsJson.cliProviderModelLists);
@@ -299,6 +326,7 @@ router.get('/', requireAuth, (req, res) => {
   );
   const codexWebSearch = parseCodexWebSearch(settingsJson.codexWebSearch);
   const localUsageBudgets = parseLocalUsageBudgets(settingsJson.localUsageBudgets);
+  const oracleBrowser = normalizeOracleBrowserSettings(settingsJson.oracleBrowser);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -307,6 +335,7 @@ router.get('/', requireAuth, (req, res) => {
     allowedTools: JSON.parse(settings.allowedTools || '[]'),
     customSystemPrompt: settings.customSystemPrompt,
     uiProvider,
+    backgroundAnimation,
     defaultCliProvider,
     cliProviderModels,
     cliProviderModelLists,
@@ -314,6 +343,7 @@ router.get('/', requireAuth, (req, res) => {
     cliProviderServiceTiers,
     codexWebSearch,
     localUsageBudgets,
+    oracleBrowser,
   };
 
   res.json({ success: true, data: userSettings });
@@ -335,6 +365,7 @@ router.put('/', requireAuth, (req, res) => {
     allowedTools,
     customSystemPrompt,
     uiProvider,
+    backgroundAnimation,
     defaultCliProvider,
     cliProviderModels,
     cliProviderModelLists,
@@ -342,6 +373,7 @@ router.put('/', requireAuth, (req, res) => {
     cliProviderServiceTiers,
     codexWebSearch,
     localUsageBudgets,
+    oracleBrowser,
   } = parsed.data;
 
   const updates: string[] = [];
@@ -365,13 +397,15 @@ router.put('/', requireAuth, (req, res) => {
   }
   if (
     uiProvider !== undefined ||
+    backgroundAnimation !== undefined ||
     defaultCliProvider !== undefined ||
     cliProviderModels !== undefined ||
     cliProviderModelLists !== undefined ||
     cliProviderReasoning !== undefined ||
     cliProviderServiceTiers !== undefined ||
     codexWebSearch !== undefined ||
-    localUsageBudgets !== undefined
+    localUsageBudgets !== undefined ||
+    oracleBrowser !== undefined
   ) {
     const existing = db
       .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
@@ -380,6 +414,9 @@ router.put('/', requireAuth, (req, res) => {
     const settingsJson = safeJsonParse<Record<string, unknown>>(existing?.settings_json, {});
     if (uiProvider !== undefined) {
       settingsJson.uiProvider = uiProvider;
+    }
+    if (backgroundAnimation !== undefined) {
+      settingsJson.backgroundAnimation = backgroundAnimation;
     }
     if (defaultCliProvider !== undefined) {
       settingsJson.defaultCliProvider = defaultCliProvider;
@@ -427,6 +464,14 @@ router.put('/', requireAuth, (req, res) => {
         delete settingsJson.localUsageBudgets;
       }
     }
+    if (oracleBrowser !== undefined) {
+      const normalized = normalizeOracleBrowserSettings(oracleBrowser);
+      if (normalized && Object.keys(normalized).length > 0) {
+        settingsJson.oracleBrowser = normalized;
+      } else {
+        delete settingsJson.oracleBrowser;
+      }
+    }
     updates.push('settings_json = ?');
     values.push(JSON.stringify(settingsJson));
   }
@@ -455,6 +500,7 @@ router.put('/', requireAuth, (req, res) => {
 
   const updatedJson = safeJsonParse<Record<string, unknown>>(settings.settingsJson, {});
   const updatedUiProvider = parseUiProvider(updatedJson.uiProvider);
+  const updatedBackgroundAnimation = parseBackgroundAnimation(updatedJson.backgroundAnimation);
   const updatedDefaultCliProvider = parseCliProvider(updatedJson.defaultCliProvider);
   const updatedCliProviderModels = parseCliProviderModels(updatedJson.cliProviderModels);
   const updatedCliProviderModelLists = parseCliProviderModelLists(
@@ -466,6 +512,7 @@ router.put('/', requireAuth, (req, res) => {
   );
   const updatedCodexWebSearch = parseCodexWebSearch(updatedJson.codexWebSearch);
   const updatedLocalUsageBudgets = parseLocalUsageBudgets(updatedJson.localUsageBudgets);
+  const updatedOracleBrowser = normalizeOracleBrowserSettings(updatedJson.oracleBrowser);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -474,6 +521,7 @@ router.put('/', requireAuth, (req, res) => {
     allowedTools: JSON.parse(settings.allowedTools || '[]'),
     customSystemPrompt: settings.customSystemPrompt,
     uiProvider: updatedUiProvider,
+    backgroundAnimation: updatedBackgroundAnimation,
     defaultCliProvider: updatedDefaultCliProvider,
     cliProviderModels: updatedCliProviderModels,
     cliProviderModelLists: updatedCliProviderModelLists,
@@ -481,6 +529,7 @@ router.put('/', requireAuth, (req, res) => {
     cliProviderServiceTiers: updatedCliProviderServiceTiers,
     codexWebSearch: updatedCodexWebSearch,
     localUsageBudgets: updatedLocalUsageBudgets,
+    oracleBrowser: updatedOracleBrowser,
   };
 
   res.json({ success: true, data: userSettings });

@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Loader2, Github, Search, Lock, Globe, Star, GitBranch } from 'lucide-react';
 import { api } from '@/services/api';
-import type { GitHubRepo } from '@claude-code-webui/shared';
+import type { GitHubRepo } from '@plum-code-webui/shared';
 
 interface CloneRepoDialogProps {
   open: boolean;

@@ -4,7 +4,7 @@ import { GitCommit as GitCommitIcon, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { ApiResponse, GitStatus, GitCommitResult } from '@claude-code-webui/shared';
+import type { ApiResponse, GitStatus, GitCommitResult } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface GitCommitProps {

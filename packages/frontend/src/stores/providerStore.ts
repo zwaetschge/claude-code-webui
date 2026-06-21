@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   applyProviderClass,
+  DEFAULT_UI_PROVIDER,
   getStoredUiProvider,
   setStoredUiProvider,
   type UiProvider,
@@ -16,6 +17,6 @@ export const useProviderStore = create<ProviderState>((set) => ({
   setProvider: (provider) => {
     setStoredUiProvider(provider);
     applyProviderClass(provider);
-    set({ uiProvider: provider });
+    set({ uiProvider: DEFAULT_UI_PROVIDER });
   },
 }));

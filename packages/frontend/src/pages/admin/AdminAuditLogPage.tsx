@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Search, RotateCcw } from 'lucide-react';
-import type { AuditLogEntry } from '@claude-code-webui/shared';
+import type { AuditLogEntry } from '@plum-code-webui/shared';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';

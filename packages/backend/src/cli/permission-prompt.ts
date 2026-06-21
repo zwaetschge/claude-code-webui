@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse Hook for Claude Code WebUI
+ * PreToolUse Hook for Plum Code WebUI
  *
  * This script is configured as a PreToolUse hook in Claude Code settings.
  * It communicates with the WebUI backend to surface permission requests to the user.

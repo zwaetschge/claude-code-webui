@@ -5,7 +5,7 @@ import { api } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EnhancedDiffViewer } from './EnhancedDiffViewer';
-import type { ApiResponse, GitCommit } from '@claude-code-webui/shared';
+import type { ApiResponse, GitCommit } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface GitHistoryProps {

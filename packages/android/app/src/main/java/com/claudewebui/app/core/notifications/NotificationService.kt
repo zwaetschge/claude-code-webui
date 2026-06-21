@@ -13,13 +13,12 @@ import com.claudewebui.app.MainActivity
 import com.claudewebui.app.R
 
 /**
- * Local notification helper for Claude Code WebUI.
+ * Local notification helper for Plum Code WebUI.
  *
  * Notification channels:
  * - SESSION_UPDATES_CHANNEL: Session completed / status changes
  * - PERMISSION_REQUESTS_CHANNEL: Permission approval prompts (high priority)
  * - ERRORS_CHANNEL: Error and warning notifications
- * - RALPH_CHANNEL: Ralph (autonomous agent) status changes
  *
  * Notifications are grouped per session using [sessionId] as the group key.
  * Tap targets deep-link directly into the relevant session via [MainActivity].
@@ -30,14 +29,12 @@ object NotificationService {
     const val SESSION_UPDATES_CHANNEL = "session_updates"
     const val PERMISSION_REQUESTS_CHANNEL = "permission_requests"
     const val ERRORS_CHANNEL = "errors"
-    const val RALPH_CHANNEL = "ralph_status"
 
     // ── Notification ID ranges ────────────────────────────────────────────
     // Ranges avoid collisions between categories while keeping grouping intact.
     private const val ID_SESSION_BASE = 1000
     private const val ID_PERMISSION_BASE = 2000
     private const val ID_ERROR_BASE = 3000
-    private const val ID_RALPH_BASE = 4000
 
     // ── Action identifiers ────────────────────────────────────────────────
     const val ACTION_OPEN = "com.claudewebui.app.action.OPEN"
@@ -68,7 +65,7 @@ object NotificationService {
                     "Session Updates",
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
-                    description = "Notifies when a Claude session completes or changes status"
+                    description = "Notifies when a session completes or changes status"
                     setShowBadge(true)
                     enableLights(true)
                     lightColor = 0xFFCC785C.toInt() // AntiqueBrass brand color
@@ -78,7 +75,7 @@ object NotificationService {
                     "Permission Requests",
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "Requires your approval before Claude can run a command"
+                    description = "Requires your approval before an agent can run a command"
                     setShowBadge(true)
                     enableLights(true)
                     lightColor = 0xFFF59E0B.toInt() // WarningAmber
@@ -95,16 +92,6 @@ object NotificationService {
                     setShowBadge(false)
                     enableLights(true)
                     lightColor = 0xFFEF4444.toInt() // ErrorRed
-                },
-                NotificationChannel(
-                    RALPH_CHANNEL,
-                    "Ralph Status",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                ).apply {
-                    description = "Status updates from the Ralph autonomous agent"
-                    setShowBadge(true)
-                    enableLights(true)
-                    lightColor = 0xFFC377FF.toInt() // BrandPurple
                 }
             )
         )
@@ -167,25 +154,6 @@ object NotificationService {
         val notificationId = sessionIdToNotificationId(sessionId, ID_ERROR_BASE)
         val notification = buildErrorNotification(
             context, sessionId, sessionName, message, isWarning, notificationId
-        )
-        NotificationManagerCompat.from(context).notify(
-            sessionId, notificationId, notification
-        )
-    }
-
-    /**
-     * Post a Ralph agent status change notification.
-     */
-    fun notifyRalphState(
-        context: Context,
-        sessionId: String,
-        runId: String,
-        state: String,
-        message: String
-    ) {
-        val notificationId = sessionIdToNotificationId(runId, ID_RALPH_BASE)
-        val notification = buildRalphNotification(
-            context, sessionId, runId, state, message, notificationId
         )
         NotificationManagerCompat.from(context).notify(
             sessionId, notificationId, notification
@@ -265,10 +233,10 @@ object NotificationService {
         return NotificationCompat.Builder(context, PERMISSION_REQUESTS_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Permission required — $sessionName")
-            .setContentText("Claude wants to run: $toolName")
+            .setContentText("Agent wants to run: $toolName")
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("Claude wants to run: $toolName\nTap \"Approve\" to allow this action.")
+                    .bigText("Agent wants to run: $toolName\nTap \"Approve\" to allow this action.")
             )
             .setContentIntent(tapIntent)
             .addAction(NotificationCompat.Action(0, "Approve", approveIntent))
@@ -301,35 +269,6 @@ object NotificationService {
             .setAutoCancel(true)
             .setGroup(sessionId)
             .setCategory(NotificationCompat.CATEGORY_ERROR)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-    }
-
-    private fun buildRalphNotification(
-        context: Context,
-        sessionId: String,
-        runId: String,
-        state: String,
-        message: String,
-        notificationId: Int
-    ): Notification {
-        val tapIntent = deepLinkPendingIntent(context, sessionId, notificationId)
-        val title = when (state) {
-            "completed" -> "Ralph finished"
-            "error" -> "Ralph encountered an error"
-            "paused" -> "Ralph paused"
-            else -> "Ralph: $state"
-        }
-        return NotificationCompat.Builder(context, RALPH_CHANNEL)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setContentIntent(tapIntent)
-            .addAction(NotificationCompat.Action(0, "Open", tapIntent))
-            .setAutoCancel(true)
-            .setGroup(sessionId)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }

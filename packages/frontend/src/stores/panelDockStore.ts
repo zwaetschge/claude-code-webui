@@ -1,7 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type DockablePanel = 'files' | 'tasks' | 'config' | 'tools';
+export type DockablePanel =
+  | 'files'
+  | 'tasks'
+  | 'config'
+  | 'designStyle'
+  | 'writingStyle'
+  | 'android'
+  | 'tools'
+  | 'browser';
 
 interface PanelDockState {
   pinned: Record<DockablePanel, boolean>;
@@ -13,7 +21,16 @@ interface PanelDockState {
 export const usePanelDockStore = create<PanelDockState>()(
   persist(
     (set) => ({
-      pinned: { files: false, tasks: false, config: false, tools: false },
+      pinned: {
+        files: false,
+        tasks: false,
+        config: false,
+        designStyle: false,
+        writingStyle: false,
+        android: false,
+        tools: false,
+        browser: false,
+      },
       togglePin: (panel) =>
         set((state) => ({
           pinned: { ...state.pinned, [panel]: !state.pinned[panel] },
@@ -22,7 +39,19 @@ export const usePanelDockStore = create<PanelDockState>()(
         set((state) => ({
           pinned: { ...state.pinned, [panel]: pinned },
         })),
-      unpinAll: () => set({ pinned: { files: false, tasks: false, config: false, tools: false } }),
+      unpinAll: () =>
+        set({
+          pinned: {
+            files: false,
+            tasks: false,
+            config: false,
+            designStyle: false,
+            writingStyle: false,
+            android: false,
+            tools: false,
+            browser: false,
+          },
+        }),
     }),
     {
       name: 'claude-webui-panel-dock',

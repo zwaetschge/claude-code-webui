@@ -18,7 +18,7 @@ export function createSetupWindow(): BrowserWindow {
     width: 480,
     height: 580,
     resizable: false,
-    title: 'Claude Code WebUI — Setup',
+    title: 'Plum Code WebUI — Setup',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
@@ -53,7 +53,7 @@ export function createAppWindow(serverUrl: string, token: string): BrowserWindow
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    title: 'Claude Code WebUI',
+    title: 'Plum Code WebUI',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
@@ -112,7 +112,7 @@ function getSetupHTML(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code WebUI — Setup</title>
+  <title>Plum Code WebUI — Setup</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -213,7 +213,7 @@ function getSetupHTML(): string {
 <body>
   <div class="container">
     <h1>Connect to Server</h1>
-    <p class="subtitle">Enter your Claude Code WebUI server details</p>
+    <p class="subtitle">Enter your Plum Code WebUI server details</p>
 
     <div id="error" class="error"></div>
 

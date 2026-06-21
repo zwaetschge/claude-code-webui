@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ant Design — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     ANT DESIGN — 400×300 THUMBNAIL PREVIEW
+     Data-dense · enterprise · structured · clear · consistent
+     ============================================================ */
+  :root {
+    --ant-primary: #1677FF;
+    --ant-primary-hover: #4096FF;
+    --ant-primary-bg: #E6F4FF;
+    --ant-primary-border: #91CAFF;
+    --ant-success: #16A34A;
+    --ant-success-bg: #F6FFED;
+    --ant-success-border: #B7EB8F;
+    --ant-warning: #D97706;
+    --ant-warning-bg: #FFFBE6;
+    --ant-warning-border: #FFE58F;
+    --ant-danger: #DC2626;
+    --ant-danger-bg: #FFF1F0;
+    --ant-danger-border: #FFCCC7;
+    --ant-surface: #FFFFFF;
+    --ant-surface-2: #FAFAFA;
+    --ant-surface-3: #F5F5F5;
+    --ant-ink: #111827;
+    --ant-ink-2: #41454F;
+    --ant-ink-3: #6B7280;
+    --ant-ink-4: #9CA3AF;
+    --ant-line: #D9D9D9;
+    --ant-line-2: #F0F0F0;
+    --ant-on-primary: #FFFFFF;
+    --ant-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --ant-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --r-sm: 3px;
+    --r-md: 4px;
+    --r-lg: 5px;
+    --sh-1: 0 1px 2px 0 rgba(0,0,0,0.04);
+    --sh-2: 0 4px 12px -4px rgba(0,0,0,0.10), 0 2px 4px -1px rgba(0,0,0,0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ant-font);
+    font-size: 12px;
+    color: var(--ant-ink);
+    background: var(--ant-surface-2);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--ant-surface);
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: 28px auto 1fr 22px;
+    border-right: 1px solid var(--ant-line-2);
+  }
+
+  /* ===== Topbar ===== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    background: var(--ant-surface);
+    border-bottom: 1px solid var(--ant-line-2);
+  }
+  .topbar__left { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    display: flex; align-items: center; gap: 5px;
+    font-weight: 700; font-size: 11px;
+    color: var(--ant-ink); letter-spacing: -0.01em;
+  }
+  .logo__mark {
+    width: 16px; height: 16px;
+    background: var(--ant-primary);
+    border-radius: var(--r-sm);
+    display: grid; place-items: center;
+    color: #fff; font-weight: 800; font-size: 9px;
+  }
+  .nav { display: flex; gap: 1px; font-size: 10px; }
+  .nav a {
+    padding: 3px 6px;
+    border-radius: var(--r-sm);
+    text-decoration: none;
+    color: var(--ant-ink-3);
+    font-weight: 500;
+  }
+  .nav a.is-active { color: var(--ant-primary); background: var(--ant-primary-bg); font-weight: 600; }
+  .topbar__right { display: flex; align-items: center; gap: 5px; }
+  .avatar {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--ant-primary-bg);
+    color: var(--ant-primary);
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 8px;
+    border: 1px solid var(--ant-primary-border);
+  }
+
+  /* ===== KPI row ===== */
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--ant-surface);
+    border-bottom: 1px solid var(--ant-line-2);
+  }
+  .kpi {
+    padding: 7px 8px;
+    border: 1px solid var(--ant-line-2);
+    border-radius: var(--r-lg);
+    background: var(--ant-surface);
+  }
+  .kpi__top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 3px;
+  }
+  .kpi__label {
+    font-size: 8.5px; color: var(--ant-ink-3); font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .kpi__icon {
+    width: 14px; height: 14px;
+    border-radius: var(--r-sm);
+    background: var(--ant-primary-bg);
+    color: var(--ant-primary);
+    display: grid; place-items: center;
+  }
+  .kpi__icon svg { width: 9px; height: 9px; }
+  .kpi__icon--success { background: var(--ant-success-bg); color: var(--ant-success); }
+  .kpi__icon--warning { background: var(--ant-warning-bg); color: var(--ant-warning); }
+  .kpi__icon--danger { background: var(--ant-danger-bg); color: var(--ant-danger); }
+
+  .kpi__value {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--ant-ink);
+    line-height: 1.15;
+    margin-bottom: 2px;
+  }
+  .kpi__meta {
+    display: flex; align-items: center; gap: 3px;
+    font-size: 8px;
+  }
+  .trend {
+    display: inline-flex; align-items: center; gap: 1px;
+    font-weight: 700;
+    font-family: var(--ant-font-mono);
+  }
+  .trend svg { width: 7px; height: 7px; }
+  .trend--up { color: var(--ant-success); }
+  .trend--down { color: var(--ant-danger); }
+  .kpi__meta-text { color: var(--ant-ink-4); }
+
+  /* ===== Main: table + side ===== */
+  .main {
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    gap: 6px;
+    padding: 6px 12px;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .card {
+    background: var(--ant-surface);
+    border: 1px solid var(--ant-line-2);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .card__head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--ant-line-2);
+  }
+  .card__title {
+    font-size: 10px; font-weight: 700;
+    color: var(--ant-ink);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .card__meta {
+    font-family: var(--ant-font-mono);
+    font-size: 8.5px;
+    color: var(--ant-ink-4);
+  }
+
+  /* Table */
+  .table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+  .table th {
+    text-align: left;
+    padding: 4px 8px;
+    background: var(--ant-surface-2);
+    color: var(--ant-ink-3);
+    font-weight: 600;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--ant-line-2);
+    white-space: nowrap;
+  }
+  .table th.is-sorted { color: var(--ant-primary); }
+  .table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--ant-line-2);
+    color: var(--ant-ink-2);
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .table tbody tr:hover { background: var(--ant-surface-2); }
+  .table tbody tr:last-child td { border-bottom: none; }
+
+  .user-cell { display: flex; align-items: center; gap: 4px; }
+  .user-cell__avatar {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--ant-primary-bg);
+    color: var(--ant-primary);
+    display: grid; place-items: center;
+    font-size: 7px; font-weight: 700;
+    flex-shrink: 0;
+  }
+  .user-cell__name { color: var(--ant-ink); font-weight: 600; font-size: 9px; }
+  .cell-strong { color: var(--ant-ink); font-weight: 600; }
+  .cell-mono { font-family: var(--ant-font-mono); font-size: 8.5px; color: var(--ant-ink-3); }
+
+  /* Badge */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 13px;
+    padding: 0 5px;
+    border-radius: var(--r-sm);
+    font-size: 8.5px;
+    font-weight: 600;
+    line-height: 1;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .badge::before {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .badge--success { color: var(--ant-success); background: var(--ant-success-bg); border-color: var(--ant-success-border); }
+  .badge--processing { color: var(--ant-primary); background: var(--ant-primary-bg); border-color: var(--ant-primary-border); }
+  .badge--warning { color: var(--ant-warning); background: var(--ant-warning-bg); border-color: var(--ant-warning-border); }
+  .badge--default { color: var(--ant-ink-3); background: var(--ant-surface-3); border-color: var(--ant-line); }
+
+  /* Side: form / component showcase */
+  .side {
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .side__label {
+    font-size: 8px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ant-ink-4);
+  }
+  .field { display: flex; flex-direction: column; gap: 2px; }
+  .field__label {
+    font-size: 8.5px;
+    color: var(--ant-ink-2);
+    font-weight: 500;
+  }
+  .field__control {
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid var(--ant-line);
+    border-radius: var(--r-sm);
+    background: var(--ant-surface);
+    font-family: var(--ant-font);
+    font-size: 9px;
+    color: var(--ant-ink);
+    display: flex; align-items: center;
+  }
+  .field__control--focused {
+    border-color: var(--ant-primary);
+    box-shadow: 0 0 0 2px rgba(22,119,255,0.12);
+  }
+  .field__control--select::after {
+    content: "▾";
+    margin-left: auto;
+    color: var(--ant-ink-4);
+    font-size: 8px;
+  }
+  .switch-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 2px 0;
+  }
+  .switch-row__label { font-size: 9px; color: var(--ant-ink-2); font-weight: 500; }
+  .switch {
+    position: relative;
+    width: 22px; height: 12px;
+    background: var(--ant-line);
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 1px; left: 1px;
+    width: 10px; height: 10px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  }
+  .switch.is-on { background: var(--ant-primary); }
+  .switch.is-on::after { left: auto; right: 1px; }
+
+  .side__btns { display: flex; gap: 4px; margin-top: 2px; }
+  .mini-btn {
+    height: 18px;
+    padding: 0 8px;
+    border: 1px solid var(--ant-line);
+    border-radius: var(--r-sm);
+    background: var(--ant-surface);
+    font-family: var(--ant-font);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--ant-ink);
+    cursor: pointer;
+  }
+  .mini-btn--primary {
+    background: var(--ant-primary);
+    border-color: var(--ant-primary);
+    color: #fff;
+  }
+
+  /* ===== Footer ===== */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    background: var(--ant-surface);
+    border-top: 1px solid var(--ant-line-2);
+    font-size: 8.5px;
+    color: var(--ant-ink-4);
+  }
+  .footer__mono {
+    font-family: var(--ant-font-mono);
+    letter-spacing: 0.04em;
+  }
+  .footer__dot { color: var(--ant-primary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Ant Design — design language preview">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="logo"><span class="logo__mark">A</span>ant · console</div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Overview</a>
+        <a href="#">Customers</a>
+        <a href="#">Reports</a>
+      </nav>
+    </div>
+    <div class="topbar__right">
+      <div class="avatar" aria-label="User">JS</div>
+    </div>
+  </header>
+
+  <!-- KPI ROW -->
+  <section class="kpis" aria-label="Key metrics">
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Customers</span>
+        <span class="kpi__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">12,847</div>
+      <div class="kpi__meta">
+        <span class="trend trend--up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          12.4%
+        </span>
+      </div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Active</span>
+        <span class="kpi__icon kpi__icon--success">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">9,302</div>
+      <div class="kpi__meta">
+        <span class="trend trend--up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          3.8%
+        </span>
+      </div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Pending</span>
+        <span class="kpi__icon kpi__icon--warning">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">128</div>
+      <div class="kpi__meta">
+        <span class="trend trend--down">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          5.2%
+        </span>
+      </div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Failed</span>
+        <span class="kpi__icon kpi__icon--danger">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">17</div>
+      <div class="kpi__meta">
+        <span class="trend trend--down">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          2.1%
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- MAIN: TABLE + SIDE -->
+  <section class="main">
+
+    <!-- TABLE -->
+    <div class="card">
+      <div class="card__head">
+        <h2 class="card__title">Recent customers <span class="badge badge--default">248</span></h2>
+        <span class="card__meta">page 1 / 50</span>
+      </div>
+      <table class="table" aria-label="Customer list">
+        <thead>
+          <tr>
+            <th>Customer</th>
+            <th>Plan</th>
+            <th>Status</th>
+            <th class="is-sorted">MRR</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <div class="user-cell">
+                <span class="user-cell__avatar">MR</span>
+                <span class="user-cell__name">Maya Rivera</span>
+              </div>
+            </td>
+            <td><span class="cell-strong">Enterprise</span></td>
+            <td><span class="badge badge--success">Active</span></td>
+            <td class="cell-strong cell-mono">$4,800</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="user-cell">
+                <span class="user-cell__avatar">JL</span>
+                <span class="user-cell__name">Jonas Lindqvist</span>
+              </div>
+            </td>
+            <td><span class="cell-strong">Pro</span></td>
+            <td><span class="badge badge--processing">Sync</span></td>
+            <td class="cell-strong cell-mono">$890</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="user-cell">
+                <span class="user-cell__avatar">SC</span>
+                <span class="user-cell__name">Sara Chen</span>
+              </div>
+            </td>
+            <td><span class="cell-strong">Enterprise</span></td>
+            <td><span class="badge badge--success">Active</span></td>
+            <td class="cell-strong cell-mono">$6,200</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="user-cell">
+                <span class="user-cell__avatar">DK</span>
+                <span class="user-cell__name">Daniel Köhler</span>
+              </div>
+            </td>
+            <td><span class="cell-strong">Starter</span></td>
+            <td><span class="badge badge--warning">Trial</span></td>
+            <td class="cell-strong cell-mono">$49</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- SIDE: form/component sample -->
+    <div class="card">
+      <div class="card__head">
+        <h2 class="card__title">New customer</h2>
+        <span class="card__meta">draft</span>
+      </div>
+      <div class="side">
+        <div class="field">
+          <span class="field__label">Full name</span>
+          <div class="field__control field__control--focused">Maya Rivera</div>
+        </div>
+        <div class="field">
+          <span class="field__label">Plan</span>
+          <div class="field__control field__control--select">Pro — $890/mo</div>
+        </div>
+        <div class="switch-row">
+          <span class="switch-row__label">Welcome email</span>
+          <div class="switch is-on"></div>
+        </div>
+        <div class="switch-row">
+          <span class="switch-row__label">2FA required</span>
+          <div class="switch is-on"></div>
+        </div>
+        <div class="side__btns">
+          <button class="mini-btn mini-btn--primary" type="button">Create</button>
+          <button class="mini-btn" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <span class="footer__mono"><span class="footer__dot">●</span> ant · data-dense · 4/8/12/16/24/32</span>
+    <span class="footer__mono">WCAG 2.2 AA · v1.0</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

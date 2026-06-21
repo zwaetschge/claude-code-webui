@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glassmorphism — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mona+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     GLASSMORPHISM DESIGN SYSTEM — 400×300 THUMBNAIL
+     Frosted glass · translucent · blur · luminous · depth
+     ============================================================ */
+  :root {
+    --gm-primary: #FF6B9D;       /* pink */
+    --gm-primary-2: #C44CFF;     /* violet */
+    --gm-secondary: #4A9EFF;     /* azure */
+    --gm-secondary-2: #00D4FF;   /* cyan */
+    --gm-success: #16A34A;
+    --gm-warning: #D97706;
+    --gm-danger: #DC2626;
+
+    /* Glass surfaces */
+    --gm-glass: rgba(255,255,255,0.16);
+    --gm-glass-2: rgba(255,255,255,0.10);
+    --gm-glass-3: rgba(255,255,255,0.06);
+    --gm-glass-border: rgba(255,255,255,0.32);
+    --gm-glass-border-2: rgba(255,255,255,0.18);
+    --gm-glass-highlight: rgba(255,255,255,0.55);
+
+    --gm-ink: #FFFFFF;
+    --gm-ink-2: rgba(255,255,255,0.78);
+    --gm-ink-3: rgba(255,255,255,0.55);
+    --gm-ink-4: rgba(255,255,255,0.32);
+
+    --gm-font: 'Mona Sans', 'Inter', -apple-system, sans-serif;
+    --gm-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --gm-r-sm: 10px;
+    --gm-r-md: 14px;
+    --gm-r-lg: 20px;
+    --gm-r-xl: 28px;
+    --gm-r-pill: 999px;
+
+    --gm-blur: blur(16px);
+    --gm-blur-strong: blur(24px);
+
+    --gm-shadow-glass: 0 8px 32px -4px rgba(31,38,135,0.25);
+    --gm-shadow-deep: 0 16px 48px -8px rgba(31,38,135,0.35);
+    --gm-shadow-pink: 0 12px 36px -8px rgba(255,107,157,0.40);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--gm-font);
+    font-size: 12px;
+    color: var(--gm-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    /* Vibrant gradient mesh background — required to show glass */
+    background:
+      radial-gradient(circle at 15% 25%, var(--gm-primary) 0%, transparent 40%),
+      radial-gradient(circle at 85% 15%, var(--gm-primary-2) 0%, transparent 45%),
+      radial-gradient(circle at 75% 80%, var(--gm-secondary) 0%, transparent 45%),
+      radial-gradient(circle at 20% 90%, var(--gm-secondary-2) 0%, transparent 40%),
+      radial-gradient(circle at 50% 50%, var(--gm-primary-2) 0%, transparent 60%),
+      linear-gradient(135deg, #6B2EFF 0%, #FF3D8A 50%, #00B8FF 100%);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  /* Floating blurred orbs behind glass */
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(40px);
+    z-index: 0;
+    pointer-events: none;
+  }
+  .orb--1 {
+    width: 140px; height: 140px;
+    background: rgba(255,255,255,0.18);
+    top: -40px; right: -30px;
+  }
+  .orb--2 {
+    width: 100px; height: 100px;
+    background: rgba(255,107,157,0.45);
+    bottom: -20px; left: 60px;
+  }
+
+  /* ============ GLASS HEADER ============ */
+  .header {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--gm-glass);
+    backdrop-filter: var(--gm-blur);
+    -webkit-backdrop-filter: var(--gm-blur);
+    border: 1px solid var(--gm-glass-border);
+    border-radius: var(--gm-r-pill);
+    box-shadow: var(--gm-shadow-glass);
+  }
+  /* Top luminous highlight */
+  .header::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 20%;
+    width: 60%; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gm-glass-highlight), transparent);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    color: var(--gm-ink);
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    background: var(--gm-glass);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--gm-glass-border);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--gm-ink);
+  }
+  .brand__mark svg { width: 12px; height: 12px; }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+    font-size: 10.5px;
+    font-weight: 500;
+  }
+  .nav a {
+    padding: 4px 11px;
+    border-radius: var(--gm-r-pill);
+    text-decoration: none;
+    color: var(--gm-ink-2);
+    transition: all .15s ease;
+  }
+  .nav a:hover {
+    color: var(--gm-ink);
+    background: var(--gm-glass-3);
+  }
+  .nav a.is-active {
+    background: var(--gm-glass);
+    border: 1px solid var(--gm-glass-border);
+    color: var(--gm-ink);
+    font-weight: 600;
+  }
+
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--gm-glass);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--gm-glass-border);
+    display: grid; place-items: center;
+    color: var(--gm-ink);
+    font-weight: 700;
+    font-size: 9px;
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  /* LEFT — glass hero card */
+  .hero {
+    padding: 16px 18px;
+    background: var(--gm-glass);
+    backdrop-filter: var(--gm-blur-strong);
+    -webkit-backdrop-filter: var(--gm-blur-strong);
+    border: 1px solid var(--gm-glass-border);
+    border-radius: var(--gm-r-lg);
+    box-shadow: var(--gm-shadow-deep);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* Luminous top highlight + glow */
+  .hero::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 10%;
+    width: 80%; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gm-glass-highlight), transparent);
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.20);
+  }
+
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: rgba(255,255,255,0.20);
+    border: 1px solid var(--gm-glass-border-2);
+    border-radius: var(--gm-r-pill);
+    font-family: var(--gm-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--gm-ink);
+    position: relative;
+    z-index: 1;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--gm-ink);
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.35);
+  }
+
+  .hero__title {
+    font-family: var(--gm-font);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: var(--gm-ink);
+    position: relative;
+    z-index: 1;
+  }
+  .hero__title em {
+    font-style: normal;
+    background: linear-gradient(90deg, #FFE066, #FF6B9D);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .hero__sub {
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--gm-ink-2);
+    max-width: 28ch;
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+    position: relative;
+    z-index: 1;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 14px;
+    border: 1px solid var(--gm-glass-border);
+    border-radius: var(--gm-r-pill);
+    font-family: var(--gm-font);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--gm-ink);
+    background: var(--gm-glass);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: transform .2s ease;
+  }
+  .btn--primary {
+    background: rgba(255,255,255,0.85);
+    color: var(--gm-primary-2);
+    box-shadow: var(--gm-shadow-pink);
+  }
+  .btn--primary:hover { transform: translateY(-1px); }
+  .btn--ghost {
+    background: transparent;
+    border-color: var(--gm-glass-border-2);
+    color: var(--gm-ink-2);
+    padding: 0 4px;
+    height: auto;
+  }
+  .btn--ghost:hover { color: var(--gm-ink); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — stacked glass stat cards */
+  .cards {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+  .card {
+    padding: 8px 12px;
+    background: var(--gm-glass);
+    backdrop-filter: var(--gm-blur);
+    -webkit-backdrop-filter: var(--gm-blur);
+    border: 1px solid var(--gm-glass-border);
+    border-radius: var(--gm-r-md);
+    box-shadow: var(--gm-shadow-glass);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    overflow: hidden;
+    position: relative;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 15%;
+    width: 70%; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gm-glass-highlight), transparent);
+  }
+  .card__icon {
+    width: 28px; height: 28px;
+    background: rgba(255,255,255,0.28);
+    border: 1px solid var(--gm-glass-border-2);
+    border-radius: 10px;
+    display: grid; place-items: center;
+    color: var(--gm-ink);
+    flex-shrink: 0;
+  }
+  .card__icon svg { width: 14px; height: 14px; }
+  .card__body { flex: 1; min-width: 0; }
+  .card__label {
+    font-family: var(--gm-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--gm-ink-2);
+    line-height: 1;
+  }
+  .card__value {
+    font-family: var(--gm-font);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gm-ink);
+    line-height: 1.1;
+    margin-top: 2px;
+    letter-spacing: -0.02em;
+  }
+  .card__value span {
+    font-size: 11px;
+    color: var(--gm-ink-2);
+    font-weight: 500;
+  }
+  .card__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--gm-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--gm-ink-2);
+    margin-top: 1px;
+  }
+  .card__sub svg { width: 7px; height: 7px; }
+
+  /* Sparkline */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 14px;
+    margin-top: 3px;
+  }
+  .spark__bar {
+    flex: 1;
+    background: rgba(255,255,255,0.40);
+    border-radius: 1.5px 1.5px 0 0;
+    min-height: 2px;
+  }
+  .spark__bar--peak {
+    background: rgba(255,255,255,0.95);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Glassmorphism design language preview">
+
+  <!-- floating blurred orbs -->
+  <div class="orb orb--1" aria-hidden="true"></div>
+  <div class="orb orb--2" aria-hidden="true"></div>
+
+  <!-- ===== GLASS HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </span>
+      <span>prism</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Home</a>
+      <a href="#">Studio</a>
+      <a href="#">Pricing</a>
+    </nav>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: glass hero card -->
+    <article class="hero">
+      <span class="hero__eyebrow">new · 2025</span>
+      <h1 class="hero__title">
+        See through<br>
+        the <em>noise</em>.
+      </h1>
+      <p class="hero__sub">Layered, luminous, weightless interfaces. Glassmorphism for the next generation of design systems.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Get started
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Tour →</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: glass stat stack -->
+    <aside class="cards">
+
+      <div class="card">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Users</div>
+          <div class="card__value">48.2<span>k</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            12%
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Engagement</div>
+          <div class="card__value">72<span>%</span></div>
+          <div class="spark" aria-hidden="true">
+            <div class="spark__bar" style="height:35%"></div>
+            <div class="spark__bar" style="height:52%"></div>
+            <div class="spark__bar" style="height:42%"></div>
+            <div class="spark__bar" style="height:68%"></div>
+            <div class="spark__bar spark__bar--peak" style="height:100%"></div>
+            <div class="spark__bar" style="height:70%"></div>
+            <div class="spark__bar" style="height:55%"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Avg session</div>
+          <div class="card__value">8.4<span>min</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            steady
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

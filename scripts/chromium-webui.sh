@@ -44,7 +44,13 @@ if [ "$has_disable_dev_shm" -eq 0 ]; then
   extra_args="$extra_args --disable-dev-shm-usage"
 fi
 
-extra_args="$extra_args --no-first-run --no-default-browser-check --disable-background-networking"
+extra_args="$extra_args --no-first-run --no-default-browser-check"
+
+case "${PLUM_CHROMIUM_DISABLE_BACKGROUND_NETWORKING:-}" in
+  1|true|TRUE|yes|YES|on|ON)
+    extra_args="$extra_args --disable-background-networking"
+    ;;
+esac
 
 if [ "$has_user_data_dir" -eq 0 ]; then
   if [ -n "${CHROMIUM_USER_DATA_DIR:-}" ]; then

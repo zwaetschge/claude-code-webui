@@ -49,7 +49,7 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
   const { activeSessionId, sessions, usage } = useSessionStore();
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const provider = activeSession?.cliProvider || 'claude';
+  const provider = activeSession?.cliProvider || 'codex';
   const limitsSupported = provider === 'claude' || provider === 'codex';
 
   // Context usage from the active session

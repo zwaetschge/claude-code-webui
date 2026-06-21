@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clean — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Poppins:wght@400;500;600;700&family=Inconsolata:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CLEAN DESIGN SYSTEM — 400×300 THUMBNAIL
+     Minimal · ample whitespace · legible · limited palette · 8pt grid
+     ============================================================ */
+  :root {
+    --cn-primary: #3B82F6;
+    --cn-primary-hover: #2563EB;
+    --cn-primary-soft: #EFF6FF;
+    --cn-secondary: #8B5CF6;
+    --cn-success: #16A34A;
+    --cn-warning: #D97706;
+    --cn-danger: #DC2626;
+
+    --cn-surface: #FFFFFF;
+    --cn-surface-2: #FAFAFA;
+    --cn-surface-3: #F4F4F5;
+    --cn-ink: #111827;
+    --cn-ink-2: #374151;
+    --cn-ink-3: #6B7280;
+    --cn-ink-4: #9CA3AF;
+    --cn-line: #E5E7EB;
+    --cn-line-soft: #F3F4F6;
+
+    --cn-font: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --cn-font-display: 'Poppins', 'Roboto', sans-serif;
+    --cn-font-mono: 'Inconsolata', ui-monospace, monospace;
+
+    --cn-r-sm: 6px;
+    --cn-r-md: 8px;
+    --cn-r-lg: 12px;
+    --cn-r-pill: 999px;
+
+    /* 8pt baseline grid */
+    --cn-s-1: 8px;
+    --cn-s-2: 16px;
+    --cn-s-3: 24px;
+    --cn-s-4: 32px;
+    --cn-s-5: 48px;
+    --cn-s-6: 64px;
+
+    --cn-sh-1: 0 1px 2px rgba(17,24,39,0.04);
+    --cn-sh-2: 0 4px 12px -2px rgba(17,24,39,0.06), 0 2px 4px -1px rgba(17,24,39,0.03);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cn-font);
+    font-size: 12px;
+    color: var(--cn-ink);
+    background: var(--cn-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--cn-surface);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 24px 32px;
+    gap: 24px;
+  }
+
+  /* ============ HEADER (minimal nav) ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    font-family: var(--cn-font-display);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--cn-ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 20px; height: 20px;
+    border-radius: var(--cn-r-sm);
+    background: var(--cn-ink);
+    display: grid; place-items: center;
+  }
+  .brand__mark::after {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    background: var(--cn-primary);
+  }
+
+  .nav {
+    display: flex;
+    gap: 20px;
+    font-size: 11px;
+    color: var(--cn-ink-3);
+    font-weight: 500;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--cn-ink); }
+  .nav a.is-active {
+    color: var(--cn-ink);
+    font-weight: 700;
+  }
+  .nav a.is-active::after {
+    content: "";
+    display: block;
+    height: 1.5px;
+    background: var(--cn-primary);
+    margin-top: 4px;
+    border-radius: 1px;
+  }
+
+  /* ============ HERO STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 32px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* LEFT — single focused headline */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--cn-font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--cn-primary);
+    align-self: flex-start;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 18px; height: 1.5px;
+    background: var(--cn-primary);
+    border-radius: 1px;
+  }
+  .hero__title {
+    font-family: var(--cn-font-display);
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    color: var(--cn-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--cn-primary);
+    font-weight: 700;
+  }
+  .hero__sub {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--cn-ink-3);
+    max-width: 28ch;
+  }
+  .hero__actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+  }
+
+  /* Buttons — minimal, restrained */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 14px;
+    border: none;
+    border-radius: var(--cn-r-md);
+    font-family: var(--cn-font);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .btn--primary {
+    background: var(--cn-primary);
+    color: #fff;
+  }
+  .btn--primary:hover { background: var(--cn-primary-hover); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--cn-ink-2);
+    padding: 0 4px;
+    height: auto;
+  }
+  .btn--ghost:hover { color: var(--cn-primary); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — single, calm feature card */
+  .feature {
+    background: var(--cn-surface);
+    border: 1px solid var(--cn-line);
+    border-radius: var(--cn-r-lg);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .feature__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .feature__label {
+    font-family: var(--cn-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cn-ink-4);
+  }
+  .feature__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--cn-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--cn-success);
+  }
+  .feature__status::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--cn-success);
+  }
+  .feature__value {
+    font-family: var(--cn-font-display);
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--cn-ink);
+    line-height: 1;
+  }
+  .feature__value span {
+    font-size: 13px;
+    color: var(--cn-ink-3);
+    font-weight: 500;
+  }
+  .feature__delta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--cn-font-mono);
+    font-size: 10px;
+    color: var(--cn-ink-3);
+  }
+  .delta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: var(--cn-success);
+    font-weight: 700;
+  }
+  .delta-pill svg { width: 8px; height: 8px; }
+
+  /* Sparkline — single accent color, very minimal */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 32px;
+    padding-top: 4px;
+    border-top: 1px solid var(--cn-line-soft);
+    margin-top: 4px;
+  }
+  .spark__bar {
+    flex: 1;
+    background: var(--cn-ink-3);
+    opacity: 0.25;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+    transition: opacity .2s ease;
+  }
+  .spark__bar--peak {
+    background: var(--cn-primary);
+    opacity: 1;
+  }
+
+  /* ============ FOOTER (one-line trust indicator) ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 16px;
+    border-top: 1px solid var(--cn-line-soft);
+    font-size: 10px;
+    color: var(--cn-ink-4);
+  }
+  .footer__trust {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .footer__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--cn-font-mono);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+  .footer__item svg { width: 10px; height: 10px; color: var(--cn-ink-3); }
+  .footer__version {
+    font-family: var(--cn-font-mono);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Clean design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span>plain</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Overview</a>
+      <a href="#">Features</a>
+      <a href="#">Pricing</a>
+      <a href="#">Docs</a>
+    </nav>
+  </header>
+
+  <!-- ===== HERO STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: focused headline -->
+    <div class="hero">
+      <span class="hero__eyebrow">Simple · Fast · Calm</span>
+      <h1 class="hero__title">Software,<br><em>without</em> the noise.</h1>
+      <p class="hero__sub">One tool, one job, done well. No bloat, no clutter — just the work in front of you.</p>
+      <div class="hero__actions">
+        <button class="btn btn--primary" type="button">
+          Get started
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">See how →</button>
+      </div>
+    </div>
+
+    <!-- RIGHT: single calm stat card -->
+    <aside class="feature">
+      <div class="feature__head">
+        <span class="feature__label">This week</span>
+        <span class="feature__status">live</span>
+      </div>
+      <div>
+        <div class="feature__value">2,418<span> · tasks</span></div>
+        <div class="feature__delta">
+          <span class="delta-pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            12%
+          </span>
+          <span>vs last week</span>
+        </div>
+      </div>
+      <div class="spark" aria-hidden="true">
+        <div class="spark__bar" style="height:32%"></div>
+        <div class="spark__bar" style="height:45%"></div>
+        <div class="spark__bar" style="height:40%"></div>
+        <div class="spark__bar" style="height:58%"></div>
+        <div class="spark__bar" style="height:52%"></div>
+        <div class="spark__bar spark__bar--peak" style="height:88%"></div>
+        <div class="spark__bar" style="height:70%"></div>
+        <div class="spark__bar" style="height:62%"></div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER (trust line) ===== -->
+  <footer class="footer">
+    <div class="footer__trust">
+      <span class="footer__item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        SOC 2
+      </span>
+      <span class="footer__item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Encrypted
+      </span>
+      <span class="footer__item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        EU hosted
+      </span>
+    </div>
+    <span class="footer__version">v1.0 · WCAG AA</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

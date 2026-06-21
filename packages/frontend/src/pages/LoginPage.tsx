@@ -638,7 +638,7 @@ export function LoginPage() {
 
             {/* Footer note */}
             <p className="mt-8 text-center text-xs text-muted-foreground/60">
-              Theme switching is available on the dashboard after connecting.
+              Appearance controls are available after connecting.
             </p>
 
             <Button

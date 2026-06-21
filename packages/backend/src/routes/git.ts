@@ -4,7 +4,7 @@ import path from 'path';
 import { requireAuth } from '../middleware/auth';
 import { AppError, asyncHandler } from '../middleware/errorHandler';
 import { isAllowedBasePath } from '../utils/allowedPaths';
-import type { GitStatus, GitBranch, GitCommit } from '@claude-code-webui/shared';
+import type { GitStatus, GitBranch, GitCommit } from '@plum-code-webui/shared';
 
 const router = Router();
 

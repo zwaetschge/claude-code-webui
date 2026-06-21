@@ -17,7 +17,7 @@ import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/useDebounce';
 import ReactMarkdown from 'react-markdown';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 
 interface AgentsEditorProps {
   workingDirectory: string;

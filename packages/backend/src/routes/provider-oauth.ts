@@ -4,7 +4,7 @@ import { getDatabase } from '../db/index.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import { config } from '../config.js';
 import { safeEncrypt, safeDecrypt } from '../utils/encryption.js';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 
 const router = Router();
 

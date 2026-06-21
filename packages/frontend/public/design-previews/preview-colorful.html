@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Colorful — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     COLORFUL DESIGN SYSTEM — 400×300 THUMBNAIL
+     Vibrant gradients · high-contrast · playful premium · mesh bg
+     ============================================================ */
+  :root {
+    /* Core palette — vibrant, modern, premium */
+    --co-primary: #3B82F6;        /* electric blue */
+    --co-secondary: #8B5CF6;      /* violet */
+    --co-success: #16A34A;
+    --co-warning: #D97706;
+    --co-danger: #DC2626;
+
+    /* Extended vibrant accents for variety */
+    --co-coral: #FB7185;          /* pink-coral */
+    --co-mint: #10B981;           /* emerald */
+    --co-amber: #F59E0B;          /* amber */
+    --co-cyan: #06B6D4;           /* cyan */
+    --co-magenta: #EC4899;        /* hot pink */
+
+    --co-surface: #FFFFFF;
+    --co-ink: #0F172A;            /* deep slate */
+    --co-ink-2: #334155;
+    --co-ink-3: #64748B;
+    --co-ink-4: #94A3B8;
+    --co-line: rgba(255,255,255,0.60);
+    --co-line-dark: rgba(15,23,42,0.08);
+
+    /* Signature gradient ramps */
+    --co-grad-blue-violet: linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%);
+    --co-grad-coral-magenta: linear-gradient(135deg, #FB7185 0%, #EC4899 100%);
+    --co-grad-mint-cyan: linear-gradient(135deg, #10B981 0%, #06B6D4 100%);
+    --co-grad-amber-coral: linear-gradient(135deg, #F59E0B 0%, #FB7185 100%);
+    --co-grad-violet-magenta: linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%);
+
+    --co-font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --co-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --co-r-sm: 8px;
+    --co-r-md: 12px;
+    --co-r-lg: 16px;
+    --co-r-xl: 22px;
+    --co-r-pill: 999px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--co-font);
+    font-size: 12px;
+    color: var(--co-ink);
+    /* Mesh gradient background — signature of vibrant styles */
+    background:
+      radial-gradient(circle at 0% 0%, rgba(59,130,246,0.30), transparent 40%),
+      radial-gradient(circle at 100% 0%, rgba(236,72,153,0.28), transparent 45%),
+      radial-gradient(circle at 50% 100%, rgba(139,92,246,0.25), transparent 50%),
+      radial-gradient(circle at 100% 100%, rgba(16,185,129,0.18), transparent 45%),
+      #F8FAFC;
+    -webkit-font-smoothing: antialiased;
+    padding: 12px;
+  }
+
+  .frame {
+    width: 376px;
+    height: 276px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ===== HEADER ===== */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: rgba(255,255,255,0.75);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.9);
+    border-radius: var(--co-r-pill);
+    box-shadow: 0 4px 14px -4px rgba(59,130,246,0.25);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 24px; height: 24px;
+    border-radius: 8px;
+    background: var(--co-grad-blue-violet);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: 0 3px 8px rgba(139,92,246,0.45);
+  }
+  .brand__mark svg { width: 13px; height: 13px; }
+  .brand__name {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: var(--co-grad-blue-violet);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+  }
+  .nav a {
+    padding: 4px 10px;
+    border-radius: var(--co-r-pill);
+    text-decoration: none;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--co-ink-3);
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--co-ink); }
+  .nav a.is-active {
+    background: var(--co-grad-blue-violet);
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(59,130,246,0.40);
+  }
+
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--co-grad-coral-magenta);
+    display: grid; place-items: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 9px;
+    box-shadow: 0 2px 6px rgba(236,72,153,0.40);
+  }
+
+  /* ===== MAIN GRID ===== */
+  .main {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  /* Card base — each gets its own gradient identity */
+  .card {
+    border-radius: var(--co-r-lg);
+    padding: 10px 12px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    color: #fff;
+    box-shadow: 0 6px 18px -6px rgba(15,23,42,0.18);
+  }
+
+  /* Hero card spans 2 cols */
+  .card--hero {
+    grid-column: span 2;
+    background: var(--co-grad-blue-violet);
+    justify-content: space-between;
+    box-shadow: 0 10px 24px -8px rgba(59,130,246,0.55);
+  }
+  .card--hero::after {
+    content: "";
+    position: absolute;
+    top: -30px; right: -30px;
+    width: 110px; height: 110px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.25), transparent 70%);
+  }
+
+  .card__label {
+    font-family: var(--co-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px;
+    background: rgba(255,255,255,0.25);
+    border-radius: var(--co-r-pill);
+    font-size: 8px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .card__pill::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
+  }
+
+  .hero__title {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    color: #fff;
+    margin: 4px 0;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .hero__title em {
+    font-style: normal;
+    background: linear-gradient(90deg, #FBBF24, #FB7185);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero__sub {
+    font-size: 10px;
+    color: rgba(255,255,255,0.85);
+    line-height: 1.4;
+    margin-bottom: 4px;
+    max-width: 28ch;
+  }
+  .hero__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    height: 22px;
+    padding: 0 12px;
+    background: #fff;
+    color: var(--co-primary);
+    border: none;
+    border-radius: var(--co-r-pill);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+  }
+  .hero__cta svg { width: 10px; height: 10px; }
+
+  /* Stat cards — each own gradient */
+  .card--coral {
+    background: var(--co-grad-coral-magenta);
+    box-shadow: 0 6px 18px -6px rgba(251,113,133,0.50);
+  }
+  .card--mint {
+    background: var(--co-grad-mint-cyan);
+    box-shadow: 0 6px 18px -6px rgba(16,185,129,0.45);
+  }
+  .card--amber {
+    background: var(--co-grad-amber-coral);
+    box-shadow: 0 6px 18px -6px rgba(245,158,11,0.45);
+  }
+  .card--violet {
+    background: var(--co-grad-violet-magenta);
+    box-shadow: 0 6px 18px -6px rgba(139,92,246,0.50);
+  }
+
+  .stat__value {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: #fff;
+    margin-top: 4px;
+  }
+  .stat__value span {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.85);
+  }
+  .stat__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding-top: 4px;
+    font-size: 9px;
+    color: rgba(255,255,255,0.9);
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    background: rgba(255,255,255,0.25);
+    border-radius: var(--co-r-pill);
+    font-family: var(--co-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .delta svg { width: 7px; height: 7px; }
+  .delta-text { font-weight: 500; opacity: 0.85; }
+
+  /* Sparkline in mint card */
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 14px;
+    margin-top: 4px;
+  }
+  .spark__bar {
+    flex: 1;
+    background: rgba(255,255,255,0.4);
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .spark__bar--peak { background: #fff; }
+
+  /* Donut */
+  .donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .donut {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: conic-gradient(
+      #fff 0% 65%,
+      rgba(255,255,255,0.5) 65% 88%,
+      rgba(255,255,255,0.25) 88% 100%
+    );
+    position: relative;
+    flex-shrink: 0;
+  }
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    background: var(--co-amber);
+    border-radius: 50%;
+    background-image: var(--co-grad-amber-coral);
+  }
+  .donut-pct {
+    font-family: var(--co-font-mono);
+    font-size: 11px;
+    font-weight: 800;
+    color: #fff;
+  }
+
+  /* Big stat with chart in violet card */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 22px;
+    margin-top: 4px;
+  }
+  .bars__col {
+    flex: 1;
+    background: rgba(255,255,255,0.35);
+    border-radius: 2px 2px 0 0;
+  }
+  .bars__col--peak {
+    background: #fff;
+    box-shadow: 0 0 6px rgba(255,255,255,0.6);
+  }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Colorful design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </span>
+      <span class="brand__name">PRISMA</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Home</a>
+      <a href="#">Explore</a>
+      <a href="#">Stats</a>
+    </nav>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- HERO: blue-violet gradient -->
+    <article class="card card--hero">
+      <span class="card__label">
+        Welcome back
+        <span class="card__pill">Pro</span>
+      </span>
+      <div>
+        <h1 class="hero__title">Create<br><em>bold</em> things.</h1>
+        <p class="hero__sub">Vibrant palettes, gradients, premium motion — ship interfaces that feel alive.</p>
+      </div>
+      <button class="hero__cta" type="button">
+        Start
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </article>
+
+    <!-- STAT 1: coral-magenta -->
+    <article class="card card--coral">
+      <span class="card__label">Followers</span>
+      <div class="stat__value">24.8<span>k</span></div>
+      <div class="stat__sub">
+        <span class="delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          18%
+        </span>
+      </div>
+    </article>
+
+    <!-- STAT 2: amber-coral donut -->
+    <article class="card card--amber">
+      <span class="card__label">Goal</span>
+      <div class="donut-wrap">
+        <div class="donut" aria-hidden="true"></div>
+        <div>
+          <div class="donut-pct">65%</div>
+          <div style="font-size:8px;color:rgba(255,255,255,0.85);">of Q4</div>
+        </div>
+      </div>
+    </article>
+
+    <!-- STAT 3: mint-cyan sparkline -->
+    <article class="card card--mint">
+      <span class="card__label">Energy</span>
+      <div class="stat__value">82<span>%</span></div>
+      <div class="spark" aria-hidden="true">
+        <div class="spark__bar" style="height:30%"></div>
+        <div class="spark__bar" style="height:48%"></div>
+        <div class="spark__bar" style="height:65%"></div>
+        <div class="spark__bar spark__bar--peak" style="height:92%"></div>
+        <div class="spark__bar" style="height:72%"></div>
+        <div class="spark__bar" style="height:60%"></div>
+      </div>
+    </article>
+
+    <!-- STAT 4: violet-magenta bars -->
+    <article class="card card--violet">
+      <span class="card__label">Plays</span>
+      <div class="stat__value">1.2<span>M</span></div>
+      <div class="bars" aria-hidden="true">
+        <div class="bars__col" style="height:42%"></div>
+        <div class="bars__col" style="height:58%"></div>
+        <div class="bars__col bars__col--peak" style="height:100%"></div>
+        <div class="bars__col" style="height:75%"></div>
+        <div class="bars__col" style="height:62%"></div>
+      </div>
+    </article>
+
+  </section>
+
+</main>
+
+</body>
+</html>

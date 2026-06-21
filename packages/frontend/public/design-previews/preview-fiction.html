@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fiction — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     FICTION DESIGN SYSTEM — 400×300 THUMBNAIL
+     Children's book · cream paper · bold outlines · colorful blocks
+     ============================================================ */
+  :root {
+    --fc-primary: #222222;        /* dark ink — outline color */
+    --fc-secondary: #FFE9CE;      /* warm cream */
+    --fc-success: #16A34A;
+    --fc-warning: #D97706;
+    --fc-danger: #DC2626;
+    --fc-surface: #FFFFFF;
+    --fc-text: #111827;
+
+    /* Saturated brand color blocks */
+    --fc-red: #EF4444;
+    --fc-yellow: #FCD34D;
+    --fc-mint: #4ADE80;
+    --fc-blue: #60A5FA;
+    --fc-pink: #F472B6;
+    --fc-orange: #FB923C;
+    --fc-violet: #A78BFA;
+    --fc-cream: #FFE9CE;
+    --fc-cream-2: #FFF5E6;
+
+    --fc-font-display: 'Fredoka', 'Cossette Texte', sans-serif;
+    --fc-font-hand: 'Patrick Hand', 'Fredoka', cursive;
+    --fc-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --fc-r-sm: 8px;
+    --fc-r-md: 14px;
+    --fc-r-lg: 20px;
+    --fc-r-xl: 28px;
+    --fc-r-pill: 999px;
+
+    --fc-outline: 2.5px solid var(--fc-primary);
+    --fc-outline-thick: 3px solid var(--fc-primary);
+    --fc-shadow-flat: 4px 4px 0 var(--fc-primary);
+    --fc-shadow-flat-sm: 2px 2px 0 var(--fc-primary);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--fc-font-display);
+    font-size: 12px;
+    color: var(--fc-primary);
+    background: var(--fc-cream);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    /* Cream paper with subtle dot grain */
+    background:
+      radial-gradient(circle at 30% 20%, rgba(34,34,34,0.020) 1px, transparent 1.5px) 0 0 / 5px 5px,
+      radial-gradient(circle at 70% 80%, rgba(34,34,34,0.015) 1px, transparent 1.5px) 0 0 / 7px 7px,
+      var(--fc-cream);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 12px;
+    border: var(--fc-outline-thick);
+  }
+
+  /* ============ TOP NAV ============ */
+  .topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 12px;
+    background: var(--fc-surface);
+    border: var(--fc-outline);
+    border-radius: var(--fc-r-pill);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--fc-font-display);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--fc-primary);
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    background: var(--fc-red);
+    border: var(--fc-outline);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--fc-surface);
+    transform: rotate(-5deg);
+  }
+  .brand__mark svg { width: 12px; height: 12px; }
+  .brand__name span { color: var(--fc-red); }
+
+  .nav {
+    display: flex;
+    gap: 3px;
+  }
+  .nav a {
+    padding: 3px 9px;
+    border-radius: var(--fc-r-pill);
+    text-decoration: none;
+    font-family: var(--fc-font-display);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fc-primary);
+    border: 2px solid transparent;
+    transition: all .15s ease;
+  }
+  .nav a:hover { background: var(--fc-yellow); border-color: var(--fc-primary); }
+  .nav a.is-active {
+    background: var(--fc-primary);
+    color: var(--fc-yellow);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 10px;
+    padding: 10px 0;
+    align-items: center;
+    position: relative;
+  }
+
+  /* LEFT — playful headline */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    position: relative;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 3px 12px;
+    background: var(--fc-mint);
+    border: var(--fc-outline);
+    border-radius: var(--fc-r-pill);
+    font-family: var(--fc-font-display);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--fc-primary);
+    box-shadow: var(--fc-shadow-flat-sm);
+    transform: rotate(-2deg);
+  }
+  .hero__eyebrow::before { content: "✿"; color: var(--fc-red); }
+
+  .hero__title {
+    font-family: var(--fc-font-display);
+    font-weight: 700;
+    font-size: 44px;
+    line-height: 0.92;
+    letter-spacing: -0.015em;
+    color: var(--fc-primary);
+    margin: 4px 0;
+  }
+  .hero__title-block {
+    display: inline-block;
+    padding: 0 10px;
+    background: var(--fc-yellow);
+    border: var(--fc-outline);
+    border-radius: var(--fc-r-md);
+    box-shadow: var(--fc-shadow-flat-sm);
+    transform: rotate(-1.5deg);
+    margin: 2px 0;
+  }
+  .hero__title-blue {
+    color: var(--fc-blue);
+  }
+
+  .hero__sub {
+    font-family: var(--fc-font-hand);
+    font-size: 13px;
+    line-height: 1.35;
+    color: var(--fc-primary);
+    max-width: 30ch;
+    margin-top: 4px;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  /* Chunky playful buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 16px;
+    border: var(--fc-outline);
+    border-radius: var(--fc-r-pill);
+    font-family: var(--fc-font-display);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    color: var(--fc-surface);
+    background: var(--fc-red);
+    box-shadow: var(--fc-shadow-flat);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn:hover {
+    transform: translate(-2px,-2px);
+    box-shadow: 6px 6px 0 var(--fc-primary);
+  }
+  .btn:active {
+    transform: translate(2px,2px);
+    box-shadow: 1px 1px 0 var(--fc-primary);
+  }
+  .btn--blue {
+    background: var(--fc-blue);
+    color: var(--fc-surface);
+  }
+  .btn--ghost {
+    background: var(--fc-surface);
+    color: var(--fc-primary);
+  }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — story cards stack */
+  .cards {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 6px;
+  }
+  .card {
+    padding: 7px 11px;
+    border: var(--fc-outline);
+    border-radius: var(--fc-r-md);
+    background: var(--fc-surface);
+    box-shadow: var(--fc-shadow-flat-sm);
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card--red {
+    background: var(--fc-red);
+    color: var(--fc-surface);
+    transform: rotate(-1.5deg);
+  }
+  .card--yellow {
+    background: var(--fc-yellow);
+    color: var(--fc-primary);
+    transform: rotate(1.2deg);
+  }
+  .card--mint {
+    background: var(--fc-mint);
+    color: var(--fc-primary);
+    transform: rotate(-0.8deg);
+  }
+
+  .card__icon {
+    width: 26px; height: 26px;
+    background: var(--fc-surface);
+    border: var(--fc-outline);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--fc-primary);
+    flex-shrink: 0;
+  }
+  .card__icon svg { width: 14px; height: 14px; }
+  .card__body { flex: 1; min-width: 0; }
+  .card__label {
+    font-family: var(--fc-font-display);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.8;
+    line-height: 1;
+  }
+  .card__value {
+    font-family: var(--fc-font-display);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-top: 1px;
+  }
+  .card__sub {
+    font-family: var(--fc-font-hand);
+    font-size: 10px;
+    opacity: 0.85;
+    margin-top: 0;
+    line-height: 1;
+  }
+
+  /* Hand-drawn illustrations — storybook motifs */
+  .doodle {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+  }
+  /* Sun in hero top-right */
+  .doodle--sun {
+    top: 6px; right: 12px;
+    width: 30px; height: 30px;
+    color: var(--fc-yellow);
+    transform: rotate(15deg);
+  }
+  /* Cloud mid-left */
+  .doodle--cloud {
+    top: 80px; left: 130px;
+    width: 30px; height: 16px;
+    color: var(--fc-surface);
+    opacity: 0.85;
+  }
+  /* Star */
+  .doodle--star {
+    bottom: 50px; right: 4px;
+    width: 20px; height: 20px;
+    color: var(--fc-violet);
+    transform: rotate(-12deg);
+  }
+  /* Little flower */
+  .doodle--flower {
+    bottom: 12px; left: 18px;
+    width: 22px; height: 22px;
+    color: var(--fc-pink);
+  }
+  /* Heart */
+  .doodle--heart {
+    top: 60px; right: 145px;
+    width: 16px; height: 16px;
+    color: var(--fc-red);
+    transform: rotate(-15deg);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 12px;
+    border: var(--fc-outline);
+    border-radius: var(--fc-r-pill);
+    background: var(--fc-yellow);
+    font-family: var(--fc-font-display);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--fc-primary);
+  }
+  .footer__dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+    border: 1.5px solid var(--fc-primary);
+  }
+  .footer__dot--red { background: var(--fc-red); }
+  .footer__dot--blue { background: var(--fc-blue); }
+  .footer__dot--mint { background: var(--fc-mint); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Fiction design language preview">
+
+  <!-- ===== TOP NAV ===== -->
+  <header class="topnav">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 16.8 5.8 21.3l2.4-7.4L2 9.4h7.6L12 2z"/></svg>
+      </span>
+      <span class="brand__name">pip<span>!</span>pop</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">play</a>
+      <a href="#">read</a>
+      <a href="#">make</a>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- decorative hand-drawn storybook doodles -->
+    <svg class="doodle doodle--sun" viewBox="0 0 32 32" fill="currentColor" stroke="var(--fc-primary)" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="16" cy="16" r="7"/>
+      <g stroke-linecap="round">
+        <line x1="16" y1="2" x2="16" y2="6"/>
+        <line x1="16" y1="26" x2="16" y2="30"/>
+        <line x1="2" y1="16" x2="6" y2="16"/>
+        <line x1="26" y1="16" x2="30" y2="16"/>
+        <line x1="6" y1="6" x2="9" y2="9"/>
+        <line x1="23" y1="23" x2="26" y2="26"/>
+        <line x1="6" y1="26" x2="9" y2="23"/>
+        <line x1="23" y1="9" x2="26" y2="6"/>
+      </g>
+    </svg>
+    <svg class="doodle doodle--cloud" viewBox="0 0 32 16" fill="currentColor" stroke="var(--fc-primary)" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <path d="M 6 14 Q 1 14 1 10 Q 1 6 6 6 Q 6 2 11 2 Q 16 2 17 6 Q 22 5 24 9 Q 30 9 30 12 Q 30 14 26 14 Z"/>
+    </svg>
+    <svg class="doodle doodle--star" viewBox="0 0 24 24" fill="currentColor" stroke="var(--fc-primary)" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <polygon points="12 2 14.5 9 22 9.5 16 14 18 22 12 18 6 22 8 14 2 9.5 9.5 9"/>
+    </svg>
+    <svg class="doodle doodle--flower" viewBox="0 0 24 24" fill="currentColor" stroke="var(--fc-primary)" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="6" r="3"/>
+      <circle cx="6" cy="10" r="3"/>
+      <circle cx="18" cy="10" r="3"/>
+      <circle cx="9" cy="16" r="3"/>
+      <circle cx="15" cy="16" r="3"/>
+      <circle cx="12" cy="12" r="2.5" fill="var(--fc-yellow)"/>
+    </svg>
+    <svg class="doodle doodle--heart" viewBox="0 0 24 24" fill="currentColor" stroke="var(--fc-primary)" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 21s-7-4.5-9.5-9C0.7 8.8 2 5 5.5 4.5 8 4 10 5.5 12 8c2-2.5 4-4 6.5-3.5C22 5 23.3 8.8 21.5 12 19 16.5 12 21 12 21z"/>
+    </svg>
+
+    <!-- LEFT: playful headline -->
+    <article class="hero">
+      <span class="hero__eyebrow">a new adventure</span>
+      <h1 class="hero__title">
+        let's<br>
+        <span class="hero__title-block hero__title-blue">play!</span>
+      </h1>
+      <p class="hero__sub">Stories, songs, and silly games — made with love for tiny humans with big imaginations.</p>
+      <div class="hero__cta">
+        <button class="btn" type="button">
+          let's go
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">peek</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: story cards stack -->
+    <aside class="cards">
+
+      <div class="card card--red">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C7 2 3 6 3 11s4 9 9 9 9-4 9-9-4-9-9-9zm0 16c-3.9 0-7-3.1-7-7s3.1-7 7-7 7 3.1 7 7-3.1 7-7 7zm-1-10h2v4h-2zm0 6h2v2h-2z"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">stories</div>
+          <div class="card__value">128 tales</div>
+          <div class="card__sub">read along ♡</div>
+        </div>
+      </div>
+
+      <div class="card card--yellow">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">songs</div>
+          <div class="card__value">48 tunes</div>
+          <div class="card__sub">sing & dance!</div>
+        </div>
+      </div>
+
+      <div class="card card--mint">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5" fill="var(--fc-mint)"/><circle cx="16" cy="16" r="1.5" fill="var(--fc-mint)"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">games</div>
+          <div class="card__value">36 plays</div>
+          <div class="card__sub">tap & giggle</div>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span>
+      <span class="footer__dot footer__dot--red"></span>
+      <span class="footer__dot footer__dot--blue"></span>
+      <span class="footer__dot footer__dot--mint"></span>
+      fiction · playful · cozy
+    </span>
+    <span>made for tiny humans ★</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

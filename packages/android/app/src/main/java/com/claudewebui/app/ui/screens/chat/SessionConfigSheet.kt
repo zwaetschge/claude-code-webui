@@ -115,7 +115,7 @@ fun SessionConfigSheet(
                         expanded = providerDropdownExpanded,
                         onDismissRequest = { providerDropdownExpanded = false }
                     ) {
-                        CLIProvider.entries.forEach { provider ->
+                        CLIProvider.active.forEach { provider ->
                             DropdownMenuItem(
                                 text = {
                                     Text(provider.name.lowercase().replaceFirstChar { it.uppercaseChar() })
@@ -297,14 +297,6 @@ private fun SessionModeSelector(
             icon = Icons.Default.Architecture,
             selected = selectedMode == SessionMode.PLANNING,
             onClick = { onModeSelected(SessionMode.PLANNING) }
-        )
-        SessionModeOption(
-            mode = SessionMode.ORCHESTRATION,
-            label = "Orchestration",
-            description = "Multi-agent orchestration mode",
-            icon = Icons.Default.AccountTree,
-            selected = selectedMode == SessionMode.ORCHESTRATION,
-            onClick = { onModeSelected(SessionMode.ORCHESTRATION) }
         )
         SessionModeOption(
             mode = SessionMode.DANGER,

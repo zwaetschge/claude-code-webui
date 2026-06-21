@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-webui",
+  "name": "plum-code-webui",
   "version": "0.1.0",
   "private": true,
   "description": "Web UI for Codex, OpenCode, Mistral Vibe, and Claude Code CLIs",
@@ -11,7 +11,7 @@
     "format": "prettier --write \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "typecheck": "pnpm -r run typecheck",
-    "test:providers": "pnpm --filter @claude-code-webui/backend run test:providers",
+    "test:providers": "pnpm --filter @plum-code-webui/backend run test:providers",
     "clean": "pnpm -r run clean && rm -rf node_modules"
   },
   "keywords": [

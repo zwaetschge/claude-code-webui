@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Corporate — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CORPORATE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Enterprise premium · structured grid · brand-aligned B2B SaaS
+     ============================================================ */
+  :root {
+    --cp-primary: #3B82F6;
+    --cp-primary-hover: #2563EB;
+    --cp-primary-deep: #1D4ED8;
+    --cp-primary-bg: #EFF6FF;
+    --cp-secondary: #8B5CF6;
+    --cp-success: #16A34A;
+    --cp-warning: #D97706;
+    --cp-danger: #DC2626;
+
+    --cp-surface: #FFFFFF;
+    --cp-surface-2: #FAFBFC;
+    --cp-surface-3: #F1F4F8;
+    --cp-ink: #111827;
+    --cp-ink-2: #374151;
+    --cp-ink-3: #6B7280;
+    --cp-ink-4: #9CA3AF;
+    --cp-line: #E5E7EB;
+    --cp-line-2: #F3F4F6;
+
+    --cp-font: 'Open Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --cp-font-display: 'Poppins', 'Open Sans', sans-serif;
+    --cp-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+    --cp-r-sm: 4px;
+    --cp-r-md: 6px;
+    --cp-r-lg: 8px;
+    --cp-r-pill: 999px;
+
+    --cp-sh-1: 0 1px 2px rgba(17,24,39,0.05), 0 1px 3px rgba(17,24,39,0.04);
+    --cp-sh-2: 0 4px 12px -2px rgba(17,24,39,0.08), 0 2px 4px -1px rgba(17,24,39,0.04);
+    --cp-sh-blue: 0 6px 16px -4px rgba(59,130,246,0.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cp-font);
+    font-size: 12px;
+    color: var(--cp-ink);
+    background: var(--cp-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--cp-surface);
+    display: grid;
+    grid-template-rows: 32px 1fr auto;
+    border-right: 1px solid var(--cp-line);
+  }
+
+  /* ============ TOP NAV (structured enterprise header) ============ */
+  .topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--cp-line);
+    background: var(--cp-surface);
+  }
+  .topnav__left { display: flex; align-items: center; gap: 20px; }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .brand__mark {
+    width: 18px; height: 18px;
+    border-radius: var(--cp-r-sm);
+    background: linear-gradient(135deg, var(--cp-primary) 0%, var(--cp-secondary) 100%);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--cp-sh-blue);
+  }
+  .brand__mark svg { width: 11px; height: 11px; }
+  .brand__name {
+    font-family: var(--cp-font-display);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--cp-ink);
+  }
+
+  .nav {
+    display: flex;
+    gap: 1px;
+    font-size: 10px;
+    color: var(--cp-ink-3);
+    font-weight: 600;
+  }
+  .nav a {
+    padding: 4px 8px;
+    border-radius: var(--cp-r-sm);
+    text-decoration: none;
+    color: inherit;
+    transition: color .15s ease, background .15s ease;
+  }
+  .nav a:hover { color: var(--cp-ink); background: var(--cp-surface-3); }
+  .nav a.is-active {
+    color: var(--cp-primary);
+    background: var(--cp-primary-bg);
+  }
+
+  .topnav__right { display: flex; align-items: center; gap: 6px; }
+  .icon-btn {
+    width: 22px; height: 22px;
+    border: 1px solid var(--cp-line);
+    border-radius: var(--cp-r-sm);
+    background: var(--cp-surface);
+    display: grid; place-items: center;
+    color: var(--cp-ink-3);
+    position: relative;
+  }
+  .icon-btn svg { width: 11px; height: 11px; }
+  .icon-btn__dot {
+    position: absolute; top: 2px; right: 2px;
+    width: 5px; height: 5px;
+    background: var(--cp-danger);
+    border: 1.5px solid var(--cp-surface);
+    border-radius: 50%;
+  }
+  .avatar {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--cp-primary);
+    color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 8px;
+  }
+
+  /* ============ HERO + DASHBOARD ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 16px;
+    padding: 16px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* LEFT: marketing hero (brand-aligned) */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 9px;
+    background: var(--cp-primary-bg);
+    color: var(--cp-primary-deep);
+    border-radius: var(--cp-r-pill);
+    font-family: var(--cp-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--cp-primary);
+  }
+
+  .hero__title {
+    font-family: var(--cp-font-display);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    color: var(--cp-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--cp-primary);
+    font-weight: 700;
+  }
+
+  .hero__sub {
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--cp-ink-3);
+    max-width: 32ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 14px;
+    border: none;
+    border-radius: var(--cp-r-md);
+    font-family: var(--cp-font);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+  }
+  .btn--primary {
+    background: var(--cp-primary);
+    color: #fff;
+    box-shadow: var(--cp-sh-blue);
+  }
+  .btn--primary:hover { background: var(--cp-primary-hover); transform: translateY(-1px); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--cp-ink-2);
+    padding: 0 4px;
+    height: auto;
+  }
+  .btn--ghost:hover { color: var(--cp-primary); }
+  .btn svg { width: 11px; height: 11px; }
+
+  /* Trust line — enterprise credibility */
+  .trust {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--cp-line-2);
+  }
+  .trust__label {
+    font-family: var(--cp-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cp-ink-4);
+  }
+  .trust__logos {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .trust__logo {
+    font-family: var(--cp-font-display);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--cp-ink-3);
+    letter-spacing: -0.01em;
+    opacity: 0.7;
+  }
+
+  /* RIGHT: dashboard card */
+  .dash {
+    background: var(--cp-surface);
+    border: 1px solid var(--cp-line);
+    border-radius: var(--cp-r-lg);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: var(--cp-sh-1);
+    overflow: hidden;
+  }
+  .dash__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--cp-line-2);
+  }
+  .dash__title {
+    font-family: var(--cp-font-display);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--cp-ink);
+  }
+  .dash__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: rgba(22,163,74,0.10);
+    color: var(--cp-success);
+    border-radius: var(--cp-r-pill);
+    font-family: var(--cp-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+  }
+  .dash__pill::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--cp-success);
+  }
+
+  /* KPI mini-grid inside dash */
+  .kpis {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .kpi {
+    padding: 6px 8px;
+    background: var(--cp-surface-2);
+    border-radius: var(--cp-r-md);
+    border: 1px solid var(--cp-line-2);
+  }
+  .kpi__label {
+    font-family: var(--cp-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    color: var(--cp-ink-3);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .kpi__value {
+    font-family: var(--cp-font-display);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: var(--cp-ink);
+    line-height: 1.1;
+    margin: 1px 0;
+  }
+  .kpi__delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--cp-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+  }
+  .kpi__delta svg { width: 7px; height: 7px; }
+  .delta-up { color: var(--cp-success); }
+  .delta-down { color: var(--cp-danger); }
+
+  /* Bar chart */
+  .chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 38px;
+    padding-top: 6px;
+    border-top: 1px solid var(--cp-line-2);
+  }
+  .chart__bar {
+    flex: 1;
+    background: var(--cp-primary);
+    opacity: 0.4;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .chart__bar--mid { opacity: 0.7; }
+  .chart__bar--peak {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--cp-primary), var(--cp-secondary));
+  }
+  .chart__label {
+    display: flex;
+    gap: 3px;
+    font-family: var(--cp-font-mono);
+    font-size: 7px;
+    color: var(--cp-ink-4);
+    margin-top: 3px;
+  }
+  .chart__label span { flex: 1; text-align: center; }
+
+  /* ============ FOOTER STRIP ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    background: var(--cp-surface-2);
+    border-top: 1px solid var(--cp-line);
+    font-family: var(--cp-font-mono);
+    font-size: 8.5px;
+    color: var(--cp-ink-4);
+    letter-spacing: 0.04em;
+  }
+  .footer__brand {
+    color: var(--cp-primary);
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Corporate design language preview">
+
+  <!-- ===== TOP NAV ===== -->
+  <header class="topnav">
+    <div class="topnav__left">
+      <div class="brand">
+        <span class="brand__mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </span>
+        <span class="brand__name">Meridian</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Platform</a>
+        <a href="#">Solutions</a>
+        <a href="#">Customers</a>
+        <a href="#">Pricing</a>
+      </nav>
+    </div>
+    <div class="topnav__right">
+      <button class="icon-btn" type="button" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <button class="icon-btn" type="button" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="icon-btn__dot"></span>
+      </button>
+      <div class="avatar" aria-label="User">AC</div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN: marketing hero + dashboard ===== -->
+  <section class="main">
+
+    <!-- LEFT: brand hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">Q4 · 2025 release</span>
+      <h1 class="hero__title">Operate at<br><em>enterprise</em> scale.</h1>
+      <p class="hero__sub">One platform for finance, ops, and people — SOC 2 certified, deployed in 14 regions.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Book a demo
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Read brief →</button>
+      </div>
+      <div class="trust">
+        <span class="trust__label">Trusted by</span>
+        <div class="trust__logos">
+          <span class="trust__logo">NORTHWIND</span>
+          <span class="trust__logo">ACME</span>
+          <span class="trust__logo">VERTEX</span>
+        </div>
+      </div>
+    </article>
+
+    <!-- RIGHT: dashboard card -->
+    <aside class="dash">
+      <div class="dash__head">
+        <h2 class="dash__title">Platform health</h2>
+        <span class="dash__pill">All systems</span>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpi__label">Uptime</div>
+          <div class="kpi__value">99.99<span style="font-size:10px;color:var(--cp-ink-3);">%</span></div>
+          <span class="kpi__delta delta-up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            SLA
+          </span>
+        </div>
+        <div class="kpi">
+          <div class="kpi__label">Requests</div>
+          <div class="kpi__value">4.2<span style="font-size:10px;color:var(--cp-ink-3);">M / day</span></div>
+          <span class="kpi__delta delta-up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            8.2%
+          </span>
+        </div>
+      </div>
+
+      <div>
+        <div class="chart" aria-hidden="true">
+          <div class="chart__bar" style="height:32%"></div>
+          <div class="chart__bar chart__bar--mid" style="height:48%"></div>
+          <div class="chart__bar chart__bar--mid" style="height:62%"></div>
+          <div class="chart__bar" style="height:42%"></div>
+          <div class="chart__bar chart__bar--mid" style="height:72%"></div>
+          <div class="chart__bar chart__bar--peak" style="height:100%"></div>
+          <div class="chart__bar chart__bar--mid" style="height:68%"></div>
+        </div>
+        <div class="chart__label" aria-hidden="true">
+          <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__brand">●</span> Meridian Cloud · Enterprise · 8pt grid</span>
+    <span>SOC 2 · ISO 27001 · GDPR · WCAG AA</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

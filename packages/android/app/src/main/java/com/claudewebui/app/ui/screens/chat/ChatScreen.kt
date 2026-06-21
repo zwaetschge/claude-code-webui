@@ -425,14 +425,17 @@ private fun ChatTopBar(
 // ── Provider Badge ────────────────────────────────────────────────────────────
 
 @Composable
+@Suppress("DEPRECATION")
 private fun ProviderBadge(provider: CLIProvider) {
     val (label, color) = when (provider) {
         CLIProvider.CLAUDE -> "Claude" to com.claudewebui.app.ui.theme.ClaudeColor
         CLIProvider.CODEX -> "Codex" to com.claudewebui.app.ui.theme.CodexColor
-        CLIProvider.GEMINI -> "Gemini" to com.claudewebui.app.ui.theme.GeminiColor
-        CLIProvider.GLM -> "GLM" to com.claudewebui.app.ui.theme.GlmColor
-        CLIProvider.KIMI -> "Kimi" to com.claudewebui.app.ui.theme.KimiColor
-        CLIProvider.MULTI -> "Multi" to MaterialTheme.colorScheme.tertiary
+        CLIProvider.OPENCODE -> "OpenCode" to com.claudewebui.app.ui.theme.OpenCodeColor
+        CLIProvider.VIBE -> "Mistral Vibe" to com.claudewebui.app.ui.theme.VibeColor
+        CLIProvider.GLM,
+        CLIProvider.KIMI -> "OpenCode" to com.claudewebui.app.ui.theme.OpenCodeColor
+        CLIProvider.GEMINI,
+        CLIProvider.MULTI -> "Legacy" to MaterialTheme.colorScheme.tertiary
     }
     Surface(
         shape = RoundedCornerShape(4.dp),

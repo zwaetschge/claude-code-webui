@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { FileIcon } from '@/components/file-tree/file-icons';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
-import type { ApiResponse, DirectoryContents, FileInfo } from '@claude-code-webui/shared';
+import type { ApiResponse, DirectoryContents, FileInfo } from '@plum-code-webui/shared';
 
 interface WebPreviewProps {
   sessionId?: string;

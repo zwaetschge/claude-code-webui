@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Modern — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MODERN DESIGN SYSTEM — 400×300 THUMBNAIL
+     Deep purple surface · IBM Plex Serif · editorial SaaS
+     "Ship software peacefully"
+     ============================================================ */
+  :root {
+    --md-primary: #553F83;       /* deep purple — also the surface */
+    --md-primary-deep: #3D2C63;
+    --md-primary-light: #7059A8;
+    --md-primary-lighter: #8B72BC;
+    --md-secondary: #111111;     /* near-black */
+    --md-success: #16A34A;
+    --md-warning: #D97706;
+    --md-danger: #DC2626;
+
+    --md-surface: #553F83;       /* surface = primary per spec */
+    --md-surface-2: #4A3773;
+    --md-surface-3: #3F2F63;
+    --md-card: #FFFFFF;
+    --md-card-2: #F9F7FD;
+    --md-ink: #FFFFFF;
+    --md-ink-2: rgba(255,255,255,0.75);
+    --md-ink-3: rgba(255,255,255,0.50);
+    --md-ink-4: rgba(255,255,255,0.30);
+    --md-line: rgba(255,255,255,0.12);
+    --md-line-2: rgba(255,255,255,0.06);
+    --md-card-ink: #111111;
+    --md-card-ink-2: #3A3A3A;
+    --md-card-ink-3: #6B6B6B;
+    --md-card-line: #E8E4F0;
+
+    --md-font: 'IBM Plex Serif', Georgia, serif;
+    --md-font-mono: 'JetBrains Mono', monospace;
+
+    --md-r-sm: 4px;
+    --md-r-md: 8px;
+    --md-r-lg: 12px;
+    --md-r-pill: 999px;
+
+    --md-sh-1: 0 1px 3px rgba(0,0,0,0.15);
+    --md-sh-2: 0 8px 28px -6px rgba(0,0,0,0.30), 0 4px 10px -2px rgba(0,0,0,0.15);
+    --md-sh-card: 0 12px 36px -8px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--md-font);
+    font-size: 12px;
+    color: var(--md-ink);
+    background: var(--md-surface);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "kern", "liga";
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(220px 140px at 85% 10%, rgba(112,89,168,0.40), transparent 60%),
+      radial-gradient(200px 130px at 10% 90%, rgba(61,44,99,0.50), transparent 60%),
+      var(--md-surface);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: 18px 24px;
+    gap: 16px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    font-family: var(--md-font);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--md-ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 24px; height: 24px;
+    background: var(--md-ink);
+    border-radius: var(--md-r-sm);
+    display: grid; place-items: center;
+    color: var(--md-primary);
+  }
+  .brand__mark svg { width: 14px; height: 14px; }
+  .brand__name em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--md-primary-lighter);
+  }
+
+  .nav {
+    display: flex;
+    gap: 18px;
+    font-family: var(--md-font);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--md-ink-2);
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .15s ease;
+    padding-bottom: 2px;
+    border-bottom: 1px solid transparent;
+  }
+  .nav a:hover { color: var(--md-ink); }
+  .nav a.is-active {
+    color: var(--md-ink);
+    border-bottom-color: var(--md-ink);
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 20px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* LEFT — editorial hero on purple */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    font-family: var(--md-font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--md-primary-lighter);
+  }
+
+  .hero__title {
+    font-family: var(--md-font);
+    font-size: 28px;
+    font-weight: 400;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    color: var(--md-ink);
+  }
+  .hero__title em {
+    font-style: italic;
+    font-weight: 500;
+  }
+  .hero__title strong {
+    font-weight: 700;
+  }
+
+  .hero__sub {
+    font-family: var(--md-font);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.6;
+    color: var(--md-ink-2);
+    max-width: 30ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 20px;
+    border: none;
+    border-radius: var(--md-r-pill);
+    font-family: var(--md-font);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform .2s ease, background .2s ease;
+  }
+  .btn--primary {
+    background: var(--md-ink);
+    color: var(--md-primary);
+    box-shadow: var(--md-sh-1);
+  }
+  .btn--primary:hover { transform: translateY(-1px); background: var(--md-card-2); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--md-ink-2);
+    padding: 0 4px;
+    height: auto;
+    font-weight: 500;
+  }
+  .btn--ghost:hover { color: var(--md-ink); }
+  .btn svg { width: 13px; height: 13px; }
+
+  /* RIGHT — white card on purple (editorial inversion) */
+  .card {
+    background: var(--md-card);
+    border-radius: var(--md-r-md);
+    padding: 16px 18px;
+    box-shadow: var(--md-sh-card);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--md-card-ink);
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 3px;
+    background: linear-gradient(90deg, var(--md-primary-light), var(--md-primary-lighter));
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card__title {
+    font-family: var(--md-font);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--md-card-ink);
+  }
+  .card__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: rgba(85,63,131,0.10);
+    color: var(--md-primary);
+    border-radius: var(--md-r-pill);
+    font-family: var(--md-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .card__badge::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--md-success);
+  }
+
+  .card__value {
+    font-family: var(--md-font);
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--md-card-ink);
+  }
+  .card__value span {
+    font-family: var(--md-font-mono);
+    font-size: 12px;
+    color: var(--md-card-ink-3);
+    font-weight: 500;
+  }
+
+  .card__delta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--md-font-mono);
+    font-size: 10px;
+    color: var(--md-card-ink-3);
+  }
+  .card__delta strong {
+    color: var(--md-primary);
+    font-weight: 700;
+  }
+
+  /* Bar chart in card */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 32px;
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--md-card-line);
+  }
+  .bar {
+    flex: 1;
+    background: var(--md-primary);
+    opacity: 0.20;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .bar--mid { opacity: 0.50; }
+  .bar--peak {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--md-primary-light), var(--md-primary));
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Modern design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h6l3-9 4 18 3-9h4"/></svg>
+      </span>
+      <span class="brand__name">serenity<em>.</em>dev</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Product</a>
+      <a href="#">Pricing</a>
+      <a href="#">Docs</a>
+      <a href="#">Blog</a>
+    </nav>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: editorial hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">— ship software, peacefully —</span>
+      <h1 class="hero__title">
+        Calm tools for<br>
+        <em>focused</em> <strong>teams</strong>.
+      </h1>
+      <p class="hero__sub">A project platform that respects your attention. Less noise, fewer meetings, more shipping.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Start free
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Read the manifesto →</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: white card on purple -->
+    <aside class="card">
+      <div class="card__head">
+        <h2 class="card__title">Deployments</h2>
+        <span class="card__badge">live</span>
+      </div>
+      <div class="card__value">1,847 <span>this quarter</span></div>
+      <div class="card__delta"><strong>+24%</strong> vs previous</div>
+      <div class="bars" aria-hidden="true">
+        <div class="bar" style="height:32%"></div>
+        <div class="bar bar--mid" style="height:48%"></div>
+        <div class="bar" style="height:40%"></div>
+        <div class="bar bar--mid" style="height:62%"></div>
+        <div class="bar" style="height:52%"></div>
+        <div class="bar bar--peak" style="height:92%"></div>
+        <div class="bar bar--mid" style="height:70%"></div>
+        <div class="bar" style="height:55%"></div>
+      </div>
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

@@ -1,21 +1,237 @@
 import { Router, Request, Response } from 'express';
-import { estimateModelCost, getProviderLabelForModel } from '@claude-code-webui/shared';
+import { estimateModelCost, getProviderLabelForModel } from '@plum-code-webui/shared';
 import { getDatabase } from '../db';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import {
+  fetchCodexUsage,
+  getCodexAuth,
+  isCodexUsageAuthError,
+  mapCodexUsage,
+  refreshCodexToken,
+  type MappedCodexWindow,
+} from '../utils/codexUsage';
 
 const router = Router();
 
 // All routes require authentication
 router.use(requireAuth);
 
-// Parse a signed-minute TZ offset (e.g. "120" for UTC+2, "-300" for UTC-5) into
-// a SQLite strftime modifier. Returns '0 minutes' (no-op) on missing/invalid input,
-// so day grouping falls back to UTC — which matches the pre-D9 behavior.
-function parseTzModifier(raw: unknown): string {
-  if (typeof raw !== 'string' || raw.length === 0) return '0 minutes';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_SECONDS = 7 * 24 * 60 * 60;
+const MAX_WINDOW_OFFSET = 520;
+
+type AnalyticsPeriod = '24h' | '7d' | '30d' | 'all';
+type AnalyticsWindowSource = 'rolling' | 'calendar-week' | 'calendar-month' | 'all';
+
+interface AnalyticsWindow {
+  period: AnalyticsPeriod;
+  startsAt: string | null;
+  endsAt: string | null;
+  source: AnalyticsWindowSource;
+  label: string;
+  offset: number;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
+  timezoneOffsetMinutes: number;
+  limit: {
+    provider: 'codex';
+    name: 'weekly';
+    utilization: number;
+    resetsAt: string | null;
+    windowSeconds: number | null;
+  } | null;
+}
+
+function normalizePeriod(raw: unknown): AnalyticsPeriod {
+  const value = typeof raw === 'string' ? raw : '';
+  if (value === '24h' || value === '7d' || value === '30d' || value === 'all') return value;
+  return '7d';
+}
+
+function parseWindowOffset(raw: unknown): number {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return 0;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(MAX_WINDOW_OFFSET, Math.max(0, value));
+}
+
+// Parse a signed-minute TZ offset (e.g. "120" for UTC+2, "-300" for UTC-5).
+// Returns 0 on missing/invalid input, so grouping falls back to UTC.
+function parseTzOffsetMinutes(raw: unknown): number {
+  if (typeof raw !== 'string' || raw.length === 0) return 0;
   const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < -840 || n > 840) return '0 minutes';
+  if (!Number.isFinite(n) || n < -840 || n > 840) return 0;
+  return n;
+}
+
+function parseTzModifier(raw: unknown): string {
+  const n = parseTzOffsetMinutes(raw);
   return `${n >= 0 ? '+' : ''}${n} minutes`;
+}
+
+function toSqlTimestamp(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function buildDateFilter(window: AnalyticsWindow, column = 'created_at') {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (window.startsAt) {
+    clauses.push(`AND ${column} >= ?`);
+    params.push(toSqlTimestamp(window.startsAt));
+  }
+  if (window.endsAt) {
+    clauses.push(`AND ${column} < ?`);
+    params.push(toSqlTimestamp(window.endsAt));
+  }
+  return {
+    sql: clauses.length ? ` ${clauses.join(' ')}` : '',
+    params,
+  };
+}
+
+function localDateParts(now: Date, tzOffsetMinutes: number) {
+  const shifted = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate(),
+    weekday: shifted.getUTCDay(),
+  };
+}
+
+function localMidnightUtc(year: number, month: number, day: number, tzOffsetMinutes: number): Date {
+  return new Date(Date.UTC(year, month, day) - tzOffsetMinutes * 60 * 1000);
+}
+
+function localWeekWindow(
+  now: Date,
+  tzOffsetMinutes: number,
+  offset = 0
+): { startsAt: Date; endsAt: Date } {
+  const parts = localDateParts(now, tzOffsetMinutes);
+  const daysSinceMonday = (parts.weekday + 6) % 7;
+  const startsAt = localMidnightUtc(
+    parts.year,
+    parts.month,
+    parts.day - daysSinceMonday - offset * 7,
+    tzOffsetMinutes
+  );
+  return { startsAt, endsAt: new Date(startsAt.getTime() + WEEK_SECONDS * 1000) };
+}
+
+function localMonthWindow(
+  now: Date,
+  tzOffsetMinutes: number,
+  offset = 0
+): { startsAt: Date; endsAt: Date } {
+  const parts = localDateParts(now, tzOffsetMinutes);
+  return {
+    startsAt: localMidnightUtc(parts.year, parts.month - offset, 1, tzOffsetMinutes),
+    endsAt: localMidnightUtc(parts.year, parts.month - offset + 1, 1, tzOffsetMinutes),
+  };
+}
+
+async function fetchCodexWeeklyLimit(): Promise<MappedCodexWindow | null> {
+  const auth = await getCodexAuth();
+  if (!auth?.tokens?.access_token) return null;
+
+  try {
+    return mapCodexUsage(await fetchCodexUsage(auth)).sevenDay;
+  } catch (err) {
+    if (!isCodexUsageAuthError(err)) {
+      console.warn('Codex weekly reset lookup failed:', err);
+      return null;
+    }
+
+    const refreshed = await refreshCodexToken(auth);
+    if (!refreshed?.tokens?.access_token) return null;
+    try {
+      return mapCodexUsage(await fetchCodexUsage(refreshed)).sevenDay;
+    } catch (retryErr) {
+      console.warn('Codex weekly reset lookup retry failed:', retryErr);
+      return null;
+    }
+  }
+}
+
+async function resolveAnalyticsWindow(
+  rawPeriod: unknown,
+  rawTz: unknown,
+  rawOffset: unknown
+): Promise<AnalyticsWindow> {
+  const period = normalizePeriod(rawPeriod);
+  const timezoneOffsetMinutes = parseTzOffsetMinutes(rawTz);
+  const offset = period === 'all' ? 0 : parseWindowOffset(rawOffset);
+  const now = new Date();
+  const navigation = {
+    offset,
+    canGoPrevious: period !== 'all',
+    canGoNext: offset > 0,
+  };
+
+  if (period === '24h') {
+    const endsAt = new Date(now.getTime() - offset * DAY_MS);
+    const startsAt = new Date(endsAt.getTime() - DAY_MS);
+    return {
+      period,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      source: 'rolling',
+      label: offset === 0 ? 'Last 24 hours' : `24h window ${offset} back`,
+      ...navigation,
+      timezoneOffsetMinutes,
+      limit: null,
+    };
+  }
+
+  if (period === '7d') {
+    const weeklyLimit = await fetchCodexWeeklyLimit();
+    const week = localWeekWindow(now, timezoneOffsetMinutes, offset);
+    return {
+      period,
+      startsAt: week.startsAt.toISOString(),
+      endsAt: week.endsAt.toISOString(),
+      source: 'calendar-week',
+      label: offset === 0 ? 'This week' : offset === 1 ? 'Previous week' : `Week ${offset} back`,
+      ...navigation,
+      timezoneOffsetMinutes,
+      limit: weeklyLimit
+        ? {
+            provider: 'codex',
+            name: 'weekly',
+            utilization: weeklyLimit.utilization,
+            resetsAt: weeklyLimit.resetsAt,
+            windowSeconds: weeklyLimit.windowSeconds,
+          }
+        : null,
+    };
+  }
+
+  if (period === '30d') {
+    const month = localMonthWindow(now, timezoneOffsetMinutes, offset);
+    return {
+      period,
+      startsAt: month.startsAt.toISOString(),
+      endsAt: month.endsAt.toISOString(),
+      source: 'calendar-month',
+      label: offset === 0 ? 'This month' : offset === 1 ? 'Previous month' : `Month ${offset} back`,
+      ...navigation,
+      timezoneOffsetMinutes,
+      limit: null,
+    };
+  }
+
+  return {
+    period,
+    startsAt: null,
+    endsAt: null,
+    source: 'all',
+    label: 'All time',
+    ...navigation,
+    timezoneOffsetMinutes,
+    limit: null,
+  };
 }
 
 type ModelSummaryRow = {
@@ -79,28 +295,10 @@ function enrichModelRow(row: ModelSummaryRow) {
 router.get('/summary', async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const db = getDatabase();
-  const { period = '7d' } = req.query;
-
-  // Calculate date range
-  let dateFilter = '';
-  switch (period) {
-    case '24h':
-      dateFilter = `AND created_at >= datetime('now', '-1 day')`;
-      break;
-    case '7d':
-      dateFilter = `AND created_at >= datetime('now', '-7 days')`;
-      break;
-    case '30d':
-      dateFilter = `AND created_at >= datetime('now', '-30 days')`;
-      break;
-    case 'all':
-      dateFilter = '';
-      break;
-    default:
-      dateFilter = `AND created_at >= datetime('now', '-7 days')`;
-  }
 
   try {
+    const window = await resolveAnalyticsWindow(req.query.period, req.query.tz, req.query.offset);
+    const dateFilter = buildDateFilter(window);
     // Get totals
     const totals = db
       .prepare(
@@ -114,10 +312,10 @@ router.get('/summary', async (req: Request, res: Response) => {
         COALESCE(SUM(cost_usd), 0) as total_cost,
         COUNT(*) as total_requests
       FROM usage_history
-      WHERE user_id = ? ${dateFilter}
+      WHERE user_id = ? ${dateFilter.sql}
     `
       )
-      .get(authReq.userId) as {
+      .get(authReq.userId, ...dateFilter.params) as {
       total_input_tokens: number;
       total_output_tokens: number;
       total_cache_read_tokens: number;
@@ -143,12 +341,12 @@ router.get('/summary', async (req: Request, res: Response) => {
         MIN(created_at) as first_seen,
         MAX(created_at) as last_seen
       FROM usage_history
-      WHERE user_id = ? ${dateFilter}
+      WHERE user_id = ? ${dateFilter.sql}
       GROUP BY model
       ORDER BY cost DESC
     `
       )
-      .all(authReq.userId) as ModelSummaryRow[];
+      .all(authReq.userId, ...dateFilter.params) as ModelSummaryRow[];
 
     const byModel = modelRows
       .map(enrichModelRow)
@@ -232,7 +430,7 @@ router.get('/summary', async (req: Request, res: Response) => {
     // "Top Sessions" list has rows to reveal beyond the default 10 — without
     // flooding the response with every session that ever ran a request.
     // Use fully qualified column name for created_at to avoid ambiguity with sessions table
-    const sessionDateFilter = dateFilter.replace('created_at', 'uh.created_at');
+    const sessionDateFilter = buildDateFilter(window, 'uh.created_at');
     const sessionRows = db
       .prepare(
         `
@@ -249,11 +447,11 @@ router.get('/summary', async (req: Request, res: Response) => {
         COUNT(*) as requests
       FROM usage_history uh
       LEFT JOIN sessions s ON s.id = uh.session_id
-      WHERE uh.user_id = ? ${sessionDateFilter}
+      WHERE uh.user_id = ? ${sessionDateFilter.sql}
       GROUP BY uh.session_id, uh.model
     `
       )
-      .all(authReq.userId) as Array<
+      .all(authReq.userId, ...sessionDateFilter.params) as Array<
       TokenCostRow & {
         session_id: string;
         session_name: string | null;
@@ -305,10 +503,64 @@ router.get('/summary', async (req: Request, res: Response) => {
       )
       .slice(0, 50);
 
+    const eventRows = db
+      .prepare(
+        `
+      SELECT event_type, COUNT(*) as count
+      FROM session_events
+      WHERE user_id = ? ${dateFilter.sql}
+      GROUP BY event_type
+    `
+      )
+      .all(authReq.userId, ...dateFilter.params) as Array<{
+      event_type: string;
+      count: number;
+    }>;
+    const eventCounts = new Map(eventRows.map((row) => [row.event_type, row.count]));
+    const latestContext = db
+      .prepare(
+        `
+      SELECT
+        session_id as sessionId,
+        provider,
+        model,
+        input_tokens as inputTokens,
+        output_tokens as outputTokens,
+        cache_read_tokens as cacheReadTokens,
+        cache_creation_tokens as cacheCreationTokens,
+        total_tokens as totalTokens,
+        context_window as contextWindow,
+        context_used_percent as contextUsedPercent,
+        context_exceeded as contextExceeded,
+        strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt
+      FROM session_events
+      WHERE user_id = ? AND event_type = 'context_snapshot' ${dateFilter.sql}
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `
+      )
+      .get(authReq.userId, ...dateFilter.params) as
+      | {
+          sessionId: string;
+          provider: string | null;
+          model: string | null;
+          inputTokens: number;
+          outputTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
+          totalTokens: number;
+          contextWindow: number;
+          contextUsedPercent: number;
+          contextExceeded: number;
+          createdAt: string;
+        }
+      | undefined;
+
     res.json({
       success: true,
       data: {
-        period,
+        period: window.period,
+        window,
         totals: {
           inputTokens: totals.total_input_tokens,
           outputTokens: totals.total_output_tokens,
@@ -329,6 +581,16 @@ router.get('/summary', async (req: Request, res: Response) => {
         byModel,
         byProvider,
         bySession,
+        events: {
+          contextSnapshots: eventCounts.get('context_snapshot') || 0,
+          compactEvents: eventCounts.get('compact') || 0,
+          latestContext: latestContext
+            ? {
+                ...latestContext,
+                contextExceeded: Boolean(latestContext.contextExceeded),
+              }
+            : null,
+        },
         pricingAudit: {
           recordedCost: totals.total_cost,
           apiEquivalentCost: apiEquivalentTotalCost,
@@ -352,36 +614,19 @@ router.get('/summary', async (req: Request, res: Response) => {
 router.get('/timeline', async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const db = getDatabase();
-  const { period = '7d', granularity = 'day', tz } = req.query;
+  const { granularity = 'day', tz } = req.query;
   const tzModifier = parseTzModifier(tz);
 
-  // Calculate date range and grouping
-  let dateFilter = '';
-  let dateFormat = '';
-
-  switch (period) {
-    case '24h':
-      dateFilter = `AND created_at >= datetime('now', '-1 day')`;
-      dateFormat = granularity === 'hour' ? '%Y-%m-%d %H:00' : '%Y-%m-%d';
-      break;
-    case '7d':
-      dateFilter = `AND created_at >= datetime('now', '-7 days')`;
-      dateFormat = '%Y-%m-%d';
-      break;
-    case '30d':
-      dateFilter = `AND created_at >= datetime('now', '-30 days')`;
-      dateFormat = '%Y-%m-%d';
-      break;
-    case 'all':
-      dateFilter = '';
-      dateFormat = '%Y-%m';
-      break;
-    default:
-      dateFilter = `AND created_at >= datetime('now', '-7 days')`;
-      dateFormat = '%Y-%m-%d';
-  }
-
   try {
+    const window = await resolveAnalyticsWindow(req.query.period, tz, req.query.offset);
+    const dateFilter = buildDateFilter(window);
+    let dateFormat = '%Y-%m-%d';
+    if (window.period === '24h') {
+      dateFormat = granularity === 'hour' ? '%Y-%m-%d %H:00' : '%Y-%m-%d';
+    } else if (window.period === 'all') {
+      dateFormat = '%Y-%m';
+    }
+
     const timeline = db
       .prepare(
         `
@@ -394,12 +639,12 @@ router.get('/timeline', async (req: Request, res: Response) => {
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COUNT(*) as requests
       FROM usage_history
-      WHERE user_id = ? ${dateFilter}
+      WHERE user_id = ? ${dateFilter.sql}
       GROUP BY strftime('${dateFormat}', created_at, ?)
       ORDER BY date ASC
     `
       )
-      .all(tzModifier, authReq.userId, tzModifier);
+      .all(tzModifier, authReq.userId, ...dateFilter.params, tzModifier);
 
     const providerRows = db
       .prepare(
@@ -414,12 +659,12 @@ router.get('/timeline', async (req: Request, res: Response) => {
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COUNT(*) as requests
       FROM usage_history
-      WHERE user_id = ? ${dateFilter}
+      WHERE user_id = ? ${dateFilter.sql}
       GROUP BY strftime('${dateFormat}', created_at, ?), model
       ORDER BY date ASC
     `
       )
-      .all(tzModifier, authReq.userId, tzModifier) as Array<{
+      .all(tzModifier, authReq.userId, ...dateFilter.params, tzModifier) as Array<{
       date: string;
       model: string | null;
       input_tokens: number;
@@ -434,9 +679,17 @@ router.get('/timeline', async (req: Request, res: Response) => {
       string,
       Record<string, { tokens: number; cost: number; requests: number }>
     >();
+    const modelsByDate = new Map<
+      string,
+      Record<
+        string,
+        { model: string; provider: string; tokens: number; cost: number; requests: number }
+      >
+    >();
     const costByDate = new Map<string, number>();
     for (const row of providerRows) {
       const provider = getProviderLabelForModel(row.model);
+      const model = row.model || 'Unknown';
       const apiEquivalentCost = estimateApiEquivalentCost(row).cost;
       const current = providersByDate.get(row.date) || {};
       const entry = current[provider] || { tokens: 0, cost: 0, requests: 0 };
@@ -445,14 +698,116 @@ router.get('/timeline', async (req: Request, res: Response) => {
       entry.requests += row.requests;
       current[provider] = entry;
       providersByDate.set(row.date, current);
+
+      const currentModels = modelsByDate.get(row.date) || {};
+      const modelEntry = currentModels[model] || {
+        model,
+        provider,
+        tokens: 0,
+        cost: 0,
+        requests: 0,
+      };
+      modelEntry.tokens += row.total_tokens;
+      modelEntry.cost += apiEquivalentCost;
+      modelEntry.requests += row.requests;
+      currentModels[model] = modelEntry;
+      modelsByDate.set(row.date, currentModels);
+
       costByDate.set(row.date, (costByDate.get(row.date) || 0) + apiEquivalentCost);
     }
 
-    const timelineWithProviders = (timeline as Array<{ date: string }>).map((entry) => ({
-      ...entry,
-      cost: costByDate.get(entry.date) || 0,
-      providers: providersByDate.get(entry.date) || {},
-    }));
+    const eventRows = db
+      .prepare(
+        `
+      SELECT
+        strftime('${dateFormat}', created_at, ?) as date,
+        event_type,
+        COUNT(*) as count,
+        MAX(context_used_percent) as max_context_used_percent
+      FROM session_events
+      WHERE user_id = ? ${dateFilter.sql}
+      GROUP BY strftime('${dateFormat}', created_at, ?), event_type
+      ORDER BY date ASC
+    `
+      )
+      .all(tzModifier, authReq.userId, ...dateFilter.params, tzModifier) as Array<{
+      date: string;
+      event_type: string;
+      count: number;
+      max_context_used_percent: number | null;
+    }>;
+    const eventsByDate = new Map<
+      string,
+      { context_snapshots: number; compact_events: number; max_context_used_percent: number | null }
+    >();
+    for (const row of eventRows) {
+      const current = eventsByDate.get(row.date) || {
+        context_snapshots: 0,
+        compact_events: 0,
+        max_context_used_percent: null,
+      };
+      if (row.event_type === 'context_snapshot') {
+        current.context_snapshots += row.count;
+        if (typeof row.max_context_used_percent === 'number') {
+          current.max_context_used_percent =
+            current.max_context_used_percent === null
+              ? row.max_context_used_percent
+              : Math.max(current.max_context_used_percent, row.max_context_used_percent);
+        }
+      } else if (row.event_type === 'compact') {
+        current.compact_events += row.count;
+      }
+      eventsByDate.set(row.date, current);
+    }
+
+    const timelineByDate = new Map<
+      string,
+      {
+        date: string;
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_creation_tokens: number;
+        total_tokens: number;
+        requests: number;
+      }
+    >();
+    for (const entry of timeline as Array<{
+      date: string;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+      total_tokens: number;
+      requests: number;
+    }>) {
+      timelineByDate.set(entry.date, entry);
+    }
+    for (const date of eventsByDate.keys()) {
+      if (!timelineByDate.has(date)) {
+        timelineByDate.set(date, {
+          date,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 0,
+          requests: 0,
+        });
+      }
+    }
+
+    const timelineWithProviders = [...timelineByDate.values()]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((entry) => ({
+        ...entry,
+        cost: costByDate.get(entry.date) || 0,
+        providers: providersByDate.get(entry.date) || {},
+        models: modelsByDate.get(entry.date) || {},
+        context_snapshots: eventsByDate.get(entry.date)?.context_snapshots || 0,
+        compact_events: eventsByDate.get(entry.date)?.compact_events || 0,
+        max_context_used_percent: eventsByDate.get(entry.date)?.max_context_used_percent ?? null,
+      }));
 
     res.json({
       success: true,
@@ -550,7 +905,7 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
         created_at
       FROM usage_history
       WHERE session_id = ? AND user_id = ?
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 100
     `
       )
@@ -574,6 +929,55 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
       };
     });
 
+    const eventRows = db
+      .prepare(
+        `
+      SELECT
+        id,
+        event_type as eventType,
+        provider,
+        model,
+        input_tokens as inputTokens,
+        output_tokens as outputTokens,
+        cache_read_tokens as cacheReadTokens,
+        cache_creation_tokens as cacheCreationTokens,
+        total_tokens as totalTokens,
+        context_window as contextWindow,
+        context_used_percent as contextUsedPercent,
+        context_exceeded as contextExceeded,
+        reason,
+        message,
+        summary,
+        strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt
+      FROM session_events
+      WHERE session_id = ? AND user_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 100
+    `
+      )
+      .all(sessionId, authReq.userId) as Array<{
+      id: string;
+      eventType: string;
+      provider: string | null;
+      model: string | null;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      totalTokens: number;
+      contextWindow: number;
+      contextUsedPercent: number;
+      contextExceeded: number;
+      reason: string | null;
+      message: string | null;
+      summary: string | null;
+      createdAt: string;
+    }>;
+    const events = eventRows.map((row) => ({
+      ...row,
+      contextExceeded: Boolean(row.contextExceeded),
+    }));
+
     res.json({
       success: true,
       data: {
@@ -595,6 +999,7 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
           totalRequests: totals.total_requests,
         },
         history,
+        events,
       },
     });
   } catch (error) {

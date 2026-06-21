@@ -116,7 +116,7 @@ function setupTray(): void {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip('Claude Code WebUI');
+  tray.setToolTip('Plum Code WebUI');
 
   const contextMenu = Menu.buildFromTemplate([
     {

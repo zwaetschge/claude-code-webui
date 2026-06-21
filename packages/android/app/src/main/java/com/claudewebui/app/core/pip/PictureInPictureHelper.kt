@@ -40,7 +40,7 @@ import com.claudewebui.app.R
  *
  * The PiP window is a compact 16:9 overlay.
  * Available remote actions:
- * - Interrupt: sends SIGINT to the current Claude session.
+ * - Interrupt: sends SIGINT to the current CLI session.
  * - Expand: brings the app back to full-screen.
  */
 @RequiresApi(Build.VERSION_CODES.O)
@@ -165,7 +165,7 @@ class PictureInPictureHelper(private val activity: Activity) {
             RemoteAction(
                 Icon.createWithResource(activity, R.drawable.ic_notification),
                 "Interrupt",
-                "Stop the current Claude operation",
+                "Stop the current operation",
                 interruptIntent
             ).apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

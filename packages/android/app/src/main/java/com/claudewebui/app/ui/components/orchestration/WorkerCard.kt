@@ -240,12 +240,15 @@ private fun WorkerStatusDot(
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+@Suppress("DEPRECATION")
 internal fun mapCLIToCliProvider(provider: CLIProvider): CliProvider = when (provider) {
     CLIProvider.CLAUDE -> CliProvider.CLAUDE
     CLIProvider.CODEX -> CliProvider.CODEX
-    CLIProvider.GEMINI -> CliProvider.GEMINI
-    CLIProvider.GLM -> CliProvider.GLM
-    CLIProvider.KIMI -> CliProvider.KIMI
+    CLIProvider.OPENCODE -> CliProvider.OPENCODE
+    CLIProvider.VIBE -> CliProvider.VIBE
+    CLIProvider.GLM,
+    CLIProvider.KIMI -> CliProvider.OPENCODE
+    CLIProvider.GEMINI,
     CLIProvider.MULTI -> CliProvider.UNKNOWN
 }
 

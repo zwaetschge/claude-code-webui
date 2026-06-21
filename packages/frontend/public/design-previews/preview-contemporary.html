@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contemporary — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700;800&family=Overpass+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CONTEMPORARY DESIGN SYSTEM — 400×300 THUMBNAIL
+     Bento grid · magenta/pink accents · dark feature card · AI vibe
+     ============================================================ */
+  :root {
+    --ct-primary: #C800DF;        /* electric magenta */
+    --ct-primary-hover: #B000C0;
+    --ct-secondary: #E60076;      /* hot pink */
+    --ct-success: #16A34A;
+    --ct-warning: #D97706;
+    --ct-danger: #DC2626;
+
+    /* Light mode surfaces */
+    --ct-surface: #FFFFFF;
+    --ct-surface-2: #FAFAFB;
+    --ct-surface-3: #F4F4F6;
+    --ct-surface-pink: #FDF2FA;
+    --ct-surface-pink-2: #FAE5F2;
+
+    /* Dark feature surface (signature dark mode support) */
+    --ct-dark: #0E0E12;
+    --ct-dark-2: #18181F;
+    --ct-dark-3: #26262E;
+
+    --ct-ink: #111827;
+    --ct-ink-2: #374151;
+    --ct-ink-3: #6B7280;
+    --ct-ink-4: #9CA3AF;
+    --ct-ink-on-dark: #FFFFFF;
+    --ct-ink-on-dark-2: #B8B8C2;
+    --ct-ink-on-dark-3: #6E6E7A;
+    --ct-line: #E5E7EB;
+    --ct-line-2: #F3F4F6;
+    --ct-line-dark: rgba(255,255,255,0.10);
+
+    --ct-grad-pink: linear-gradient(135deg, #E60076 0%, #C800DF 100%);
+
+    --ct-font: 'Jost', -apple-system, BlinkMacSystemFont, sans-serif;
+    --ct-font-mono: 'Overpass Mono', ui-monospace, monospace;
+
+    --ct-r-sm: 8px;
+    --ct-r-md: 12px;
+    --ct-r-lg: 16px;
+    --ct-r-xl: 20px;
+    --ct-r-pill: 999px;
+
+    --ct-sh-1: 0 1px 2px rgba(17,24,39,0.04);
+    --ct-sh-2: 0 4px 14px -4px rgba(17,24,39,0.08), 0 2px 4px -1px rgba(17,24,39,0.04);
+    --ct-sh-pink: 0 8px 22px -6px rgba(200,0,223,0.40);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ct-font);
+    font-size: 12px;
+    color: var(--ct-ink);
+    background:
+      radial-gradient(220px 140px at 100% 0%, rgba(200,0,223,0.06), transparent 60%),
+      radial-gradient(180px 110px at 0% 100%, rgba(230,0,118,0.05), transparent 60%),
+      var(--ct-surface-2);
+    -webkit-font-smoothing: antialiased;
+    padding: 12px;
+  }
+
+  .frame {
+    width: 376px;
+    height: 276px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ===== HEADER (bento-style pill nav) ===== */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--ct-surface);
+    border: 1px solid var(--ct-line);
+    border-radius: var(--ct-r-pill);
+    box-shadow: var(--ct-sh-1);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    border-radius: 8px;
+    background: var(--ct-grad-pink);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--ct-sh-pink);
+  }
+  .brand__mark svg { width: 12px; height: 12px; }
+  .brand__name {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    color: var(--ct-ink);
+  }
+  .brand__name em {
+    font-style: normal;
+    background: var(--ct-grad-pink);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 800;
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+    background: var(--ct-surface-3);
+    padding: 3px;
+    border-radius: var(--ct-r-pill);
+  }
+  .nav a {
+    padding: 4px 10px;
+    border-radius: var(--ct-r-pill);
+    text-decoration: none;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--ct-ink-3);
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--ct-ink); }
+  .nav a.is-active {
+    background: var(--ct-surface);
+    color: var(--ct-ink);
+    box-shadow: var(--ct-sh-1);
+  }
+
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--ct-grad-pink);
+    display: grid; place-items: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 9px;
+  }
+
+  /* ===== BENTO GRID ===== */
+  .bento {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  /* Card base */
+  .card {
+    background: var(--ct-surface);
+    border: 1px solid var(--ct-line);
+    border-radius: var(--ct-r-lg);
+    padding: 11px 12px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .card:hover { transform: translateY(-1px); box-shadow: var(--ct-sh-2); }
+
+  .card__label {
+    font-family: var(--ct-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ct-ink-3);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .card__label::before {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--ct-primary);
+  }
+
+  /* HERO: AI feature card — spans 2 cols */
+  .card--hero {
+    grid-column: span 2;
+    background:
+      radial-gradient(80px 60px at 90% 10%, rgba(230,0,118,0.10), transparent 70%),
+      var(--ct-surface);
+    justify-content: space-between;
+  }
+  .hero__title {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    color: var(--ct-ink);
+    margin: 4px 0 3px;
+  }
+  .hero__title em {
+    font-style: normal;
+    background: var(--ct-grad-pink);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 800;
+  }
+  .hero__sub {
+    font-size: 10px;
+    line-height: 1.45;
+    color: var(--ct-ink-3);
+    margin-bottom: 6px;
+    max-width: 30ch;
+  }
+  .hero__actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 12px;
+    border: none;
+    border-radius: var(--ct-r-pill);
+    font-family: var(--ct-font);
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+  }
+  .btn--primary {
+    background: var(--ct-grad-pink);
+    color: #fff;
+    box-shadow: var(--ct-sh-pink);
+  }
+  .btn--primary:hover { transform: translateY(-1px); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--ct-ink-2);
+    padding: 0 6px;
+    height: auto;
+  }
+  .btn--ghost:hover { color: var(--ct-primary); }
+  .btn svg { width: 10px; height: 10px; }
+
+  /* AI sparkle decoration in hero corner */
+  .sparkle {
+    position: absolute;
+    top: 12px; right: 14px;
+    width: 26px; height: 26px;
+    background: var(--ct-surface-pink);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--ct-primary);
+  }
+  .sparkle svg { width: 14px; height: 14px; }
+
+  /* KPI cards */
+  .stat__value {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: var(--ct-ink);
+    line-height: 1;
+    margin-top: 4px;
+  }
+  .stat__value span {
+    font-size: 11px;
+    color: var(--ct-ink-3);
+    font-weight: 500;
+  }
+  .stat__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding-top: 4px;
+    font-size: 9px;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    background: var(--ct-surface-pink);
+    color: var(--ct-primary);
+    border-radius: var(--ct-r-pill);
+    font-family: var(--ct-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+  }
+  .delta svg { width: 7px; height: 7px; }
+  .delta-text { color: var(--ct-ink-4); }
+
+  /* DARK FEATURE CARD (signature dark mode support) */
+  .card--dark {
+    background: var(--ct-dark);
+    border-color: var(--ct-dark);
+    color: var(--ct-ink-on-dark);
+    box-shadow: 0 8px 24px -8px rgba(14,14,18,0.40);
+  }
+  .card--dark .card__label {
+    color: var(--ct-ink-on-dark-3);
+  }
+  .card--dark .card__label::before {
+    background: var(--ct-secondary);
+  }
+  .card--dark .stat__value {
+    color: var(--ct-ink-on-dark);
+  }
+  .card--dark .stat__value span {
+    color: var(--ct-ink-on-dark-2);
+  }
+
+  /* Bar list inside dark card */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 18px;
+    margin-top: 4px;
+  }
+  .bars__col {
+    flex: 1;
+    background: var(--ct-secondary);
+    opacity: 0.5;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .bars__col--peak {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--ct-primary), var(--ct-secondary));
+    box-shadow: 0 0 6px rgba(200,0,223,0.5);
+  }
+
+  /* Donut on accent card */
+  .donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .donut {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: conic-gradient(
+      var(--ct-primary) 0% 72%,
+      var(--ct-secondary) 72% 92%,
+      var(--ct-surface-3) 92% 100%
+    );
+    position: relative;
+    flex-shrink: 0;
+  }
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    background: var(--ct-surface);
+    border-radius: 50%;
+  }
+  .donut-pct {
+    font-family: var(--ct-font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--ct-primary);
+    line-height: 1;
+  }
+  .donut-meta {
+    font-size: 8px;
+    color: var(--ct-ink-3);
+  }
+
+  /* Accent badge */
+  .badge-ai {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    background: var(--ct-grad-pink);
+    color: #fff;
+    border-radius: var(--ct-r-pill);
+    font-family: var(--ct-font-mono);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .badge-ai svg { width: 7px; height: 7px; }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Contemporary design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
+      </span>
+      <span class="brand__name">nova<em>.</em></span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Today</a>
+      <a href="#">Insights</a>
+      <a href="#">Library</a>
+    </nav>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== BENTO GRID ===== -->
+  <section class="bento">
+
+    <!-- HERO: AI personalized card -->
+    <article class="card card--hero">
+      <div class="sparkle" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
+      </div>
+      <div>
+        <span class="badge-ai">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l3.5 7.5L24 14l-7.5 3.5L13 25l-3.5-7.5L2 14l7.5-3.5z"/></svg>
+          AI curated
+        </span>
+        <h1 class="hero__title">Your day,<br><em>auto-arranged</em>.</h1>
+        <p class="hero__sub">Smart blocks, live insights, and a layout that learns how you work.</p>
+      </div>
+      <div class="hero__actions">
+        <button class="btn btn--primary" type="button">
+          Open today
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Customize</button>
+      </div>
+    </article>
+
+    <!-- KPI 1: Focus score with donut -->
+    <article class="card">
+      <span class="card__label">Focus</span>
+      <div class="donut-wrap">
+        <div class="donut" aria-hidden="true"></div>
+        <div>
+          <div class="donut-pct">72</div>
+          <div class="donut-meta">/ 100</div>
+        </div>
+      </div>
+    </article>
+
+    <!-- KPI 2: Tasks completed -->
+    <article class="card">
+      <span class="card__label">Done</span>
+      <div class="stat__value">14<span>/ 18</span></div>
+      <div class="stat__sub">
+        <span class="delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          22%
+        </span>
+      </div>
+    </article>
+
+    <!-- DARK FEATURE CARD: activity (signature dark mode support) -->
+    <article class="card card--dark">
+      <span class="card__label">Activity</span>
+      <div class="stat__value">8.4<span>k events</span></div>
+      <div class="bars" aria-hidden="true">
+        <div class="bars__col" style="height:35%"></div>
+        <div class="bars__col" style="height:55%"></div>
+        <div class="bars__col" style="height:42%"></div>
+        <div class="bars__col" style="height:70%"></div>
+        <div class="bars__col bars__col--peak" style="height:100%"></div>
+        <div class="bars__col" style="height:65%"></div>
+        <div class="bars__col" style="height:48%"></div>
+      </div>
+    </article>
+
+    <!-- KPI 3: Streak -->
+    <article class="card">
+      <span class="card__label">Streak</span>
+      <div class="stat__value">28<span> days</span></div>
+      <div class="stat__sub">
+        <span class="delta-text">personal best</span>
+      </div>
+    </article>
+
+  </section>
+
+</main>
+
+</body>
+</html>

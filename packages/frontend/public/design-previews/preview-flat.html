@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flat — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     FLAT DESIGN SYSTEM — 400×300 THUMBNAIL
+     2D · no shadows · no gradients · vibrant solid fills · clean
+     ============================================================ */
+  :root {
+    --fl-primary: #F2673C;        /* vibrant orange */
+    --fl-primary-deep: #D54A1F;
+    --fl-primary-bg: #FFF1EC;
+    --fl-secondary: #8B5CF6;      /* violet */
+    --fl-secondary-deep: #7C3AED;
+    --fl-secondary-bg: #F5F3FF;
+    --fl-success: #16A34A;
+    --fl-warning: #D97706;
+    --fl-danger: #DC2626;
+
+    /* Saturated flat blocks */
+    --fl-yellow: #FCD34D;
+    --fl-mint: #10B981;
+    --fl-blue: #3B82F6;
+    --fl-pink: #EC4899;
+
+    --fl-surface: #FFFFFF;
+    --fl-surface-2: #F9FAFB;
+    --fl-surface-3: #F3F4F6;
+    --fl-ink: #111827;
+    --fl-ink-2: #374151;
+    --fl-ink-3: #6B7280;
+    --fl-ink-4: #9CA3AF;
+    --fl-line: #E5E7EB;
+    --fl-line-2: #F3F4F6;
+
+    --fl-font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --fl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --fl-r-sm: 4px;
+    --fl-r-md: 6px;
+    --fl-r-lg: 8px;
+    --fl-r-xl: 12px;
+    --fl-r-pill: 999px;
+
+    /* Strictly NO shadows — flat dogma */
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--fl-font);
+    font-size: 12px;
+    color: var(--fl-ink);
+    background: var(--fl-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--fl-surface);
+    /* NO gradients, NO textures — pure flat */
+    display: grid;
+    grid-template-rows: 36px 1fr 24px;
+  }
+
+  /* ============ TOP BAR ============ */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: var(--fl-primary);
+    color: #fff;
+  }
+  .topbar__left { display: flex; align-items: center; gap: 14px; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    color: #fff;
+  }
+  .brand__mark {
+    width: 20px; height: 20px;
+    background: #fff;
+    /* rounded square — pure flat */
+    border-radius: var(--fl-r-sm);
+    display: grid; place-items: center;
+    color: var(--fl-primary);
+  }
+  .brand__mark svg { width: 12px; height: 12px; }
+
+  .nav {
+    display: flex;
+    gap: 1px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .nav a {
+    padding: 3px 9px;
+    border-radius: var(--fl-r-sm);
+    text-decoration: none;
+    color: rgba(255,255,255,0.85);
+    transition: background .12s ease, color .12s ease;
+  }
+  .nav a:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  .nav a.is-active {
+    background: #fff;
+    color: var(--fl-primary);
+    font-weight: 700;
+  }
+
+  .topbar__right { display: flex; align-items: center; gap: 6px; }
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--fl-secondary);
+    color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 9px;
+  }
+
+  /* ============ MAIN GRID ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 16px;
+    padding: 16px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* LEFT — flat hero */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--fl-primary-bg);
+    color: var(--fl-primary-deep);
+    border-radius: var(--fl-r-pill);
+    font-family: var(--fl-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--fl-primary);
+  }
+
+  .hero__title {
+    font-family: var(--fl-font);
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    color: var(--fl-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--fl-primary);
+  }
+
+  .hero__sub {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--fl-ink-3);
+    max-width: 30ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  /* Buttons — flat, solid fill, no shadow */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 14px;
+    border: none;
+    border-radius: var(--fl-r-md);
+    font-family: var(--fl-font);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .12s ease;
+  }
+  .btn--primary {
+    background: var(--fl-primary);
+    color: #fff;
+  }
+  .btn--primary:hover { background: var(--fl-primary-deep); }
+  .btn--secondary {
+    background: var(--fl-secondary);
+    color: #fff;
+  }
+  .btn--secondary:hover { background: var(--fl-secondary-deep); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--fl-ink-2);
+    padding: 0 4px;
+    height: auto;
+  }
+  .btn--ghost:hover { color: var(--fl-primary); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — flat color cards */
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+  }
+  .card {
+    padding: 10px 12px;
+    border-radius: var(--fl-r-md);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .card--orange { background: var(--fl-primary); color: #fff; }
+  .card--violet { background: var(--fl-secondary); color: #fff; }
+  .card--yellow { background: var(--fl-yellow); color: var(--fl-ink); }
+  .card--mint { background: var(--fl-mint); color: #fff; }
+
+  .card__label {
+    font-family: var(--fl-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  .card__value {
+    font-family: var(--fl-font);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .card__value span {
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.85;
+  }
+  .card__delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    background: rgba(255,255,255,0.25);
+    border-radius: var(--fl-r-pill);
+    font-family: var(--fl-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    align-self: flex-start;
+  }
+  .card--yellow .card__delta {
+    background: rgba(17,24,39,0.12);
+    color: var(--fl-ink);
+  }
+  .card__delta svg { width: 7px; height: 7px; }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: var(--fl-ink);
+    color: rgba(255,255,255,0.6);
+    font-family: var(--fl-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+  }
+  .footer__accent { color: var(--fl-primary); }
+  .footer__live {
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .footer__live::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--fl-mint);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Flat design language preview">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="brand">
+        <span class="brand__mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </span>
+        <span>swift.io</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Dashboard</a>
+        <a href="#">Projects</a>
+        <a href="#">Team</a>
+        <a href="#">Reports</a>
+      </nav>
+    </div>
+    <div class="topbar__right">
+      <div class="avatar" aria-label="User">DK</div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">New · v2.0</span>
+      <h1 class="hero__title">Work<br>at the <em>speed</em><br>of thought.</h1>
+      <p class="hero__sub">A flat, fast, focused workspace. No clutter, no noise — just you and the work that matters.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Get started
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Take a tour →</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: flat color block cards -->
+    <aside class="cards">
+
+      <div class="card card--orange">
+        <span class="card__label">Tasks done</span>
+        <div class="card__value">248</div>
+        <span class="card__delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          18%
+        </span>
+      </div>
+
+      <div class="card card--violet">
+        <span class="card__label">Streak</span>
+        <div class="card__value">12<span> days</span></div>
+        <span class="card__delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 22h20L12 2z"/><path d="M12 9v4M12 17h.01"/></svg>
+          hot
+        </span>
+      </div>
+
+      <div class="card card--yellow">
+        <span class="card__label">Focus</span>
+        <div class="card__value">94<span>%</span></div>
+        <span class="card__delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          +6
+        </span>
+      </div>
+
+      <div class="card card--mint">
+        <span class="card__label">Storage</span>
+        <div class="card__value">4.2<span>GB</span></div>
+        <span class="card__delta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          free
+        </span>
+      </div>
+
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__accent">●</span> flat · 2d · vibrant · clean</span>
+    <span class="footer__live">all systems · operational</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

@@ -5,7 +5,7 @@ import type {
   DelegatedTaskInfo,
   DelegatedTaskSubmitRequest,
   DelegatedTaskSubmitResponse,
-} from '@claude-code-webui/shared';
+} from '@plum-code-webui/shared';
 
 export interface TaskRunner {
   taskType: string;

@@ -33,9 +33,9 @@ val InfoBlue = Color(0xFF3B82F6)
 
 val ClaudeColor = Color(0xFFCC785C)
 val CodexColor = Color(0xFF10A37F)
+val OpenCodeColor = Color(0xFF7C3AED)
+val VibeColor = Color(0xFFEF4444)
 val GeminiColor = Color(0xFF4285F4)
-val GlmColor = Color(0xFFFF6B35)
-val KimiColor = Color(0xFF7C3AED)
 
 // ── Light Theme Palette ──────────────────────────────────────────────────────
 

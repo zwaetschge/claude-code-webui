@@ -68,8 +68,6 @@ import com.claudewebui.app.ui.theme.ProviderThemes
 
 enum class SessionMode(val label: String, val description: String) {
     NORMAL("Normal", "Standard single-agent session"),
-    ORCHESTRATION("Orchestration", "Multi-agent coordination"),
-    RALPH("Ralph", "Autonomous task execution"),
 }
 
 // ── NewSessionDialog ──────────────────────────────────────────────────────────
@@ -84,7 +82,7 @@ fun NewSessionDialog(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var sessionName by remember { mutableStateOf("") }
-    var selectedProvider by remember { mutableStateOf(CLIProvider.CLAUDE) }
+    var selectedProvider by remember { mutableStateOf(CLIProvider.CODEX) }
     var selectedMode by remember { mutableStateOf(SessionMode.NORMAL) }
     var selectedCategoryId by remember { mutableStateOf<String?>(null) }
     var showAdvanced by remember { mutableStateOf(false) }
@@ -134,14 +132,7 @@ fun NewSessionDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                val providers = listOf(
-                    CLIProvider.CLAUDE,
-                    CLIProvider.CODEX,
-                    CLIProvider.GEMINI,
-                    CLIProvider.GLM,
-                    CLIProvider.KIMI,
-                )
-                providers.forEach { provider ->
+                CLIProvider.active.forEach { provider ->
                     ProviderOption(
                         provider = provider,
                         isSelected = selectedProvider == provider,
@@ -456,12 +447,15 @@ private fun SectionLabel(text: String) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+@Suppress("DEPRECATION")
 private fun CLIProvider.toCliProvider(): CliProvider = when (this) {
     CLIProvider.CLAUDE -> CliProvider.CLAUDE
     CLIProvider.CODEX  -> CliProvider.CODEX
-    CLIProvider.GEMINI -> CliProvider.GEMINI
-    CLIProvider.GLM    -> CliProvider.GLM
-    CLIProvider.KIMI   -> CliProvider.KIMI
+    CLIProvider.OPENCODE -> CliProvider.OPENCODE
+    CLIProvider.VIBE -> CliProvider.VIBE
+    CLIProvider.GLM,
+    CLIProvider.KIMI   -> CliProvider.OPENCODE
+    CLIProvider.GEMINI,
     CLIProvider.MULTI  -> CliProvider.UNKNOWN
 }
 

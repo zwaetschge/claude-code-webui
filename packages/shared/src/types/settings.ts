@@ -1,13 +1,23 @@
-import type { CLIProvider } from './session.js';
+import type { CLIProvider, CodexServiceTier } from './session.js';
 
 export type Theme = 'dark' | 'light' | 'system';
 export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
+export type BackgroundAnimation = 'glass' | 'aurora' | 'ribbons' | 'still';
 export type CodexWebSearchMode = 'auto' | 'cached' | 'live' | 'disabled';
-export type CodexServiceTier = 'fast';
+export type OracleBrowserMode = 'profile' | 'manual' | 'remote';
 
 export interface LocalUsageBudget {
   dailyUsd?: number;
   weeklyUsd?: number;
+}
+
+export interface OracleBrowserSettings {
+  mode?: OracleBrowserMode;
+  chatgptUrl?: string;
+  remoteChrome?: string;
+  chromeProfile?: string;
+  chromeCookiePath?: string;
+  manualLoginProfileDir?: string;
 }
 
 export interface UserSettings {
@@ -17,6 +27,7 @@ export interface UserSettings {
   allowedTools: string[];
   customSystemPrompt: string | null;
   uiProvider?: UiProvider;
+  backgroundAnimation?: BackgroundAnimation;
   defaultCliProvider?: CLIProvider;
   cliProviderModels?: Partial<Record<CLIProvider, string>>;
   cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
@@ -24,6 +35,7 @@ export interface UserSettings {
   cliProviderServiceTiers?: Partial<Record<CLIProvider, CodexServiceTier>>;
   codexWebSearch?: CodexWebSearchMode;
   localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
+  oracleBrowser?: OracleBrowserSettings;
 }
 
 export interface UpdateSettingsInput {
@@ -32,6 +44,7 @@ export interface UpdateSettingsInput {
   allowedTools?: string[];
   customSystemPrompt?: string | null;
   uiProvider?: UiProvider;
+  backgroundAnimation?: BackgroundAnimation;
   defaultCliProvider?: CLIProvider;
   cliProviderModels?: Partial<Record<CLIProvider, string>>;
   cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
@@ -39,6 +52,7 @@ export interface UpdateSettingsInput {
   cliProviderServiceTiers?: Partial<Record<CLIProvider, CodexServiceTier>>;
   codexWebSearch?: CodexWebSearchMode;
   localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
+  oracleBrowser?: OracleBrowserSettings;
 }
 
 export interface ClaudeSettings {

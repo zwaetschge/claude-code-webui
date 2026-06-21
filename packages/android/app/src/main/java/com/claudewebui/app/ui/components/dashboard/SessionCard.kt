@@ -460,12 +460,15 @@ private fun SessionStatus.toUiStatus(): UiSessionStatus = when (this) {
     SessionStatus.ERROR   -> UiSessionStatus.ERROR
 }
 
+@Suppress("DEPRECATION")
 private fun CLIProvider.toCliProvider(): CliProvider = when (this) {
     CLIProvider.CLAUDE -> CliProvider.CLAUDE
     CLIProvider.CODEX  -> CliProvider.CODEX
-    CLIProvider.GEMINI -> CliProvider.GEMINI
-    CLIProvider.GLM    -> CliProvider.GLM
-    CLIProvider.KIMI   -> CliProvider.KIMI
+    CLIProvider.OPENCODE -> CliProvider.OPENCODE
+    CLIProvider.VIBE -> CliProvider.VIBE
+    CLIProvider.GLM,
+    CLIProvider.KIMI   -> CliProvider.OPENCODE
+    CLIProvider.GEMINI,
     CLIProvider.MULTI  -> CliProvider.UNKNOWN
 }
 
@@ -512,7 +515,7 @@ private fun SessionCardPreview() {
                     workingDirectory = "/home/user/project",
                     status = SessionStatus.RUNNING,
                     lastMessage = "Creating the DashboardScreen composable with Material 3 components...",
-                    cliProvider = CLIProvider.CLAUDE,
+                    cliProvider = CLIProvider.CODEX,
                     createdAt = "2024-01-15T10:00:00Z",
                     updatedAt = "2024-01-15T10:05:00Z",
                 ),

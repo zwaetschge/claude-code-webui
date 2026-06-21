@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/services/api';
 import { FileIcon } from './file-icons';
 import { FilePreviewDialog } from '@/components/file-preview';
-import type { FileInfo, ApiResponse, DirectoryContents } from '@claude-code-webui/shared';
+import type { FileInfo, ApiResponse, DirectoryContents } from '@plum-code-webui/shared';
 
 // File extensions that support preview
 const PREVIEWABLE_EXTENSIONS = new Set([
