@@ -18,7 +18,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Central HTTP client for all REST API communication with the Claude Code WebUI backend.
+ * Central HTTP client for all REST API communication with the Plum Code WebUI backend.
  * Uses Ktor with OkHttp engine, kotlinx.serialization for JSON, and automatic
  * bearer token injection via [AuthInterceptorPlugin].
  */
@@ -396,26 +396,6 @@ class ApiClient {
         client.get(url("/api/analytics")) {
             parameter("period", period)
         }.body()
-
-    // ========================================================================
-    // Self-Rebuild
-    // ========================================================================
-
-    /** POST /api/self-rebuild/trigger */
-    suspend fun triggerRebuild(): ApiResponse<JsonElement> =
-        client.post(url("/api/self-rebuild/trigger")).body()
-
-    /** GET /api/self-rebuild/status */
-    suspend fun rebuildStatus(): ApiResponse<JsonElement> =
-        client.get(url("/api/self-rebuild/status")).body()
-
-    /** GET /api/self-rebuild/last-result */
-    suspend fun rebuildLastResult(): ApiResponse<JsonElement> =
-        client.get(url("/api/self-rebuild/last-result")).body()
-
-    /** GET /api/self-rebuild/robot/status */
-    suspend fun rebuildRobotStatus(): ApiResponse<JsonElement> =
-        client.get(url("/api/self-rebuild/robot/status")).body()
 
     // ========================================================================
     // Usage

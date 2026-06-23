@@ -330,8 +330,8 @@ private fun DefaultPermissionModeCard(
                 // Description of current mode
                 AnimatedContent(targetState = current, label = "permissionMode") { mode ->
                     val (color, desc) = when (mode) {
-                        PermissionAction.ALLOW_ONCE -> WarningAmber to "Claude will prompt you before using each tool."
-                        PermissionAction.ALLOW_GLOBAL, PermissionAction.ALLOW_PROJECT -> SuccessGreen to "Claude can use tools without confirmation."
+                        PermissionAction.ALLOW_ONCE -> WarningAmber to "The active provider will prompt you before using each tool."
+                        PermissionAction.ALLOW_GLOBAL, PermissionAction.ALLOW_PROJECT -> SuccessGreen to "The active provider can use tools without confirmation."
                         PermissionAction.DENY -> ErrorRed to "Tool calls are blocked by default."
                     }
                     Row(

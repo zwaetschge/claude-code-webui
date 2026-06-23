@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Matrix — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MATRIX DESIGN SYSTEM — 400×300 THUMBNAIL
+     Cyber-slick · dark terminal · order-book · green-on-black
+     Space Mono · hairlines · 2px corners · dense data
+     ============================================================ */
+  :root {
+    --mx-primary: #2DB58A;       /* brand green — drives every interaction */
+    --mx-primary-deep: #1F8C66;
+    --mx-primary-glow: rgba(45,181,138,0.40);
+    --mx-secondary: #0B0C14;     /* deep monochromatic surface */
+    --mx-secondary-2: #0F1118;
+    --mx-secondary-3: #161823;
+    --mx-secondary-4: #1C1F2E;
+    --mx-success: #16A34A;
+    --mx-warning: #D97706;
+    --mx-danger: #DC2626;
+    --mx-red: #F6465D;          /* trading red — sell side */
+    --mx-green: #0ECB81;        /* trading green — buy side */
+
+    --mx-ink: #EAECEF;
+    --mx-ink-2: #B7BDC6;
+    --mx-ink-3: #848E9C;
+    --mx-ink-4: #5E6673;
+    --mx-ink-5: #474D57;
+    --mx-line: #2B3139;
+    --mx-line-2: #1E2329;
+    --mx-line-hair: #1A1D26;
+
+    --mx-font: 'Space Mono', ui-monospace, monospace;
+
+    --mx-r: 2px;                /* near-square — signature */
+    --mx-r-pill: 999px;
+
+    --mx-glow-green: 0 0 8px rgba(45,181,138,0.30);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--mx-font);
+    font-size: 11px;
+    color: var(--mx-ink);
+    background: var(--mx-secondary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--mx-secondary);
+    display: grid;
+    grid-template-rows: 28px 1fr 22px;
+    border-right: 1px solid var(--mx-line-hair);
+  }
+
+  /* ============ TOP BAR ============ */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--mx-line);
+    background: var(--mx-secondary-2);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--mx-primary);
+    text-shadow: var(--mx-glow-green);
+  }
+  .brand__mark {
+    width: 14px; height: 14px;
+    background: var(--mx-primary);
+    border-radius: var(--mx-r);
+    box-shadow: var(--mx-glow-green);
+  }
+  .brand__sep { color: var(--mx-ink-4); }
+
+  .ticker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+  }
+  .ticker__pair { color: var(--mx-ink); font-weight: 700; }
+  .ticker__price { color: var(--mx-green); font-weight: 700; }
+  .ticker__change { color: var(--mx-green); }
+  .ticker__change--down { color: var(--mx-red); }
+  .ticker__sep { color: var(--mx-ink-5); }
+
+  .topbar__right { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--mx-ink-3); }
+  .live-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--mx-primary);
+    box-shadow: var(--mx-glow-green);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ============ MAIN GRID ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.2fr;
+    gap: 1px;
+    background: var(--mx-line-hair);
+    overflow: hidden;
+  }
+
+  /* Each column */
+  .col {
+    background: var(--mx-secondary);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* Column header */
+  .col__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--mx-line-2);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--mx-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    background: var(--mx-secondary-2);
+  }
+  .col__head-accent { color: var(--mx-primary); }
+
+  /* ============ ORDER BOOK (left) ============ */
+  .book-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    padding: 2px 10px;
+    font-size: 9px;
+    line-height: 1.4;
+    position: relative;
+  }
+  .book-row__price { color: var(--mx-red); font-weight: 700; }
+  .book-row__price--bid { color: var(--mx-green); }
+  .book-row__size { color: var(--mx-ink-2); text-align: right; }
+  .book-row__total { color: var(--mx-ink-4); text-align: right; }
+  /* Depth bar background */
+  .book-row__bar {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    background: rgba(246,70,93,0.10);
+    z-index: 0;
+  }
+  .book-row__bar--bid { background: rgba(14,203,129,0.10); }
+  .book-row > * { position: relative; z-index: 1; }
+
+  /* Spread row */
+  .spread {
+    padding: 3px 10px;
+    border-top: 1px solid var(--mx-line);
+    border-bottom: 1px solid var(--mx-line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 9px;
+    color: var(--mx-ink-3);
+    background: var(--mx-secondary-2);
+  }
+  .spread__value { color: var(--mx-primary); font-weight: 700; }
+
+  /* ============ PRICE CHART (middle) ============ */
+  .chart-area {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    padding: 4px;
+  }
+  .chart-area svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .chart-info {
+    padding: 4px 10px;
+    border-top: 1px solid var(--mx-line-2);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .chart-info__row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 8.5px;
+  }
+  .chart-info__label { color: var(--mx-ink-4); }
+  .chart-info__value { color: var(--mx-ink); font-weight: 700; }
+  .chart-info__value--green { color: var(--mx-green); }
+  .chart-info__value--red { color: var(--mx-red); }
+
+  /* Timeframe selector */
+  .timeframe {
+    display: flex;
+    gap: 1px;
+    padding: 3px 10px;
+    border-top: 1px solid var(--mx-line-2);
+    background: var(--mx-secondary-2);
+  }
+  .tf-btn {
+    padding: 2px 6px;
+    border: none;
+    background: transparent;
+    color: var(--mx-ink-4);
+    font-family: var(--mx-font);
+    font-size: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    border-radius: var(--mx-r);
+  }
+  .tf-btn.is-active {
+    background: var(--mx-primary);
+    color: var(--mx-secondary);
+  }
+  .tf-btn:hover:not(.is-active) { color: var(--mx-ink); background: var(--mx-secondary-3); }
+
+  /* ============ TRADE HISTORY (right) ============ */
+  .trade-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    padding: 2px 10px;
+    font-size: 9px;
+    line-height: 1.4;
+  }
+  .trade-row__price { color: var(--mx-green); font-weight: 700; }
+  .trade-row__price--sell { color: var(--mx-red); }
+  .trade-row__size { color: var(--mx-ink-2); text-align: right; }
+  .trade-row__time { color: var(--mx-ink-4); text-align: right; }
+
+  /* ============ FOOTER BAR ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    border-top: 1px solid var(--mx-line);
+    background: var(--mx-secondary-2);
+    font-size: 8.5px;
+    color: var(--mx-ink-4);
+  }
+  .footer__stats { display: flex; gap: 12px; }
+  .footer__stat { display: flex; gap: 4px; }
+  .footer__stat-label { color: var(--mx-ink-5); }
+  .footer__stat-value { color: var(--mx-ink-2); font-weight: 700; }
+  .footer__stat-value--green { color: var(--mx-primary); }
+  .footer__brand { color: var(--mx-primary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Matrix design language preview">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand__mark"></span>
+      <span>MATRIX</span>
+      <span class="brand__sep">//</span>
+      <span class="ticker__pair">BTC/USDT</span>
+    </div>
+    <div class="ticker">
+      <span class="ticker__price">67,428.50</span>
+      <span class="ticker__sep">|</span>
+      <span class="ticker__change">+2.84%</span>
+      <span class="ticker__sep">|</span>
+      <span style="color:var(--mx-ink-3);">H 68,120</span>
+      <span class="ticker__sep">|</span>
+      <span style="color:var(--mx-ink-3);">L 65,804</span>
+    </div>
+    <div class="topbar__right">
+      <span class="live-dot"></span>
+      <span>LIVE</span>
+    </div>
+  </header>
+
+  <!-- ===== MAIN: ORDER BOOK | CHART | TRADES ===== -->
+  <section class="main">
+
+    <!-- COL 1: Order Book -->
+    <div class="col">
+      <div class="col__head">
+        <span>Order Book</span>
+        <span class="col__head-accent">0.01</span>
+      </div>
+
+      <!-- Column labels -->
+      <div class="book-row" style="padding-top:3px;padding-bottom:3px;border-bottom:1px solid var(--mx-line-2);">
+        <span style="color:var(--mx-ink-4);font-size:8px;">Price</span>
+        <span style="color:var(--mx-ink-4);font-size:8px;text-align:right;">Size</span>
+        <span style="color:var(--mx-ink-4);font-size:8px;text-align:right;">Total</span>
+      </div>
+
+      <!-- Asks (sell) -->
+      <div class="book-row"><div class="book-row__bar" style="width:35%"></div><span class="book-row__price">67,450.2</span><span class="book-row__size">0.842</span><span class="book-row__total">56,813</span></div>
+      <div class="book-row"><div class="book-row__bar" style="width:48%"></div><span class="book-row__price">67,445.8</span><span class="book-row__size">1.204</span><span class="book-row__total">81,200</span></div>
+      <div class="book-row"><div class="book-row__bar" style="width:22%"></div><span class="book-row__price">67,442.1</span><span class="book-row__size">0.318</span><span class="book-row__total">21,447</span></div>
+      <div class="book-row"><div class="book-row__bar" style="width:60%"></div><span class="book-row__price">67,438.5</span><span class="book-row__size">1.872</span><span class="book-row__total">126,278</span></div>
+      <div class="book-row"><div class="book-row__bar" style="width:30%"></div><span class="book-row__price">67,431.0</span><span class="book-row__size">0.524</span><span class="book-row__total">35,334</span></div>
+
+      <!-- Spread -->
+      <div class="spread">
+        <span>SPREAD</span>
+        <span class="spread__value">2.50</span>
+        <span style="color:var(--mx-ink-4);">|</span>
+        <span class="spread__value">0.004%</span>
+      </div>
+
+      <!-- Bids (buy) -->
+      <div class="book-row"><div class="book-row__bar book-row__bar--bid" style="width:42%"></div><span class="book-row__price book-row__price--bid">67,428.5</span><span class="book-row__size">0.948</span><span class="book-row__total">63,923</span></div>
+      <div class="book-row"><div class="book-row__bar book-row__bar--bid" style="width:65%"></div><span class="book-row__price book-row__price--bid">67,420.0</span><span class="book-row__size">2.104</span><span class="book-row__total">141,840</span></div>
+      <div class="book-row"><div class="book-row__bar book-row__bar--bid" style="width:28%"></div><span class="book-row__price book-row__price--bid">67,415.2</span><span class="book-row__size">0.612</span><span class="book-row__total">41,258</span></div>
+      <div class="book-row"><div class="book-row__bar book-row__bar--bid" style="width:55%"></div><span class="book-row__price book-row__price--bid">67,410.8</span><span class="book-row__size">1.486</span><span class="book-row__total">100,174</span></div>
+      <div class="book-row"><div class="book-row__bar book-row__bar--bid" style="width:18%"></div><span class="book-row__price book-row__price--bid">67,402.4</span><span class="book-row__size">0.384</span><span class="book-row__total">25,883</span></div>
+    </div>
+
+    <!-- COL 2: Chart -->
+    <div class="col">
+      <div class="col__head">
+        <span>Chart</span>
+        <span class="col__head-accent">1m</span>
+      </div>
+
+      <div class="chart-area">
+        <svg viewBox="0 0 120 160" preserveAspectRatio="none" aria-hidden="true">
+          <!-- grid lines -->
+          <line x1="0" y1="40" x2="120" y2="40" stroke="#1A1D26" stroke-width="0.5"/>
+          <line x1="0" y1="80" x2="120" y2="80" stroke="#1A1D26" stroke-width="0.5"/>
+          <line x1="0" y1="120" x2="120" y2="120" stroke="#1A1D26" stroke-width="0.5"/>
+
+          <!-- candlesticks -->
+          <!-- Green candles (up) -->
+          <g>
+            <line x1="6" y1="100" x2="6" y2="125" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="4" y="105" width="4" height="15" fill="#0ECB81"/>
+
+            <line x1="14" y1="95" x2="14" y2="118" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="12" y="100" width="4" height="12" fill="#0ECB81"/>
+
+            <line x1="22" y1="85" x2="22" y2="110" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="20" y="90" width="4" height="15" fill="#0ECB81"/>
+
+            <line x1="30" y1="92" x2="30" y2="108" stroke="#F6465D" stroke-width="0.6"/>
+            <rect x="28" y="95" width="4" height="10" fill="#F6465D"/>
+
+            <line x1="38" y1="75" x2="38" y2="100" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="36" y="80" width="4" height="18" fill="#0ECB81"/>
+
+            <line x1="46" y1="68" x2="46" y2="90" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="44" y="72" width="4" height="14" fill="#0ECB81"/>
+
+            <line x1="54" y1="72" x2="54" y2="85" stroke="#F6465D" stroke-width="0.6"/>
+            <rect x="52" y="75" width="4" height="8" fill="#F6465D"/>
+
+            <line x1="62" y1="55" x2="62" y2="80" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="60" y="58" width="4" height="18" fill="#0ECB81"/>
+
+            <line x1="70" y1="45" x2="70" y2="68" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="68" y="48" width="4" height="16" fill="#0ECB81"/>
+
+            <line x1="78" y1="50" x2="78" y2="62" stroke="#F6465D" stroke-width="0.6"/>
+            <rect x="76" y="52" width="4" height="8" fill="#F6465D"/>
+
+            <line x1="86" y1="35" x2="86" y2="58" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="84" y="38" width="4" height="16" fill="#0ECB81"/>
+
+            <line x1="94" y1="28" x2="94" y2="48" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="92" y="30" width="4" height="14" fill="#0ECB81"/>
+
+            <line x1="102" y1="32" x2="102" y2="42" stroke="#F6465D" stroke-width="0.6"/>
+            <rect x="100" y="34" width="4" height="6" fill="#F6465D"/>
+
+            <line x1="110" y1="22" x2="110" y2="38" stroke="#0ECB81" stroke-width="0.6"/>
+            <rect x="108" y="25" width="4" height="10" fill="#0ECB81"/>
+          </g>
+
+          <!-- Last price line -->
+          <line x1="0" y1="25" x2="120" y2="25" stroke="#2DB58A" stroke-width="0.4" stroke-dasharray="2,2" opacity="0.6"/>
+        </svg>
+      </div>
+
+      <div class="chart-info">
+        <div class="chart-info__row">
+          <span class="chart-info__label">O</span><span class="chart-info__value">65,804</span>
+          <span class="chart-info__label">H</span><span class="chart-info__value chart-info__value--green">68,120</span>
+        </div>
+        <div class="chart-info__row">
+          <span class="chart-info__label">L</span><span class="chart-info__value chart-info__value--red">65,620</span>
+          <span class="chart-info__label">C</span><span class="chart-info__value">67,428</span>
+        </div>
+        <div class="chart-info__row">
+          <span class="chart-info__label">VOL</span><span class="chart-info__value">1,284 BTC</span>
+        </div>
+      </div>
+
+      <div class="timeframe">
+        <button class="tf-btn">1m</button>
+        <button class="tf-btn">5m</button>
+        <button class="tf-btn is-active">15m</button>
+        <button class="tf-btn">1h</button>
+        <button class="tf-btn">4h</button>
+        <button class="tf-btn">1D</button>
+      </div>
+    </div>
+
+    <!-- COL 3: Trade History -->
+    <div class="col">
+      <div class="col__head">
+        <span>Market Trades</span>
+        <span class="col__head-accent">↻ real-time</span>
+      </div>
+
+      <div class="trade-row" style="border-bottom:1px solid var(--mx-line-2);padding-top:3px;padding-bottom:3px;">
+        <span style="color:var(--mx-ink-4);font-size:8px;">Price</span>
+        <span style="color:var(--mx-ink-4);font-size:8px;text-align:right;">Amount</span>
+        <span style="color:var(--mx-ink-4);font-size:8px;text-align:right;">Time</span>
+      </div>
+
+      <div class="trade-row"><span class="trade-row__price">67,428.5</span><span class="trade-row__size">0.0428</span><span class="trade-row__time">12:04:18</span></div>
+      <div class="trade-row"><span class="trade-row__price trade-row__price--sell">67,426.0</span><span class="trade-row__size">0.8412</span><span class="trade-row__time">12:04:12</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,428.5</span><span class="trade-row__size">0.1204</span><span class="trade-row__time">12:04:08</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,430.0</span><span class="trade-row__size">0.0318</span><span class="trade-row__time">12:04:01</span></div>
+      <div class="trade-row"><span class="trade-row__price trade-row__price--sell">67,425.5</span><span class="trade-row__size">1.8720</span><span class="trade-row__time">12:03:55</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,428.5</span><span class="trade-row__size">0.5240</span><span class="trade-row__time">12:03:48</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,432.0</span><span class="trade-row__size">0.0948</span><span class="trade-row__time">12:03:42</span></div>
+      <div class="trade-row"><span class="trade-row__price trade-row__price--sell">67,424.0</span><span class="trade-row__size">2.1040</span><span class="trade-row__time">12:03:35</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,428.5</span><span class="trade-row__size">0.6120</span><span class="trade-row__time">12:03:28</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,435.0</span><span class="trade-row__size">0.1486</span><span class="trade-row__time">12:03:22</span></div>
+      <div class="trade-row"><span class="trade-row__price trade-row__price--sell">67,422.5</span><span class="trade-row__size">0.3840</span><span class="trade-row__time">12:03:15</span></div>
+      <div class="trade-row"><span class="trade-row__price">67,428.5</span><span class="trade-row__size">0.8420</span><span class="trade-row__time">12:03:08</span></div>
+    </div>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="footer__stats">
+      <span class="footer__stat"><span class="footer__stat-label">24h VOL</span><span class="footer__stat-value">84.2K BTC</span></span>
+      <span class="footer__stat"><span class="footer__stat-label">24h CHG</span><span class="footer__stat-value footer__stat-value--green">+5.62%</span></span>
+      <span class="footer__stat"><span class="footer__stat-label">FUNDING</span><span class="footer__stat-value">0.0102%</span></span>
+    </div>
+    <span><span class="footer__brand">●</span> matrix · terminal · v2.4</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

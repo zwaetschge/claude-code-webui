@@ -23,8 +23,9 @@ import {
   previewVhostEnabled,
 } from './middleware/preview-vhost';
 import { ensureCliPath } from './utils/cliPaths';
+import { ensureDefaultClaudeMcpServers } from './utils/mcpDefaults';
 import { syncProviderLinks } from './utils/providerLinks';
-import type { CLIProvider } from '@claude-code-webui/shared';
+import type { CLIProvider } from '@plum-code-webui/shared';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from './services/cli-updates.js';
 
 // Routes
@@ -58,11 +59,18 @@ import opencodeRoutes from './routes/opencode';
 import memoriesRoutes from './routes/memories';
 import taskRoutes from './routes/tasks';
 import devicesRoutes from './routes/devices';
+import androidRoutes from './routes/android';
 import previewRoutes from './routes/preview';
 import adminRoutes from './routes/admin';
 import comfyuiRoutes from './routes/comfyui';
 import automationRoutes from './routes/automation';
+import oracleRoutes from './routes/oracle';
+import dockerRoutes from './routes/docker';
+import watchdogRoutes from './routes/watchdogs';
+import sessionMeshRoutes from './routes/session-mesh';
 import { initTaskManager } from './services/tasks';
+import discordRoutes from './routes/discord';
+import { initDiscordOutboxWorker } from './services/discord';
 
 function parseBooleanEnv(value?: string): boolean {
   if (!value) return false;
@@ -157,6 +165,16 @@ async function main() {
   // Initialize database
   initDatabase();
   ensureCliPath();
+  try {
+    const mcpDefaults = await ensureDefaultClaudeMcpServers();
+    if (mcpDefaults.updated) {
+      console.log(
+        `[mcp-defaults] Added ${mcpDefaults.added.join(', ')} to ${mcpDefaults.settingsPath}`
+      );
+    }
+  } catch (err) {
+    console.warn('[mcp-defaults] sync skipped:', err);
+  }
   syncProviderLinks();
 
   const app = express();
@@ -173,6 +191,7 @@ async function main() {
 
   // Initialize task delegation system
   initTaskManager();
+  initDiscordOutboxWorker();
 
   // Preview vhost — must run BEFORE any other middleware so helmet/CORS/body-parsers
   // don't rewrite or consume proxied traffic. Authelia (Traefik ForwardAuth) guards the
@@ -280,6 +299,7 @@ async function main() {
   app.use('/api/files', filesRoutes);
   app.use('/api/git', gitRoutes);
   app.use('/api/settings', settingsRoutes);
+  app.use('/api/oracle', oracleRoutes);
   app.use('/api/mcp-servers', mcpRoutes);
   app.use('/api/claude', claudeRoutes);
   app.use('/api/claude-config', claudeConfigRoutes);
@@ -304,10 +324,15 @@ async function main() {
   app.use('/api/memories', memoriesRoutes);
   app.use('/api/tasks', taskRoutes);
   app.use('/api/devices', devicesRoutes);
+  app.use('/api/android', androidRoutes);
   app.use('/api/preview', previewRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/comfyui', comfyuiRoutes);
   app.use('/api/automation', automationRoutes);
+  app.use('/api/docker', dockerRoutes);
+  app.use('/api/watchdogs', watchdogRoutes);
+  app.use('/api/discord', discordRoutes);
+  app.use('/api', sessionMeshRoutes);
 
   const logosDir = process.env.LOGOS_DIR || path.join(process.cwd(), 'logos');
   if (fs.existsSync(logosDir)) {
@@ -340,6 +365,36 @@ async function main() {
   // Serve frontend static files in production
   if (config.isProduction) {
     const frontendPath = path.join(__dirname, '../../frontend/dist');
+    const designPreviewPath = path.join(frontendPath, 'design-previews');
+    app.use(
+      '/design-previews',
+      (_req, res, next) => {
+        res.setHeader(
+          'Content-Security-Policy',
+          [
+            "default-src 'self'",
+            "script-src 'none'",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "img-src 'self' data: blob: https:",
+            "font-src 'self' data: https://fonts.gstatic.com",
+            "connect-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'self'",
+          ].join('; ')
+        );
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+        next();
+      },
+      express.static(designPreviewPath, {
+        fallthrough: false,
+        index: false,
+        maxAge: 0,
+        dotfiles: 'deny',
+      })
+    );
+
     app.use(express.static(frontendPath));
 
     // Backend auth routes that should NOT be handled by SPA
@@ -359,8 +414,10 @@ async function main() {
       '/assets/',
       '/claude-logo.png',
       '/favicon.svg',
+      '/design-previews/',
       '/manifest.json',
       '/sw.js',
+      '/service-worker.js',
     ];
 
     // Handle SPA routing - serve index.html for all non-API routes

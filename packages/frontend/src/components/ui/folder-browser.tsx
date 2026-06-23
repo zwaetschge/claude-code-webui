@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 
 interface FileInfo {
   name: string;

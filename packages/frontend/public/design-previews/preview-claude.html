@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     CLAUDE / WARM STONE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Editorial · ivory parchment · slate ink · clay accent · serif dark cards
+     ============================================================ */
+  :root {
+    /* Core achromatic palette */
+    --cl-ink: #141413;            /* near-black slate — dominant ink */
+    --cl-ink-2: #2B2926;
+    --cl-ink-3: #5C5852;
+    --cl-ink-4: #8C8780;
+    --cl-ivory: #FAF9F6;          /* warm parchment — NEVER pure white */
+    --cl-ivory-2: #F3F1EB;
+    --cl-ivory-3: #EAE6DD;
+    --cl-line: #D9D4C9;
+    --cl-line-soft: #E5E0D4;
+
+    /* Single earthy clay accent — used sparingly */
+    --cl-clay: #B85C38;
+    --cl-clay-deep: #9A4A2B;
+
+    /* Semantic (rarely shown) */
+    --cl-success: #16A34A;
+    --cl-warning: #D97706;
+    --cl-danger: #DC2626;
+
+    /* Type */
+    --cl-font-grotesque: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --cl-font-serif: 'Newsreader', 'Source Serif Pro', Georgia, serif;
+    --cl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--cl-font-grotesque);
+    font-size: 12px;
+    color: var(--cl-ink);
+    background: var(--cl-ivory);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--cl-ivory);
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    padding: 8px 16px 6px;
+    border-bottom: 1px solid var(--cl-ink);
+    font-family: var(--cl-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--cl-ink);
+  }
+  .masthead__left, .masthead__right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .masthead__sep { color: var(--cl-ink-4); }
+  .masthead__clay { color: var(--cl-clay); }
+
+  /* ============ TITLE BAR ============ */
+  .titlebar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 10px 16px 12px;
+    border-bottom: 1px solid var(--cl-line);
+  }
+  .wordmark {
+    font-family: var(--cl-font-grotesque);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.045em;
+    color: var(--cl-ink);
+    line-height: 1;
+  }
+  .wordmark__sub {
+    display: block;
+    font-family: var(--cl-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cl-ink-3);
+    margin-top: 4px;
+  }
+  .titlebar__meta {
+    font-family: var(--cl-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--cl-ink-3);
+    text-align: right;
+    line-height: 1.4;
+  }
+  .titlebar__meta strong { color: var(--cl-ink); font-weight: 600; }
+
+  /* ============ MAIN BODY (alternating rhythm) ============ */
+  .body {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    overflow: hidden;
+  }
+
+  /* LEFT — editorial article teaser on ivory */
+  .article {
+    padding: 14px 16px 12px;
+    border-right: 1px solid var(--cl-line);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .article__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--cl-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cl-clay);
+    margin-bottom: 8px;
+  }
+  .article__eyebrow::before {
+    content: "§";
+    font-family: var(--cl-font-serif);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--cl-ink);
+    letter-spacing: 0;
+  }
+
+  /* Editorial headline — grotesque, tight, with serif italic accent */
+  .article__headline {
+    font-family: var(--cl-font-grotesque);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    color: var(--cl-ink);
+    margin-bottom: 8px;
+  }
+  .article__headline em {
+    font-family: var(--cl-font-serif);
+    font-style: italic;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    /* Underline = the emphasis device, not color */
+    border-bottom: 2px solid var(--cl-clay);
+    padding-bottom: 1px;
+  }
+
+  .article__lede {
+    font-family: var(--cl-font-serif);
+    font-size: 11px;
+    font-style: italic;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--cl-ink-2);
+    margin-bottom: 10px;
+    max-width: 34ch;
+  }
+  .article__lede::first-letter {
+    font-family: var(--cl-font-serif);
+    font-size: 22px;
+    font-weight: 600;
+    font-style: normal;
+    float: left;
+    line-height: 0.9;
+    padding: 2px 5px 0 0;
+    color: var(--cl-ink);
+  }
+
+  /* Byline */
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--cl-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--cl-ink-3);
+    margin-bottom: 8px;
+  }
+  .byline__author { color: var(--cl-ink); font-weight: 600; }
+  .byline__sep { color: var(--cl-ink-4); }
+
+  /* Signature CTA — asymmetric flat-top / rounded-bottom */
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 7px 14px 7px 12px;
+    background: var(--cl-ink);
+    color: var(--cl-ivory);
+    border: none;
+    border-radius: 0 0 8px 8px;  /* signature: flat top / rounded bottom */
+    font-family: var(--cl-font-grotesque);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    /* Zero shadow — hard-edged only */
+  }
+  .cta__arrow {
+    font-family: var(--cl-font-serif);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--cl-clay);
+    line-height: 1;
+  }
+  .cta:hover { background: var(--cl-clay-deep); }
+
+  /* RIGHT — inverted dark feature card (serif display lives here) */
+  .feature {
+    background: var(--cl-ink);
+    color: var(--cl-ivory);
+    padding: 14px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+  }
+  .feature__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--cl-font-mono);
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--cl-ivory-3);
+    opacity: 0.7;
+    margin-bottom: 6px;
+  }
+  .feature__label::before {
+    content: "";
+    width: 14px; height: 1px;
+    background: var(--cl-clay);
+  }
+
+  /* Serif display — only on inverted dark cards */
+  .feature__headline {
+    font-family: var(--cl-font-serif);
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    color: var(--cl-ivory);
+    margin-bottom: 8px;
+  }
+  .feature__headline em {
+    font-style: italic;
+    color: var(--cl-clay);
+  }
+  .feature__headline strong {
+    font-weight: 700;
+    font-style: normal;
+    border-bottom: 1.5px solid var(--cl-ivory-3);
+    padding-bottom: 1px;
+  }
+
+  .feature__body {
+    font-family: var(--cl-font-grotesque);
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--cl-ivory-3);
+    opacity: 0.85;
+    margin-bottom: 10px;
+  }
+
+  /* Mini stat list */
+  .stats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(250,249,246,0.15);
+  }
+  .stat {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .stat__label {
+    font-family: var(--cl-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--cl-ivory-3);
+    opacity: 0.7;
+  }
+  .stat__value {
+    font-family: var(--cl-font-serif);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--cl-ivory);
+    font-feature-settings: "tnum";
+  }
+  .stat__value--clay { color: var(--cl-clay); }
+
+  /* ============ FOOTER STRIP ============ */
+  .footer {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    padding: 5px 16px;
+    background: var(--cl-ink);
+    color: var(--cl-ivory-3);
+    border-top: 1px solid var(--cl-ink);
+    font-family: var(--cl-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .footer__center {
+    color: var(--cl-clay);
+  }
+  .footer__sep { color: var(--cl-ink-4); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Claude / warm stone design language preview">
+
+  <!-- ============ MASTHEAD ============ -->
+  <header class="masthead">
+    <div class="masthead__left">
+      <span>Vol. 04</span>
+      <span class="masthead__sep">/</span>
+      <span>No. 12</span>
+      <span class="masthead__sep">·</span>
+      <span>November 2025</span>
+    </div>
+    <div class="masthead__right">
+      <span class="masthead__clay">●</span>
+      <span>warm stone edition</span>
+    </div>
+  </header>
+
+  <!-- ============ TITLE BAR ============ -->
+  <section class="titlebar">
+    <div>
+      <h1 class="wordmark">The Stone Review</h1>
+      <span class="wordmark__sub">research · in plain prose</span>
+    </div>
+    <div class="titlebar__meta">
+      <strong>Issue 47</strong><br>
+      pp. 1—128
+    </div>
+  </section>
+
+  <!-- ============ BODY: alternating ivory / slate ============ -->
+  <section class="body">
+
+    <!-- LEFT: editorial article (ivory, grotesque + serif italic) -->
+    <article class="article">
+      <div>
+        <div class="article__eyebrow">Essay · Feature</div>
+        <h2 class="article__headline">
+          On the quiet<br>
+          discipline of <em>restraint</em>.
+        </h2>
+        <p class="article__lede">
+          The page does not need to shout to be heard. Authority comes from typography, from what is left out — never from glow or chromatic excess.
+        </p>
+        <div class="byline">
+          <span class="byline__author">M. Halloran</span>
+          <span class="byline__sep">·</span>
+          <span>12 min read</span>
+          <span class="byline__sep">·</span>
+          <span>p. 14</span>
+        </div>
+      </div>
+
+      <!-- Signature asymmetric CTA -->
+      <button class="cta" type="button">
+        Read the essay
+        <span class="cta__arrow">→</span>
+      </button>
+    </article>
+
+    <!-- RIGHT: inverted dark feature card (serif display) -->
+    <aside class="feature">
+      <div>
+        <div class="feature__label">In this issue</div>
+        <h3 class="feature__headline">
+          <em>Eight</em> papers on<br>
+          <strong>trust</strong> & systems.
+        </h3>
+        <p class="feature__body">
+          Each one printed in full, set in serif, indexed by hand.
+        </p>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="stat__label">Pages</span>
+          <span class="stat__value">128</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Contributors</span>
+          <span class="stat__value">23</span>
+        </div>
+        <div class="stat">
+          <span class="stat__label">Read time</span>
+          <span class="stat__value stat__value--clay">3.4 h</span>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="footer">
+    <span>warm stone · ivory ↔ slate</span>
+    <span class="footer__center">— achromatic · single clay accent —</span>
+    <span>WCAG AA · v1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

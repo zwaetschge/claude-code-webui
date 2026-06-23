@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Neobrutalism — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     NEOBRUTALISM DESIGN SYSTEM — 400×300 THUMBNAIL
+     Bold borders · vivid accents · hard shadows · warm surfaces
+     ============================================================ */
+  :root {
+    --nb-bg: #FFF3E0;           /* warm cream-yellow */
+    --nb-surface: #FFFFFF;
+    --nb-ink: #1A1A2E;          /* near-black navy */
+    --nb-primary: #4361EE;      /* electric blue */
+    --nb-accent-pink: #FF006E;
+    --nb-accent-yellow: #FFBE0B;
+    --nb-accent-green: #06D6A0;
+    --nb-accent-purple: #8338EC;
+    --nb-accent-orange: #FB5607;
+
+    --nb-font: 'Archivo', -apple-system, sans-serif;
+    --nb-font-mono: 'Space Mono', monospace;
+
+    --nb-border: 3px solid var(--nb-ink);
+    --nb-border-thick: 4px solid var(--nb-ink);
+    --nb-shadow: 6px 6px 0 var(--nb-ink);
+    --nb-shadow-sm: 4px 4px 0 var(--nb-ink);
+    --nb-shadow-lg: 8px 8px 0 var(--nb-ink);
+    --nb-r: 0px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--nb-font);
+    font-size: 12px;
+    color: var(--nb-ink);
+    background: var(--nb-bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(3px 3px at 10% 15%, var(--nb-accent-pink), transparent 50%),
+      radial-gradient(3px 3px at 85% 25%, var(--nb-accent-green), transparent 50%),
+      radial-gradient(2.5px 2.5px at 90% 80%, var(--nb-accent-purple), transparent 50%),
+      radial-gradient(3px 3px at 15% 85%, var(--nb-accent-yellow), transparent 50%),
+      radial-gradient(2.5px 2.5px at 50% 50%, var(--nb-primary), transparent 50%),
+      var(--nb-bg);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--nb-surface);
+    border: var(--nb-border);
+    box-shadow: var(--nb-shadow-sm);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 900;
+    font-size: 14px;
+    letter-spacing: -0.02em;
+  }
+  .brand__mark {
+    width: 24px; height: 24px;
+    background: var(--nb-accent-yellow);
+    border: 2.5px solid var(--nb-ink);
+    display: grid; place-items: center;
+    color: var(--nb-ink);
+    transform: rotate(-5deg);
+  }
+  .brand__mark svg { width: 14px; height: 14px; }
+  .brand__name span { color: var(--nb-accent-pink); }
+
+  .nav {
+    display: flex;
+    gap: 3px;
+  }
+  .nav a {
+    padding: 3px 9px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 10px;
+    color: var(--nb-ink);
+    border: 2.5px solid transparent;
+    transition: all .12s ease;
+  }
+  .nav a:hover {
+    border-color: var(--nb-ink);
+    background: var(--nb-accent-yellow);
+  }
+  .nav a.is-active {
+    background: var(--nb-ink);
+    color: var(--nb-accent-yellow);
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 10px;
+    align-items: center;
+  }
+
+  /* LEFT — bold hero */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    position: relative;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--nb-accent-green);
+    color: var(--nb-ink);
+    border: var(--nb-border);
+    box-shadow: var(--nb-shadow-sm);
+    font-family: var(--nb-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transform: rotate(-1.5deg);
+  }
+
+  .hero__title {
+    font-weight: 900;
+    font-size: 48px;
+    line-height: 0.86;
+    letter-spacing: -0.04em;
+    color: var(--nb-ink);
+    text-transform: uppercase;
+    margin: 6px 0 2px;
+  }
+  .hero__title-blue {
+    color: var(--nb-primary);
+    background: var(--nb-surface);
+    border: var(--nb-border-thick);
+    box-shadow: var(--nb-shadow);
+    padding: 0 8px;
+    display: inline-block;
+    transform: rotate(-1deg);
+    margin: 2px 0;
+  }
+  .hero__title-pink {
+    color: var(--nb-accent-pink);
+  }
+
+  .hero__sub {
+    font-family: var(--nb-font);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--nb-ink);
+    max-width: 28ch;
+    margin-top: 4px;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 16px;
+    border: var(--nb-border);
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--nb-ink);
+    background: var(--nb-surface);
+    box-shadow: var(--nb-shadow);
+    transition: transform .1s ease, box-shadow .1s ease;
+  }
+  .btn--primary {
+    background: var(--nb-accent-yellow);
+  }
+  .btn--primary:hover {
+    transform: translate(-2px,-2px);
+    box-shadow: var(--nb-shadow-lg);
+  }
+  .btn--primary:active {
+    transform: translate(4px,4px);
+    box-shadow: 1px 1px 0 var(--nb-ink);
+  }
+  .btn--pink {
+    background: var(--nb-accent-pink);
+    color: var(--nb-surface);
+  }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — stat cards stack */
+  .cards {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .card {
+    padding: 7px 11px;
+    border: var(--nb-border);
+    box-shadow: var(--nb-shadow-sm);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+  }
+  .card--blue { background: var(--nb-primary); color: var(--nb-surface); }
+  .card--green { background: var(--nb-accent-green); }
+  .card--pink { background: var(--nb-accent-pink); color: var(--nb-surface); }
+
+  .card__icon {
+    width: 26px; height: 26px;
+    background: var(--nb-surface);
+    border: 2.5px solid var(--nb-ink);
+    display: grid; place-items: center;
+    color: var(--nb-ink);
+    flex-shrink: 0;
+  }
+  .card__icon svg { width: 14px; height: 14px; }
+  .card__body { flex: 1; }
+  .card__label {
+    font-family: var(--nb-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  .card__value {
+    font-weight: 900;
+    font-size: 18px;
+    line-height: 1;
+    margin-top: 1px;
+    letter-spacing: -0.025em;
+  }
+  .card__sub {
+    font-family: var(--nb-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    opacity: 0.8;
+    margin-top: 1px;
+  }
+
+  /* Sticker badge */
+  .sticker {
+    position: absolute;
+    top: -8px; right: -8px;
+    background: var(--nb-accent-purple);
+    color: var(--nb-surface);
+    border: 2.5px solid var(--nb-ink);
+    border-radius: 50%;
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    font-weight: 900;
+    font-size: 10px;
+    box-shadow: var(--nb-shadow-sm);
+    transform: rotate(12deg);
+    z-index: 2;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Neobrutalism design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      </span>
+      <span class="brand__name">BOLD<span>.</span>so</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Home</a>
+      <a href="#">Work</a>
+      <a href="#">Shop</a>
+    </nav>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: bold headline -->
+    <article class="hero">
+      <span class="hero__eyebrow">★ NEW · 2025</span>
+      <h1 class="hero__title">
+        <span class="hero__title-blue">LOUD</span><br>
+        &
+        <span class="hero__title-pink">PROUD</span>
+      </h1>
+      <p class="hero__sub">Big borders, bigger energy. Design that refuses to be ignored.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Start
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--pink" type="button">Try</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: stat cards -->
+    <aside class="cards">
+      <div class="card card--blue">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Makers</div>
+          <div class="card__value">48K</div>
+          <div class="card__sub">+ going bold</div>
+        </div>
+      </div>
+
+      <div class="card card--green">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Rating</div>
+          <div class="card__value">4.9★</div>
+          <div class="card__sub">2,318 reviews</div>
+        </div>
+      </div>
+
+      <div class="card card--pink">
+        <div class="sticker">★</div>
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 22h20L12 2z"/><path d="M12 9v4M12 17h.01"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Trend</div>
+          <div class="card__value">#1</div>
+          <div class="card__sub">product of the day</div>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

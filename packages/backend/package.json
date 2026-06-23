@@ -1,5 +1,5 @@
 {
-  "name": "@claude-code-webui/backend",
+  "name": "@plum-code-webui/backend",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,12 +11,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test:providers": "tsx scripts/provider-regression-tests.ts",
+    "test:providers": "pnpm --filter @plum-code-webui/shared run build && tsx scripts/provider-regression-tests.ts",
     "clean": "rm -rf dist",
     "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
-    "@claude-code-webui/shared": "workspace:*",
+    "@plum-code-webui/shared": "workspace:*",
     "uuid": "^9.0.1",
     "@octokit/rest": "^21.0.2",
     "bcryptjs": "^2.4.3",
@@ -37,6 +37,7 @@
     "passport-google-oauth20": "^2.0.0",
     "simple-git": "^3.27.0",
     "socket.io": "^4.8.1",
+    "ws": "^8.18.3",
     "exceljs": "^4.4.0",
     "zod": "^3.24.1"
   },
@@ -56,6 +57,7 @@
     "@types/passport": "^1.0.17",
     "@types/passport-github2": "^1.2.9",
     "@types/passport-google-oauth20": "^2.0.16",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

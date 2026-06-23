@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>Plum Style Claude Preview</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: #030302;
+    font-family: ui-serif, Georgia, "Iowan Old Style", "Apple Garamond", "Times New Roman", serif;
+    color: #fbf7f2;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .frame {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(120% 100% at 0% 0%, rgba(201,130,92,0.06) 0%, rgba(201,130,92,0) 45%),
+      radial-gradient(80% 80% at 100% 100%, rgba(232,196,154,0.035) 0%, rgba(232,196,154,0) 50%),
+      linear-gradient(180deg, #0d0b08 0%, #070604 60%, #030302 100%);
+    overflow: hidden;
+  }
+
+  .ui-sans { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+  .rail {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 48px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 10px 0;
+    background: linear-gradient(90deg, rgba(232,196,154,0.02) 0%, rgba(232,196,154,0) 100%);
+    box-shadow: inset -1px 0 0 rgba(232,196,154,0.08);
+    z-index: 3;
+  }
+
+  .brand {
+    width: 30px; height: 30px; border-radius: 999px;
+    display: grid; place-items: center; margin-bottom: 6px;
+    background: rgba(232,196,154,0.05);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.16), 0 0 14px rgba(201,130,92,0.18);
+    color: #e8c49a;
+  }
+  .brand svg { width: 16px; height: 16px; }
+
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 999px;
+    display: grid; place-items: center;
+    color: rgba(251,247,242,0.5);
+    cursor: pointer; position: relative;
+    transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  }
+  .icon-btn svg { width: 15px; height: 15px; }
+  .icon-btn:hover { color: #fbf7f2; background: rgba(232,196,154,0.06); }
+  .icon-btn.active {
+    color: #070604;
+    background: linear-gradient(135deg, #e8c49a 0%, #c9825c 100%);
+    box-shadow: 0 0 0 1px rgba(232,196,154,0.4), 0 0 16px rgba(201,130,92,0.28);
+  }
+  .icon-btn .dot {
+    position: absolute; top: 4px; right: 4px;
+    width: 6px; height: 6px; border-radius: 999px;
+    background: #e8c49a; box-shadow: 0 0 6px rgba(232,196,154,0.7);
+  }
+
+  .rail-spacer { flex: 1; }
+
+  .avatar {
+    width: 28px; height: 28px; border-radius: 999px;
+    background: linear-gradient(135deg, #2a2018 0%, #16110c 100%);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.18);
+    display: grid; place-items: center;
+    color: rgba(251,247,242,0.78);
+    font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+  }
+
+  .stage {
+    position: absolute;
+    left: 48px; top: 0; right: 0; bottom: 0;
+    padding: 14px 16px 14px 18px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .title-block { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .eyebrow {
+    font-size: 8.5px; font-weight: 600;
+    letter-spacing: 1.6px; text-transform: uppercase;
+    color: rgba(251,247,242,0.42);
+  }
+  .title {
+    font-size: 15px; font-weight: 500; letter-spacing: 0.1px;
+    color: #f7efe7;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    line-height: 1.25;
+  }
+  .title .dim { color: rgba(251,247,242,0.42); font-style: italic; }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 18px; padding: 0 8px 0 6px; border-radius: 999px;
+    background: rgba(232,196,154,0.08);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.28);
+    font-size: 9px; font-weight: 600; letter-spacing: 0.3px;
+    color: #e8c49a;
+  }
+  .status .pulse {
+    width: 5px; height: 5px; border-radius: 999px;
+    background: #e8c49a; box-shadow: 0 0 6px rgba(232,196,154,0.8);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .panel {
+    position: relative;
+    border-radius: 18px;
+    padding: 12px 14px 13px;
+    background: rgba(22,18,14,0.68);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.13), 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+  .panel-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.6px;
+    color: rgba(251,247,242,0.62); text-transform: uppercase;
+  }
+  .chip-row { display: flex; gap: 4px; }
+  .chip {
+    height: 16px; padding: 0 6px; border-radius: 999px;
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.3px;
+    color: rgba(251,247,242,0.5);
+    background: rgba(232,196,154,0.04);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.08);
+    display: inline-flex; align-items: center;
+  }
+  .chip.on {
+    color: #f7efe7;
+    background: rgba(232,196,154,0.12);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.32);
+  }
+
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .metric {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 9px; border-radius: 12px;
+    background: rgba(232,196,154,0.03);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.07);
+  }
+  .metric .k {
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.7px;
+    text-transform: uppercase; color: rgba(251,247,242,0.42);
+  }
+  .metric .v {
+    font-size: 14px; font-weight: 500; letter-spacing: 0;
+    color: #fbf7f2; font-feature-settings: "tnum" 1;
+  }
+  .metric .d { font-size: 8.5px; font-weight: 600; color: #9bb089; }
+  .metric .d.warn { color: #d99a5b; }
+
+  .spark { margin-top: 10px; height: 26px; width: 100%; display: block; }
+
+  .actions { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 24px; padding: 0 11px; border-radius: 999px;
+    font-size: 9.5px; font-weight: 600; letter-spacing: 0.2px;
+    color: rgba(251,247,242,0.72);
+    background: rgba(232,196,154,0.04);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.12);
+    cursor: pointer;
+    transition: background 140ms ease, box-shadow 140ms ease, color 140ms ease;
+  }
+  .pill svg { width: 11px; height: 11px; }
+  .pill:hover {
+    color: #fbf7f2;
+    background: rgba(232,196,154,0.08);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.28);
+  }
+  .pill.primary {
+    color: #070604;
+    background: linear-gradient(135deg, #f7efe7 0%, #e8c49a 55%, #c9825c 100%);
+    box-shadow: 0 0 0 1px rgba(232,196,154,0.4), 0 0 14px rgba(201,130,92,0.22);
+  }
+  .pill.primary:hover { filter: brightness(1.04); }
+
+  .icon-pill {
+    width: 24px; height: 24px; border-radius: 999px;
+    display: grid; place-items: center;
+    color: rgba(251,247,242,0.5);
+    background: rgba(232,196,154,0.03);
+    box-shadow: inset 0 0 0 1px rgba(232,196,154,0.1);
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+  }
+  .icon-pill:hover { color: #fbf7f2; background: rgba(232,196,154,0.08); }
+  .icon-pill svg { width: 12px; height: 12px; }
+
+  .actions .spacer { flex: 1; }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <nav class="rail" aria-label="Werkzeuge">
+      <div class="brand" title="Plum · Claude Lane">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3c2.5 0 4 1.5 4 4 0 1.2-.4 2.2-1 3 2 .4 3.5 1.9 3.5 4 0 2.8-2.2 5-6.5 5s-6.5-2.2-6.5-5c0-2.1 1.5-3.6 3.5-4-.6-.8-1-1.8-1-3 0-2.5 1.5-4 4-4Z" opacity="0.95"/>
+        </svg>
+      </div>
+      <button class="icon-btn active ui-sans" title="Verlauf" aria-label="Verlauf">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/>
+        </svg>
+      </button>
+      <button class="icon-btn ui-sans" title="Notiz" aria-label="Notiz">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z"/><path d="M9 13h6M9 17h4"/>
+        </svg>
+        <span class="dot"></span>
+      </button>
+      <button class="icon-btn ui-sans" title="Hinweise" aria-label="Hinweise">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/><circle cx="12" cy="12" r="4"/>
+        </svg>
+      </button>
+      <button class="icon-btn ui-sans" title="Einstellungen" aria-label="Einstellungen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+        </svg>
+      </button>
+      <div class="rail-spacer"></div>
+      <div class="avatar ui-sans" title="Verfasser">VA</div>
+    </nav>
+
+    <main class="stage">
+      <div class="top">
+        <div class="title-block">
+          <span class="eyebrow ui-sans">Claude Lane · Legacy</span>
+          <h1 class="title">Fortschritt <span class="dim">— Kapitel III</span></h1>
+        </div>
+        <span class="status ui-sans"><span class="pulse"></span>Bereit</span>
+      </div>
+
+      <section class="panel">
+        <header class="panel-head">
+          <span class="panel-title ui-sans">Verlauf</span>
+          <div class="chip-row ui-sans">
+            <span class="chip on">Heute</span><span class="chip">Woche</span><span class="chip">Monat</span>
+          </div>
+        </header>
+        <div class="metrics">
+          <div class="metric"><span class="k ui-sans">Wörter</span><span class="v">128.4k</span><span class="d ui-sans">+2.3k</span></div>
+          <div class="metric"><span class="k ui-sans">Kapitel</span><span class="v">14</span><span class="d ui-sans">+1</span></div>
+          <div class="metric"><span class="k ui-sans">Offen</span><span class="v">3</span><span class="d warn ui-sans">review</span></div>
+        </div>
+        <svg class="spark" viewBox="0 0 280 26" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#c9825c" stop-opacity="0.4"/>
+              <stop offset="100%" stop-color="#c9825c" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0,20 L20,16 L40,18 L60,11 L80,14 L100,8 L120,12 L140,6 L160,10 L180,5 L200,9 L220,4 L240,8 L260,3 L280,6 L280,26 L0,26 Z" fill="url(#sparkFill)"/>
+          <path d="M0,20 L20,16 L40,18 L60,11 L80,14 L100,8 L120,12 L140,6 L160,10 L180,5 L200,9 L220,4 L240,8 L260,3 L280,6" fill="none" stroke="#e8c49a" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </section>
+
+      <div class="actions">
+        <button class="pill primary ui-sans">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          Fortsetzen
+        </button>
+        <button class="pill ui-sans">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg>
+          Anmerkung
+        </button>
+        <div class="spacer"></div>
+        <button class="icon-pill ui-sans" title="Export" aria-label="Export">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+        </button>
+        <button class="icon-pill ui-sans" title="Mehr" aria-label="Mehr">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+        </button>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

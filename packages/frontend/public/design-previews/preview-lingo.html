@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Lingo — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     LINGO DESIGN SYSTEM — 400×300 THUMBNAIL
+     Duolingo-inspired · bright green · tactile 3D buttons · Nunito
+     ============================================================ */
+  :root {
+    --lg-primary: #58cc02;        /* duo green */
+    --lg-primary-deep: #46a302;   /* 3D shadow darker */
+    --lg-primary-light: #6ee002;
+    --lg-primary-bg: #e5f9d4;
+    --lg-secondary: #ce82ff;      /* purple */
+    --lg-secondary-deep: #a860e0;
+    --lg-secondary-light: #dca5ff;
+    --lg-secondary-bg: #f5e9ff;
+    --lg-success: #58cc02;
+    --lg-warning: #ffc800;
+    --lg-warning-deep: #e0b000;
+    --lg-danger: #ff4b4b;
+    --lg-danger-deep: #d93a3a;
+
+    --lg-surface: #FFFFFF;
+    --lg-surface-2: #f7f9f5;
+    --lg-ink: #3c3c3c;
+    --lg-ink-2: #4f4f4f;
+    --lg-ink-3: #8a8a8a;
+    --lg-ink-4: #b0b0b0;
+    --lg-line: #e5e5e5;
+    --lg-line-2: #f0f0f0;
+
+    --lg-font: 'Nunito', -apple-system, sans-serif;
+    --lg-font-mono: 'JetBrains Mono', monospace;
+
+    --lg-r-sm: 10px;
+    --lg-r-md: 14px;
+    --lg-r-lg: 18px;
+    --lg-r-xl: 24px;
+    --lg-r-pill: 999px;
+
+    /* Tactile 3D shadow system — signature */
+    --lg-3d-green: 0 4px 0 var(--lg-primary-deep);
+    --lg-3d-purple: 0 4px 0 var(--lg-secondary-deep);
+    --lg-3d-warn: 0 4px 0 var(--lg-warning-deep);
+    --lg-3d-ink: 0 4px 0 #2a2a2a;
+    --lg-3d-danger: 0 4px 0 var(--lg-danger-deep);
+    --lg-shadow-soft: 0 2px 8px rgba(60,60,60,0.08);
+    --lg-shadow-float: 0 4px 16px rgba(60,60,60,0.10);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--lg-font);
+    font-size: 12px;
+    color: var(--lg-ink);
+    background: var(--lg-surface);
+    -webkit-font-smoothing: antialiased;
+    font-weight: 700;
+  }
+
+  .frame {
+    width: 400px;
+    height: 300px;
+    padding: 12px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+    background:
+      radial-gradient(160px 100px at 90% 0%, rgba(88,204,2,0.06), transparent 60%),
+      radial-gradient(140px 90px at 10% 100%, rgba(206,130,255,0.05), transparent 60%),
+      var(--lg-surface);
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--lg-surface);
+    border: 2px solid var(--lg-line);
+    border-radius: var(--lg-r-lg);
+    box-shadow: var(--lg-shadow-soft);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    color: var(--lg-primary);
+  }
+  .brand__mark {
+    width: 28px; height: 28px;
+    background: var(--lg-primary);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--lg-surface);
+    box-shadow: var(--lg-3d-green);
+    position: relative;
+  }
+  .brand__mark svg { width: 16px; height: 16px; }
+
+  /* Streak counter — duo signature */
+  .streak {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--lg-warning-deep);
+  }
+  .streak svg { width: 16px; height: 16px; }
+
+  /* Gems counter */
+  .gems {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--lg-secondary-deep);
+  }
+  .gems svg { width: 16px; height: 16px; }
+
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--lg-secondary);
+    box-shadow: var(--lg-3d-purple);
+    display: grid; place-items: center;
+    color: var(--lg-surface);
+    font-weight: 800;
+    font-size: 11px;
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  /* LEFT — lesson hero card */
+  .hero {
+    background: var(--lg-surface);
+    border: 2px solid var(--lg-line);
+    border-radius: var(--lg-r-lg);
+    padding: 14px 16px;
+    box-shadow: var(--lg-shadow-float);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Section label with icon */
+  .hero__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--lg-primary-deep);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .hero__label svg { width: 14px; height: 14px; }
+
+  /* Book/title */
+  .hero__title {
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    color: var(--lg-ink);
+  }
+  .hero__title span { color: var(--lg-primary); }
+
+  .hero__sub {
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--lg-ink-3);
+    max-width: 28ch;
+  }
+
+  /* Progress bar — duo signature */
+  .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .progress {
+    flex: 1;
+    height: 16px;
+    background: var(--lg-line-2);
+    border-radius: var(--lg-r-pill);
+    overflow: hidden;
+    position: relative;
+  }
+  .progress__fill {
+    height: 100%;
+    width: 68%;
+    background: var(--lg-primary);
+    border-radius: var(--lg-r-pill);
+    position: relative;
+    /* glossy highlight */
+    box-shadow: inset 0 -3px 0 var(--lg-primary-deep);
+  }
+  .progress__fill::after {
+    content: "";
+    position: absolute;
+    top: 3px; left: 4px; right: 4px;
+    height: 4px;
+    background: rgba(255,255,255,0.35);
+    border-radius: var(--lg-r-pill);
+  }
+  .progress__pct {
+    font-family: var(--lg-font);
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--lg-primary-deep);
+  }
+
+  /* Tactile 3D button — THE signature */
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 40px;
+    padding: 0 18px;
+    border: none;
+    border-radius: var(--lg-r-md);
+    font-family: var(--lg-font);
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--lg-surface);
+    background: var(--lg-primary);
+    box-shadow: var(--lg-3d-green);
+    transition: transform .1s ease, box-shadow .1s ease;
+  }
+  .btn:hover { background: var(--lg-primary-light); }
+  /* Pressed state — 3D shadow shrinks, button moves down */
+  .btn:active {
+    transform: translateY(4px);
+    box-shadow: 0 0 0 var(--lg-primary-deep);
+  }
+  .btn--purple {
+    background: var(--lg-secondary);
+    box-shadow: var(--lg-3d-purple);
+    height: 40px;
+  }
+  .btn--purple:hover { background: var(--lg-secondary-light); }
+  .btn--purple:active { transform: translateY(4px); box-shadow: 0 0 0 var(--lg-secondary-deep); }
+  .btn--ghost {
+    background: var(--lg-surface);
+    border: 2px solid var(--lg-line);
+    color: var(--lg-ink-2);
+    box-shadow: 0 4px 0 var(--lg-line);
+    text-transform: none;
+    font-size: 13px;
+    height: 40px;
+  }
+  .btn--ghost:active { transform: translateY(4px); box-shadow: 0 0 0 var(--lg-line); }
+  .btn svg { width: 14px; height: 14px; }
+
+  /* RIGHT — stat + character card stack */
+  .right {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  /* Daily goal stat card */
+  .stat-card {
+    background: var(--lg-surface);
+    border: 2px solid var(--lg-line);
+    border-radius: var(--lg-r-lg);
+    padding: 10px 14px;
+    box-shadow: var(--lg-shadow-soft);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .stat-card__icon {
+    width: 36px; height: 36px;
+    background: var(--lg-primary-bg);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--lg-primary-deep);
+    flex-shrink: 0;
+  }
+  .stat-card__icon svg { width: 18px; height: 18px; }
+  .stat-card__body { flex: 1; }
+  .stat-card__label {
+    font-size: 9px;
+    font-weight: 800;
+    color: var(--lg-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+  .stat-card__value {
+    font-size: 20px;
+    font-weight: 900;
+    color: var(--lg-ink);
+    line-height: 1.1;
+    margin-top: 1px;
+  }
+  .stat-card__value span {
+    font-size: 11px;
+    color: var(--lg-ink-3);
+    font-weight: 700;
+  }
+
+  /* Character card — mascot energy */
+  .char-card {
+    background: var(--lg-secondary-bg);
+    border: 2px solid var(--lg-secondary-light);
+    border-radius: var(--lg-r-lg);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .char-card__bubble {
+    background: var(--lg-surface);
+    border: 2px solid var(--lg-line);
+    border-radius: var(--lg-r-md);
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--lg-ink);
+    line-height: 1.3;
+    text-align: center;
+    position: relative;
+    z-index: 1;
+  }
+  /* Speech bubble tail */
+  .char-card__bubble::after {
+    content: "";
+    position: absolute;
+    bottom: -7px; left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 7px solid var(--lg-surface);
+  }
+  .char-card__mascot {
+    width: 50px; height: 50px;
+    margin: 6px auto 0;
+    position: relative;
+    z-index: 1;
+  }
+  .char-card__mascot svg { width: 100%; height: 100%; }
+  .char-card__name {
+    text-align: center;
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--lg-secondary-deep);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Lingo design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+      </span>
+      <span>lingo</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <span class="streak">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C9 6 7 8 7 12a5 5 0 0 0 10 0c0-2-1-4-2-5 0 2-1 3-2 3 1-3-1-6-1-8z"/></svg>
+        28
+      </span>
+      <span class="gems">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 2 9l10 13L22 9 12 2z"/></svg>
+        548
+      </span>
+      <div class="avatar" aria-label="User">NL</div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: lesson hero -->
+    <article class="hero">
+      <span class="hero__label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        Unit 4 · Lesson 12
+      </span>
+      <h1 class="hero__title">Past <span>tense</span><br>verbs</h1>
+      <p class="hero__sub">Learn how to talk about things that already happened. 5 quick exercises.</p>
+
+      <div class="progress-row">
+        <div class="progress"><div class="progress__fill"></div></div>
+        <span class="progress__pct">68%</span>
+      </div>
+
+      <div class="hero__cta">
+        <button class="btn" type="button">
+          Continue
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </article>
+
+    <!-- RIGHT: stat + mascot -->
+    <aside class="right">
+
+      <!-- Daily goal -->
+      <div class="stat-card">
+        <div class="stat-card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="stat-card__body">
+          <div class="stat-card__label">Daily goal</div>
+          <div class="stat-card__value">14<span>/20 min</span></div>
+        </div>
+      </div>
+
+      <!-- Mascot character card -->
+      <div class="char-card">
+        <div class="char-card__bubble">
+          Great job! You're on fire! 🔥
+        </div>
+        <!-- Owl mascot SVG -->
+        <div class="char-card__mascot" aria-hidden="true">
+          <svg viewBox="0 0 60 60">
+            <!-- body -->
+            <ellipse cx="30" cy="38" rx="22" ry="20" fill="#58cc02" stroke="#3c3c3c" stroke-width="2"/>
+            <!-- belly -->
+            <ellipse cx="30" cy="42" rx="14" ry="12" fill="#d5f5b8"/>
+            <!-- eyes -->
+            <circle cx="22" cy="28" r="6" fill="#fff" stroke="#3c3c3c" stroke-width="1.5"/>
+            <circle cx="38" cy="28" r="6" fill="#fff" stroke="#3c3c3c" stroke-width="1.5"/>
+            <circle cx="22" cy="29" r="3" fill="#3c3c3c"/>
+            <circle cx="38" cy="29" r="3" fill="#3c3c3c"/>
+            <circle cx="23" cy="28" r="1" fill="#fff"/>
+            <circle cx="39" cy="28" r="1" fill="#fff"/>
+            <!-- beak -->
+            <path d="M 27 33 L 30 38 L 33 33 Z" fill="#ffc800" stroke="#3c3c3c" stroke-width="1"/>
+            <!-- ears -->
+            <path d="M 12 22 L 16 14 L 20 22 Z" fill="#58cc02" stroke="#3c3c3c" stroke-width="1.5"/>
+            <path d="M 40 22 L 44 14 L 48 22 Z" fill="#58cc02" stroke="#3c3c3c" stroke-width="1.5"/>
+            <!-- feet -->
+            <ellipse cx="24" cy="58" rx="4" ry="2" fill="#ffc800" stroke="#3c3c3c" stroke-width="1"/>
+            <ellipse cx="36" cy="58" rx="4" ry="2" fill="#ffc800" stroke="#3c3c3c" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="char-card__name">Owly</div>
+      </div>
+
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

@@ -21,7 +21,7 @@ import type {
   ApiResponse,
   DiscoveredProject,
   CLIProvider,
-} from '@claude-code-webui/shared';
+} from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface DiscoveredProjectsProps {

@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Editorial — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gelasio:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=Ubuntu+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     EDITORIAL DESIGN SYSTEM — 400×300 THUMBNAIL
+     Magazine · serif · structured grid · columns · elegant reading
+     ============================================================ */
+  :root {
+    --ed-primary: #111111;
+    --ed-primary-2: #2A2A2A;
+    --ed-secondary: #F1F1F1;
+    --ed-secondary-2: #E5E5E5;
+    --ed-success: #16A34A;
+    --ed-warning: #D97706;
+    --ed-danger: #DC2626;
+    --ed-accent: #8B1A1A;       /* deep red editorial accent */
+
+    --ed-surface: #FFFFFF;
+    --ed-paper: #FCFBF7;        /* faintly warm paper */
+    --ed-ink: #111827;
+    --ed-ink-2: #4A4A4A;
+    --ed-ink-3: #767676;
+    --ed-ink-4: #A8A8A8;
+    --ed-line: #111111;
+    --ed-line-2: #D6D6D6;
+    --ed-line-3: #EAEAEA;
+
+    --ed-font: 'Gelasio', 'Source Serif Pro', Georgia, serif;
+    --ed-font-mono: 'Ubuntu Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ed-font);
+    font-size: 12px;
+    color: var(--ed-ink);
+    background: var(--ed-paper);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "kern", "liga", "onum";
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--ed-paper);
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    border-right: 1px solid var(--ed-line);
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--ed-line);
+    background: var(--ed-surface);
+  }
+  .masthead__left, .masthead__right {
+    padding: 4px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--ed-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ed-ink-2);
+  }
+  .masthead__left { border-right: 1px solid var(--ed-line-2); }
+  .masthead__right {
+    border-left: 1px solid var(--ed-line-2);
+    color: var(--ed-accent);
+  }
+  .masthead__sep { color: var(--ed-ink-4); }
+
+  /* ============ TITLE BAR ============ */
+  .titlebar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 8px 14px 10px;
+    border-bottom: 1px solid var(--ed-line);
+  }
+  .wordmark {
+    font-family: var(--ed-font);
+    font-weight: 700;
+    font-size: 26px;
+    letter-spacing: -0.02em;
+    color: var(--ed-primary);
+    line-height: 1;
+    font-style: italic;
+  }
+  .wordmark__sub {
+    display: block;
+    font-family: var(--ed-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ed-ink-3);
+    margin-top: 4px;
+    font-style: normal;
+  }
+  .titlebar__nav {
+    display: flex;
+    gap: 14px;
+    font-family: var(--ed-font);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ed-ink-3);
+  }
+  .titlebar__nav a {
+    text-decoration: none;
+    color: inherit;
+    padding-bottom: 2px;
+    border-bottom: 1px solid transparent;
+    transition: border-color .15s ease;
+  }
+  .titlebar__nav a:hover { color: var(--ed-ink); border-bottom-color: var(--ed-ink); }
+  .titlebar__nav a.is-active {
+    color: var(--ed-primary);
+    border-bottom-color: var(--ed-accent);
+    font-weight: 600;
+  }
+
+  /* ============ MAIN GRID (2-column editorial layout) ============ */
+  .body {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    overflow: hidden;
+  }
+
+  /* LEFT — feature article */
+  .article {
+    padding: 12px 14px 10px;
+    border-right: 1px solid var(--ed-line);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+  }
+  .article__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--ed-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ed-ink-3);
+  }
+  .article__section {
+    color: var(--ed-accent);
+    font-weight: 700;
+  }
+  .article__sep { color: var(--ed-ink-4); }
+
+  /* Magazine headline — serif, large, with italic accent */
+  .article__headline {
+    font-family: var(--ed-font);
+    font-weight: 700;
+    font-size: 26px;
+    line-height: 1.04;
+    letter-spacing: -0.018em;
+    color: var(--ed-primary);
+    margin: 4px 0 2px;
+  }
+  .article__headline em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ed-ink);
+  }
+
+  /* Lede with dropcap */
+  .article__lede {
+    font-family: var(--ed-font);
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--ed-ink-2);
+    font-weight: 400;
+    margin-top: 4px;
+  }
+  .article__lede::first-letter {
+    font-family: var(--ed-font);
+    font-weight: 700;
+    font-size: 36px;
+    line-height: 0.85;
+    float: left;
+    margin: 3px 6px 0 0;
+    color: var(--ed-accent);
+    font-style: normal;
+  }
+
+  /* Byline */
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 6px;
+    border-top: 1px solid var(--ed-line-3);
+    font-family: var(--ed-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ed-ink-3);
+  }
+  .byline__author {
+    color: var(--ed-primary);
+    font-weight: 700;
+  }
+
+  .article__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 4px 0;
+    font-family: var(--ed-font);
+    font-size: 11px;
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ed-primary);
+    border-bottom: 1.5px solid var(--ed-accent);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .article__cta::after {
+    content: "→";
+    margin-left: 4px;
+    color: var(--ed-accent);
+    font-style: normal;
+  }
+
+  /* RIGHT — "In this issue" index */
+  .index {
+    padding: 12px 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--ed-secondary);
+  }
+  .index__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 5px;
+    border-bottom: 1.5px solid var(--ed-primary);
+  }
+  .index__title {
+    font-family: var(--ed-font);
+    font-style: italic;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--ed-primary);
+    line-height: 1;
+  }
+  .index__count {
+    font-family: var(--ed-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--ed-ink-3);
+    letter-spacing: 0.08em;
+  }
+
+  .index__list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 1;
+  }
+  .index__item {
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    gap: 6px;
+    align-items: baseline;
+    padding: 3px 0;
+    border-bottom: 1px dotted var(--ed-line-2);
+  }
+  .index__item:last-child { border-bottom: none; }
+  .index__num {
+    font-family: var(--ed-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--ed-accent);
+    letter-spacing: 0.04em;
+  }
+  .index__text {
+    font-family: var(--ed-font);
+    font-size: 11px;
+    color: var(--ed-ink);
+    line-height: 1.25;
+  }
+  .index__text em {
+    font-style: italic;
+    color: var(--ed-ink-2);
+  }
+  .index__page {
+    font-family: var(--ed-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--ed-ink-3);
+  }
+
+  /* Featured callout at bottom of index */
+  .index__feature {
+    margin-top: 4px;
+    padding: 8px 10px;
+    background: var(--ed-primary);
+    color: var(--ed-surface);
+    border-radius: 0;
+  }
+  .index__feature-label {
+    font-family: var(--ed-font-mono);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ed-secondary);
+    opacity: 0.7;
+  }
+  .index__feature-title {
+    font-family: var(--ed-font);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 12px;
+    color: var(--ed-surface);
+    line-height: 1.15;
+    margin-top: 2px;
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 14px;
+    background: var(--ed-primary);
+    color: var(--ed-surface);
+    border-top: 2px solid var(--ed-primary);
+    font-family: var(--ed-font-mono);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .footer__accent { color: var(--ed-accent); }
+  .footer__price {
+    color: var(--ed-secondary);
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Editorial design language preview">
+
+  <!-- ===== MASTHEAD ===== -->
+  <header class="masthead">
+    <div class="masthead__left">
+      <span>Vol. XLVII</span>
+      <span class="masthead__sep">·</span>
+      <span>No. 12</span>
+      <span class="masthead__sep">·</span>
+      <span>November 2025</span>
+    </div>
+    <div class="masthead__right">
+      <span>$8.50</span>
+      <span class="masthead__sep" style="color:var(--ed-ink-4);">·</span>
+      <span>canada $11</span>
+    </div>
+  </header>
+
+  <!-- ===== TITLE BAR ===== -->
+  <section class="titlebar">
+    <div>
+      <h1 class="wordmark">The Mercury</h1>
+      <span class="wordmark__sub">a review of ideas · since 1978</span>
+    </div>
+    <nav class="titlebar__nav" aria-label="Primary">
+      <a href="#" class="is-active">Current</a>
+      <a href="#">Archive</a>
+      <a href="#">Subscribe</a>
+    </nav>
+  </section>
+
+  <!-- ===== BODY ===== -->
+  <section class="body">
+
+    <!-- LEFT: feature article -->
+    <article class="article">
+      <div class="article__meta">
+        <span class="article__section">Essay</span>
+        <span class="article__sep">·</span>
+        <span>The Cover Story</span>
+      </div>
+
+      <h2 class="article__headline">
+        On the slow<br>
+        <em>weight</em> of attention.
+      </h2>
+
+      <p class="article__lede">
+        In an age that prizes speed above all else, the deliberate act of reading — of dwelling on a single page — has become a quiet form of resistance. We argue it is the most important one left.
+      </p>
+
+      <a href="#" class="article__cta">Continue reading</a>
+
+      <div class="byline">
+        <span>By</span>
+        <span class="byline__author">Eleanor Vance</span>
+        <span class="article__sep">·</span>
+        <span>14 min</span>
+        <span class="article__sep">·</span>
+        <span>p. 24</span>
+      </div>
+    </article>
+
+    <!-- RIGHT: in this issue index -->
+    <aside class="index">
+      <div class="index__head">
+        <h3 class="index__title">In this issue</h3>
+        <span class="index__count">8 pieces</span>
+      </div>
+
+      <div class="index__list">
+        <div class="index__item">
+          <span class="index__num">01</span>
+          <span class="index__text">The architecture of <em>doubt</em></span>
+          <span class="index__page">p. 12</span>
+        </div>
+        <div class="index__item">
+          <span class="index__num">02</span>
+          <span class="index__text">Letters from a <em>quiet city</em></span>
+          <span class="index__page">p. 18</span>
+        </div>
+        <div class="index__item">
+          <span class="index__num">03</span>
+          <span class="index__text">Notes on the <em>long form</em></span>
+          <span class="index__page">p. 31</span>
+        </div>
+        <div class="index__item">
+          <span class="index__num">04</span>
+          <span class="index__text">A bibliography, <em>annotated</em></span>
+          <span class="index__page">p. 44</span>
+        </div>
+      </div>
+
+      <div class="index__feature">
+        <div class="index__feature-label">— Featured —</div>
+        <div class="index__feature-title">"What we lose when we stop reading slowly."</div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__accent">●</span> editorial · serif · structured</span>
+    <span class="footer__price">mercury.press · subscribe →</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Riso — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@100;200;300;400;500;600;700&family=Overpass+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     RISO DESIGN SYSTEM — 400×300 THUMBNAIL
+     Two-color risograph · pink + federal blue on warm paper
+     Space Grotesk display · offset print shadow · dot overlap
+     ============================================================ */
+  :root {
+    --rs-primary:    #F237A1;   /* fluorescent pink — sole interaction color */
+    --rs-primary-2:  #D91A86;
+    --rs-primary-soft: rgba(242,55,161,0.12);
+    --rs-secondary:  #2C40A7;   /* federal blue — headings + offset shadow */
+    --rs-secondary-2:#1F2F7A;
+    --rs-success:    #16A34A;
+    --rs-warning:    #D97706;
+    --rs-danger:     #DC2626;
+
+    --rs-paper:      #FBF6EC;   /* warm off-white paper */
+    --rs-paper-2:    #F5EEDF;
+    --rs-paper-3:    #EFE6D2;
+
+    --rs-ink:        #111827;
+    --rs-ink-2:      #374151;
+    --rs-ink-3:      #6B7280;
+    --rs-ink-4:      #9CA3AF;
+
+    --rs-font:    'Space Grotesk', -apple-system, sans-serif;
+    --rs-font-m:  'Overpass Mono', ui-monospace, monospace;
+
+    /* riso offset shadow = blue printed slightly off-register */
+    --rs-offset-p: 3px 3px 0 var(--rs-primary);
+    --rs-offset-b: 3px 3px 0 var(--rs-secondary);
+    --rs-offset-b2: 4px 4px 0 var(--rs-secondary);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--rs-font);
+    font-size: 12px;
+    color: var(--rs-ink);
+    background: var(--rs-paper);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — single warm paper surface + riso dot textures
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: var(--rs-paper);
+    isolation: isolate;
+  }
+  /* pink dot field bottom-right */
+  .dots-pink {
+    position: absolute;
+    z-index: 1;
+    right: -20px; bottom: -20px;
+    width: 200px; height: 200px;
+    pointer-events: none;
+    opacity: 0.55;
+    background-image: radial-gradient(var(--rs-primary) 1.4px, transparent 1.8px);
+    background-size: 7px 7px;
+    -webkit-mask-image: radial-gradient(circle at 70% 70%, #000 10%, transparent 65%);
+            mask-image: radial-gradient(circle at 70% 70%, #000 10%, transparent 65%);
+  }
+  /* blue dot field top-left */
+  .dots-blue {
+    position: absolute;
+    z-index: 1;
+    left: -20px; top: -20px;
+    width: 180px; height: 180px;
+    pointer-events: none;
+    opacity: 0.45;
+    background-image: radial-gradient(var(--rs-secondary) 1.4px, transparent 1.8px);
+    background-size: 7px 7px;
+    -webkit-mask-image: radial-gradient(circle at 30% 30%, #000 10%, transparent 65%);
+            mask-image: radial-gradient(circle at 30% 30%, #000 10%, transparent 65%);
+  }
+  /* paper grain */
+  .grain {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.4;
+    background-image: radial-gradient(rgba(17,24,39,0.04) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 14px 20px 12px;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--rs-secondary);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    position: relative;
+    width: 24px; height: 24px;
+    display: grid;
+    place-items: center;
+  }
+  .brand__mark::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--rs-primary);
+    border-radius: 50%;
+    transform: translate(2px, 2px);  /* misregistration */
+  }
+  .brand__mark::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--rs-secondary);
+    border-radius: 50%;
+    -webkit-mask-image: radial-gradient(circle, transparent 38%, #000 40%);
+            mask-image: radial-gradient(circle, transparent 38%, #000 40%);
+  }
+  .brand__name {
+    font-family: var(--rs-font);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--rs-secondary);
+    text-shadow: var(--rs-offset-p);
+  }
+  .brand__name em {
+    font-style: normal;
+    color: var(--rs-primary);
+    text-shadow: var(--rs-offset-b);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--rs-ink-2);
+    letter-spacing: -0.01em;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .18s ease;
+  }
+  .nav a:hover { color: var(--rs-primary); }
+  .nav a.is-active {
+    color: var(--rs-primary);
+    font-weight: 600;
+  }
+  .nav a.is-active::after {
+    content: "";
+    display: block;
+    height: 2px;
+    background: var(--rs-primary);
+    border-radius: 1px;
+    margin-top: 3px;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 18px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    font-family: var(--rs-font-m);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--rs-primary);
+    padding: 3px 8px;
+    background: var(--rs-primary-soft);
+    border-radius: 4px;
+  }
+  .hero__title {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    color: var(--rs-secondary);
+    text-shadow: var(--rs-offset-p);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--rs-primary);
+    text-shadow: var(--rs-offset-b);
+  }
+  .hero__sub {
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+    color: var(--rs-ink-2);
+    max-width: 30ch;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 30px;
+    padding: 0 16px;
+    border: 2px solid var(--rs-secondary);
+    border-radius: 0;
+    font-family: var(--rs-font);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn--primary {
+    background: var(--rs-primary);
+    color: var(--rs-paper);
+    border-color: var(--rs-secondary);
+    box-shadow: var(--rs-offset-b);
+  }
+  .btn--primary:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--rs-secondary);
+  }
+  .btn--ghost {
+    background: transparent;
+    color: var(--rs-secondary);
+    border: none;
+    padding: 0 4px;
+    height: auto;
+    font-weight: 500;
+  }
+  .btn--ghost:hover { color: var(--rs-primary); }
+  .btn--ghost::after { content: " →"; font-weight: 600; }
+
+  /* ============================================================
+     RIGHT: RISO PRINT CARD
+     Signature — pink/blue two-color with offset shadow,
+     dot texture overlap, chunky offset title block.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 14px 14px 12px;
+    background: var(--rs-paper);
+    border: 2px solid var(--rs-secondary);
+    box-shadow: var(--rs-offset-p);
+    overflow: hidden;
+  }
+  /* blue dot overlay inside card (riso second pass) */
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.10;
+    background-image: radial-gradient(var(--rs-secondary) 1px, transparent 1.3px);
+    background-size: 5px 5px;
+  }
+  /* pink dot corner */
+  .card::after {
+    content: "";
+    position: absolute;
+    right: -30px; top: -30px;
+    width: 90px; height: 90px;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image: radial-gradient(var(--rs-primary) 1.2px, transparent 1.6px);
+    background-size: 6px 6px;
+    -webkit-mask-image: radial-gradient(circle, #000 20%, transparent 70%);
+            mask-image: radial-gradient(circle, #000 20%, transparent 70%);
+  }
+
+  .card__head {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .card__label {
+    font-family: var(--rs-font-m);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--rs-secondary);
+  }
+  .card__num {
+    font-family: var(--rs-font);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--rs-primary);
+    line-height: 1;
+    text-shadow: var(--rs-offset-b);
+    letter-spacing: -0.04em;
+  }
+
+  .metric {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .metric__value {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.045em;
+    color: var(--rs-secondary);
+    text-shadow: var(--rs-offset-p);
+  }
+  .metric__unit {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--rs-ink-2);
+  }
+  .metric__delta {
+    margin-left: auto;
+    align-self: center;
+    font-family: var(--rs-font-m);
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--rs-paper);
+    background: var(--rs-primary);
+    padding: 3px 7px;
+  }
+
+  .bars {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 26px;
+    margin-bottom: 10px;
+  }
+  .bars i {
+    flex: 1;
+    background: var(--rs-secondary);
+    border-radius: 1px;
+    min-height: 3px;
+    position: relative;
+  }
+  .bars i::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--rs-primary);
+    transform: translate(1.5px, 1.5px);  /* riso offset on bars */
+    border-radius: 1px;
+  }
+  .bars i.peak {
+    background: var(--rs-primary);
+  }
+  .bars i.peak::after {
+    background: var(--rs-secondary);
+  }
+
+  .card__row {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 8px;
+    border-top: 2px solid var(--rs-paper-3);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    background: var(--rs-secondary);
+    color: var(--rs-paper);
+    font-family: var(--rs-font-m);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .meta {
+    font-family: var(--rs-font-m);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--rs-ink-3);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 2px solid var(--rs-secondary);
+    padding-top: 9px;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 16px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.1;
+  }
+  .stat__k {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--rs-secondary);
+  }
+  .stat__k span {
+    font-size: 9.5px;
+    color: var(--rs-ink-3);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+  .stat__l {
+    font-family: var(--rs-font-m);
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--rs-ink-3);
+  }
+  .footer__meta {
+    font-family: var(--rs-font-m);
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--rs-ink-3);
+  }
+  .footer__meta b { color: var(--rs-primary); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Riso design language preview — two-color print">
+
+  <div class="grain" aria-hidden="true"></div>
+  <div class="dots-blue" aria-hidden="true"></div>
+  <div class="dots-pink" aria-hidden="true"></div>
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Ris<em>o</em>press</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Prints</a>
+        <a href="#">Studio</a>
+        <a href="#">Shop</a>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">★ New series · 2025</span>
+        <h1 class="hero__title">Print that <em>pops</em>.</h1>
+        <p class="hero__sub">Two-color risograph prints with that perfect misregistered charm. Hand-fed, limited runs.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Browse prints</button>
+          <button class="btn btn--ghost" type="button">Studio</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: riso print card -->
+      <div class="card" aria-label="Series spotlight">
+        <div class="card__head">
+          <span class="card__label">Series Spotlight</span>
+          <span class="card__num">N°7</span>
+        </div>
+
+        <div class="metric">
+          <span class="metric__value">48</span>
+          <span class="metric__unit">/50 sold</span>
+          <span class="metric__delta">+18 today</span>
+        </div>
+
+        <div class="bars" aria-hidden="true">
+          <i style="height:30%"></i>
+          <i style="height:45%"></i>
+          <i style="height:38%"></i>
+          <i style="height:58%"></i>
+          <i class="peak" style="height:88%"></i>
+          <i style="height:70%"></i>
+          <i style="height:62%"></i>
+          <i style="height:52%"></i>
+        </div>
+
+        <div class="card__row">
+          <span class="chip">Limited</span>
+          <span class="meta">Edition · 50 copies</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">2<span>color</span></span>
+          <span class="stat__l">Process</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">A3<span> format</span></span>
+          <span class="stat__l">Paper</span>
+        </div>
+      </div>
+      <span class="footer__meta">Riso · <b>#F237A1</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Loader2, Plus, Minus, FileCode } from 'lucide-react';
 import { api } from '@/services/api';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { ApiResponse, GitFileDiff } from '@claude-code-webui/shared';
+import type { ApiResponse, GitFileDiff } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface GitDiffViewerProps {

@@ -84,3 +84,41 @@ export interface DiscoveredProject {
   lastModified: string;
   sessionFiles: string[];
 }
+
+// Android Builder / ADB device types
+export interface AndroidLiveDevice {
+  serial: string;
+  state?: string;
+  model?: string;
+  product?: string;
+  device?: string;
+  transportId?: string | number;
+  friendlyName?: string;
+  [key: string]: unknown;
+}
+
+export interface AndroidKnownDevice {
+  serial: string;
+  host?: string;
+  port?: number;
+  friendlyName?: string;
+  autoReconnect?: boolean;
+  lastSeenAt?: string;
+  lastConnectedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface AndroidDeviceSnapshot {
+  live: AndroidLiveDevice[];
+  known: AndroidKnownDevice[];
+  selectedSerial: string | null;
+  selectedDevice: AndroidLiveDevice | AndroidKnownDevice | null;
+}
+
+export interface AndroidPairResult {
+  pair: unknown;
+  connect: unknown | null;
+  connectError?: string;
+  selectedSerial: string | null;
+  devices: AndroidDeviceSnapshot;
+}

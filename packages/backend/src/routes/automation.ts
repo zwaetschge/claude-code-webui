@@ -6,6 +6,8 @@ import {
   type Response,
 } from 'express';
 import crypto from 'crypto';
+import path from 'path';
+import fs from 'fs/promises';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
@@ -16,6 +18,15 @@ import { safeJsonParse } from '../utils/json';
 import { recordAudit } from '../utils/auditLog';
 import { getProcessManager } from '../websocket';
 import type { SessionRuntimeSnapshot } from '../services/claude/ClaudeProcessManager';
+import { discordIntegrationService, discordNotifier } from '../services/discord';
+import { isAllowedBasePath } from '../utils/allowedPaths';
+import type {
+  CLIProvider,
+  DiscordAlertEventType,
+  DiscordAlertSeverity,
+  DiscordMaintenancePolicy,
+  SessionMode,
+} from '@plum-code-webui/shared';
 
 const router = Router();
 
@@ -28,6 +39,10 @@ const automationScopeValues = [
   'goals:write',
 ] as const;
 type AutomationScope = (typeof automationScopeValues)[number];
+
+const cliProviderValues = ['claude', 'codex', 'opencode', 'vibe'] as const;
+const sessionModeValues = ['planning', 'auto-accept', 'manual', 'danger'] as const;
+const sessionSurfaceValues = ['code', 'task'] as const;
 
 const defaultAutomationScopes: AutomationScope[] = [
   'sessions:read',
@@ -122,6 +137,25 @@ const createGoalSchema = z.object({
   status: z.enum(goalStatusValues).optional().default('pending'),
   priority: z.number().int().min(-100).max(100).optional().default(0),
   metadata: z.record(z.unknown()).optional(),
+});
+
+const optionalNonEmptyString = (maxLength: number) =>
+  z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).max(maxLength).optional()
+  );
+
+const createAutomationSessionSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  workingDirectory: optionalNonEmptyString(2048),
+  cliProvider: z.enum(cliProviderValues).optional().default('codex'),
+  cliModel: z.string().trim().min(1).max(200).nullable().optional(),
+  cliReasoning: z.string().trim().min(1).max(50).nullable().optional(),
+  cliServiceTier: z.enum(['fast']).nullable().optional(),
+  mode: z.enum(sessionModeValues).optional().default('auto-accept'),
+  surface: z.enum(sessionSurfaceValues).optional().default('code'),
+  goal: createGoalSchema.optional(),
+  initialMessage: z.string().trim().min(1).max(50_000).optional(),
 });
 
 const updateGoalSchema = z.object({
@@ -283,6 +317,57 @@ function formatGoal(row: GoalRow): Record<string, unknown> {
   };
 }
 
+function goalSeverity(status: GoalStatus): DiscordAlertSeverity {
+  if (status === 'blocked') return 'warning';
+  if (status === 'cancelled') return 'warning';
+  return 'info';
+}
+
+function goalEventType(status: GoalStatus, fallback: DiscordAlertEventType): DiscordAlertEventType {
+  if (status === 'completed') return 'goal.completed';
+  return fallback;
+}
+
+function queueGoalNotification(
+  row: GoalRow,
+  principal: AutomationPrincipal,
+  input: {
+    eventType: DiscordAlertEventType;
+    severity?: DiscordAlertSeverity;
+    title: string;
+    summary: string;
+    previousStatus?: GoalStatus | null;
+  }
+): void {
+  try {
+    discordNotifier.queueAlert({
+      eventType: input.eventType,
+      severity: input.severity ?? goalSeverity(row.status),
+      title: input.title,
+      summary: input.summary,
+      userId: principal.userId,
+      sessionId: row.sessionId,
+      fields: [
+        { name: 'Goal status', value: row.status, inline: true },
+        ...(input.previousStatus
+          ? [{ name: 'Previous status', value: input.previousStatus, inline: true }]
+          : []),
+        { name: 'Session', value: row.sessionName || row.sessionId, inline: true },
+        { name: 'Goal ID', value: row.id, inline: true },
+        ...(principal.tokenId
+          ? [{ name: 'Actor', value: `automation token ${principal.tokenId}`, inline: true }]
+          : [{ name: 'Actor', value: 'user', inline: true }]),
+      ],
+      metadata: {
+        workingDirectory: row.workingDirectory,
+        priority: row.priority,
+      },
+    });
+  } catch (err) {
+    console.warn('[DISCORD] Failed to queue goal notification:', err);
+  }
+}
+
 function runtimeFor(sessionId: string): SessionRuntimeSnapshot {
   return getProcessManager().getSessionRuntimeSnapshot(sessionId);
 }
@@ -390,6 +475,92 @@ function parseGoalStatusFilter(raw: string | undefined): GoalStatus[] | null {
     }
   }
   return statuses as GoalStatus[];
+}
+
+function sanitizeSessionFolderName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[äöüß]/g, (char) => {
+      const map: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' };
+      return map[char] || char;
+    })
+    .replace(/[^a-z0-9-_]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .substring(0, 100);
+}
+
+async function ensureDir(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true });
+}
+
+async function resolveAutomationWorkingDirectory(
+  userId: string,
+  sessionName: string,
+  providedWorkingDir: string | undefined
+): Promise<string> {
+  if (providedWorkingDir) {
+    const workingDirectory = path.resolve(providedWorkingDir);
+    if (!isAllowedBasePath(workingDirectory)) {
+      throw new AppError('Working directory not allowed', 400, 'INVALID_PATH');
+    }
+
+    try {
+      const stat = await fs.stat(workingDirectory);
+      if (!stat.isDirectory()) {
+        throw new AppError('Path is not a directory', 400, 'NOT_A_DIRECTORY');
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new AppError('Directory does not exist', 400, 'DIR_NOT_FOUND');
+      }
+      throw err;
+    }
+    return workingDirectory;
+  }
+
+  const settings = getDatabase()
+    .prepare('SELECT default_working_dir as defaultWorkingDir FROM user_settings WHERE user_id = ?')
+    .get(userId) as { defaultWorkingDir: string | null } | undefined;
+
+  const defaultWorkingDir = settings?.defaultWorkingDir;
+  if (!defaultWorkingDir) {
+    throw new AppError(
+      'Please set a default working directory in Settings first',
+      400,
+      'NO_DEFAULT_DIR'
+    );
+  }
+
+  const folderName = sanitizeSessionFolderName(sessionName);
+  if (!folderName) {
+    throw new AppError('Session name must contain valid characters', 400, 'INVALID_NAME');
+  }
+
+  const workingDirectory = path.join(defaultWorkingDir, folderName);
+  if (!isAllowedBasePath(workingDirectory)) {
+    throw new AppError('Working directory not allowed', 400, 'INVALID_PATH');
+  }
+
+  await ensureDir(workingDirectory);
+  return workingDirectory;
+}
+
+function resolveAutomationSessionMode(
+  requestedMode: SessionMode,
+  principal: AutomationPrincipal,
+  maintenancePolicy: DiscordMaintenancePolicy
+): { mode: SessionMode; requestedMode: SessionMode; adjusted: boolean } {
+  if (
+    principal.type === 'automation_token' &&
+    maintenancePolicy === 'approval_required' &&
+    requestedMode !== 'manual' &&
+    requestedMode !== 'planning'
+  ) {
+    return { mode: 'manual', requestedMode, adjusted: true };
+  }
+
+  return { mode: requestedMode, requestedMode, adjusted: false };
 }
 
 function assertGoalOwnership(goalId: string, userId: string): GoalRow {
@@ -548,6 +719,175 @@ router.get('/sessions', requireAutomation(['sessions:read']), rateLimiters.stand
   res.json({ success: true, data: rows.map(formatSession) });
 });
 
+router.post(
+  '/sessions',
+  requireAutomation(['sessions:control']),
+  rateLimiters.sessionCreation,
+  asyncHandler(async (req, res) => {
+    const parsed = createAutomationSessionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError('Invalid session payload', 400, 'VALIDATION_ERROR');
+    }
+
+    const principal = currentPrincipal(req);
+    const gatewaySettings = discordIntegrationService.getRuntimeSettings();
+    if (principal.type === 'automation_token' && !gatewaySettings.inboundJobsEnabled) {
+      throw new AppError(
+        'Inbound automation session creation is disabled in Discord settings',
+        403,
+        'INBOUND_JOBS_DISABLED'
+      );
+    }
+
+    const cliProvider: CLIProvider = parsed.data.cliProvider;
+    const modeDecision = resolveAutomationSessionMode(
+      parsed.data.mode,
+      principal,
+      gatewaySettings.maintenancePolicy
+    );
+    const workingDirectory = await resolveAutomationWorkingDirectory(
+      principal.userId,
+      parsed.data.name,
+      parsed.data.workingDirectory
+    );
+
+    let storedReasoning = parsed.data.cliReasoning?.trim() || null;
+    let storedServiceTier = cliProvider === 'codex' ? parsed.data.cliServiceTier || null : null;
+    if (cliProvider === 'codex' && storedReasoning?.toLowerCase() === 'fast') {
+      storedReasoning = null;
+      storedServiceTier = 'fast';
+    }
+
+    const sessionId = nanoid();
+    const goalId = parsed.data.goal ? nanoid() : null;
+    const db = getDatabase();
+
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO sessions (
+           id,
+           user_id,
+           name,
+           working_directory,
+           cli_provider,
+           mode,
+           surface,
+           cli_model,
+           cli_reasoning,
+           cli_service_tier
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        sessionId,
+        principal.userId,
+        parsed.data.name,
+        workingDirectory,
+        cliProvider,
+        modeDecision.mode,
+        parsed.data.surface,
+        parsed.data.cliModel?.trim() || null,
+        storedReasoning,
+        storedServiceTier
+      );
+
+      if (parsed.data.goal && goalId) {
+        db.prepare(
+          `INSERT INTO session_goals
+            (id, session_id, created_by_user_id, created_by_token_id, title, instructions, status, priority, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          goalId,
+          sessionId,
+          principal.userId,
+          principal.tokenId,
+          parsed.data.goal.title,
+          parsed.data.goal.instructions ?? null,
+          parsed.data.goal.status,
+          parsed.data.goal.priority,
+          parsed.data.goal.metadata ? JSON.stringify(parsed.data.goal.metadata) : null
+        );
+      }
+    })();
+
+    const context = getRequestContext(req);
+    recordAudit({
+      actorUserId: principal.userId,
+      action: 'automation.session.created',
+      resourceType: 'session',
+      resourceId: sessionId,
+      ip: context.ip,
+      userAgent: context.userAgent,
+      metadata: {
+        authType: principal.type,
+        tokenId: principal.tokenId,
+        cliProvider,
+        requestedMode: modeDecision.requestedMode,
+        mode: modeDecision.mode,
+        modeAdjusted: modeDecision.adjusted,
+        maintenancePolicy: gatewaySettings.maintenancePolicy,
+        inboundJobsEnabled: gatewaySettings.inboundJobsEnabled,
+        goalId,
+        hasInitialMessage: Boolean(parsed.data.initialMessage),
+      },
+    });
+
+    const session = getOwnedSession(sessionId, principal.userId);
+    const goal = goalId ? assertGoalOwnership(goalId, principal.userId) : null;
+    if (goal) {
+      queueGoalNotification(goal, principal, {
+        eventType: goalEventType(goal.status, 'goal.created'),
+        title:
+          goal.status === 'completed'
+            ? `Goal completed: ${goal.title}`
+            : `Goal created: ${goal.title}`,
+        summary: 'A Discord/automation supervisor created a new Plum session goal.',
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        session: formatSession(session),
+        goal: goal ? formatGoal(goal) : null,
+        initialMessageQueued: Boolean(parsed.data.initialMessage),
+        requestedMode: modeDecision.requestedMode,
+        mode: modeDecision.mode,
+        modeAdjusted: modeDecision.adjusted,
+        maintenancePolicy: gatewaySettings.maintenancePolicy,
+      },
+    });
+
+    if (parsed.data.initialMessage) {
+      const initialMessage = parsed.data.initialMessage;
+      void (async () => {
+        try {
+          await getProcessManager().sendMessage(sessionId, principal.userId, initialMessage);
+          if (goalId) {
+            db.prepare(
+              `UPDATE session_goals
+               SET status = CASE WHEN status = 'pending' THEN 'in_progress' ELSE status END,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`
+            ).run(goalId);
+            const updatedGoal = assertGoalOwnership(goalId, principal.userId);
+            if (goal?.status === 'pending' && updatedGoal.status === 'in_progress') {
+              queueGoalNotification(updatedGoal, principal, {
+                eventType: 'goal.updated',
+                title: `Goal started: ${updatedGoal.title}`,
+                summary:
+                  'The automation supervisor queued the initial message, so Plum marked the goal in progress.',
+                previousStatus: 'pending',
+              });
+            }
+          }
+        } catch (error) {
+          console.error('[Automation] Failed to send initial automation session message:', error);
+        }
+      })();
+    }
+  })
+);
+
 router.get(
   '/sessions/:id/status',
   requireAutomation(['sessions:read', 'goals:read']),
@@ -684,6 +1024,14 @@ router.post(
     });
 
     const row = assertGoalOwnership(goalId, principal.userId);
+    queueGoalNotification(row, principal, {
+      eventType: goalEventType(row.status, 'goal.created'),
+      title: row.status === 'completed' ? `Goal completed: ${row.title}` : `Goal created: ${row.title}`,
+      summary:
+        row.status === 'completed'
+          ? 'An automation goal was created already marked as completed.'
+          : 'A new automation goal was created for a Plum session.',
+    });
     res.status(201).json({ success: true, data: formatGoal(row) });
   }
 );
@@ -751,6 +1099,21 @@ router.patch('/goals/:id', requireAutomation(['goals:write']), rateLimiters.stri
   });
 
   const row = assertGoalOwnership(goalId, principal.userId);
+  const statusChanged = row.status !== existing.status;
+  if (statusChanged || parsed.data.title !== undefined || parsed.data.instructions !== undefined) {
+    const eventType = statusChanged ? goalEventType(row.status, 'goal.updated') : 'goal.updated';
+    queueGoalNotification(row, principal, {
+      eventType,
+      title:
+        eventType === 'goal.completed'
+          ? `Goal completed: ${row.title}`
+          : `Goal updated: ${row.title}`,
+      summary: statusChanged
+        ? `Automation goal status changed from ${existing.status} to ${row.status}.`
+        : 'Automation goal details were updated.',
+      previousStatus: statusChanged ? existing.status : null,
+    });
+  }
   res.json({ success: true, data: formatGoal(row) });
 });
 
@@ -770,9 +1133,11 @@ router.post(
 
     const principal = currentPrincipal(req);
     getOwnedSession(sessionId, principal.userId);
-    if (parsed.data.goalId) {
-      const goal = assertGoalOwnership(parsed.data.goalId, principal.userId);
-      if (goal.sessionId !== sessionId) {
+    const linkedGoal = parsed.data.goalId
+      ? assertGoalOwnership(parsed.data.goalId, principal.userId)
+      : null;
+    if (linkedGoal) {
+      if (linkedGoal.sessionId !== sessionId) {
         throw new AppError('Goal belongs to a different session', 400, 'VALIDATION_ERROR');
       }
     }
@@ -788,6 +1153,15 @@ router.post(
            WHERE id = ?`
         )
         .run(parsed.data.goalId);
+      const row = assertGoalOwnership(parsed.data.goalId, principal.userId);
+      if (linkedGoal?.status === 'pending' && row.status === 'in_progress') {
+        queueGoalNotification(row, principal, {
+          eventType: 'goal.updated',
+          title: `Goal started: ${row.title}`,
+          summary: 'A message was sent to the session for this goal, so Plum marked it in progress.',
+          previousStatus: 'pending',
+        });
+      }
     }
 
     const context = getRequestContext(req);

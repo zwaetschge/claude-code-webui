@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Pacman — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     PÁCMAN DESIGN SYSTEM — 400×300 THUMBNAIL
+     Retro arcade · pixel font · dotted borders · 8-bit · black
+     ============================================================ */
+  :root {
+    --pm-primary: #2A3FE5;       /* arcade blue */
+    --pm-primary-light: #4D5FF0;
+    --pm-secondary: #F4B9B0;     /* peach */
+    --pm-success: #16A34A;
+    --pm-warning: #D97706;
+    --pm-danger: #DC2626;
+
+    /* Pacman classic ghost colors */
+    --pm-red: #FF0000;
+    --pm-pink: #FFB8DE;
+    --pm-cyan: #00FFFF;
+    --pm-orange: #FFB852;
+    --pm-yellow: #FFEE00;
+    --pm-maze-blue: #2121DE;
+    --pm-dot: #FFB8AE;
+
+    --pm-surface: #000000;
+    --pm-surface-2: #0A0A12;
+    --pm-ink: #FFFFFF;
+    --pm-ink-2: rgba(255,255,255,0.70);
+    --pm-ink-3: rgba(255,255,255,0.45);
+    --pm-ink-4: rgba(255,255,255,0.25);
+
+    --pm-font: 'Press Start 2P', monospace;
+    --pm-font-mono: 'Space Mono', monospace;
+
+    --pm-r: 0px;     /* pixel = sharp corners */
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--pm-font-mono);
+    font-size: 11px;
+    color: var(--pm-ink);
+    background: var(--pm-surface);
+    -webkit-font-smoothing: none;
+    image-rendering: pixelated;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background:
+      /* scanline overlay for CRT feel */
+      repeating-linear-gradient(0deg,
+        transparent 0, transparent 2px,
+        rgba(0,0,0,0.15) 2px, rgba(0,0,0,0.15) 3px),
+      var(--pm-surface);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    border: 2px solid var(--pm-primary);
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-bottom: 2px solid var(--pm-primary);
+    background: var(--pm-surface-2);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--pm-font);
+    font-size: 9px;
+    color: var(--pm-yellow);
+    text-shadow: 0 0 6px rgba(255,238,0,0.40);
+  }
+  .brand__pac {
+    width: 16px; height: 16px;
+    background: var(--pm-yellow);
+    /* Pacman shape via clip-path */
+    clip-path: polygon(100% 25%, 50% 50%, 100% 75%, 100% 100%, 0 100%, 0 0, 100% 0);
+  }
+  .brand__high {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--pm-font);
+    font-size: 8px;
+    color: var(--pm-red);
+  }
+  .brand__high-val { color: var(--pm-ink); }
+  .brand__sep { color: var(--pm-ink-4); }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  /* LEFT — maze mini-game area */
+  .maze {
+    border-right: 2px solid var(--pm-primary);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .maze__label {
+    font-family: var(--pm-font);
+    font-size: 7px;
+    color: var(--pm-cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* Pixel art maze via CSS grid */
+  .maze__grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    grid-template-rows: repeat(8, 1fr);
+    gap: 1px;
+    background: var(--pm-surface);
+    min-height: 0;
+  }
+  .cell {
+    display: grid;
+    place-items: center;
+    font-size: 6px;
+  }
+  /* Wall cells */
+  .cell--wall {
+    background: var(--pm-maze-blue);
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,255,0.30);
+  }
+  /* Dot cells */
+  .cell--dot::after {
+    content: "";
+    width: 3px; height: 3px;
+    background: var(--pm-dot);
+    border-radius: 50%;
+  }
+  /* Power pellet cells */
+  .cell--power::after {
+    content: "";
+    width: 6px; height: 6px;
+    background: var(--pm-yellow);
+    border-radius: 50%;
+    box-shadow: 0 0 4px rgba(255,238,0,0.60);
+  }
+  /* Pacman */
+  .cell--pac::after {
+    content: "";
+    width: 8px; height: 8px;
+    background: var(--pm-yellow);
+    clip-path: polygon(100% 25%, 50% 50%, 100% 75%, 100% 100%, 0 100%, 0 0, 100% 0);
+    box-shadow: 0 0 6px rgba(255,238,0,0.50);
+  }
+  /* Ghosts */
+  .cell--ghost-red::after,
+  .cell--ghost-cyan::after,
+  .cell--ghost-pink::after {
+    content: "";
+    width: 8px; height: 7px;
+    border-radius: 50% 50% 0 0;
+  }
+  .cell--ghost-red::after { background: var(--pm-red); }
+  .cell--ghost-cyan::after { background: var(--pm-cyan); }
+  .cell--ghost-pink::after { background: var(--pm-pink); }
+
+  .maze__score {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--pm-font);
+    font-size: 7px;
+  }
+  .maze__score-val { color: var(--pm-yellow); }
+  .maze__lives {
+    display: flex;
+    gap: 3px;
+  }
+  .maze__life {
+    width: 8px; height: 8px;
+    background: var(--pm-yellow);
+    clip-path: polygon(100% 25%, 50% 50%, 100% 75%, 100% 100%, 0 100%, 0 0, 100% 0);
+  }
+
+  /* RIGHT — stats / hi-score panel */
+  .panel {
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .panel__title {
+    font-family: var(--pm-font);
+    font-size: 7px;
+    color: var(--pm-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* Stat rows with dotted borders */
+  .stat {
+    padding: 6px 8px;
+    border: 2px dotted var(--pm-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .stat__label {
+    font-family: var(--pm-font);
+    font-size: 6px;
+    color: var(--pm-cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .stat__value {
+    font-family: var(--pm-font);
+    font-size: 12px;
+    color: var(--pm-yellow);
+    text-shadow: 0 0 4px rgba(255,238,0,0.30);
+  }
+  .stat__value span {
+    font-family: var(--pm-font-mono);
+    font-size: 9px;
+    color: var(--pm-ink-2);
+    text-shadow: none;
+  }
+
+  /* Ghost leaderboard */
+  .ghosts {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ghost-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border: 1px dotted var(--pm-ink-4);
+  }
+  .ghost-row__icon {
+    width: 10px; height: 9px;
+    border-radius: 50% 50% 0 0;
+    flex-shrink: 0;
+  }
+  .ghost-row__icon--red { background: var(--pm-red); }
+  .ghost-row__icon--pink { background: var(--pm-pink); }
+  .ghost-row__icon--cyan { background: var(--pm-cyan); }
+  .ghost-row__name {
+    font-family: var(--pm-font);
+    font-size: 6px;
+    color: var(--pm-ink);
+    flex: 1;
+  }
+  .ghost-row__pts {
+    font-family: var(--pm-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--pm-secondary);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+    border-top: 2px solid var(--pm-primary);
+    background: var(--pm-surface-2);
+    font-family: var(--pm-font);
+    font-size: 6px;
+    color: var(--pm-ink-3);
+  }
+  .footer__insert {
+    color: var(--pm-yellow);
+    animation: blink-text 1s step-end infinite;
+  }
+  @keyframes blink-text {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+  .footer__credit {
+    color: var(--pm-red);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Pacman design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__pac"></span>
+      <span>1UP</span>
+    </div>
+    <div class="brand__high">
+      <span>HI-SCORE</span>
+      <span class="brand__sep">|</span>
+      <span class="brand__high-val">256,300</span>
+    </div>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: maze -->
+    <div class="maze">
+      <span class="maze__label">// LEVEL 1-1</span>
+      <div class="maze__grid">
+        <!-- Row 0: border wall -->
+        <div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div>
+        <!-- Row 1 -->
+        <div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--power"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div>
+        <!-- Row 2 -->
+        <div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div>
+        <!-- Row 3 -->
+        <div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--pac"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--ghost-red"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div>
+        <!-- Row 4 -->
+        <div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div>
+        <!-- Row 5 -->
+        <div class="cell cell--wall"></div><div class="cell cell--power"></div><div class="cell cell--dot"></div><div class="cell cell--ghost-cyan"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--ghost-pink"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div>
+        <!-- Row 6 -->
+        <div class="cell cell--wall"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--dot"></div><div class="cell cell--wall"></div>
+        <!-- Row 7: border wall -->
+        <div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div><div class="cell cell--wall"></div>
+      </div>
+      <div class="maze__score">
+        <span>SCORE <span class="maze__score-val">42,100</span></span>
+        <div class="maze__lives">
+          <span class="maze__life"></span>
+          <span class="maze__life"></span>
+          <span class="maze__life"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: stats panel -->
+    <aside class="panel">
+      <span class="panel__title">// STATS</span>
+
+      <div class="stat">
+        <span class="stat__label">PELLETS</span>
+        <span class="stat__value">240<span>/244</span></span>
+      </div>
+
+      <div class="stat">
+        <span class="stat__label">LEVEL</span>
+        <span class="stat__value">1-1</span>
+      </div>
+
+      <div class="ghosts">
+        <div class="ghost-row">
+          <span class="ghost-row__icon ghost-row__icon--red"></span>
+          <span class="ghost-row__name">BLINKY</span>
+          <span class="ghost-row__pts">200</span>
+        </div>
+        <div class="ghost-row">
+          <span class="ghost-row__icon ghost-row__icon--pink"></span>
+          <span class="ghost-row__name">PINKY</span>
+          <span class="ghost-row__pts">200</span>
+        </div>
+        <div class="ghost-row">
+          <span class="ghost-row__icon ghost-row__icon--cyan"></span>
+          <span class="ghost-row__name">INKY</span>
+          <span class="ghost-row__pts">400</span>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span class="footer__insert">INSERT COIN</span>
+    <span class="footer__credit">© NAMCO · 1980</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

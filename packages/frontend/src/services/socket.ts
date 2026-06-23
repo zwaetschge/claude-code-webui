@@ -1,11 +1,14 @@
 import { io, Socket } from 'socket.io-client';
 import type {
+  ActiveFollowupMode,
   ClientToServerEvents,
   ServerToClientEvents,
   BufferedMessage,
   SessionMode,
   PermissionAction,
-} from '@claude-code-webui/shared';
+  PendingQuestion,
+  ToolActionSummary,
+} from '@plum-code-webui/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { toast } from '@/hooks/use-toast';
@@ -133,13 +136,25 @@ class SocketService {
       // to Date.now() only matters for old backends without the field.
       const beTs = typeof data.timestamp === 'number' ? data.timestamp : Date.now();
       if (data.status === 'started') {
-        store.addToolExecution(data.sessionId, {
-          toolId: data.toolId || generateId(),
-          toolName: data.toolName,
-          status: 'started',
-          input: data.input,
-          timestamp: beTs,
-        });
+        const toolId = data.toolId || generateId();
+        const existing = (store.toolExecutions[data.sessionId] || []).some(
+          (tool) => tool.toolId === toolId
+        );
+        if (existing) {
+          store.updateToolExecution(data.sessionId, toolId, {
+            input: data.input,
+            ...(data.actionSummary ? { actionSummary: data.actionSummary } : {}),
+          });
+        } else {
+          store.addToolExecution(data.sessionId, {
+            toolId,
+            toolName: data.toolName,
+            status: 'started',
+            input: data.input,
+            actionSummary: data.actionSummary,
+            timestamp: beTs,
+          });
+        }
       } else if (data.toolId) {
         store.updateToolExecution(data.sessionId, data.toolId, {
           status: data.status,
@@ -147,6 +162,7 @@ class SocketService {
           input: data.input,
           result: data.result,
           error: data.error,
+          ...(data.actionSummary ? { actionSummary: data.actionSummary } : {}),
         });
       }
 
@@ -159,19 +175,21 @@ class SocketService {
     });
 
     this.socket.on('session:agent', (data) => {
-      const { setActiveAgent } = useSessionStore.getState();
+      const { recordAgentEvent } = useSessionStore.getState();
       console.log(`[SOCKET] session:agent received:`, data.agentType, data.description);
-      if (data.status === 'started') {
-        setActiveAgent(data.sessionId, {
-          agentType: data.agentType,
-          description: data.description,
-          status: data.status,
-          startedAt: Date.now(),
-        });
-      } else {
-        // Clear agent when completed or error
-        setActiveAgent(data.sessionId, null);
-      }
+      recordAgentEvent(data.sessionId, {
+        agentId: data.agentId,
+        agentType: data.agentType,
+        description: data.description,
+        status: data.status,
+        startedAt: data.startedAt,
+        completedAt: data.completedAt,
+        result: data.result,
+        error: data.error,
+        toolId: data.toolId,
+        externalAgentId: data.externalAgentId,
+        timestamp: data.timestamp,
+      });
     });
 
     this.socket.on('session:todos', (data) => {
@@ -222,11 +240,11 @@ class SocketService {
       }
       const summary = data.summary ? `\n\n${data.summary}` : '';
       const compactMessage = {
-        id: `compact-${Date.now()}`,
+        id: data.id || `compact-${Date.now()}`,
         sessionId: data.sessionId,
         role: 'system' as const,
         content: `${data.message}${summary}`,
-        createdAt: new Date().toISOString(),
+        createdAt: data.createdAt || new Date().toISOString(),
       };
       store.addMessageIfNotExists(data.sessionId, compactMessage);
     });
@@ -266,6 +284,12 @@ class SocketService {
         // Send notification
         notificationService.notifyPermissionRequest(data.sessionId, [data.toolName]);
       }
+    });
+
+    this.socket.on('session:question_request', (data) => {
+      console.log(`[SOCKET] session:question_request received:`, data.requestId);
+      useSessionStore.getState().setPendingQuestion(data.sessionId, data);
+      notificationService.notifyNeedsInput(data.sessionId, 'OpenCode needs your input');
     });
 
     this.socket.on('error', (message) => {
@@ -329,22 +353,36 @@ class SocketService {
             input?: unknown;
             result?: string;
             error?: string;
+            actionSummary?: ToolActionSummary;
           };
 
           // Add tool execution to store (using original timestamp from buffered message)
           if (data.status === 'started') {
-            store.addToolExecution(sessionId, {
-              toolId: data.toolId || generateId(),
-              toolName: data.toolName,
-              status: 'started',
-              input: data.input,
-              timestamp: msg.timestamp, // Use original timestamp
-            });
+            const toolId = data.toolId || generateId();
+            const existing = (store.toolExecutions[sessionId] || []).some(
+              (tool) => tool.toolId === toolId
+            );
+            if (existing) {
+              store.updateToolExecution(sessionId, toolId, {
+                input: data.input,
+                ...(data.actionSummary ? { actionSummary: data.actionSummary } : {}),
+              });
+            } else {
+              store.addToolExecution(sessionId, {
+                toolId,
+                toolName: data.toolName,
+                status: 'started',
+                input: data.input,
+                actionSummary: data.actionSummary,
+                timestamp: msg.timestamp, // Use original timestamp
+              });
+            }
           } else if (data.toolId) {
             store.updateToolExecution(sessionId, data.toolId, {
               status: data.status,
               result: data.result,
               error: data.error,
+              ...(data.actionSummary ? { actionSummary: data.actionSummary } : {}),
               completedAt: msg.timestamp,
             });
           }
@@ -375,19 +413,31 @@ class SocketService {
         }
         case 'agent': {
           const data = msg.data as {
+            agentId?: string;
             agentType: string;
             description?: string;
             status: 'started' | 'completed' | 'error';
+            startedAt?: number;
+            completedAt?: number;
+            result?: string;
+            error?: string;
+            toolId?: string;
+            externalAgentId?: string;
+            timestamp?: number;
           };
-          if (data.status === 'started') {
-            store.setActiveAgent(sessionId, {
-              agentType: data.agentType,
-              description: data.description,
-              status: data.status,
-            });
-          } else {
-            store.setActiveAgent(sessionId, null);
-          }
+          store.recordAgentEvent(sessionId, {
+            agentId: data.agentId,
+            agentType: data.agentType,
+            description: data.description,
+            status: data.status,
+            startedAt: data.startedAt,
+            completedAt: data.completedAt,
+            result: data.result,
+            error: data.error,
+            toolId: data.toolId,
+            externalAgentId: data.externalAgentId,
+            timestamp: data.timestamp ?? msg.timestamp,
+          });
           break;
         }
         case 'status': {
@@ -402,12 +452,14 @@ class SocketService {
         }
         case 'compact': {
           const data = msg.data as {
+            id?: string;
             sessionId: string;
             message: string;
             summary?: string;
             clear?: boolean;
             reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
             error?: string;
+            createdAt?: string;
           };
           if (data.clear) {
             store.setMessages(sessionId, []);
@@ -415,13 +467,18 @@ class SocketService {
             store.clearToolExecutions(sessionId);
           }
           const compactMessage = {
-            id: `compact-${msg.timestamp}`,
+            id: data.id || `compact-${msg.timestamp}`,
             sessionId,
             role: 'system' as const,
             content: `${data.message}${data.summary ? `\n\n${data.summary}` : ''}`,
-            createdAt: new Date(msg.timestamp).toISOString(),
+            createdAt: data.createdAt || new Date(msg.timestamp).toISOString(),
           };
           store.addMessageIfNotExists(sessionId, compactMessage);
+          break;
+        }
+        case 'question': {
+          const data = msg.data as PendingQuestion;
+          store.setPendingQuestion(sessionId, data);
           break;
         }
       }
@@ -460,7 +517,8 @@ class SocketService {
   sendMessage(
     sessionId: string,
     message: string,
-    images?: { data: string; mimeType: string }[]
+    images?: { data: string; mimeType: string; filename?: string }[],
+    activeFollowupMode?: ActiveFollowupMode
   ): void {
     // clientMessageId lets the server dedupe if the socket reconnects and we retry:
     // a single logical send keeps the same id regardless of transport hiccups.
@@ -468,7 +526,13 @@ class SocketService {
     console.log(
       `sendMessage: sessionId=${sessionId}, message="${message}", socket=${!!this.socket}, connected=${this.socket?.connected}`
     );
-    this.socket?.emit('session:send', { sessionId, message, images, clientMessageId });
+    this.socket?.emit('session:send', {
+      sessionId,
+      message,
+      images,
+      activeFollowupMode,
+      clientMessageId,
+    });
   }
 
   // Send raw input for interactive prompts (trust dialogs, selections, etc.)
@@ -477,7 +541,12 @@ class SocketService {
     this.socket?.emit('session:input', { sessionId, input });
   }
 
-  async sendMessageWithFiles(sessionId: string, message: string, files: File[]): Promise<void> {
+  async sendMessageWithFiles(
+    sessionId: string,
+    message: string,
+    files: File[],
+    activeFollowupMode?: ActiveFollowupMode
+  ): Promise<void> {
     // Convert files to base64
     const attachments = await Promise.all(
       files.map(async (file) => {
@@ -490,7 +559,12 @@ class SocketService {
       })
     );
 
-    this.sendMessage(sessionId, message, attachments.length > 0 ? attachments : undefined);
+    this.sendMessage(
+      sessionId,
+      message,
+      attachments.length > 0 ? attachments : undefined,
+      activeFollowupMode
+    );
   }
 
   private fileToBase64(file: File): Promise<string> {
@@ -578,6 +652,59 @@ class SocketService {
 
     // Clear the pending permission from the store
     useSessionStore.getState().setPendingPermission(sessionId, null);
+  }
+
+  async respondToQuestion(
+    sessionId: string,
+    requestId: string,
+    answers: string[][],
+    providerSessionId?: string
+  ): Promise<void> {
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      throw new Error('No auth token');
+    }
+
+    const response = await fetch('/api/opencode/questions/respond', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ requestId, answers, providerSessionId }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to respond to OpenCode question');
+    }
+
+    useSessionStore.getState().setPendingQuestion(sessionId, null);
+  }
+
+  async rejectQuestion(
+    sessionId: string,
+    requestId: string,
+    providerSessionId?: string
+  ): Promise<void> {
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      throw new Error('No auth token');
+    }
+
+    const response = await fetch('/api/opencode/questions/reject', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ requestId, providerSessionId }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to reject OpenCode question');
+    }
+
+    useSessionStore.getState().setPendingQuestion(sessionId, null);
   }
 
   // Generic emit for typed events

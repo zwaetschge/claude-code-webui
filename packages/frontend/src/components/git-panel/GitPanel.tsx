@@ -29,7 +29,7 @@ import type {
   ApiResponse,
   GitStatus as GitStatusType,
   GitBranch as GitBranchType,
-} from '@claude-code-webui/shared';
+} from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface GitPanelProps {

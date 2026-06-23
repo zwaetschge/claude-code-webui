@@ -1,32 +1,24 @@
-import { useState, useRef, useCallback, useMemo, memo, useEffect, type ReactNode } from 'react';
+import { useState, useRef, useCallback, useMemo, memo, useEffect } from 'react';
 import {
+  MessageCircle,
   Send,
   Paperclip,
   Loader2,
+  Sparkles,
   X,
   FileText,
   FileCode,
   File as FileIcon,
   StopCircle,
-  Plus,
-  Image,
-  Sparkles,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CommandMenu } from '@/components/chat/CommandMenu';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import type { Command } from '@claude-code-webui/shared';
+import type { Command, SessionSurface } from '@plum-code-webui/shared';
 
 type AttachmentType = 'image' | 'text' | 'pdf' | 'document';
+type ActiveFollowupMode = 'queue' | 'steer';
 
 interface FileAttachment {
   id: string;
@@ -34,74 +26,6 @@ interface FileAttachment {
   preview: string | null;
   type: AttachmentType;
 }
-
-type QuickPromptItem = { label: string; value: string; hint?: string };
-type QuickPrompt = QuickPromptItem | { heading: string };
-
-interface ComposerAction {
-  id: string;
-  label: string;
-  icon?: ReactNode;
-  onSelect: () => void;
-  badge?: number;
-  badgePulse?: boolean;
-  active?: boolean;
-  disabled?: boolean;
-}
-
-// Supported file types for upload
-const ACCEPTED_FILE_TYPES = [
-  'image/*',
-  'text/*',
-  'application/pdf',
-  'application/json',
-  'application/xml',
-  'application/javascript',
-  'application/typescript',
-  '.md',
-  '.markdown',
-  '.txt',
-  '.csv',
-  '.tsv',
-  '.json',
-  '.xml',
-  '.yaml',
-  '.yml',
-  '.js',
-  '.ts',
-  '.tsx',
-  '.jsx',
-  '.py',
-  '.rb',
-  '.go',
-  '.rs',
-  '.java',
-  '.kt',
-  '.swift',
-  '.c',
-  '.cpp',
-  '.h',
-  '.hpp',
-  '.cs',
-  '.html',
-  '.css',
-  '.scss',
-  '.sass',
-  '.less',
-  '.sh',
-  '.bash',
-  '.zsh',
-  '.fish',
-  '.sql',
-  '.graphql',
-  '.env',
-  '.gitignore',
-  '.dockerfile',
-  '.toml',
-  '.ini',
-  '.cfg',
-  '.conf',
-].join(',');
 
 function getAttachmentType(mimeType: string, filename: string): AttachmentType {
   if (mimeType.startsWith('image/')) return 'image';
@@ -133,13 +57,22 @@ interface ChatInputProps {
   commands?: Command[];
   selectedToolName?: string | null;
   selectedCliTool?: string | null;
-  quickPrompts?: QuickPrompt[];
-  composerActions?: ComposerAction[];
   disabled?: boolean;
   isSending?: boolean;
   isExecutingTool?: boolean;
   isActive?: boolean;
   queuesWhileActive?: boolean;
+  steersWhileActive?: boolean;
+  surface?: SessionSurface;
+  activeStatusLabel?: string;
+  activeStatusDetail?: string;
+  activeFollowupMode?: ActiveFollowupMode;
+  onActiveFollowupModeChange?: (checked: boolean) => void;
+  fastModeActive?: boolean;
+  fastModePending?: boolean;
+  onFastModeToggle?: () => void;
+  queueDepth?: number;
+  onOpenRun?: () => void;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -150,13 +83,22 @@ export const ChatInput = memo(function ChatInput({
   commands,
   selectedToolName,
   selectedCliTool,
-  quickPrompts,
-  composerActions,
   disabled,
   isSending,
   isExecutingTool,
   isActive,
   queuesWhileActive,
+  steersWhileActive,
+  surface = 'code',
+  activeStatusLabel,
+  activeStatusDetail,
+  activeFollowupMode,
+  onActiveFollowupModeChange,
+  fastModeActive = false,
+  fastModePending = false,
+  onFastModeToggle,
+  queueDepth = 0,
+  onOpenRun,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -233,7 +175,81 @@ export const ChatInput = memo(function ChatInput({
     [addFiles]
   );
 
-  const blocksSubmitForActiveRun = !!isActive && !queuesWhileActive;
+  const allowsActiveFollowup = !!queuesWhileActive || !!steersWhileActive;
+  const blocksSubmitForActiveRun = !!isActive && !allowsActiveFollowup;
+  const activeSubmitLabel = steersWhileActive
+    ? isActive
+      ? 'Steer message'
+      : 'Send'
+    : queuesWhileActive && isActive
+      ? 'Queue message'
+      : 'Send';
+  const showActiveFollowupButton = !!activeFollowupMode;
+  const canToggleActiveFollowupMode = !!onActiveFollowupModeChange;
+  const showFastModeButton = !!onFastModeToggle;
+  const idleModeSummary = [
+    activeFollowupMode === 'steer'
+      ? 'Steering'
+      : activeFollowupMode === 'queue'
+        ? 'Follow-up'
+        : null,
+    fastModeActive ? 'Fast' : null,
+  ]
+    .filter(Boolean)
+    .join(' / ');
+  const composerStatusLabel =
+    activeStatusLabel ||
+    (isActive
+      ? steersWhileActive
+        ? 'Steering active turn'
+        : queuesWhileActive
+          ? 'Follow-up queue'
+          : 'Turn running'
+      : queueDepth > 0
+        ? `${queueDepth} queued`
+        : selectedToolName
+          ? `${selectedToolName} selected`
+          : '');
+  const composerStatusDetail =
+    activeStatusDetail ||
+    (isActive
+      ? steersWhileActive
+        ? 'Updating current run.'
+        : queuesWhileActive
+          ? 'Waiting behind current run.'
+          : 'Run lock active.'
+      : '');
+  const composerBriefLabel =
+    composerStatusLabel || (showActiveFollowupButton || showFastModeButton ? 'Ready' : '');
+  const composerBriefDetail =
+    composerStatusDetail || (!composerStatusLabel && composerBriefLabel ? idleModeSummary : '');
+  const showStatusStrip =
+    !!composerBriefLabel ||
+    !!composerBriefDetail ||
+    showActiveFollowupButton ||
+    showFastModeButton ||
+    (surface === 'task' && !!selectedToolName);
+  const showStatusBubble = !!composerBriefLabel || !!composerBriefDetail;
+  const composerTone = steersWhileActive
+    ? 'steer'
+    : queuesWhileActive
+      ? 'queue'
+      : isActive
+        ? 'blocked'
+        : selectedCliTool
+          ? 'tool'
+          : 'idle';
+  const inputPlaceholder = selectedToolName
+    ? `Prompt for ${selectedToolName}...`
+    : isActive
+      ? steersWhileActive
+        ? 'Steer the active run...'
+        : queuesWhileActive
+          ? 'Add a follow-up...'
+          : 'Current run is active...'
+      : surface === 'task'
+        ? 'Give Plum a task...'
+        : 'Message...';
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -255,19 +271,6 @@ export const ChatInput = memo(function ChatInput({
       // Reset textarea height
       if (inputRef.current) {
         inputRef.current.style.height = 'auto';
-      }
-
-      // Check for slash commands
-      if (currentInput.trim().startsWith('/imagegen') && currentAttachments.length > 0) {
-        onSendMessageWithFiles(
-          currentInput.trim().replace(/^\/imagegen\b/, '$imagegen'),
-          currentAttachments.map((a) => a.file)
-        );
-        currentAttachments.forEach((a) => {
-          if (a.preview) URL.revokeObjectURL(a.preview);
-        });
-        setAttachments([]);
-        return;
       }
 
       if (currentInput.startsWith('/')) {
@@ -349,68 +352,6 @@ export const ChatInput = memo(function ChatInput({
     inputRef.current?.focus();
   }, []);
 
-  const handleQuickPrompt = useCallback(
-    (value: string) => {
-      const commandInput = value.trimStart();
-      const hasTrailingWhitespace = /\s$/.test(value);
-
-      setShowCommandMenu(false);
-
-      if (commandInput.startsWith('/') && !hasTrailingWhitespace) {
-        void onCommandExecute(commandInput);
-        inputRef.current?.focus();
-        return;
-      }
-
-      if (!commandInput.startsWith('/')) {
-        const prompt = value.trim();
-        if (!prompt) return;
-
-        setInput('');
-        if (inputRef.current) {
-          inputRef.current.style.height = 'auto';
-        }
-
-        if (attachments.length > 0) {
-          const currentAttachments = [...attachments];
-          onSendMessageWithFiles(
-            prompt,
-            currentAttachments.map((attachment) => attachment.file)
-          );
-          currentAttachments.forEach((attachment) => {
-            if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-          });
-          setAttachments([]);
-        } else {
-          onSendMessage(prompt);
-        }
-
-        inputRef.current?.focus();
-        return;
-      }
-
-      setInput(value);
-      inputRef.current?.focus();
-    },
-    [attachments, onCommandExecute, onSendMessage, onSendMessageWithFiles]
-  );
-
-  const imagegenQuickPrompt = useMemo(() => {
-    return quickPrompts?.find(
-      (prompt): prompt is QuickPromptItem =>
-        !('heading' in prompt) && prompt.value.trimStart().startsWith('/imagegen')
-    );
-  }, [quickPrompts]);
-
-  const quickPromptTemplates = useMemo(() => {
-    return (
-      quickPrompts?.filter(
-        (prompt): prompt is QuickPromptItem =>
-          !('heading' in prompt) && !prompt.value.trimStart().startsWith('/')
-      ) ?? []
-    );
-  }, [quickPrompts]);
-
   // Helper to get icon for attachment type
   const getAttachmentIcon = (type: AttachmentType) => {
     switch (type) {
@@ -462,6 +403,7 @@ export const ChatInput = memo(function ChatInput({
         onSubmit={handleSubmit}
         className={cn(
           'glass-chrome chat-composer-form relative rounded-[18px] md:rounded-2xl shadow-lg shadow-black/5 dark:shadow-black/20',
+          surface === 'task' && 'is-task-composer',
           selectedCliTool && 'ring-1 ring-orange-500/30'
         )}
       >
@@ -469,104 +411,107 @@ export const ChatInput = memo(function ChatInput({
         <input
           ref={fileInputRef}
           type="file"
-          accept={ACCEPTED_FILE_TYPES}
           multiple
           className="hidden"
           onChange={handleFileSelect}
         />
 
-        <div className="composer-input-shell">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                disabled={disabled}
-                className="composer-control-button composer-plus-button"
-                title="Add tools and actions"
-                aria-label="Add tools and actions"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              side="top"
-              sideOffset={8}
-              className="composer-plus-menu glass-panel min-w-[280px] max-h-[72vh] overflow-y-auto border-foreground/10 rounded-xl p-1"
-            >
-              <DropdownMenuLabel className="composer-menu-label">Add</DropdownMenuLabel>
-              <DropdownMenuItem
-                onSelect={() => fileInputRef.current?.click()}
-                className="composer-plus-menu-item"
-              >
-                <Paperclip className="composer-menu-icon" />
-                <span className="flex-1">Attach files</span>
-                <span className="composer-menu-meta">Images, docs, code</span>
-              </DropdownMenuItem>
-              {imagegenQuickPrompt && (
-                <DropdownMenuItem
-                  disabled={isSending || isExecutingTool}
-                  onSelect={() => handleQuickPrompt(imagegenQuickPrompt.value)}
-                  className="composer-plus-menu-item"
-                >
-                  <Image className="composer-menu-icon" />
-                  <span className="flex-1">{imagegenQuickPrompt.label}</span>
-                  {imagegenQuickPrompt.hint && (
-                    <span className="composer-menu-meta">{imagegenQuickPrompt.hint}</span>
+        {showStatusStrip && (
+          <div className={cn('composer-brief-row', `is-${composerTone}`)}>
+            {showStatusBubble && (
+              <div className="composer-now-brief">
+                <span className="composer-brief-indicator">
+                  {isActive ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
                   )}
-                </DropdownMenuItem>
-              )}
+                </span>
+                <span className="composer-brief-copy">
+                  <span className="composer-brief-label">{composerBriefLabel}</span>
+                  {composerBriefDetail && (
+                    <span className="composer-brief-detail">{composerBriefDetail}</span>
+                  )}
+                </span>
+                {queueDepth > 0 && <span className="composer-brief-count">{queueDepth}</span>}
+                {onOpenRun && isActive && (
+                  <button type="button" className="composer-brief-run" onClick={onOpenRun}>
+                    Run
+                  </button>
+                )}
+              </div>
+            )}
 
-              {composerActions && composerActions.length > 0 && (
-                <DropdownMenuGroup className="md:hidden">
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="composer-menu-label">Workspace</DropdownMenuLabel>
-                  {composerActions.map((action) => (
-                    <DropdownMenuItem
-                      key={action.id}
-                      disabled={action.disabled}
-                      onSelect={action.onSelect}
-                      className={cn('composer-plus-menu-item', action.active && 'is-active')}
-                    >
-                      {action.icon && <span className="composer-menu-icon">{action.icon}</span>}
-                      <span className="flex-1">{action.label}</span>
-                      {action.badge !== undefined && action.badge > 0 && (
-                        <span
-                          className={cn(
-                            'composer-menu-badge',
-                            action.badgePulse && 'panel-badge-pulse'
-                          )}
-                        >
-                          {action.badge}
-                        </span>
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuGroup>
+            <div className="composer-brief-actions">
+              {showActiveFollowupButton && (
+                <button
+                  type="button"
+                  className={cn(
+                    'composer-bubble-button is-followup',
+                    activeFollowupMode === 'steer' && 'is-active',
+                    activeFollowupMode === 'queue' && !canToggleActiveFollowupMode && 'is-active'
+                  )}
+                  onClick={
+                    canToggleActiveFollowupMode
+                      ? () => onActiveFollowupModeChange?.(activeFollowupMode !== 'steer')
+                      : undefined
+                  }
+                  tabIndex={canToggleActiveFollowupMode ? undefined : -1}
+                  aria-pressed={
+                    activeFollowupMode === 'steer' ||
+                    (activeFollowupMode === 'queue' && !canToggleActiveFollowupMode)
+                  }
+                  aria-disabled={!canToggleActiveFollowupMode}
+                  aria-label={
+                    canToggleActiveFollowupMode
+                      ? 'Toggle active-send steering mode'
+                      : 'Follow-up queue is active'
+                  }
+                  title={
+                    activeFollowupMode === 'steer'
+                      ? 'Steering is active. New messages preempt the active Codex turn.'
+                      : 'Follow-up mode is active. New messages wait until the current turn finishes.'
+                  }
+                >
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  <span>{activeFollowupMode === 'steer' ? 'Steering' : 'Follow-up'}</span>
+                </button>
               )}
+              {showFastModeButton && (
+                <button
+                  type="button"
+                  className={cn('composer-bubble-button is-fast', fastModeActive && 'is-active')}
+                  onClick={onFastModeToggle}
+                  disabled={fastModePending}
+                  aria-pressed={fastModeActive}
+                  aria-label={fastModeActive ? 'Disable fast mode' : 'Enable fast mode'}
+                  title={fastModeActive ? 'Disable Fast mode' : 'Enable Fast mode'}
+                >
+                  {fastModePending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Zap className="h-3.5 w-3.5" />
+                  )}
+                  <span>Fast</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
-              {quickPromptTemplates.length > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="composer-menu-label">Prompts</DropdownMenuLabel>
-                  {quickPromptTemplates.map((prompt, index) => (
-                    <DropdownMenuItem
-                      key={`${prompt.label}-${index}`}
-                      disabled={disabled || isSending || isExecutingTool || blocksSubmitForActiveRun}
-                      onSelect={() => handleQuickPrompt(prompt.value)}
-                      className="composer-plus-menu-item"
-                    >
-                      <Sparkles className="composer-menu-icon" />
-                      <span className="flex-1">{prompt.label}</span>
-                      {prompt.hint && <span className="composer-menu-meta">{prompt.hint}</span>}
-                    </DropdownMenuItem>
-                  ))}
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        <div className="composer-input-shell">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={disabled}
+            className="composer-control-button composer-attach-button"
+            title="Attach files"
+            aria-label="Attach files"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
 
           {/* Text input */}
           <div className="composer-field relative">
@@ -585,7 +530,7 @@ export const ChatInput = memo(function ChatInput({
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder={selectedToolName ? `Prompt for ${selectedToolName}...` : 'Message...'}
+              placeholder={inputPlaceholder}
               rows={1}
               className={cn(
                 'composer-textarea w-full min-h-[40px] max-h-[148px] md:max-h-[220px] bg-transparent border-0 focus:outline-none focus:ring-0 text-base md:text-sm resize-none placeholder:text-muted-foreground/60 text-foreground'
@@ -604,7 +549,7 @@ export const ChatInput = memo(function ChatInput({
           </div>
 
           <div className="composer-actions-right">
-            {onInterrupt && isActive && !queuesWhileActive ? (
+            {onInterrupt && isActive && !allowsActiveFollowup ? (
               <Button
                 type="button"
                 size="icon"
@@ -632,8 +577,8 @@ export const ChatInput = memo(function ChatInput({
                   'composer-control-button composer-control-send',
                   selectedCliTool && 'composer-control-tool'
                 )}
-                title={isActive && queuesWhileActive ? 'Queue message' : 'Send'}
-                aria-label={isActive && queuesWhileActive ? 'Queue message' : 'Send message'}
+                title={isActive ? activeSubmitLabel : 'Send'}
+                aria-label={isActive ? activeSubmitLabel : 'Send message'}
               >
                 {isSending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

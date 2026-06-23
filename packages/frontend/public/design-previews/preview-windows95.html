@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Windows 95 — design preview · 400×300</title>
+<link rel="preconnect" href="https://unpkg.com">
+<!-- Pixelated MS Sans Serif bitmap fonts (OFL-licensed via 98.css project) -->
+<link rel="preload" href="https://unpkg.com/98.css/dist/ms_sans_serif.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="https://unpkg.com/98.css/dist/ms_sans_serif_bold.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+  /* ============================================================
+     WINDOWS 95 (Chicago) — 400×300 THUMBNAIL
+     Pixel-perfect reconstruction. Three laws enforced:
+       1) Integer pixels only (no em/rem/%/calc fractional)
+       2) Hard edges (border-radius:0, no blur, no smoothing)
+       3) Colors from finite table only
+     Win95 RTM: SOLID #000080 titlebar (not Win98 gradient).
+     ============================================================ */
+
+  @font-face {
+    font-family: "Pixelated MS Sans Serif";
+    src: url("https://unpkg.com/98.css/dist/ms_sans_serif.woff2") format("woff2");
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Pixelated MS Sans Serif";
+    src: url("https://unpkg.com/98.css/dist/ms_sans_serif_bold.woff2") format("woff2");
+    font-weight: 700;
+    font-display: swap;
+  }
+
+  /* ---- WIN95 COLOR TABLE (finite, exhaustive) ---- */
+  :root {
+    --w95-teal:    #008080;   /* Chicago desktop */
+    --w95-silver:  #c0c0c0;   /* Button/window face */
+    --w95-gray:    #808080;   /* bevel shadow */
+    --w95-silver-d:#dfdfdf;   /* bevel inner light */
+    --w95-white:   #ffffff;   /* bevel highlight */
+    --w95-black:   #000000;   /* bevel frame + text */
+    --w95-navy:    #000080;   /* titlebar solid */
+    --w95-blue-hi: #1084d0;   /* (Win98 only — DO NOT use on titlebar) */
+    --w95-yellow:  #ffff80;   /* rare accent */
+    --w95-cream:   #ffffe0;   /* tooltip bg */
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border-radius: 0 !important;   /* LAW 2: zero radius, globally */
+  }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--w95-teal);
+    color: var(--w95-black);
+    /* LAW 1 + 2: 11px bitmap font, no smoothing, integer grid */
+    font: 11px "Pixelated MS Sans Serif", "W95FA", Tahoma, Arial, sans-serif;
+    -webkit-font-smoothing: none;
+       -moz-osx-font-smoothing: grayscale;
+    font-smooth: never;
+    image-rendering: pixelated;
+    text-rendering: geometricPrecision;
+  }
+
+  /* ============================================================
+     POSTER / DESKTOP — Teal background, that's the whole bg.
+     No gradients, no decoration.
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    background: var(--w95-teal);
+    overflow: hidden;
+  }
+
+  /* Desktop icons row (top-left) — 16x16 pixel-art via SVG */
+  .desk-icons {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 1;
+  }
+  .desk-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 60px;
+    padding: 2px;
+    color: var(--w95-white);
+    text-shadow: 1px 1px 0 var(--w95-black);
+    text-align: center;
+    line-height: 1.1;
+  }
+  .desk-icon svg {
+    image-rendering: pixelated;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .desk-icon span {
+    font-size: 10px;
+    padding: 0 2px;
+  }
+  .desk-icon.is-selected span {
+    background: var(--w95-navy);
+    outline: 1px dotted var(--w95-white);
+  }
+
+  /* ============================================================
+     WINDOW — Raised bevel (4-stack inset box-shadow)
+     ============================================================ */
+  .window {
+    position: absolute;
+    top: 12px;
+    left: 80px;
+    width: 244px;
+    background: var(--w95-silver);
+    /* canonical RAISED 4-stack bevel */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-black),
+      inset  1px  1px 0 var(--w95-white),
+      inset -2px -2px 0 var(--w95-gray),
+      inset  2px  2px 0 var(--w95-silver-d);
+    padding: 3px;
+    z-index: 2;
+  }
+
+  /* ---- TITLEBAR (Win95 RTM: SOLID navy, no gradient) ---- */
+  .titlebar {
+    background: var(--w95-navy);   /* SOLID — Win98 gradient verboten */
+    color: var(--w95-white);
+    font-weight: 700;
+    height: 18px;
+    padding: 3px 2px 3px 3px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .titlebar__title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .titlebar__icon {
+    width: 14px;
+    height: 13px;
+    flex: 0 0 auto;
+    image-rendering: pixelated;
+  }
+  .titlebar__name { font-size: 11px; }
+
+  /* titlebar window controls (min / max / close) */
+  .titlebar__ctrl {
+    display: flex;
+    gap: 0;
+    align-items: center;
+  }
+  .tbtn {
+    width: 16px;
+    height: 14px;
+    padding: 0;
+    margin-left: 2px;
+    background: var(--w95-silver);
+    color: var(--w95-black);
+    font: 700 9px "Pixelated MS Sans Serif", sans-serif;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    border: 0;
+    /* raised bevel, only 1 visible inner layer */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-black),
+      inset  1px  1px 0 var(--w95-white),
+      inset -2px -2px 0 var(--w95-gray),
+      inset  2px  2px 0 var(--w95-silver-d);
+    cursor: pointer;
+  }
+  .tbtn svg { display: block; image-rendering: pixelated; }
+
+  /* ---- MENUBAR (flat, no bevel, sits on window face) ---- */
+  .menubar {
+    display: flex;
+    align-items: center;
+    background: var(--w95-silver);
+    padding: 1px 0;
+    font-size: 11px;
+  }
+  .menubar__item {
+    padding: 3px 6px;
+    color: var(--w95-black);
+    cursor: default;
+  }
+  .menubar__item u { text-decoration: underline; }
+  .menubar__item:hover {
+    background: var(--w95-navy);
+    color: var(--w95-white);
+  }
+
+  /* ---- WINDOW BODY ---- */
+  .window-body {
+    padding: 11px;
+    background: var(--w95-silver);
+  }
+
+  /* sunken field group (etched bevel = sunken-outer + raised-inner) */
+  .field-group {
+    padding: 8px 11px 11px;
+    margin-bottom: 8px;
+    position: relative;
+    /* ETCHED bevel */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-gray),
+      inset -2px -2px 0 var(--w95-silver-d),
+      inset  2px  2px 0 var(--w95-black);
+  }
+  .field-group__legend {
+    position: absolute;
+    top: -7px;
+    left: 8px;
+    background: var(--w95-silver);
+    padding: 0 4px;
+    font-size: 11px;
+  }
+
+  /* form row */
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+  .row:last-child { margin-bottom: 0; }
+  .row label {
+    flex: 0 0 auto;
+    width: 56px;
+    text-align: right;
+  }
+
+  /* SUNKEN input */
+  .input {
+    flex: 1;
+    height: 21px;
+    background: var(--w95-white);
+    padding: 3px 4px;
+    border: 0;
+    color: var(--w95-black);
+    font: 11px "Pixelated MS Sans Serif", sans-serif;
+    /* SUNKEN 4-stack bevel */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-gray),
+      inset -2px -2px 0 var(--w95-silver-d),
+      inset  2px  2px 0 var(--w95-black);
+  }
+  .input:focus {
+    outline: none;
+  }
+
+  /* checkbox */
+  .check {
+    width: 13px;
+    height: 13px;
+    background: var(--w95-white);
+    flex: 0 0 auto;
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-gray),
+      inset -2px -2px 0 var(--w95-silver-d),
+      inset  2px  2px 0 var(--w95-black);
+    display: grid;
+    place-items: center;
+  }
+  .check.is-on::after {
+    content: "✓";
+    color: var(--w95-black);
+    font: 700 11px "Pixelated MS Sans Serif", sans-serif;
+    line-height: 1;
+  }
+
+  /* progress bar — sunken outer, filled block inside */
+  .progress {
+    height: 14px;
+    margin-top: 2px;
+    background: var(--w95-white);
+    /* sunken outer only (1px) */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-gray);
+    padding: 1px;
+  }
+  .progress__fill {
+    height: 100%;
+    width: 65%;
+    background: var(--w95-navy);
+    /* tiny block-style highlight on top */
+    box-shadow: inset 0 1px 0 #0000a0;
+  }
+
+  /* button row at bottom of window body */
+  .btn-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 11px;
+    padding-top: 8px;
+  }
+
+  /* RAISED button — canonical */
+  .btn {
+    background: var(--w95-silver);
+    color: var(--w95-black);
+    border: 0;
+    padding: 2px 12px;
+    min-width: 75px;
+    min-height: 23px;
+    font: 11px "Pixelated MS Sans Serif", sans-serif;
+    /* RAISED 4-stack bevel */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-black),
+      inset  1px  1px 0 var(--w95-white),
+      inset -2px -2px 0 var(--w95-gray),
+      inset  2px  2px 0 var(--w95-silver-d);
+    cursor: pointer;
+    /* LAW: NO :hover state */
+  }
+  .btn:active {
+    /* pressed = sunken + 1px text shift */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-black),
+      inset -2px -2px 0 var(--w95-silver-d),
+      inset  2px  2px 0 var(--w95-gray);
+    padding: 3px 11px 1px 13px;
+  }
+  .btn:focus {
+    outline: 1px dotted var(--w95-black);
+    outline-offset: -4px;
+  }
+  /* default button = 1px black ring outside the raised bevel */
+  .btn--default {
+    box-shadow:
+      inset  0   0   0  1px var(--w95-black),
+      inset  2px  2px 0  0   var(--w95-white),
+      inset -3px -3px 0 0   var(--w95-gray),
+      inset  3px 3px 0  0   var(--w95-silver-d);
+  }
+
+  /* ---- STATUSBAR (single-row, sunken-outer panels) ---- */
+  .statusbar {
+    display: flex;
+    height: 18px;
+    background: var(--w95-silver);
+    margin-top: 6px;
+  }
+  .statusbar__panel {
+    flex: 1;
+    padding: 2px 6px;
+    font-size: 11px;
+    /* sunken outer only */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-gray);
+    display: flex;
+    align-items: center;
+  }
+  .statusbar__panel + .statusbar__panel {
+    flex: 0 0 auto;
+    min-width: 60px;
+    justify-content: flex-end;
+  }
+
+  /* ============================================================
+     TASKBAR — 28px, raised, with Start button 54×22
+     ============================================================ */
+  .taskbar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 28px;
+    background: var(--w95-silver);
+    /* RAISED 4-stack bevel, top-only emphasis */
+    box-shadow:
+      inset  0   1px 0  0   var(--w95-white),
+      inset  0   2px 0  0   var(--w95-silver-d),
+      inset  0  -1px 0  0   var(--w95-black);
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    z-index: 10;
+  }
+  .start {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 6px;
+    background: var(--w95-silver);
+    font-weight: 700;
+    font-size: 11px;
+    box-shadow:
+      inset -1px -1px 0 var(--w95-black),
+      inset  1px  1px 0 var(--w95-white),
+      inset -2px -2px 0 var(--w95-gray),
+      inset  2px  2px 0 var(--w95-silver-d);
+  }
+  .start__logo {
+    width: 16px;
+    height: 14px;
+    image-rendering: pixelated;
+  }
+  .start__text { line-height: 1; }
+
+  /* active task button in taskbar */
+  .task {
+    height: 22px;
+    padding: 0 8px;
+    background: var(--w95-silver);
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 100px;
+    max-width: 130px;
+    /* pressed/sunken because it's the active task */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-black),
+      inset -2px -2px 0 var(--w95-silver-d),
+      inset  2px  2px 0 var(--w95-gray);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .task__icon {
+    width: 14px;
+    height: 13px;
+    flex: 0 0 auto;
+    image-rendering: pixelated;
+  }
+  .task__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* clock tray (right side) */
+  .tray {
+    margin-left: auto;
+    height: 22px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* sunken-outer */
+    box-shadow:
+      inset -1px -1px 0 var(--w95-white),
+      inset  1px  1px 0 var(--w95-gray);
+    font-size: 11px;
+  }
+  .tray__icons {
+    display: flex;
+    gap: 3px;
+  }
+  .tray__i {
+    width: 14px; height: 13px;
+    image-rendering: pixelated;
+  }
+
+  /* ============================================================
+     Reduced motion — Win95 has no transitions to disable anyway,
+     but keep the declaration for spec compliance.
+     ============================================================ */
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Windows 95 design language preview — Chicago">
+
+  <!-- ===== DESKTOP ICONS (top-left, selected highlight on first) ===== -->
+  <div class="desk-icons" aria-hidden="true">
+    <div class="desk-icon is-selected">
+      <!-- 16x16 My Computer pixel art -->
+      <svg width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+        <!-- monitor body -->
+        <rect x="3" y="3" width="22" height="16" fill="#c0c0c0" stroke="#000" stroke-width="1"/>
+        <rect x="5" y="5" width="18" height="12" fill="#008080"/>
+        <!-- stand -->
+        <rect x="9" y="19" width="10" height="3" fill="#c0c0c0" stroke="#000" stroke-width="1"/>
+        <rect x="6" y="22" width="16" height="2" fill="#c0c0c0" stroke="#000" stroke-width="1"/>
+        <!-- base / keyboard hint -->
+        <rect x="3" y="25" width="26" height="4" fill="#c0c0c0" stroke="#000" stroke-width="1"/>
+        <rect x="9" y="26" width="14" height="1" fill="#000080"/>
+        <!-- diskette slot -->
+        <rect x="20" y="26" width="6" height="1" fill="#000"/>
+      </svg>
+      <span>My Computer</span>
+    </div>
+    <div class="desk-icon">
+      <!-- Recycle Bin -->
+      <svg width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+        <rect x="8" y="6" width="16" height="3" fill="#c0c0c0" stroke="#000"/>
+        <rect x="10" y="9" width="12" height="18" fill="#c0c0c0" stroke="#000"/>
+        <rect x="12" y="12" width="8" height="1" fill="#808080"/>
+        <rect x="12" y="16" width="8" height="1" fill="#808080"/>
+        <rect x="12" y="20" width="8" height="1" fill="#808080"/>
+        <rect x="11" y="4" width="10" height="2" fill="#000080"/>
+      </svg>
+      <span>Recycle Bin</span>
+    </div>
+  </div>
+
+  <!-- ===== ACTIVE WINDOW ===== -->
+  <section class="window" role="dialog" aria-labelledby="w-title">
+
+    <!-- TITLEBAR (Win95 RTM solid navy) -->
+    <header class="titlebar">
+      <div class="titlebar__title">
+        <!-- 14x14 window icon (computer) -->
+        <svg class="titlebar__icon" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true">
+          <rect x="1" y="1" width="11" height="8" fill="#c0c0c0" stroke="#000"/>
+          <rect x="2" y="2" width="9" height="6" fill="#008080"/>
+          <rect x="4" y="9" width="5" height="1" fill="#c0c0c0"/>
+          <rect x="2" y="10" width="9" height="2" fill="#c0c0c0" stroke="#000"/>
+        </svg>
+        <span class="titlebar__name" id="w-title">Welcome — Exploring Chicago</span>
+      </div>
+      <div class="titlebar__ctrl">
+        <button class="tbtn" aria-label="Minimize">
+          <svg width="6" height="6" viewBox="0 0 6 6" aria-hidden="true"><rect x="0" y="5" width="6" height="1" fill="#000"/></svg>
+        </button>
+        <button class="tbtn" aria-label="Maximize">
+          <svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true" fill="none" stroke="#000" stroke-width="1">
+            <rect x="0.5" y="0.5" width="8" height="8"/>
+            <rect x="0.5" y="0.5" width="8" height="2" fill="#000"/>
+          </svg>
+        </button>
+        <button class="tbtn" aria-label="Close">
+          <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" stroke="#000" stroke-width="1.2" fill="none">
+            <path d="M0 0 L8 8 M8 0 L0 8"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- MENUBAR -->
+    <nav class="menubar" aria-label="Window menu">
+      <span class="menubar__item"><u>F</u>ile</span>
+      <span class="menubar__item"><u>E</u>dit</span>
+      <span class="menubar__item"><u>V</u>iew</span>
+      <span class="menubar__item"><u>H</u>elp</span>
+    </nav>
+
+    <!-- WINDOW BODY -->
+    <div class="window-body">
+
+      <!-- etched field-set with form controls -->
+      <fieldset class="field-group">
+        <legend class="field-group__legend">Registration</legend>
+
+        <div class="row">
+          <label for="name">Name:</label>
+          <input class="input" id="name" type="text" value="Chicago" readonly>
+        </div>
+
+        <div class="row">
+          <label for="org">Org:</label>
+          <input class="input" id="org" type="text" value="Microsoft" readonly>
+        </div>
+      </fieldset>
+
+      <!-- second field-set with checkbox + progress -->
+      <fieldset class="field-group">
+        <legend class="field-group__legend">Status</legend>
+
+        <div class="row">
+          <span class="check is-on" aria-hidden="true"></span>
+          <span>Show welcome screen at startup</span>
+        </div>
+
+        <div class="row">
+          <label style="width:auto">Install:</label>
+          <div class="progress" style="flex:1" aria-hidden="true">
+            <div class="progress__fill"></div>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- buttons, bottom-right -->
+      <div class="btn-row">
+        <button class="btn btn--default" type="button" autofocus>OK</button>
+        <button class="btn" type="button">Cancel</button>
+      </div>
+
+      <!-- status bar with two panels -->
+      <footer class="statusbar">
+        <div class="statusbar__panel">For Help, press F1</div>
+        <div class="statusbar__panel">65%</div>
+      </footer>
+
+    </div>
+  </section>
+
+  <!-- ===== TASKBAR ===== -->
+  <footer class="taskbar">
+    <div class="start">
+      <!-- Win95 flag logo pixel art -->
+      <svg class="start__logo" viewBox="0 0 16 14" shape-rendering="crispEdges" aria-hidden="true">
+        <!-- red block -->
+        <rect x="0" y="0" width="5" height="5" fill="#ff0000" stroke="#000"/>
+        <!-- green block -->
+        <rect x="5" y="0" width="5" height="5" fill="#00ff00" stroke="#000"/>
+        <!-- blue block -->
+        <rect x="0" y="5" width="5" height="5" fill="#0000ff" stroke="#000"/>
+        <!-- yellow block -->
+        <rect x="5" y="5" width="5" height="5" fill="#ffff00" stroke="#000"/>
+        <!-- wave tail -->
+        <rect x="11" y="2" width="4" height="2" fill="#c0c0c0"/>
+        <rect x="11" y="7" width="4" height="2" fill="#c0c0c0"/>
+      </svg>
+      <span class="start__text">Start</span>
+    </div>
+
+    <!-- active task button (sunken because active) -->
+    <div class="task">
+      <svg class="task__icon" viewBox="0 0 14 13" shape-rendering="crispEdges" aria-hidden="true">
+        <rect x="1" y="1" width="11" height="8" fill="#c0c0c0" stroke="#000"/>
+        <rect x="2" y="2" width="9" height="6" fill="#008080"/>
+        <rect x="4" y="9" width="5" height="1" fill="#c0c0c0"/>
+        <rect x="2" y="10" width="9" height="2" fill="#c0c0c0" stroke="#000"/>
+      </svg>
+      <span class="task__label">Welcome — Exploring Chica…</span>
+    </div>
+
+    <!-- system tray with clock -->
+    <div class="tray">
+      <div class="tray__icons">
+        <!-- speaker icon -->
+        <svg class="tray__i" viewBox="0 0 14 13" shape-rendering="crispEdges" aria-hidden="true">
+          <polygon points="1,5 4,5 7,2 7,11 4,8 1,8" fill="#c0c0c0" stroke="#000"/>
+          <path d="M9 4 Q11 6 9 8" stroke="#000" fill="none"/>
+        </svg>
+      </div>
+      <span>3:07 PM</span>
+    </div>
+  </footer>
+
+</main>
+
+</body>
+</html>

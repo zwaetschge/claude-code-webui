@@ -6,7 +6,7 @@ import { toast } from '@/hooks/use-toast';
 import { useSessionStore } from '@/stores/sessionStore';
 import { CodeEditor } from './CodeEditor';
 import { FileIcon } from '@/components/file-tree/file-icons';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface EditorPanelProps {
@@ -62,57 +62,65 @@ export function EditorPanel({ sessionId }: EditorPanelProps) {
 
   if (files.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-        Double-click a file in the tree to open it
+      <div className="workspace-editor-empty flex h-full items-center justify-center text-muted-foreground text-sm">
+        <div className="workspace-files-state-card text-center">
+          <FileIcon filename="empty.ts" isDirectory={false} className="mx-auto mb-3 h-7 w-7" />
+          <div className="text-sm font-medium text-foreground">No file open</div>
+          <div className="mt-1 text-xs text-muted-foreground">Open a file from Files view.</div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Tab Bar */}
-      <div className="shrink-0 flex items-center gap-1 px-2 py-1 border-b overflow-x-auto">
+    <div className="workspace-editor-shell flex h-full flex-col bg-background">
+      <div className="workspace-editor-tabbar shrink-0 flex items-center gap-1 overflow-x-auto border-b px-2 py-1">
         {files.map((file) => {
           const isActive = file.path === activeTab;
           const fileName = getFileName(file.path);
 
           return (
-            <button
+            <div
               key={file.path}
-              onClick={() => setActiveTab(sessionId, file.path)}
-              className={cn(
-                'group flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors min-w-0',
-                isActive
-                  ? 'bg-muted text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-              )}
+              className={cn('workspace-editor-tab group', isActive && 'is-active')}
             >
-              <FileIcon filename={fileName} isDirectory={false} className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate max-w-32">{fileName}</span>
-
-              {/* Dirty indicator */}
-              {file.isDirty && <Circle className="h-2 w-2 fill-current text-amber-500 shrink-0" />}
-
-              {/* Close button */}
               <button
-                onClick={(e) => handleClose(file.path, e)}
-                className={cn(
-                  'shrink-0 p-0.5 rounded hover:bg-muted-foreground/20 transition-colors',
-                  isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                type="button"
+                onClick={() => setActiveTab(sessionId, file.path)}
+                className="workspace-editor-tab-main"
+                title={file.path}
+              >
+                <FileIcon
+                  filename={fileName}
+                  isDirectory={false}
+                  className="h-3.5 w-3.5 shrink-0"
+                />
+                <span className="truncate">{fileName}</span>
+                {file.isDirty && (
+                  <Circle className="h-2 w-2 shrink-0 fill-current text-amber-500" />
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => handleClose(file.path, e)}
+                className="workspace-editor-tab-close"
+                aria-label={`Close ${fileName}`}
+                title="Close file"
               >
                 <X className="h-3 w-3" />
               </button>
-            </button>
+            </div>
           );
         })}
 
-        {/* Save button */}
+        <div className="workspace-editor-tab-spacer" />
+
         {activeFile?.isDirty && (
           <Button
             size="sm"
             variant="ghost"
-            className="h-6 px-2 ml-auto"
+            className="workspace-editor-save h-7 px-2"
             onClick={handleSave}
             disabled={saveMutation.isPending}
           >
@@ -126,9 +134,8 @@ export function EditorPanel({ sessionId }: EditorPanelProps) {
         )}
       </div>
 
-      {/* Editor */}
-      <div className="flex-1 min-h-0">
-        {activeFile && (
+      <div className="workspace-editor-body flex-1 min-h-0">
+        {activeFile ? (
           <CodeEditor
             key={activeFile.path}
             path={activeFile.path}
@@ -136,6 +143,10 @@ export function EditorPanel({ sessionId }: EditorPanelProps) {
             onChange={(value) => updateFileContent(sessionId, activeFile.path, value)}
             onSave={handleSave}
           />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Select an open file tab.
+          </div>
         )}
       </div>
     </div>

@@ -8,7 +8,7 @@ import androidx.annotation.RequiresApi
 import com.claudewebui.app.MainActivity
 
 /**
- * Quick Settings tile for Claude Code WebUI.
+ * Quick Settings tile for Plum Code WebUI.
  *
  * Behaviour:
  * - **Subtitle**: shows the number of active (running) sessions; e.g. "2 running".

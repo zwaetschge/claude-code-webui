@@ -27,41 +27,32 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,7 +66,6 @@ import androidx.compose.ui.unit.sp
 import com.claudewebui.app.core.network.ApiClient
 import com.claudewebui.app.data.model.Session
 import com.claudewebui.app.data.model.SessionStatus
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,9 +73,6 @@ import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 // ── Data Models ───────────────────────────────────────────────────────────────
 
@@ -98,12 +85,6 @@ data class ContainerInfo(
     val version: String = ""
 )
 
-data class RebuildEntry(
-    val timestamp: String,
-    val success: Boolean,
-    val message: String
-)
-
 data class WatchdogUiState(
     val isLoading: Boolean = false,
     val serverHealth: ContainerHealth = ContainerHealth.UNKNOWN,
@@ -112,9 +93,6 @@ data class WatchdogUiState(
     val activeSessions: List<Session> = emptyList(),
     val activeSessionCount: Int = 0,
     val containers: List<ContainerInfo> = emptyList(),
-    val rebuildInProgress: Boolean = false,
-    val lastRebuildStatus: String = "",
-    val rebuildHistory: List<RebuildEntry> = emptyList(),
     val recentErrors: List<String> = emptyList(),
     val error: String? = null
 )
@@ -141,10 +119,19 @@ class WatchdogViewModel(
                 val resp = api.health()
                 val healthy = resp.status.value in 200..299
                 _uiState.value = _uiState.value.copy(
-                    serverHealth = if (healthy) ContainerHealth.HEALTHY else ContainerHealth.UNHEALTHY
+                    serverHealth = if (healthy) ContainerHealth.HEALTHY else ContainerHealth.UNHEALTHY,
+                    containers = listOf(
+                        ContainerInfo(
+                            "plum-code-webui",
+                            if (healthy) ContainerHealth.HEALTHY else ContainerHealth.UNHEALTHY
+                        )
+                    )
                 )
             }.onFailure {
-                _uiState.value = _uiState.value.copy(serverHealth = ContainerHealth.UNHEALTHY)
+                _uiState.value = _uiState.value.copy(
+                    serverHealth = ContainerHealth.UNHEALTHY,
+                    containers = listOf(ContainerInfo("plum-code-webui", ContainerHealth.UNHEALTHY))
+                )
             }
 
             // Sessions
@@ -159,113 +146,7 @@ class WatchdogViewModel(
                 }
             }
 
-            // Rebuild status
-            runCatching {
-                val resp = api.rebuildStatus()
-                if (resp.success && resp.data != null) {
-                    val obj = resp.data as? JsonObject
-                    _uiState.value = _uiState.value.copy(
-                        rebuildInProgress = obj?.get("inProgress")?.jsonPrimitive?.booleanOrNull ?: false,
-                        lastRebuildStatus = obj?.get("status")?.jsonPrimitive?.content ?: "",
-                        serverVersion = obj?.get("version")?.jsonPrimitive?.content ?: "",
-                        serverUptime = obj?.get("uptime")?.jsonPrimitive?.content ?: ""
-                    )
-                }
-            }
-
-            // Robot status
-            runCatching {
-                val resp = api.rebuildRobotStatus()
-                if (resp.success && resp.data != null) {
-                    val obj = resp.data as? JsonObject
-                    val robotHealth = if (obj?.get("running")?.jsonPrimitive?.booleanOrNull == true)
-                        ContainerHealth.HEALTHY else ContainerHealth.UNHEALTHY
-                    _uiState.value = _uiState.value.copy(
-                        containers = listOf(
-                            ContainerInfo(
-                                "claude-code-webui",
-                                _uiState.value.serverHealth,
-                                uptime = _uiState.value.serverUptime,
-                                version = _uiState.value.serverVersion
-                            ),
-                            ContainerInfo(
-                                "repair-bot",
-                                robotHealth,
-                                uptime = obj?.get("uptime")?.jsonPrimitive?.content ?: ""
-                            )
-                        )
-                    )
-                }
-            }.onFailure {
-                _uiState.value = _uiState.value.copy(
-                    containers = listOf(
-                        ContainerInfo(
-                            "claude-code-webui",
-                            _uiState.value.serverHealth,
-                            uptime = _uiState.value.serverUptime
-                        ),
-                        ContainerInfo("repair-bot", ContainerHealth.UNKNOWN)
-                    )
-                )
-            }
-
-            // Last rebuild result
-            runCatching {
-                val resp = api.rebuildLastResult()
-                if (resp.success && resp.data != null) {
-                    val obj = resp.data as? JsonObject
-                    val entry = RebuildEntry(
-                        timestamp = obj?.get("timestamp")?.jsonPrimitive?.content ?: "",
-                        success = obj?.get("success")?.jsonPrimitive?.booleanOrNull ?: false,
-                        message = obj?.get("message")?.jsonPrimitive?.content ?: ""
-                    )
-                    if (entry.timestamp.isNotBlank()) {
-                        _uiState.value = _uiState.value.copy(rebuildHistory = listOf(entry))
-                    }
-                }
-            }
-
             _uiState.value = _uiState.value.copy(isLoading = false)
-        }
-    }
-
-    fun triggerRebuild() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(rebuildInProgress = true, error = null)
-            runCatching {
-                val resp = api.triggerRebuild()
-                if (resp.success) {
-                    _uiState.value = _uiState.value.copy(
-                        lastRebuildStatus = "Rebuild triggered – monitoring…"
-                    )
-                    // Poll for completion
-                    repeat(30) {
-                        delay(3000)
-                        runCatching {
-                            val status = api.rebuildStatus()
-                            if (status.success && status.data != null) {
-                                val obj = status.data as? JsonObject
-                                val inProgress = obj?.get("inProgress")?.jsonPrimitive?.booleanOrNull ?: true
-                                if (!inProgress) {
-                                    _uiState.value = _uiState.value.copy(rebuildInProgress = false)
-                                    refresh()
-                                    return@repeat
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        rebuildInProgress = false,
-                        error = resp.error?.message ?: "Rebuild trigger failed"
-                    )
-                }
-            }.onFailure { e ->
-                _uiState.value = _uiState.value.copy(
-                    rebuildInProgress = false,
-                    error = e.message
-                )
-            }
         }
     }
 
@@ -283,23 +164,12 @@ fun WatchdogScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    var showRebuildDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.error) {
         state.error?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.clearError()
         }
-    }
-
-    if (showRebuildDialog) {
-        RebuildConfirmDialog(
-            onConfirm = {
-                showRebuildDialog = false
-                viewModel.triggerRebuild()
-            },
-            onDismiss = { showRebuildDialog = false }
-        )
     }
 
     Scaffold(
@@ -398,50 +268,6 @@ fun WatchdogScreen(
                                     modifier = Modifier.padding(top = 4.dp)
                                 )
                             }
-                        }
-                    }
-                }
-            }
-
-            // ── Rebuild section ──────────────────────────────────────────
-            item {
-                WatchdogSectionCard(title = "Self-Rebuild", icon = Icons.Default.Build) {
-                    Column(
-                        modifier = Modifier.padding(top = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Status
-                        if (state.rebuildInProgress) {
-                            RebuildProgressBanner()
-                        } else if (state.lastRebuildStatus.isNotBlank()) {
-                            Text(
-                                text = "Last status: ${state.lastRebuildStatus}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // History
-                        state.rebuildHistory.forEach { entry ->
-                            RebuildHistoryRow(entry)
-                        }
-
-                        // Trigger button
-                        Button(
-                            onClick = { showRebuildDialog = true },
-                            enabled = !state.rebuildInProgress,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Icon(
-                                Icons.Default.Build,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("Trigger Rebuild")
                         }
                     }
                 }
@@ -700,87 +526,6 @@ private fun ActiveSessionRow(session: Session) {
 }
 
 @Composable
-private fun RebuildProgressBanner() {
-    val progress by rememberInfiniteTransition(label = "rebuild").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1200), RepeatMode.Restart),
-        label = "rebuildProgress"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Rebuild in progress…",
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
-            )
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
-private fun RebuildHistoryRow(entry: RebuildEntry) {
-    val statusColor = if (entry.success) Color(0xFF22C55E) else Color(0xFFEF4444)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(statusColor.copy(alpha = 0.08f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = if (entry.success) Icons.Default.CheckCircle else Icons.Default.Error,
-            contentDescription = null,
-            tint = statusColor,
-            modifier = Modifier.size(16.dp)
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                if (entry.success) "Rebuild succeeded" else "Rebuild failed",
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                color = statusColor
-            )
-            if (entry.message.isNotBlank()) {
-                Text(
-                    entry.message.take(80),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        if (entry.timestamp.isNotBlank()) {
-            Icon(
-                Icons.Default.History,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(12.dp)
-            )
-            Text(
-                entry.timestamp.take(10),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
 private fun ErrorLogRow(message: String) {
     Row(
         modifier = Modifier
@@ -806,42 +551,4 @@ private fun ErrorLogRow(message: String) {
             lineHeight = 16.sp
         )
     }
-}
-
-@Composable
-private fun RebuildConfirmDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = {
-            Icon(Icons.Default.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        },
-        title = {
-            Text("Trigger Rebuild?", style = MaterialTheme.typography.titleMedium)
-        },
-        text = {
-            Text(
-                "This will rebuild and restart the WebUI container. " +
-                "Active sessions will be terminated. Are you sure?",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                Text("Rebuild Now")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
 }

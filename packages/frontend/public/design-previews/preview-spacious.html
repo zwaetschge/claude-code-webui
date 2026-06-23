@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Spacious — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&family=Montserrat:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     SPACIOUS DESIGN SYSTEM — 400×300 THUMBNAIL
+     Generous whitespace · 8pt grid · Open Sans + Montserrat
+     Calm hierarchy · breathing layout · readable above all
+     ============================================================ */
+  :root {
+    --sp-primary:    #3B82F6;   /* blue */
+    --sp-primary-2:  #2563EB;
+    --sp-primary-soft: rgba(59,130,246,0.10);
+    --sp-secondary:  #8B5CF6;   /* violet accent */
+    --sp-secondary-2:#7C3AED;
+    --sp-success:    #16A34A;
+    --sp-warning:    #D97706;
+    --sp-danger:     #DC2626;
+
+    --sp-surface:    #FFFFFF;
+    --sp-surface-2:  #FAFBFC;
+    --sp-surface-3:  #F4F6F9;
+    --sp-surface-4:  #E8ECF2;
+
+    --sp-ink:        #111827;
+    --sp-ink-2:      #1F2937;
+    --sp-ink-3:      #4B5563;
+    --sp-ink-4:      #6B7280;
+    --sp-ink-5:      #9CA3AF;
+
+    --sp-line:       #E5E7EB;
+    --sp-line-2:     #F0F2F5;
+
+    --sp-font:    'Open Sans', -apple-system, sans-serif;
+    --sp-font-d:  'Montserrat', 'Open Sans', sans-serif;
+    --sp-font-m:  'IBM Plex Mono', ui-monospace, monospace;
+
+    /* generous, consistent radii */
+    --sp-r-sm: 8px;
+    --sp-r-md: 12px;
+    --sp-r-lg: 16px;
+    --sp-r-pill: 999px;
+
+    --sp-shadow-1: 0 1px 2px rgba(17,24,39,0.04);
+    --sp-shadow-2: 0 4px 12px rgba(17,24,39,0.06), 0 1px 3px rgba(17,24,39,0.04);
+    --sp-shadow-3: 0 8px 24px rgba(17,24,39,0.06), 0 2px 8px rgba(17,24,39,0.04);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--sp-font);
+    font-size: 13px;
+    color: var(--sp-ink);
+    background: var(--sp-surface);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — pure white, no decoration (space IS the design)
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background: var(--sp-surface);
+    isolation: isolate;
+  }
+  /* ultra-faint radial tint to avoid total flatness */
+  .poster::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse 80% 60% at 50% 30%, rgba(244,246,249,0.6) 0%, transparent 70%);
+  }
+
+  /* ============================================================
+     FRAME — generous padding & gaps (8pt grid multiples)
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 24px 32px;
+    gap: 24px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--sp-font-d);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--sp-ink);
+  }
+  .brand__mark {
+    width: 28px; height: 28px;
+    border-radius: var(--sp-r-sm);
+    background: linear-gradient(135deg, var(--sp-primary) 0%, var(--sp-secondary) 100%);
+    box-shadow: 0 4px 12px -2px rgba(59,130,246,0.40);
+    position: relative;
+    overflow: hidden;
+  }
+  .brand__mark::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 7px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.40) 0%, transparent 55%);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sp-ink-4);
+    letter-spacing: -0.005em;
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    padding: 8px 12px;
+    border-radius: var(--sp-r-sm);
+    transition: color .15s ease, background .15s ease;
+  }
+  .nav a:hover {
+    color: var(--sp-ink);
+    background: var(--sp-surface-3);
+  }
+  .nav a.is-active {
+    color: var(--sp-primary);
+    font-weight: 600;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 32px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero (airy, generous line-height) ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    padding: 6px 12px;
+    background: var(--sp-primary-soft);
+    border-radius: var(--sp-r-pill);
+    font-family: var(--sp-font-m);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sp-primary);
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--sp-primary);
+  }
+  .hero__title {
+    font-family: var(--sp-font-d);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--sp-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--sp-primary);
+  }
+  .hero__sub {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.7;
+    letter-spacing: -0.005em;
+    color: var(--sp-ink-4);
+    max-width: 30ch;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 40px;          /* generous touch target */
+    padding: 0 20px;
+    border: none;
+    border-radius: var(--sp-r-sm);
+    font-family: var(--sp-font);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    transition: background .15s ease, transform .15s ease, box-shadow .15s ease;
+  }
+  .btn--primary {
+    background: var(--sp-primary);
+    color: #FFFFFF;
+    box-shadow: 0 4px 12px -2px rgba(59,130,246,0.40);
+  }
+  .btn--primary:hover {
+    background: var(--sp-primary-2);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px -2px rgba(59,130,246,0.50);
+  }
+  .btn--ghost {
+    background: transparent;
+    color: var(--sp-ink-3);
+    padding: 0 12px;
+    height: 40px;
+  }
+  .btn--ghost:hover { color: var(--sp-ink); background: var(--sp-surface-3); }
+
+  /* ============================================================
+     RIGHT: SPACIOUS STAT CARD
+     Generous padding, clear hierarchy, breathing separators,
+     tabular metrics, calm gradient sparkline.
+     ============================================================ */
+  .card {
+    padding: 20px;
+    background: var(--sp-surface);
+    border: 1px solid var(--sp-line);
+    border-radius: var(--sp-r-lg);
+    box-shadow: var(--sp-shadow-3);
+    position: relative;
+  }
+  /* top accent stripe — quiet but brand-reinforcing */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 20px; right: 20px;
+    height: 3px;
+    background: linear-gradient(90deg, var(--sp-primary) 0%, var(--sp-secondary) 100%);
+    border-radius: 0 0 2px 2px;
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .card__title {
+    font-family: var(--sp-font-d);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sp-ink);
+    letter-spacing: -0.005em;
+  }
+  .card__sub {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--sp-ink-5);
+    margin-top: 2px;
+  }
+  .card__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: rgba(22,163,74,0.10);
+    color: #15803D;
+    border-radius: var(--sp-r-pill);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .card__badge::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--sp-success);
+  }
+
+  .metric {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .metric__value {
+    font-family: var(--sp-font-d);
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--sp-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .metric__delta {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--sp-font-m);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--sp-success);
+  }
+  .metric__delta::before {
+    content: "↑";
+    margin-right: 3px;
+    font-size: 12px;
+  }
+
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 36px;
+    margin-bottom: 16px;
+  }
+  .spark i {
+    flex: 1;
+    border-radius: 3px 3px 0 0;
+    min-height: 4px;
+    background: linear-gradient(180deg, var(--sp-primary) 0%, rgba(59,130,246,0.15) 100%);
+    transition: opacity .15s ease;
+  }
+  .spark i.peak {
+    background: linear-gradient(180deg, var(--sp-secondary) 0%, rgba(139,92,246,0.20) 100%);
+  }
+
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 14px;
+    border-top: 1px solid var(--sp-line-2);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    background: var(--sp-surface-3);
+    border-radius: var(--sp-r-pill);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--sp-ink-3);
+  }
+  .meta {
+    font-family: var(--sp-font-m);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--sp-ink-5);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 32px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.1;
+  }
+  .stat__k {
+    font-family: var(--sp-font-d);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--sp-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat__k span {
+    font-size: 11px;
+    color: var(--sp-ink-4);
+    font-weight: 500;
+    margin-left: 3px;
+  }
+  .stat__l {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--sp-ink-5);
+    letter-spacing: -0.005em;
+  }
+  .footer__meta {
+    font-family: var(--sp-font-m);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--sp-ink-5);
+  }
+  .footer__meta b { color: var(--sp-primary); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Spacious design language preview — generous whitespace">
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span>Aera</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Overview</a>
+        <a href="#">Features</a>
+        <a href="#">Pricing</a>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">New · v2.0</span>
+        <h1 class="hero__title">Space to <em>think.</em></h1>
+        <p class="hero__sub">A calm workspace built around generous breathing room — so your ideas have space to land.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Start free</button>
+          <button class="btn btn--ghost" type="button">Take a tour</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: stat card -->
+      <div class="card" aria-label="Workspace summary">
+        <div class="card__head">
+          <div>
+            <div class="card__title">Active sessions</div>
+            <div class="card__sub">Last 7 days</div>
+          </div>
+          <span class="card__badge">Live</span>
+        </div>
+
+        <div class="metric">
+          <span class="metric__value">8,492</span>
+          <span class="metric__delta">9.2%</span>
+        </div>
+
+        <div class="spark" aria-hidden="true">
+          <i style="height:32%"></i>
+          <i style="height:46%"></i>
+          <i style="height:38%"></i>
+          <i style="height:60%"></i>
+          <i style="height:52%"></i>
+          <i style="height:70%"></i>
+          <i class="peak" style="height:94%"></i>
+          <i style="height:80%"></i>
+        </div>
+
+        <div class="card__row">
+          <span class="chip">↑ Trending up</span>
+          <span class="meta">Updated · 1m ago</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">99.9<span>%</span></span>
+          <span class="stat__l">Uptime</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">A11y<span> AA</span></span>
+          <span class="stat__l">Compliance</span>
+        </div>
+      </div>
+      <span class="footer__meta">Spacious · <b>#3B82F6</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

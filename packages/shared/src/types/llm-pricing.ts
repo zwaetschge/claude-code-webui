@@ -20,7 +20,7 @@ export interface ModelCostEstimate {
   known: boolean;
 }
 
-export const LLM_PRICING_RATE_CARD_VERSION = '2026-06-01-standard-api-equivalent-v3';
+export const LLM_PRICING_RATE_CARD_VERSION = '2026-06-17-standard-api-equivalent-v5';
 
 export const DEFAULT_MODEL_PRICING: ModelPricing = {
   input: 5,
@@ -31,15 +31,30 @@ export const DEFAULT_MODEL_PRICING: ModelPricing = {
   label: 'GPT-5.5 fallback',
 };
 
-function stripProviderPrefix(model: string): string {
+function splitProviderPrefix(model: string): { provider: string | null; id: string } {
   const slash = model.indexOf('/');
-  if (slash === -1) return model;
+  if (slash === -1) return { provider: null, id: model };
   const provider = model.slice(0, slash);
   const id = model.slice(slash + 1);
-  if (provider === 'anthropic' || provider === 'openai' || provider === 'mistral') {
+  return { provider, id };
+}
+
+function normalizeProviderModelId(provider: string | null, id: string, raw: string): string {
+  if (!provider) return id;
+  if (
+    provider === 'anthropic' ||
+    provider === 'openai' ||
+    provider === 'mistral' ||
+    provider === 'z-ai' ||
+    provider === 'zai' ||
+    provider === 'zhipuai' ||
+    provider === 'deepseek' ||
+    provider === 'opencode' ||
+    provider === 'opencode-go'
+  ) {
     return id;
   }
-  return model;
+  return raw;
 }
 
 function price(
@@ -53,11 +68,105 @@ function price(
   return { input, output, cacheRead, cacheWrite, source, label };
 }
 
+function resolveOpenCodeZenPricing(id: string): ModelPricing | null {
+  const source = 'OpenCode Zen pricing, 2026-06-09';
+
+  if (id === 'big-pickle' || id === 'deepseek-v4-flash-free') {
+    return price(0, 0, 0, 0, source, 'OpenCode Zen free model');
+  }
+  if (id === 'mimo-v2.5-free' || id === 'nemotron-3-ultra-free') {
+    return price(0, 0, 0, 0, source, 'OpenCode Zen free model');
+  }
+  if (id === 'minimax-m2.7' || id === 'minimax-m2.5') {
+    return price(0.3, 1.2, 0.06, 0.375, source, 'OpenCode Zen MiniMax');
+  }
+  if (id === 'kimi-k2.5') {
+    return price(0.6, 3, 0.1, 0, source, 'OpenCode Zen Kimi K2.5');
+  }
+  if (id === 'kimi-k2.6') {
+    return price(0.95, 4, 0.16, 0, source, 'OpenCode Zen Kimi K2.6');
+  }
+  if (id === 'qwen3.7-max') {
+    return price(2.5, 7.5, 0.5, 3.125, source, 'OpenCode Zen Qwen3.7 Max');
+  }
+  if (id === 'qwen3.7-plus') {
+    return price(0.4, 1.6, 0.04, 0.5, source, 'OpenCode Zen Qwen3.7 Plus');
+  }
+  if (id === 'qwen3.6-plus') {
+    return price(0.5, 3, 0.05, 0.625, source, 'OpenCode Zen Qwen3.6 Plus');
+  }
+  if (id === 'qwen3.5-plus') {
+    return price(0.2, 1.2, 0.02, 0.25, source, 'OpenCode Zen Qwen3.5 Plus');
+  }
+  if (id === 'deepseek-v4-flash') {
+    return price(0.14, 0.28, 0.03, 0, source, 'OpenCode Zen DeepSeek V4 Flash');
+  }
+  if (id === 'grok-build-0.1') {
+    return price(1, 2, 0.2, 0, source, 'OpenCode Zen Grok Build');
+  }
+  if (id === 'gemini-3.5-flash') {
+    return price(1.5, 9, 0.15, 0, source, 'OpenCode Zen Gemini 3.5 Flash');
+  }
+  if (id === 'gemini-3.1-pro') {
+    return price(2, 12, 0.2, 0, source, 'OpenCode Zen Gemini 3.1 Pro');
+  }
+  if (id === 'gemini-3-flash') {
+    return price(0.5, 3, 0.05, 0, source, 'OpenCode Zen Gemini 3 Flash');
+  }
+  if (id === 'gpt-5.5-pro') {
+    return price(30, 180, 30, 0, source, 'OpenCode Zen GPT-5.5 Pro');
+  }
+  if (id === 'gpt-5.4-pro') {
+    return price(30, 180, 30, 0, source, 'OpenCode Zen GPT-5.4 Pro');
+  }
+  if (id === 'gpt-5.4-nano') {
+    return price(0.2, 1.25, 0.02, 0, source, 'OpenCode Zen GPT-5.4 Nano');
+  }
+  if (id === 'gpt-5.3-codex-spark') {
+    return price(1.75, 14, 0.175, 0, source, 'OpenCode Zen GPT-5.3 Codex Spark');
+  }
+  if (id === 'gpt-5.2' || id === 'gpt-5.2-codex') {
+    return price(1.75, 14, 0.175, 0, source, 'OpenCode Zen GPT-5.2');
+  }
+  if (id === 'gpt-5.1' || id === 'gpt-5.1-codex' || id === 'gpt-5' || id === 'gpt-5-codex') {
+    return price(1.07, 8.5, 0.107, 0, source, 'OpenCode Zen GPT-5.1/5');
+  }
+  if (id === 'gpt-5.1-codex-max') {
+    return price(1.25, 10, 0.125, 0, source, 'OpenCode Zen GPT-5.1 Codex Max');
+  }
+  if (id === 'gpt-5.1-codex-mini') {
+    return price(0.25, 2, 0.025, 0, source, 'OpenCode Zen GPT-5.1 Codex Mini');
+  }
+  if (id === 'gpt-5-nano') {
+    return price(0.05, 0.4, 0.005, 0, source, 'OpenCode Zen GPT-5 Nano');
+  }
+
+  return null;
+}
+
 export function resolveModelPricing(model?: string | null): ModelPricing | null {
   if (!model) return null;
   const raw = model.trim().toLowerCase();
   if (!raw) return null;
-  const id = stripProviderPrefix(raw);
+  const { provider, id: providerId } = splitProviderPrefix(raw);
+
+  // These providers expose subscription, local, quota, or provider-specific
+  // billing that is not a stable per-token API rate card.
+  if (
+    provider === 'ollama-cloud' ||
+    provider === 'ollama' ||
+    provider === 'llama-local' ||
+    provider === 'lmstudio'
+  ) {
+    return null;
+  }
+
+  if (provider === 'opencode') {
+    const zenPricing = resolveOpenCodeZenPricing(providerId);
+    if (zenPricing) return zenPricing;
+  }
+
+  const id = normalizeProviderModelId(provider, providerId, raw);
 
   // OpenAI, USD per 1M tokens.
   if (id.startsWith('gpt-5.5')) {
@@ -66,14 +175,23 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   if (id.startsWith('gpt-5.4-mini')) {
     return price(0.75, 4.5, 0.075, 0, 'OpenAI API pricing, 2026-06-01', 'GPT-5.4 mini');
   }
+  if (id.startsWith('gpt-5.4-nano')) {
+    return price(0.2, 1.25, 0.02, 0, 'OpenAI API pricing, 2026-06-09', 'GPT-5.4 nano');
+  }
   if (id.startsWith('gpt-5.4')) {
     return price(2.5, 15, 0.25, 0, 'OpenAI API pricing, 2026-06-01', 'GPT-5.4');
   }
   if (id.startsWith('gpt-5.3-codex') || id.startsWith('gpt-5.2-codex')) {
     return price(1.75, 14, 0.175, 0, 'OpenAI model pricing, 2026-06-01', 'GPT Codex');
   }
-  if (id === 'gpt-5' || id.startsWith('gpt-5.2')) {
-    return price(1.25, 10, 0.125, 0, 'OpenAI API pricing, 2026-06-01', 'GPT-5 family');
+  if (id === 'gpt-5.2' || id.startsWith('gpt-5.2-')) {
+    return price(1.75, 14, 0.175, 0, 'OpenAI API pricing, 2026-06-09', 'GPT-5.2');
+  }
+  if (id === 'gpt-5.1' || id.startsWith('gpt-5.1-') || id === 'gpt-5') {
+    return price(1.25, 10, 0.125, 0, 'OpenAI API pricing, 2026-06-09', 'GPT-5.1/5 family');
+  }
+  if (id === 'gpt-5-nano') {
+    return price(0.05, 0.4, 0.005, 0, 'OpenAI API pricing, 2026-06-09', 'GPT-5 nano');
   }
   if (id.startsWith('gpt-4o-mini')) {
     return price(0.15, 0.6, 0.075, 0, 'OpenAI model pricing, 2026-06-01', 'GPT-4o mini');
@@ -102,7 +220,16 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
     return price(0.8, 4, 0.08, 1, 'Anthropic API pricing, 2026-06-01', 'Claude Haiku 3.5');
   }
 
+  // Moonshot/Kimi, USD per 1M tokens. OpenCode Go is subscription-based, but
+  // analytics use API-equivalent spend so Go-routed Kimi rows stay priced.
+  if (id === 'kimi-k2.7-code' || id === 'kimi-k2.7-code-highspeed' || id === 'kimi-k2.7') {
+    return price(0.95, 4, 0.19, 0, 'Kimi K2.7 Code API pricing, 2026-06-17', 'Kimi K2.7 Code');
+  }
+
   // Z.AI, USD per 1M tokens.
+  if (raw === 'z-ai/glm-5.2' || raw === 'zai/glm-5.2' || id === 'glm-5.2') {
+    return price(1.4, 4.4, 0.26, 0, 'Z.AI pricing, 2026-06-17', 'GLM-5.2');
+  }
   if (raw === 'z-ai/glm-5.1' || raw === 'zai/glm-5.1' || id === 'glm-5.1') {
     return price(1.4, 4.4, 0.26, 0, 'Z.AI pricing, 2026-06-01', 'GLM-5.1');
   }
@@ -117,6 +244,15 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   }
   if (raw === 'z-ai/glm-4.5' || raw === 'zai/glm-4.5' || id === 'glm-4.5') {
     return price(0.6, 2.2, 0.11, 0, 'Z.AI pricing, 2026-06-01', 'GLM-4.5');
+  }
+
+  // DeepSeek, USD per 1M tokens. deepseek-chat and deepseek-reasoner are
+  // compatibility aliases for the V4 Flash non-thinking/thinking modes.
+  if (id === 'deepseek-chat' || id === 'deepseek-reasoner' || id === 'deepseek-v4-flash') {
+    return price(0.14, 0.28, 0.0028, 0, 'DeepSeek API pricing, 2026-06-09', 'DeepSeek V4 Flash');
+  }
+  if (id === 'deepseek-v4-pro') {
+    return price(0.435, 0.87, 0.003625, 0, 'DeepSeek API pricing, 2026-06-09', 'DeepSeek V4 Pro');
   }
 
   // Google Gemini API, USD per 1M tokens. Use the standard <=200k prompt tier

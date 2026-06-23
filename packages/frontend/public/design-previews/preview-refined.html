@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Refined Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Refined tokens */
+      --primary: #3B82F6;       /* blue accent */
+      --secondary: #8B5CF6;     /* purple accent */
+      --text: #111827;          /* near-black ink */
+      --text-soft: #6B7280;     /* muted ink */
+      --rule: #E5E7EB;          /* hairline rule */
+      --rule-strong: #111827;   /* ink rule */
+      --surface: #FFFFFF;
+      --paper: #FDFCFB;         /* warm white */
+      --serif: 'Playfair Display', Georgia, serif;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      background: #ECEAE6;
+      font-family: var(--serif);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .frame {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      padding: 16px;
+      display: grid;
+      place-items: center;
+      background: #ECEAE6;
+    }
+
+    .card {
+      position: relative;
+      width: 368px;
+      height: 268px;
+      background: var(--surface);
+      padding: 24px 28px 20px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+      box-shadow:
+        0 1px 2px rgba(17, 24, 39, 0.04),
+        0 12px 32px rgba(17, 24, 39, 0.10);
+      overflow: hidden;
+    }
+
+    /* Hairline inner border for the engraved feel */
+    .card::before {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border: 1px solid var(--rule);
+      pointer-events: none;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      z-index: 1;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .monogram {
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--text);
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-family: var(--serif);
+      font-weight: 600;
+      font-style: italic;
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .brand-name {
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .brand-name .sep {
+      color: var(--rule);
+      margin: 0 4px;
+    }
+
+    .meta-right {
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+
+    /* Body — invitation */
+    .body {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.20em;
+      text-transform: uppercase;
+      color: var(--primary);
+    }
+
+    .eyebrow::before {
+      content: '';
+      width: 14px;
+      height: 1px;
+      background: var(--primary);
+    }
+
+    .headline {
+      font-family: var(--serif);
+      font-weight: 500;
+      font-size: 30px;
+      line-height: 1.0;
+      letter-spacing: -0.005em;
+      color: var(--text);
+    }
+
+    .headline .italic {
+      font-style: italic;
+      font-weight: 400;
+      color: var(--text);
+    }
+
+    .headline .accent {
+      color: var(--secondary);
+      font-style: italic;
+      font-weight: 400;
+    }
+
+    .lede {
+      margin-top: 2px;
+      font-family: var(--serif);
+      font-size: 10.5px;
+      line-height: 1.5;
+      color: var(--text-soft);
+      max-width: 230px;
+    }
+
+    /* Footer — member details + rule */
+    .footer {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .hairline {
+      height: 1px;
+      background: var(--rule);
+      width: 100%;
+    }
+
+    .details {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .label {
+      font-family: var(--mono);
+      font-size: 7px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+
+    .value {
+      font-family: var(--serif);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      line-height: 1.1;
+      letter-spacing: -0.005em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .value .sub {
+      display: block;
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.10em;
+      color: var(--text-soft);
+      margin-top: 1px;
+    }
+
+    .field.right { align-items: flex-end; text-align: right; }
+
+    .seal {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid var(--text);
+      display: grid;
+      place-items: center;
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--text);
+    }
+
+    /* Decorative small dot accents */
+    .dots {
+      position: absolute;
+      top: 24px;
+      right: 28px;
+      display: flex;
+      gap: 3px;
+      z-index: 1;
+    }
+    .dots span {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--rule);
+    }
+    .dots span.on { background: var(--secondary); }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <article class="card">
+
+      <!-- Header -->
+      <header class="header">
+        <div class="brand">
+          <div class="monogram" aria-hidden="true">M</div>
+          <div class="brand-name">Maison<span class="sep">·</span>Atelier</div>
+        </div>
+        <div class="meta-right">No. 0142</div>
+      </header>
+
+      <!-- Decorative dots -->
+      <div class="dots" aria-hidden="true">
+        <span></span><span></span><span class="on"></span><span></span>
+      </div>
+
+      <!-- Invitation body -->
+      <div class="body">
+        <span class="eyebrow">Private invitation</span>
+        <h1 class="headline">
+          The <span class="italic">Quiet</span><br>
+          <span class="accent">Circle</span>
+        </h1>
+        <p class="lede">
+          A members&rsquo; atelier for those who prefer craft over noise. By nomination only.
+        </p>
+      </div>
+
+      <!-- Footer / member details -->
+      <footer class="footer">
+        <div class="hairline"></div>
+        <div class="details">
+          <div class="field">
+            <span class="label">Holder</span>
+            <span class="value">Élise Vasseur</span>
+          </div>
+          <div class="field">
+            <span class="label">Tier</span>
+            <span class="value">Atelier<span class="sub">II</span></span>
+          </div>
+          <div class="field">
+            <span class="label">Valid</span>
+            <span class="value">'26<span class="sub">— '27</span></span>
+          </div>
+          <div class="field right">
+            <span class="label">Seal</span>
+            <div class="seal" aria-hidden="true">A</div>
+          </div>
+        </div>
+      </footer>
+
+    </article>
+  </div>
+</body>
+</html>

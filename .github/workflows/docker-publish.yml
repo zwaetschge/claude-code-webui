@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: valentin2177/claude-code-webui
+  IMAGE_NAME: valentin2177/plum-code-webui
 
 jobs:
   build:

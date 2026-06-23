@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
-import type { ApiError } from '@claude-code-webui/shared';
+import type { ApiError } from '@plum-code-webui/shared';
 import { randomUUID } from 'crypto';
 
 declare module 'express-serve-static-core' {

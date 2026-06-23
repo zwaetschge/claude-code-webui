@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Neon — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&family=STIX+Two+Text:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Source+Code+Pro:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     NEON DESIGN SYSTEM — 400×300 THUMBNAIL
+     Electric glow · lime+cyan on white · STIX Two Text serif
+     High-contrast attention-grabbing
+     ============================================================ */
+  :root {
+    --ne-primary: #BBF351;       /* electric lime-green */
+    --ne-primary-deep: #9BD420;
+    --ne-secondary: #00BCFF;     /* bright cyan */
+    --ne-secondary-deep: #0098D0;
+    --ne-success: #16A34A;
+    --ne-warning: #D97706;
+    --ne-danger: #DC2626;
+
+    --ne-surface: #FFFFFF;
+    --ne-surface-2: #FAFAFA;
+    --ne-surface-3: #F4F4F4;
+    --ne-ink: #111827;
+    --ne-ink-2: #374151;
+    --ne-ink-3: #6B7280;
+    --ne-ink-4: #9CA3AF;
+    --ne-line: #E5E7EB;
+    --ne-line-2: #F3F4F6;
+
+    --ne-font: 'Roboto', -apple-system, sans-serif;
+    --ne-font-display: 'STIX Two Text', Georgia, serif;
+    --ne-font-mono: 'Source Code Pro', monospace;
+
+    --ne-r-sm: 6px;
+    --ne-r-md: 10px;
+    --ne-r-lg: 16px;
+    --ne-r-pill: 999px;
+
+    /* Neon glow shadows — signature */
+    --ne-glow-lime: 0 0 16px rgba(187,243,81,0.60), 0 0 4px rgba(187,243,81,0.80);
+    --ne-glow-cyan: 0 0 16px rgba(0,188,255,0.55), 0 0 4px rgba(0,188,255,0.75);
+    --ne-glow-lime-text: 0 0 12px rgba(187,243,81,0.50);
+    --ne-glow-cyan-text: 0 0 12px rgba(0,188,255,0.50);
+    --ne-sh-1: 0 2px 8px -2px rgba(17,24,39,0.06);
+    --ne-sh-2: 0 6px 20px -4px rgba(17,24,39,0.08), 0 2px 6px -1px rgba(17,24,39,0.04);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ne-font);
+    font-size: 12px;
+    color: var(--ne-ink);
+    background:
+      radial-gradient(180px 120px at 90% 5%, rgba(187,243,81,0.10), transparent 60%),
+      radial-gradient(180px 120px at 10% 95%, rgba(0,188,255,0.08), transparent 60%),
+      var(--ne-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame {
+    width: 400px;
+    height: 300px;
+    padding: 12px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--ne-surface);
+    border: 1.5px solid var(--ne-ink);
+    border-radius: var(--ne-r-pill);
+    box-shadow: var(--ne-sh-1);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 900;
+    font-size: 14px;
+    letter-spacing: -0.02em;
+  }
+  .brand__mark {
+    width: 24px; height: 24px;
+    background: var(--ne-primary);
+    border: 2px solid var(--ne-ink);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: var(--ne-ink);
+    box-shadow: var(--ne-glow-lime);
+  }
+  .brand__mark svg { width: 13px; height: 13px; }
+  .brand__name {
+    font-family: var(--ne-font);
+  }
+  .brand__name span { color: var(--ne-secondary); text-shadow: var(--ne-glow-cyan-text); }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+  }
+  .nav a {
+    padding: 4px 10px;
+    border-radius: var(--ne-r-pill);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 10.5px;
+    color: var(--ne-ink-3);
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--ne-ink); background: var(--ne-surface-3); }
+  .nav a.is-active {
+    background: var(--ne-ink);
+    color: var(--ne-primary);
+    text-shadow: var(--ne-glow-lime-text);
+    box-shadow: var(--ne-glow-lime);
+  }
+
+  .avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--ne-secondary);
+    border: 2px solid var(--ne-ink);
+    display: grid; place-items: center;
+    color: var(--ne-ink);
+    font-weight: 900;
+    font-size: 9px;
+    box-shadow: var(--ne-glow-cyan);
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  /* LEFT — neon glow hero */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 12px;
+    background: var(--ne-ink);
+    color: var(--ne-primary);
+    border-radius: var(--ne-r-pill);
+    font-family: var(--ne-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-shadow: var(--ne-glow-lime-text);
+    box-shadow: var(--ne-glow-lime);
+  }
+
+  /* STIX Two Text serif with neon glow — the signature */
+  .hero__title {
+    font-family: var(--ne-font-display);
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.0;
+    letter-spacing: -0.025em;
+    color: var(--ne-ink);
+    margin: 2px 0;
+  }
+  .hero__title em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ne-primary-deep);
+    text-shadow: var(--ne-glow-lime-text);
+  }
+  .hero__title-cyan {
+    color: var(--ne-secondary-deep);
+    text-shadow: var(--ne-glow-cyan-text);
+  }
+
+  .hero__sub {
+    font-family: var(--ne-font);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: var(--ne-ink-3);
+    max-width: 30ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+  }
+  /* Neon glow buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 18px;
+    border: 2px solid var(--ne-ink);
+    border-radius: var(--ne-r-pill);
+    font-family: var(--ne-font);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: box-shadow .2s ease, transform .2s ease;
+  }
+  .btn--lime {
+    background: var(--ne-primary);
+    color: var(--ne-ink);
+    box-shadow: var(--ne-glow-lime);
+  }
+  .btn--lime:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 24px rgba(187,243,81,0.70), 0 0 8px rgba(187,243,81,0.90);
+  }
+  .btn--cyan {
+    background: var(--ne-secondary);
+    color: var(--ne-ink);
+    box-shadow: var(--ne-glow-cyan);
+  }
+  .btn--cyan:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 24px rgba(0,188,255,0.65), 0 0 8px rgba(0,188,255,0.85);
+  }
+  .btn--ghost {
+    background: transparent;
+    border-color: var(--ne-line);
+    color: var(--ne-ink-2);
+    box-shadow: none;
+  }
+  .btn--ghost:hover { color: var(--ne-secondary-deep); border-color: var(--ne-secondary); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — neon-bordered stat cards */
+  .cards {
+    display: grid;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 6px;
+    min-height: 0;
+  }
+  .card {
+    padding: 8px 12px;
+    border-radius: var(--ne-r-md);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    overflow: hidden;
+    position: relative;
+    background: var(--ne-surface);
+    border: 1.5px solid var(--ne-ink);
+  }
+  /* Neon border-glow */
+  .card--lime {
+    border-color: var(--ne-primary-deep);
+    box-shadow: var(--ne-glow-lime);
+  }
+  .card--cyan {
+    border-color: var(--ne-secondary-deep);
+    box-shadow: var(--ne-glow-cyan);
+  }
+  .card--dark {
+    background: var(--ne-ink);
+    color: var(--ne-surface);
+    border-color: var(--ne-ink);
+  }
+
+  .card__icon {
+    width: 28px; height: 28px;
+    border-radius: var(--ne-r-sm);
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .card--lime .card__icon { background: var(--ne-primary); color: var(--ne-ink); }
+  .card--cyan .card__icon { background: var(--ne-secondary); color: var(--ne-ink); }
+  .card--dark .card__icon { background: var(--ne-primary); color: var(--ne-ink); box-shadow: var(--ne-glow-lime); }
+  .card__icon svg { width: 14px; height: 14px; }
+  .card__body { flex: 1; min-width: 0; }
+  .card__label {
+    font-family: var(--ne-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ne-ink-3);
+    line-height: 1;
+  }
+  .card--dark .card__label { color: var(--ne-ink-4); }
+  .card__value {
+    font-family: var(--ne-font);
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--ne-ink);
+    line-height: 1.1;
+    margin-top: 2px;
+    letter-spacing: -0.025em;
+  }
+  .card--dark .card__value { color: var(--ne-primary); text-shadow: var(--ne-glow-lime-text); }
+  .card__value span {
+    font-size: 11px;
+    color: var(--ne-ink-3);
+    font-weight: 500;
+  }
+  .card--dark .card__value span { color: var(--ne-ink-4); }
+  .card__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--ne-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+  .card--lime .card__sub { color: var(--ne-primary-deep); }
+  .card--cyan .card__sub { color: var(--ne-secondary-deep); }
+  .card--dark .card__sub { color: var(--ne-secondary); text-shadow: var(--ne-glow-cyan-text); }
+  .card__sub svg { width: 7px; height: 7px; }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Neon design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </span>
+      <span class="brand__name">glow<span>.</span>io</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Home</a>
+      <a href="#">Studio</a>
+      <a href="#">Shop</a>
+    </nav>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: neon glow hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">⚡ live now</span>
+      <h1 class="hero__title">
+        Light up<br>
+        the <em>night</em>.
+      </h1>
+      <p class="hero__sub">Electric interfaces that demand attention. Glow, pulse, shine — impossible to ignore.</p>
+      <div class="hero__cta">
+        <button class="btn btn--lime" type="button">
+          Get glowing
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">See how →</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: neon-bordered stat cards -->
+    <aside class="cards">
+
+      <div class="card card--lime">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Creators</div>
+          <div class="card__value">24.8<span>k</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            18%
+          </div>
+        </div>
+      </div>
+
+      <div class="card card--cyan">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Signal</div>
+          <div class="card__value">99.9<span>%</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            uptime
+          </div>
+        </div>
+      </div>
+
+      <div class="card card--dark">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Glow score</div>
+          <div class="card__value">98<span>/100</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            electric
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

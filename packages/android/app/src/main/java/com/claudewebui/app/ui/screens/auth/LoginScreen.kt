@@ -11,6 +11,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -82,9 +84,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.claudewebui.app.R
 import com.claudewebui.app.data.model.AuthUser
 import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.AntiqueBrassDark
 import com.claudewebui.app.ui.theme.BrandBlue
 import com.claudewebui.app.ui.theme.BrandPurple
 import com.claudewebui.app.ui.theme.SuccessGreen
@@ -182,27 +184,11 @@ private fun BrandHeader(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Logo mark — gradient square with CC initial
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(AntiqueBrass, AntiqueBrassDark),
-                    )
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "CC",
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.5).sp,
-                ),
-                color = Color.White,
-            )
-        }
+        Image(
+            painter = painterResource(id = R.mipmap.ic_launcher),
+            contentDescription = null,
+            modifier = Modifier.size(84.dp),
+        )
 
         val titleText = buildAnnotatedString {
             withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground)) {

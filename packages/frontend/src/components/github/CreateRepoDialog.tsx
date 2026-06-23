@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Loader2, Github, Lock, Globe } from 'lucide-react';
 import { api } from '@/services/api';
-import type { GitHubRepo } from '@claude-code-webui/shared';
+import type { GitHubRepo } from '@plum-code-webui/shared';
 
 interface CreateRepoDialogProps {
   open: boolean;

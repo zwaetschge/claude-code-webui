@@ -9,7 +9,7 @@ import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { redactSensitiveText } from '../utils/sanitize';
-import type { McpServer, McpServerType } from '@claude-code-webui/shared';
+import type { McpServer, McpServerType } from '@plum-code-webui/shared';
 
 const router = Router();
 const CLAUDE_SETTINGS_MCP_ID_PREFIX = 'claude-settings:';

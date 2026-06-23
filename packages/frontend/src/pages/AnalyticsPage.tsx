@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -16,6 +16,8 @@ import {
   Loader2,
   FileJson,
   FileSpreadsheet,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -30,17 +32,50 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
-import { CLI_PROVIDER_LABEL, CLI_PROVIDER_LIMIT_LABELS, type CLIProvider } from '@/lib/providers';
+import {
+  CLI_PROVIDER_LABEL,
+  CLI_PROVIDER_LIMIT_LABELS,
+  type CLIProvider,
+  type UiProvider,
+} from '@/lib/providers';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
-import { getProviderLabelForModel } from '@claude-code-webui/shared';
+import { getProviderLabelForModel } from '@plum-code-webui/shared';
 
 interface ApiResponse<T> {
   success: boolean;
   data: T;
 }
 
+interface LimitWindowData {
+  utilization: number;
+  resetsAt: string | null;
+  windowSeconds?: number | null;
+  used?: number | null;
+  limit?: number | null;
+  remaining?: number | null;
+  unit?: string | null;
+}
+
 interface AnalyticsSummary {
   period: string;
+  window?: {
+    period: string;
+    startsAt: string | null;
+    endsAt: string | null;
+    source: 'rolling' | 'calendar-week' | 'calendar-month' | 'all';
+    label: string;
+    offset: number;
+    canGoPrevious: boolean;
+    canGoNext: boolean;
+    timezoneOffsetMinutes: number;
+    limit: {
+      provider: 'codex';
+      name: 'weekly';
+      utilization: number;
+      resetsAt: string | null;
+      windowSeconds: number | null;
+    } | null;
+  };
   totals: {
     inputTokens: number;
     outputTokens: number;
@@ -126,6 +161,24 @@ interface AnalyticsSummary {
       requests: number;
     }>;
   };
+  events?: {
+    contextSnapshots: number;
+    compactEvents: number;
+    latestContext: {
+      sessionId: string;
+      provider: string | null;
+      model: string | null;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      totalTokens: number;
+      contextWindow: number;
+      contextUsedPercent: number;
+      contextExceeded: boolean;
+      createdAt: string;
+    } | null;
+  };
 }
 
 interface TimelineData {
@@ -138,6 +191,13 @@ interface TimelineData {
   cost: number;
   requests: number;
   providers?: Record<string, { tokens: number; cost: number; requests: number }>;
+  models?: Record<
+    string,
+    { model: string; provider: string; tokens: number; cost: number; requests: number }
+  >;
+  context_snapshots?: number;
+  compact_events?: number;
+  max_context_used_percent?: number | null;
 }
 
 interface ProviderStats {
@@ -160,10 +220,11 @@ interface ProviderStats {
 interface UsageLimitData {
   subscriptionType?: string;
   rateLimitTier?: string;
-  fiveHour: { utilization: number; resetsAt: string | null } | null;
-  sevenDay: { utilization: number; resetsAt: string | null } | null;
-  sevenDaySonnet: { utilization: number; resetsAt: string | null } | null;
-  additional?: Array<{ name: string; utilization: number; resetsAt: string | null }>;
+  fiveHour: LimitWindowData | null;
+  sevenDay: LimitWindowData | null;
+  sevenDaySonnet: LimitWindowData | null;
+  additional?: Array<{ name: string } & LimitWindowData>;
+  source?: 'upstream' | 'local-budget' | 'local-estimate';
   localBudget?: {
     dailyUsd: number | null;
     weeklyUsd: number | null;
@@ -179,25 +240,70 @@ interface UsageLimitData {
 interface UsageLimitsResponse {
   success: boolean;
   supported: boolean;
-  provider: string;
+  provider: UsageLimitProvider;
   data: UsageLimitData | null;
   error?: { code: string; message: string };
 }
 
-const USAGE_PROVIDERS: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
+type UsageLimitProvider = CLIProvider | 'z-ai' | 'opencode-go';
 
-const USAGE_PROVIDER_COLORS: Record<CLIProvider, string> = {
+const USAGE_PROVIDERS: UsageLimitProvider[] = [
+  'codex',
+  'z-ai',
+  'opencode-go',
+  'opencode',
+  'vibe',
+  'claude',
+];
+
+const USAGE_PROVIDER_COLORS: Record<UsageLimitProvider, string> = {
   claude: '#f97316',
   codex: '#22c55e',
   opencode: '#3b82f6',
+  'opencode-go': '#2563eb',
   vibe: '#fa520f',
+  'z-ai': '#0f766e',
+};
+
+const USAGE_PROVIDER_LABELS: Record<UsageLimitProvider, string> = {
+  ...CLI_PROVIDER_LABEL,
+  'opencode-go': 'OpenCode Go',
+  'z-ai': 'Z.ai Coding Plan',
+};
+
+const USAGE_PROVIDER_LOGO: Record<UsageLimitProvider, UiProvider> = {
+  claude: 'claude',
+  codex: 'codex',
+  opencode: 'opencode',
+  'opencode-go': 'opencode',
+  vibe: 'vibe',
+  'z-ai': 'opencode',
+};
+
+const USAGE_LIMIT_LABELS: Record<
+  UsageLimitProvider,
+  {
+    session: { title: string; subtitle?: string };
+    weeklyAll?: { title: string; subtitle?: string };
+    weeklySonnet?: { title: string; subtitle?: string };
+  }
+> = {
+  ...CLI_PROVIDER_LIMIT_LABELS,
+  'opencode-go': {
+    session: { title: 'Rolling', subtitle: 'Go quota' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Go quota' },
+  },
+  'z-ai': {
+    session: { title: '5h', subtitle: 'Tokens' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Tokens' },
+  },
 };
 
 const PERIODS = [
   { value: '24h', label: '24h' },
-  { value: '7d', label: '7 Days' },
-  { value: '30d', label: '30 Days' },
-  { value: 'all', label: 'All Time' },
+  { value: '7d', label: 'Weekly' },
+  { value: '30d', label: 'Monthly' },
+  { value: 'all', label: 'All' },
 ];
 
 const CHART_METRICS = [
@@ -224,6 +330,25 @@ const PROVIDER_COLORS: Record<string, string> = {
   Claude: '#f97316',
   Other: PROVIDER_FALLBACK_COLOR,
 };
+
+const MODEL_COLORS = [
+  '#2563eb',
+  '#16a34a',
+  '#dc2626',
+  '#9333ea',
+  '#0891b2',
+  '#ea580c',
+  '#4f46e5',
+  '#0d9488',
+  '#be123c',
+  '#65a30d',
+  '#7c3aed',
+  '#ca8a04',
+  '#0284c7',
+  '#c026d3',
+  '#059669',
+  '#e11d48',
+];
 
 function withAlpha(hex: string, alpha: string): string {
   const normalized = hex.startsWith('#') ? hex.slice(1) : hex;
@@ -265,18 +390,135 @@ function formatRate(value?: number): string {
   return `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}/M`;
 }
 
-function getProviderKey(provider: string): string {
-  const normalized = provider
+function formatLimitAmount(value?: number | null, unit?: string | null): string {
+  if (value === undefined || value === null || !Number.isFinite(value)) return '';
+  if (unit === 'usd') return formatCurrency(value);
+  if (unit === 'tokens') return `${formatNumber(value)} tokens`;
+  if (unit === 'requests') return `${formatNumber(value)} requests`;
+  if (unit === 'percent') return `${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}%`;
+  return formatNumber(value);
+}
+
+function formatLimitUsage(limit: LimitWindowData): string | null {
+  if (
+    limit.used === undefined ||
+    limit.used === null ||
+    limit.limit === undefined ||
+    limit.limit === null
+  ) {
+    return null;
+  }
+  const used = formatLimitAmount(limit.used, limit.unit);
+  const total = formatLimitAmount(limit.limit, limit.unit);
+  if (!used || !total) return null;
+  return `${used} / ${total}`;
+}
+
+function formatLimitSource(source?: UsageLimitData['source']): string {
+  if (source === 'local-estimate') return 'Local estimate';
+  if (source === 'local-budget') return 'Local budget';
+  return 'Live quota';
+}
+
+function getModelKey(model: string, index: number): string {
+  const normalized = model
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return `provider_${normalized || 'other'}`;
+  return `model_${index}_${normalized || 'unknown'}`;
+}
+
+function getModelColor(model: string, index: number): string {
+  if (index < MODEL_COLORS.length) return MODEL_COLORS[index] || PROVIDER_FALLBACK_COLOR;
+  let hash = 0;
+  for (let i = 0; i < model.length; i += 1) {
+    hash = (hash * 31 + model.charCodeAt(i)) >>> 0;
+  }
+  return MODEL_COLORS[hash % MODEL_COLORS.length] || PROVIDER_FALLBACK_COLOR;
 }
 
 function formatChartValue(metric: ChartMetric, value: number): string {
   if (metric === 'cost') return formatCurrency(value);
   if (metric === 'requests') return value.toLocaleString();
   return formatNumber(value);
+}
+
+function formatResetDelta(iso: string): string {
+  const target = Date.parse(iso);
+  if (!Number.isFinite(target)) return '';
+  const diffMs = target - Date.now();
+  if (diffMs <= 0) return 'now';
+  const mins = Math.floor(diffMs / 60000);
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const remainMins = mins % 60;
+  if (days > 0) return `in ${days}d ${hours}h`;
+  if (hours > 0) return `in ${hours}h ${remainMins}m`;
+  return `in ${remainMins}m`;
+}
+
+function formatResetAbsolute(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatWindowDate(iso?: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatWindowRange(startsAt?: string | null, endsAt?: string | null): string {
+  if (!startsAt && !endsAt) return 'all recorded usage';
+  const start = formatWindowDate(startsAt);
+  const end = formatWindowDate(endsAt);
+  if (start && end) return `${start} - ${end}`;
+  return start ? `since ${start}` : `until ${end}`;
+}
+
+function parseTimelineLabel(value: string): Date | null {
+  const match = value.match(/^(\d{4})-(\d{2})(?:-(\d{2})(?:\s+(\d{2}):00)?)?$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = match[3] ? Number(match[3]) : 1;
+  const hour = match[4] ? Number(match[4]) : 0;
+  const date = new Date(year, month, day, hour);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTimelineLabel(value: string): string {
+  const date = parseTimelineLabel(value);
+  if (!date) return value;
+  if (/^\d{4}-\d{2}$/.test(value)) {
+    return date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  }
+  if (/\d{2}:00$/.test(value)) {
+    return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' });
+  }
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function LimitResetLine({ resetsAt }: { resetsAt?: string | null }) {
+  if (!resetsAt) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      Reset {formatResetDelta(resetsAt)} · {formatResetAbsolute(resetsAt)}
+    </p>
+  );
 }
 
 // Signed minute offset from UTC — positive east. Berlin (UTC+2) = 120.
@@ -318,6 +560,10 @@ function buildTimelineCsv(rows: TimelineData[]): string {
     'total_tokens',
     'cost',
     'requests',
+    'context_snapshots',
+    'compact_events',
+    'max_context_used_percent',
+    'models_json',
   ];
   const lines = [header.join(',')];
   for (const row of rows) {
@@ -331,6 +577,10 @@ function buildTimelineCsv(rows: TimelineData[]): string {
         row.total_tokens,
         row.cost,
         row.requests,
+        row.context_snapshots ?? 0,
+        row.compact_events ?? 0,
+        row.max_context_used_percent ?? '',
+        csvEscape(row.models ? JSON.stringify(row.models) : ''),
       ].join(',')
     );
   }
@@ -339,6 +589,7 @@ function buildTimelineCsv(rows: TimelineData[]): string {
 
 export function AnalyticsPage() {
   const [period, setPeriod] = useState('7d');
+  const [periodOffset, setPeriodOffset] = useState(0);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('tokens');
   const [topSessionsLimit, setTopSessionsLimit] = useState(TOP_SESSIONS_PAGE_SIZE);
   // Capture the offset once per mount so query keys stay stable even if the system clock
@@ -352,10 +603,10 @@ export function AnalyticsPage() {
     isError: summaryError,
     error: summaryErrorObj,
   } = useQuery({
-    queryKey: ['analytics-summary', period],
+    queryKey: ['analytics-summary', period, periodOffset, tzOffset],
     queryFn: async () => {
       const response = await api.get<ApiResponse<AnalyticsSummary>>(
-        `/api/analytics/summary?period=${period}`
+        `/api/analytics/summary?period=${period}&tz=${tzOffset}&offset=${periodOffset}`
       );
       return response.data.data;
     },
@@ -366,10 +617,10 @@ export function AnalyticsPage() {
     isLoading: timelineLoading,
     isError: timelineError,
   } = useQuery({
-    queryKey: ['analytics-timeline', period, tzOffset],
+    queryKey: ['analytics-timeline', period, periodOffset, tzOffset],
     queryFn: async () => {
       const response = await api.get<ApiResponse<TimelineData[]>>(
-        `/api/analytics/timeline?period=${period}&tz=${tzOffset}`
+        `/api/analytics/timeline?period=${period}&tz=${tzOffset}&offset=${periodOffset}`
       );
       return response.data.data;
     },
@@ -395,6 +646,7 @@ export function AnalyticsPage() {
     .map((q) => ({
       provider: q.data!.cliProvider,
       data: q.data!.data!,
+      error: q.data!.error,
     }));
 
   const usageLimitsLoading = usageLimitsQueries.some((q) => q.isLoading);
@@ -421,9 +673,15 @@ export function AnalyticsPage() {
     summary && promptTokens > 0
       ? Math.round((summary.totals.cacheReadTokens / promptTokens) * 100)
       : 0;
+  const analyticsWindow = summary?.window;
+  const windowLimit = analyticsWindow?.limit;
+  const contextSnapshots = summary?.events?.contextSnapshots ?? 0;
+  const compactEvents = summary?.events?.compactEvents ?? 0;
+  const latestContextPercent = summary?.events?.latestContext?.contextUsedPercent ?? 0;
 
   const handlePeriodChange = useCallback((next: string) => {
     setPeriod(next);
+    setPeriodOffset(0);
     setTopSessionsLimit(TOP_SESSIONS_PAGE_SIZE);
   }, []);
 
@@ -431,6 +689,7 @@ export function AnalyticsPage() {
     if (!summary && !timeline) return;
     const payload = {
       period,
+      offset: periodOffset,
       exportedAt: new Date().toISOString(),
       tzOffsetMinutes: tzOffset,
       summary: summary ?? null,
@@ -439,16 +698,20 @@ export function AnalyticsPage() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     triggerDownload(
       JSON.stringify(payload, null, 2),
-      `analytics-${period}-${stamp}.json`,
+      `analytics-${period}-offset-${periodOffset}-${stamp}.json`,
       'application/json'
     );
-  }, [summary, timeline, period, tzOffset]);
+  }, [summary, timeline, period, periodOffset, tzOffset]);
 
   const exportCsv = useCallback(() => {
     if (!timeline || timeline.length === 0) return;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    triggerDownload(buildTimelineCsv(timeline), `analytics-${period}-${stamp}.csv`, 'text/csv');
-  }, [timeline, period]);
+    triggerDownload(
+      buildTimelineCsv(timeline),
+      `analytics-${period}-offset-${periodOffset}-${stamp}.csv`,
+      'text/csv'
+    );
+  }, [timeline, period, periodOffset]);
 
   const tokenBreakdown = useMemo(() => {
     if (!summary) return [];
@@ -517,15 +780,20 @@ export function AnalyticsPage() {
       .sort((a, b) => b.cost - a.cost);
   }, [summary]);
 
-  const providerSeries = useMemo(() => {
-    if (!providerSummary.length) return [];
-    return providerSummary.map((provider) => ({
-      key: getProviderKey(provider.provider),
-      label: provider.provider,
-      color: getProviderColor(provider.provider),
-      fillOpacity: 0.32,
-    }));
-  }, [providerSummary]);
+  const modelSeries = useMemo(() => {
+    if (!summary?.byModel?.length) return [];
+    return summary.byModel.map((model, index) => {
+      const modelName = model.model || 'Unknown';
+      return {
+        key: getModelKey(modelName, index),
+        label: modelName,
+        model: modelName,
+        provider: model.provider || getProviderLabelForModel(model.model),
+        color: getModelColor(modelName, index),
+        fillOpacity: 0.28,
+      };
+    });
+  }, [summary]);
 
   const fallbackSeries = useMemo(() => {
     if (chartMetric === 'tokens') {
@@ -564,18 +832,18 @@ export function AnalyticsPage() {
     ];
   }, [chartMetric]);
 
-  const chartSeries = providerSeries.length > 0 ? providerSeries : fallbackSeries;
+  const chartSeries = modelSeries.length > 0 ? modelSeries : fallbackSeries;
 
   const chartData = useMemo(() => {
     if (!timeline || timeline.length === 0) return [];
-    if (providerSeries.length === 0) {
+    if (modelSeries.length === 0) {
       return timeline;
     }
     return timeline.map((entry) => {
-      const providers = entry.providers || {};
+      const models = entry.models || {};
       const dataPoint: Record<string, number | string> = { date: entry.date };
-      providerSeries.forEach((series) => {
-        const stats = providers[series.label];
+      modelSeries.forEach((series) => {
+        const stats = models[series.model];
         let value = 0;
         if (chartMetric === 'cost') {
           value = stats?.cost ?? 0;
@@ -588,23 +856,21 @@ export function AnalyticsPage() {
       });
       return dataPoint;
     });
-  }, [timeline, providerSeries, chartMetric]);
+  }, [timeline, modelSeries, chartMetric]);
 
   return (
-    <div className="analytics-shell glass-page container mx-auto py-6 px-4 max-w-7xl space-y-8">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-muted-foreground">
+    <div className="analytics-shell glass-page analytics-dashboard container mx-auto">
+      <div className="analytics-hero">
+        <div className="analytics-hero-copy">
+          <div className="analytics-eyebrow">
             <BarChart3 className="h-4 w-4" />
             Unified Analytics
           </div>
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-            All providers. One ledger.
-          </h1>
-          <p className="text-sm text-muted-foreground max-w-2xl">
+          <h1>All providers. One ledger.</h1>
+          <p>
             Token volume and API-equivalent spend across every connected coding provider.
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="analytics-provider-pills">
             {providerSummary.length === 0 ? (
               <span className="ui-pill ui-pill-subtle">All providers</span>
             ) : (
@@ -626,9 +892,25 @@ export function AnalyticsPage() {
               })
             )}
           </div>
+          {analyticsWindow && (
+            <div className="analytics-window-row">
+              <span className="ui-pill ui-pill-subtle">
+                <Calendar className="h-3.5 w-3.5" />
+                {analyticsWindow.label}:{' '}
+                {formatWindowRange(analyticsWindow.startsAt, analyticsWindow.endsAt)}
+              </span>
+              {windowLimit && (
+                <span className="ui-pill ui-pill-subtle border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                  <Gauge className="h-3.5 w-3.5" />
+                  Codex weekly {windowLimit.utilization}%
+                  {windowLimit.resetsAt && <> · reset {formatResetDelta(windowLimit.resetsAt)}</>}
+                </span>
+              )}
+            </div>
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div role="radiogroup" aria-label="Time period" className="flex flex-wrap gap-2">
+        <div className="analytics-hero-actions">
+          <div role="radiogroup" aria-label="Time period" className="analytics-control-group">
             {PERIODS.map((p, idx) => (
               <button
                 key={p.value}
@@ -657,7 +939,41 @@ export function AnalyticsPage() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="analytics-control-group">
+            <button
+              type="button"
+              onClick={() => setPeriodOffset((value) => value + 1)}
+              disabled={period === 'all'}
+              className="ui-pill ui-pill-subtle transition-colors hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+              title="Show previous time window"
+              aria-label="Show previous time window"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              <span>Previous</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriodOffset(0)}
+              disabled={period === 'all' || periodOffset === 0}
+              className="ui-pill ui-pill-subtle transition-colors hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+              title="Jump to current time window"
+              aria-label="Jump to current time window"
+            >
+              <span>Current</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriodOffset((value) => Math.max(0, value - 1))}
+              disabled={period === 'all' || periodOffset === 0}
+              className="ui-pill ui-pill-subtle transition-colors hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+              title="Show next time window"
+              aria-label="Show next time window"
+            >
+              <span>Next</span>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="analytics-control-group">
             <button
               type="button"
               onClick={exportCsv}
@@ -693,7 +1009,7 @@ export function AnalyticsPage() {
 
       {/* Provider Usage Limits */}
       {usageLimitsData.length > 0 && (
-        <Card>
+        <Card className="analytics-quota-panel">
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2 text-lg">
@@ -710,26 +1026,38 @@ export function AnalyticsPage() {
             )}
           </CardHeader>
           <CardContent>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {usageLimitsData.map(({ provider, data }) => {
+            <div className="analytics-quota-grid">
+              {usageLimitsData.map(({ provider, data, error }) => {
                 const color = USAGE_PROVIDER_COLORS[provider] || PROVIDER_FALLBACK_COLOR;
-                const labels = CLI_PROVIDER_LIMIT_LABELS[provider];
-                const providerName = CLI_PROVIDER_LABEL[provider];
+                const labels = USAGE_LIMIT_LABELS[provider];
+                const providerName = USAGE_PROVIDER_LABELS[provider];
+                const logoProvider = USAGE_PROVIDER_LOGO[provider];
 
                 return (
                   <div
                     key={provider}
-                    className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4"
+                    className="analytics-quota-card"
+                    style={{ '--analytics-provider-color': color } as CSSProperties}
                   >
                     <div className="flex items-center gap-3">
-                      <ProviderLogo provider={provider} className="h-6 w-6" />
+                      <ProviderLogo provider={logoProvider} className="h-6 w-6" />
                       <div>
                         <h3 className="text-sm font-semibold">{providerName}</h3>
                         <p className="text-xs text-muted-foreground">
                           {data.subscriptionType || data.rateLimitTier || 'Rate limits'}
                         </p>
                       </div>
+                      <span className="ml-auto rounded-md border border-border/70 px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {formatLimitSource(data.source)}
+                      </span>
                     </div>
+
+                    {error && (
+                      <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{error.message}</span>
+                      </div>
+                    )}
 
                     <div className="space-y-3">
                       {/* Session / 5h limit */}
@@ -756,6 +1084,12 @@ export function AnalyticsPage() {
                               }}
                             />
                           </div>
+                          {formatLimitUsage(data.fiveHour) && (
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatLimitUsage(data.fiveHour)}
+                            </p>
+                          )}
+                          <LimitResetLine resetsAt={data.fiveHour.resetsAt} />
                         </div>
                       )}
 
@@ -786,6 +1120,12 @@ export function AnalyticsPage() {
                               }}
                             />
                           </div>
+                          {formatLimitUsage(data.sevenDay) && (
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatLimitUsage(data.sevenDay)}
+                            </p>
+                          )}
+                          <LimitResetLine resetsAt={data.sevenDay.resetsAt} />
                         </div>
                       )}
 
@@ -816,6 +1156,12 @@ export function AnalyticsPage() {
                               }}
                             />
                           </div>
+                          {formatLimitUsage(data.sevenDaySonnet) && (
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatLimitUsage(data.sevenDaySonnet)}
+                            </p>
+                          )}
+                          <LimitResetLine resetsAt={data.sevenDaySonnet.resetsAt} />
                         </div>
                       )}
 
@@ -837,6 +1183,12 @@ export function AnalyticsPage() {
                               }}
                             />
                           </div>
+                          {formatLimitUsage(limit) && (
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatLimitUsage(limit)}
+                            </p>
+                          )}
+                          <LimitResetLine resetsAt={limit.resetsAt} />
                         </div>
                       ))}
                     </div>
@@ -871,8 +1223,8 @@ export function AnalyticsPage() {
         </Card>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-        <Card>
+      <div className="analytics-metric-grid">
+        <Card className="analytics-metric-card is-tokens">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Total Tokens
@@ -890,7 +1242,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-metric-card is-spend">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               API Spend
@@ -907,7 +1259,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-metric-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Effective Rate
@@ -922,7 +1274,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-metric-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Requests
@@ -939,7 +1291,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-metric-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Cache Efficiency
@@ -954,7 +1306,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-metric-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Pricing Coverage
@@ -970,15 +1322,33 @@ export function AnalyticsPage() {
             </p>
           </CardContent>
         </Card>
+
+        <Card className="analytics-metric-card">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Context Events
+            </CardTitle>
+            <Gauge className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-semibold">
+              {isLoading ? '...' : `${Math.round(latestContextPercent)}%`}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {contextSnapshots.toLocaleString()} snapshots · {compactEvents.toLocaleString()}{' '}
+              compacts
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
-        <Card>
+      <div className="analytics-main-grid">
+        <Card className="analytics-chart-panel">
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <CardTitle className="text-lg">Usage Over Time</CardTitle>
               <CardDescription>
-                Unified volume across every provider in the selected window.
+                Per-model volume across every provider in the selected window.
               </CardDescription>
             </div>
             <div role="radiogroup" aria-label="Chart metric" className="flex flex-wrap gap-2">
@@ -1032,10 +1402,7 @@ export function AnalyticsPage() {
                     <XAxis
                       dataKey="date"
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => {
-                        const date = new Date(value);
-                        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                      }}
+                      tickFormatter={(value) => formatTimelineLabel(String(value))}
                     />
                     <YAxis
                       tick={{ fontSize: 12 }}
@@ -1046,7 +1413,7 @@ export function AnalyticsPage() {
                         if (!active || !payload?.length) return null;
                         return (
                           <div className="bg-popover border border-border/70 rounded-lg p-3 shadow-sm">
-                            <p className="font-medium mb-2">{label}</p>
+                            <p className="font-medium mb-2">{formatTimelineLabel(String(label))}</p>
                             {payload.map((entry) => (
                               <p
                                 key={entry.dataKey}
@@ -1068,11 +1435,7 @@ export function AnalyticsPage() {
                         dataKey={series.key}
                         name={series.label}
                         stackId={
-                          providerSeries.length > 0
-                            ? '1'
-                            : chartMetric === 'tokens'
-                              ? '1'
-                              : undefined
+                          modelSeries.length > 0 ? '1' : chartMetric === 'tokens' ? '1' : undefined
                         }
                         stroke={series.color}
                         fill={series.color}
@@ -1090,7 +1453,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-composition-panel">
           <CardHeader>
             <CardTitle className="text-lg">Token Composition</CardTitle>
             <CardDescription>Input, output, and cache volume combined.</CardDescription>
@@ -1133,7 +1496,7 @@ export function AnalyticsPage() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="analytics-audit-panel">
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <CardTitle className="text-lg">Pricing Health</CardTitle>
@@ -1211,8 +1574,8 @@ export function AnalyticsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-[1.2fr,1fr]">
-        <Card>
+      <div className="analytics-lower-grid">
+        <Card className="analytics-provider-panel">
           <CardHeader>
             <CardTitle className="text-lg">Provider Mix</CardTitle>
             <CardDescription>API-equivalent spend and volume by provider.</CardDescription>
@@ -1296,7 +1659,7 @@ export function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="analytics-model-panel">
           <CardHeader>
             <CardTitle className="text-lg">Top Models</CardTitle>
             <CardDescription>Highest API-equivalent spend by model.</CardDescription>
@@ -1360,7 +1723,7 @@ export function AnalyticsPage() {
         </Card>
       </div>
 
-      <Card>
+      <Card className="analytics-sessions-panel">
         <CardHeader className="flex items-center justify-between gap-3 md:flex-row">
           <div>
             <CardTitle className="text-lg">Top Sessions</CardTitle>

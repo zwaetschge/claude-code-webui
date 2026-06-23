@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Retro — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Macondo&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     RETRO DESIGN SYSTEM — 400×300 THUMBNAIL
+     Vintage · high-contrast · Macondo display + JetBrains Mono
+     Blue/violet on warm cream, sunbursts, halftone, badges.
+     ============================================================ */
+  :root {
+    --rt-primary:    #3B82F6;   /* retro blue */
+    --rt-primary-2:  #2563EB;
+    --rt-secondary:  #8B5CF6;   /* violet */
+    --rt-secondary-2:#7C3AED;
+    --rt-success:    #16A34A;
+    --rt-warning:    #D97706;
+    --rt-danger:     #DC2626;
+
+    --rt-cream:      #F4ECD8;   /* vintage paper */
+    --rt-cream-2:    #EFE5C8;
+    --rt-cream-3:    #E8DBB4;
+    --rt-surface:    #FFFFFF;
+    --rt-ink:        #1F2937;   /* near-black for body */
+    --rt-ink-2:      #374151;
+    --rt-ink-3:      #6B7280;
+    --rt-ink-4:      #9CA3AF;
+
+    --rt-font-d:  'Macondo', 'Georgia', cursive;
+    --rt-font-m:  'JetBrains Mono', ui-monospace, monospace;
+    --rt-font-s:  'JetBrains Mono', ui-monospace, monospace;  /* stand-in for mono sans */
+
+    --rt-shadow-hard: 3px 3px 0 var(--rt-ink);
+    --rt-shadow-hard-b: 3px 3px 0 var(--rt-primary-2);
+    --rt-shadow-hard-v: 3px 3px 0 var(--rt-secondary-2);
+    --rt-shadow-hard-w: 3px 3px 0 var(--rt-cream-3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--rt-font-s);
+    font-size: 12px;
+    color: var(--rt-ink);
+    background: var(--rt-cream);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — warm cream paper with sunburst rays + halftone
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background:
+      /* sunburst rays radiating from top-right */
+      repeating-conic-gradient(
+        from 200deg at 88% 12%,
+        rgba(59,130,246,0.14) 0deg 6deg,
+        transparent 6deg 12deg
+      ),
+      radial-gradient(ellipse 50% 45% at 12% 88%, rgba(139,92,246,0.10) 0%, transparent 60%),
+      linear-gradient(180deg, var(--rt-cream) 0%, var(--rt-cream-2) 100%);
+    isolation: isolate;
+  }
+  /* halftone dot texture — vintage print tell */
+  .halftone {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.45;
+    background-image: radial-gradient(rgba(31,41,55,0.10) 1px, transparent 1.4px);
+    background-size: 5px 5px;
+    -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 25%, transparent 90%);
+            mask-image: radial-gradient(ellipse at 50% 50%, #000 25%, transparent 90%);
+  }
+  /* corner starbursts — pure decoration */
+  .burst {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    color: var(--rt-primary);
+    opacity: 0.55;
+  }
+  .burst--tl { top: 8px; left: 8px; }
+  .burst--br { bottom: 8px; right: 8px; color: var(--rt-secondary); }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 12px 18px 10px;
+    gap: 10px;
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 3px double var(--rt-ink);
+  }
+  .logo {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .logo__mark {
+    font-family: var(--rt-font-d);
+    font-size: 28px;
+    font-weight: 400;
+    color: var(--rt-primary-2);
+    line-height: 1;
+    letter-spacing: 0.01em;
+    text-shadow: 1.5px 1.5px 0 var(--rt-ink);
+  }
+  .logo__mark em {
+    font-style: normal;
+    color: var(--rt-secondary-2);
+  }
+  .logo__est {
+    font-family: var(--rt-font-m);
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--rt-ink-2);
+    text-transform: uppercase;
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--rt-font-m);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--rt-ink-2);
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    padding: 2px 0;
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--rt-primary-2); }
+  .nav a.is-active {
+    color: var(--rt-cream);
+    background: var(--rt-ink);
+    padding: 3px 7px;
+  }
+  .star {
+    color: var(--rt-warning);
+    font-size: 10px;
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 14px;
+    align-items: start;
+    min-height: 0;
+    padding-top: 2px;
+  }
+
+  /* ---- LEFT: retro headline + ribbon ---- */
+  .lead {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .ribbon {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    padding: 3px 9px 3px 9px;
+    background: var(--rt-primary-2);
+    color: var(--rt-cream);
+    font-family: var(--rt-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    box-shadow: var(--rt-shadow-hard);
+    position: relative;
+  }
+  .ribbon::before,
+  .ribbon::after {
+    content: "★";
+    color: var(--rt-warning);
+    font-size: 8px;
+  }
+  .headline {
+    font-family: var(--rt-font-d);
+    font-size: 34px;
+    font-weight: 400;
+    line-height: 1.02;
+    letter-spacing: 0.005em;
+    color: var(--rt-ink);
+    text-shadow: 2px 2px 0 var(--rt-cream-3);
+    margin-top: 2px;
+  }
+  .headline em {
+    font-style: italic;
+    color: var(--rt-secondary-2);
+  }
+  .headline span {
+    color: var(--rt-primary-2);
+  }
+  .deck {
+    font-family: var(--rt-font-m);
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1.5;
+    letter-spacing: 0.01em;
+    color: var(--rt-ink-2);
+    max-width: 32ch;
+    margin-top: 2px;
+  }
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 5px;
+    font-family: var(--rt-font-m);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--rt-ink-2);
+  }
+  .byline b { color: var(--rt-primary-2); font-weight: 700; }
+  .byline span { color: var(--rt-ink-4); }
+
+  /* ============================================================
+     RIGHT: VINTAGE BADGE CARD
+     Retro signature — bold border, offset shadow, sticker/badge feel,
+     star rating, stamp, ticket-style perforation.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 11px 11px 10px;
+    background: var(--rt-surface);
+    border: 2.5px solid var(--rt-ink);
+    box-shadow: var(--rt-shadow-hard-v);
+    overflow: hidden;
+  }
+  /* ticket perforation top */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: 0; right: 0;
+    height: 5px;
+    background:
+      radial-gradient(circle at 6px 0, var(--rt-cream) 0 3px, transparent 3.5px) repeat-x;
+    background-size: 12px 5px;
+  }
+  /* diagonal corner stamp */
+  .stamp {
+    position: absolute;
+    top: 9px;
+    right: -22px;
+    transform: rotate(18deg);
+    background: var(--rt-danger);
+    color: var(--rt-cream);
+    font-family: var(--rt-font-m);
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 2px 24px;
+    box-shadow: 0 0 0 1.5px var(--rt-cream), 1.5px 1.5px 0 var(--rt-ink);
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 4px 0 7px;
+  }
+  .card__cat {
+    font-family: var(--rt-font-m);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--rt-ink-2);
+    padding: 2px 6px;
+    background: var(--rt-cream-2);
+    border: 1px solid var(--rt-ink);
+  }
+
+  .feature {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 9px;
+  }
+  /* vintage product chip — sun emblem */
+  .feature__chip {
+    flex: 0 0 auto;
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--rt-warning);
+    border: 2px solid var(--rt-ink);
+    display: grid;
+    place-items: center;
+    box-shadow: var(--rt-shadow-hard);
+    position: relative;
+  }
+  .feature__chip::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    background:
+      conic-gradient(from 0deg,
+        var(--rt-ink) 0deg 12deg, transparent 12deg 30deg,
+        var(--rt-ink) 30deg 42deg, transparent 42deg 60deg,
+        var(--rt-ink) 60deg 72deg, transparent 72deg 90deg,
+        var(--rt-ink) 90deg 102deg, transparent 102deg 120deg,
+        var(--rt-ink) 120deg 132deg, transparent 132deg 150deg,
+        var(--rt-ink) 150deg 162deg, transparent 162deg 180deg,
+        var(--rt-ink) 180deg 192deg, transparent 192deg 210deg,
+        var(--rt-ink) 210deg 222deg, transparent 222deg 240deg,
+        var(--rt-ink) 240deg 252deg, transparent 252deg 270deg,
+        var(--rt-ink) 270deg 282deg, transparent 282deg 300deg,
+        var(--rt-ink) 300deg 312deg, transparent 312deg 330deg,
+        var(--rt-ink) 330deg 342deg, transparent 342deg 360deg
+      );
+    -webkit-mask-image: radial-gradient(circle, transparent 52%, #000 53%);
+            mask-image: radial-gradient(circle, transparent 52%, #000 53%);
+    opacity: 0.9;
+  }
+  .feature__chip::after {
+    content: "★";
+    position: relative;
+    color: var(--rt-cream);
+    font-size: 16px;
+    z-index: 1;
+  }
+  .feature__meta { min-width: 0; }
+  .feature__name {
+    font-family: var(--rt-font-d);
+    font-size: 17px;
+    font-weight: 400;
+    line-height: 1.05;
+    color: var(--rt-ink);
+    letter-spacing: 0.01em;
+  }
+  .feature__name span { color: var(--rt-primary-2); }
+  .feature__sub {
+    font-family: var(--rt-font-m);
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--rt-ink-3);
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .price {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 5px 7px;
+    background: var(--rt-cream-2);
+    border: 1.5px dashed var(--rt-ink);
+  }
+  .price__now {
+    font-family: var(--rt-font-d);
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1;
+    color: var(--rt-danger);
+    text-shadow: 1px 1px 0 var(--rt-ink);
+  }
+  .price__now span {
+    font-family: var(--rt-font-m);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--rt-ink-2);
+    text-shadow: none;
+    margin-left: 2px;
+  }
+  .price__was {
+    font-family: var(--rt-font-m);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--rt-ink-3);
+    text-decoration: line-through;
+  }
+  .price__save {
+    margin-left: auto;
+    align-self: center;
+    font-family: var(--rt-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--rt-cream);
+    background: var(--rt-success);
+    padding: 2px 6px;
+    text-transform: uppercase;
+  }
+
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 7px;
+    border-top: 2px dotted var(--rt-ink);
+  }
+  .rating {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--rt-font-m);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--rt-ink-2);
+  }
+  .rating__stars {
+    color: var(--rt-warning);
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--rt-font-m);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--rt-cream);
+    background: var(--rt-primary-2);
+    padding: 4px 9px;
+    border: 1.5px solid var(--rt-ink);
+    box-shadow: 2px 2px 0 var(--rt-ink);
+    text-decoration: none;
+  }
+
+  /* ============ FOOTER (ticket bar) ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 3px double var(--rt-ink);
+    padding-top: 7px;
+  }
+  .marquee {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--rt-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--rt-ink-2);
+  }
+  .marquee b { color: var(--rt-primary-2); }
+  .marquee span { color: var(--rt-warning); }
+  .footer__meta {
+    font-family: var(--rt-font-m);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--rt-ink-2);
+  }
+  .footer__meta b { color: var(--rt-secondary-2); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Retro design language preview — vintage">
+
+  <div class="halftone" aria-hidden="true"></div>
+  <svg class="burst burst--tl" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 0 L13.5 9 L24 12 L13.5 15 L12 24 L10.5 15 L0 12 L10.5 9 Z" fill="currentColor"/>
+  </svg>
+  <svg class="burst burst--br" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 0 L13.5 9 L24 12 L13.5 15 L12 24 L10.5 15 L0 12 L10.5 9 Z" fill="currentColor"/>
+  </svg>
+
+  <div class="frame">
+
+    <!-- ===== MASTHEAD ===== -->
+    <header class="masthead">
+      <div class="logo">
+        <span class="logo__mark">Retr<em>o</em>!</span>
+        <span class="logo__est">Est. 1958</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Shop</a>
+        <a href="#">Deals</a>
+        <a href="#">Vinyl</a>
+        <span class="star" aria-hidden="true">★</span>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: lead -->
+      <article class="lead">
+        <span class="ribbon">Special Edition</span>
+        <h1 class="headline">Spin the <span>good</span> <em>old</em> days.</h1>
+        <p class="deck">Vintage finds, classic pressings, and diner-grade gear — delivered with old-school charm.</p>
+        <div class="byline">
+          <b>Curated weekly</b>
+          <span>·</span>
+          <span>Free shipping</span>
+        </div>
+      </article>
+
+      <!-- RIGHT: vintage badge card -->
+      <div class="card" aria-label="Featured pick">
+        <span class="stamp">Hot!</span>
+
+        <div class="card__head">
+          <span class="card__cat">Pick of the Week</span>
+        </div>
+
+        <div class="feature">
+          <span class="feature__chip" aria-hidden="true"></span>
+          <div class="feature__meta">
+            <div class="feature__name">Sunbeam <span>Radio</span></div>
+            <div class="feature__sub">Model S-58 · 1958</div>
+          </div>
+        </div>
+
+        <div class="price">
+          <span class="price__now">$64<span>.00</span></span>
+          <span class="price__was">$89</span>
+          <span class="price__save">Save 28%</span>
+        </div>
+
+        <div class="card__row">
+          <span class="rating">
+            <span class="rating__stars" aria-hidden="true">★★★★★</span>
+            4.9
+          </span>
+          <a class="cta" href="#">Buy</a>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <span class="marquee"><b>Authentic</b> · <span>★★★★★</span> · <b>Guaranteed</b></span>
+      <span class="footer__meta">Retro · <b>#3B82F6</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

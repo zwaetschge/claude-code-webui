@@ -7,9 +7,10 @@ import type {
   CommandExecutionResult,
   BuiltinCommandName,
   CLIProvider,
-} from '@claude-code-webui/shared';
-import { CLI_FORWARDED_COMMANDS } from '@claude-code-webui/shared';
+} from '@plum-code-webui/shared';
+import { CLI_FORWARDED_COMMANDS } from '@plum-code-webui/shared';
 import { listCodexFeatures } from '../utils/codexCli';
+import { listSkillLibrary } from '../utils/skillLibrary';
 
 // Built-in command definitions (native WebUI handlers)
 const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 'scope'>> = {
@@ -74,7 +75,7 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
     arguments: [],
   },
   theme: {
-    description: 'Open theme picker',
+    description: 'Open appearance controls',
     arguments: [],
   },
   permissions: {
@@ -117,10 +118,6 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
     description: 'Diagnose and verify the WebUI installation',
     arguments: [],
   },
-  fast: {
-    description: 'Toggle Codex fast service tier on or off',
-    arguments: ['on|off|status'],
-  },
   features: {
     description: 'List Codex feature flags',
     arguments: [],
@@ -140,6 +137,14 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
   'web-search': {
     description: 'Show Codex web-search mode guidance',
     arguments: [],
+  },
+  auth: {
+    description: 'Open the provider login flow',
+    arguments: ['provider?'],
+  },
+  hermes: {
+    description: 'Alias for opening the Codex provider login flow',
+    arguments: ['auth|model'],
   },
 };
 
@@ -172,6 +177,8 @@ const PROVIDER_LABELS: Record<CLIProvider, string> = {
   opencode: 'OpenCode',
   vibe: 'Mistral Vibe',
 };
+
+const OPENCODE_FORWARDED_COMMANDS = new Set(['init', 'review', 'security-review', 'plan']);
 
 export class CommandService {
   private userCommandsDir: string;
@@ -242,18 +249,11 @@ export class CommandService {
   }
 
   private async listSkillNames(): Promise<string[]> {
-    const skillsDir = join(homedir(), '.claude', 'skills');
-    try {
-      const stats = await stat(skillsDir);
-      if (!stats.isDirectory()) return [];
-      const entries = await readdir(skillsDir, { withFileTypes: true });
-      return entries
-        .filter((entry) => entry.isDirectory() && !entry.name.endsWith('.disabled'))
-        .map((entry) => entry.name)
-        .sort((a, b) => a.localeCompare(b));
-    } catch {
-      return [];
-    }
+    const skills = await listSkillLibrary(join(homedir(), '.claude'), {
+      kind: 'skill',
+      enabledOnly: true,
+    });
+    return skills.map((skill) => skill.baseName).sort((a, b) => a.localeCompare(b));
   }
 
   // Load commands from a directory
@@ -363,6 +363,9 @@ export class CommandService {
   ): Promise<CommandExecutionResult> {
     // Check built-in commands first (WebUI-native handlers)
     if (parsed.name in BUILTIN_COMMAND_DEFS) {
+      if (parsed.name === 'auth' || parsed.name === 'hermes') {
+        return this.executeAuthCommand(parsed);
+      }
       return this.executeBuiltinCommand(parsed.name as BuiltinCommandName, parsed, context);
     }
 
@@ -375,6 +378,20 @@ export class CommandService {
           success: true,
           action: 'forward_to_cli',
           response: rawCommand,
+        };
+      }
+      if (provider === 'opencode') {
+        if (OPENCODE_FORWARDED_COMMANDS.has(parsed.name)) {
+          const rawCommand = `/${parsed.name}${parsed.rawArgs ? ' ' + parsed.rawArgs : ''}`;
+          return {
+            success: true,
+            action: 'forward_to_cli',
+            response: rawCommand,
+          };
+        }
+        return {
+          success: false,
+          error: `/${parsed.name} is a Claude Code native command and is not available in OpenCode. Use /init, /review, /security-review, /plan, a WebUI command, or ask OpenCode in plain language.`,
         };
       }
       if (provider !== 'claude') {
@@ -409,6 +426,23 @@ export class CommandService {
       success: true,
       action: 'send_message',
       response: processedContent,
+    };
+  }
+
+  private async executeAuthCommand(parsed: ParsedCommand): Promise<CommandExecutionResult> {
+    const sub = (parsed.args[0] || '').toLowerCase();
+    if (parsed.name === 'hermes' && sub && sub !== 'auth' && sub !== 'model') {
+      return {
+        success: false,
+        error: `Unknown command: /${parsed.name} ${parsed.rawArgs}. Use /auth or /hermes auth to open the login flow.`,
+      };
+    }
+
+    return {
+      success: true,
+      action: 'open_login',
+      data: { provider: 'codex' },
+      response: 'Opening Codex login flow…',
     };
   }
 
@@ -447,6 +481,10 @@ export class CommandService {
             ? Object.entries(CLI_FORWARDED_DESCRIPTIONS)
                 .map(([name, desc]) => `/${name} — ${desc}`)
                 .join('\n')
+            : provider === 'opencode'
+              ? Array.from(OPENCODE_FORWARDED_COMMANDS)
+                  .map((name) => `/${name} — ${CLI_FORWARDED_DESCRIPTIONS[name]}`)
+                  .join('\n')
             : '';
         const customList = commands
           .filter((c) => c.scope !== 'builtin')
@@ -582,15 +620,22 @@ export class CommandService {
         };
       }
 
-      case 'mcp':
+      case 'mcp': {
+        const provider = context.provider || 'codex';
         return {
           success: true,
           response: [
-            `MCP servers are loaded for ${PROVIDER_LABELS[context.provider || 'codex']} at session start.`,
-            'Manage server definitions in Settings or `~/.claude/settings.json`; Codex mirrors them into `~/.codex/config.toml` during backend startup.',
+            `MCP servers are loaded for ${PROVIDER_LABELS[provider]} at session start.`,
+            provider === 'codex'
+              ? 'Codex also loads a local `oracle` second-opinion server for GPT-backed reviews.'
+              : null,
+            'Manage mirrored server definitions in Settings or `~/.claude/settings.json`; Codex appends its own local MCP entries in `~/.codex/config.toml` during backend startup.',
             'Start a fresh chat after changing MCP config.',
-          ].join('\n'),
+          ]
+            .filter((line): line is string => typeof line === 'string')
+            .join('\n'),
         };
+      }
 
       case 'memory':
         return {
@@ -729,8 +774,8 @@ export class CommandService {
         return {
           success: true,
           action: 'open_settings',
-          response: 'Opening theme picker…',
-          data: { tab: 'theme' },
+          response: 'Opening appearance controls…',
+          data: { tab: 'general', section: 'appearance' },
         };
 
       case 'permissions':
@@ -764,57 +809,6 @@ export class CommandService {
           action: 'show_doctor',
           response: 'Running WebUI diagnostics…',
         };
-
-      case 'fast': {
-        const provider = context.provider || 'codex';
-
-        if (provider !== 'codex') {
-          return {
-            success: false,
-            error: `/fast is only available for Codex sessions in WebUI. ${PROVIDER_LABELS[provider]} does not expose Codex service tiers.`,
-          };
-        }
-
-        const mode = parsed.args[0]?.toLowerCase();
-        const statusOnly = mode === 'status' || mode === 'state';
-        const explicit =
-          mode === 'on' ||
-          mode === 'enable' ||
-          mode === 'enabled' ||
-          mode === 'true' ||
-          mode === '1'
-            ? true
-            : mode === 'off' ||
-                mode === 'disable' ||
-                mode === 'disabled' ||
-                mode === 'false' ||
-                mode === '0'
-              ? false
-              : undefined;
-
-        if (mode && !statusOnly && explicit === undefined) {
-          return {
-            success: false,
-            error: 'Usage: /fast, /fast on, /fast off, or /fast status.',
-          };
-        }
-
-        return {
-          success: true,
-          action: 'toggle_fast',
-          response: statusOnly
-            ? 'Checking fast mode.'
-            : explicit === true
-              ? 'Enabling fast mode.'
-              : explicit === false
-                ? 'Disabling fast mode.'
-                : 'Toggling fast mode.',
-          data: {
-            ...(statusOnly ? { statusOnly: true } : {}),
-            ...(explicit === undefined ? {} : { enabled: explicit }),
-          },
-        };
-      }
 
       case 'model':
         if (parsed.args.length === 0) {
@@ -858,7 +852,7 @@ export class CommandService {
         };
 
       case 'compact':
-        if (context.provider === 'codex') {
+        if (context.provider === 'codex' || context.provider === 'opencode') {
           const rawArgs = parsed.rawArgs.trim();
           return {
             success: true,

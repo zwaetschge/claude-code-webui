@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Premium Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #3B82F6;
+      --secondary: #8B5CF6;
+      --success: #16A34A;
+      --warning: #D97706;
+      --danger: #DC2626;
+      --surface: #FFFFFF;
+      --text: #111827;
+      --neutral-50: #F9FAFB;
+      --neutral-100: #F3F4F6;
+      --neutral-200: #E5E7EB;
+      --neutral-300: #D1D5DB;
+      --neutral-500: #6B7280;
+      --neutral-600: #4B5563;
+      --neutral-900: #111827;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      letter-spacing: -0.01em;
+    }
+
+    .preview {
+      width: 400px;
+      height: 300px;
+      position: relative;
+      padding: 20px;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(139, 92, 246, 0.10) 0%, transparent 45%),
+        radial-gradient(circle at 90% 90%, rgba(59, 130, 246, 0.10) 0%, transparent 50%),
+        linear-gradient(180deg, #FAFAFB 0%, #F4F4F6 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Subtle grain texture for premium feel */
+    .preview::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle at 1px 1px, rgba(17, 24, 39, 0.025) 1px, transparent 0);
+      background-size: 16px 16px;
+      pointer-events: none;
+    }
+
+    .topbar {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-mark {
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 700;
+      font-size: 11px;
+      box-shadow: 0 2px 6px rgba(59, 130, 246, 0.30);
+    }
+
+    .brand-name {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--neutral-900);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      background: rgba(22, 163, 74, 0.10);
+      color: var(--success);
+    }
+
+    .pill::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.20);
+    }
+
+    .headline {
+      position: relative;
+      z-index: 1;
+    }
+
+    .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      color: var(--primary);
+      margin-bottom: 4px;
+    }
+
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.05;
+      color: var(--neutral-900);
+    }
+
+    .title em {
+      font-style: normal;
+      background: linear-gradient(120deg, var(--primary) 0%, var(--secondary) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .card {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow:
+        0 1px 2px rgba(17, 24, 39, 0.04),
+        0 8px 24px rgba(17, 24, 39, 0.06),
+        0 24px 48px -12px rgba(59, 130, 246, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+
+    .icon-blue {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.14) 0%, rgba(59, 130, 246, 0.06) 100%);
+      color: var(--primary);
+    }
+
+    .icon-purple {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.14) 0%, rgba(139, 92, 246, 0.06) 100%);
+      color: var(--secondary);
+    }
+
+    .icon-amber {
+      background: linear-gradient(135deg, rgba(217, 119, 6, 0.14) 0%, rgba(217, 119, 6, 0.06) 100%);
+      color: var(--warning);
+    }
+
+    .row-meta {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .row-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--neutral-900);
+      letter-spacing: -0.01em;
+    }
+
+    .row-sub {
+      font-size: 9.5px;
+      color: var(--neutral-500);
+      margin-top: 1px;
+    }
+
+    .row-value {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--neutral-900);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+    }
+
+    .row-delta {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--success);
+      margin-left: 4px;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--neutral-200);
+      margin: 0 -14px;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: auto;
+    }
+
+    .meta-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .meta-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      color: var(--neutral-500);
+    }
+
+    .meta-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--neutral-900);
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 30px;
+      padding: 0 14px;
+      border-radius: 9px;
+      border: none;
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      background: var(--neutral-900);
+      color: white;
+      box-shadow:
+        0 1px 2px rgba(17, 24, 39, 0.20),
+        0 4px 12px rgba(17, 24, 39, 0.16);
+    }
+
+    .btn svg {
+      width: 10px;
+      height: 10px;
+    }
+
+    .swatches {
+      display: flex;
+      gap: 3px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+  </style>
+</head>
+<body>
+  <div class="preview">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">P</div>
+        <span class="brand-name">Premium</span>
+      </div>
+      <span class="pill">Live</span>
+    </div>
+
+    <div class="headline">
+      <div class="eyebrow">Design System</div>
+      <h1 class="title">Crafted with <em>precision</em>.</h1>
+    </div>
+
+    <article class="card">
+      <div class="card-row">
+        <div class="icon icon-blue" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+        </div>
+        <div class="row-meta">
+          <div class="row-title">Quarterly revenue</div>
+          <div class="row-sub">Updated 2 minutes ago</div>
+        </div>
+        <div>
+          <span class="row-value">$84.2k</span>
+          <span class="row-delta">+12.4%</span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="card-row">
+        <div class="icon icon-purple" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </div>
+        <div class="row-meta">
+          <div class="row-title">Active sessions</div>
+          <div class="row-sub">Across all platforms</div>
+        </div>
+        <div>
+          <span class="row-value">1,284</span>
+          <span class="row-delta">+8.1%</span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="card-row">
+        <div class="icon icon-amber" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>
+        </div>
+        <div class="row-meta">
+          <div class="row-title">Customer rating</div>
+          <div class="row-sub">From 2,431 reviews</div>
+        </div>
+        <div>
+          <span class="row-value">4.92</span>
+          <span class="row-delta">+0.3%</span>
+        </div>
+      </div>
+
+      <div class="footer">
+        <div class="meta-row">
+          <div class="meta-item">
+            <span class="meta-label">Uptime</span>
+            <span class="meta-value">99.98%</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Latency</span>
+            <span class="meta-value">42ms</span>
+          </div>
+        </div>
+        <button class="btn">
+          View report
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </article>
+  </div>
+</body>
+</html>

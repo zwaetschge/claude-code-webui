@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vintage Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=JetBrains+Mono:wght@400;500;700&family=Special+Elite&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Vintage tokens */
+      --primary: #008080;          /* teal */
+      --primary-dark: #005c5c;
+      --primary-light: #2aa3a3;
+      --secondary: #C0C0C0;        /* silver chrome */
+      --secondary-dark: #8c8c8c;
+      --secondary-light: #e8e8e8;
+      --success: #16A34A;
+      --warning: #D97706;
+      --danger: #DC2626;
+      --surface: #C0C0C0;
+      --text: #000000;
+
+      /* Era-appropriate extras */
+      --paper: #f1e6c8;            /* aged cream */
+      --paper-2: #e8d9a8;
+      --ink: #2a1c08;              /* sepia ink */
+      --ink-soft: #5a4520;
+      --mustard: #d4a017;
+      --maroon: #6b1d1d;
+
+      --pixel: 'Silkscreen', monospace;
+      --typew: 'Special Elite', 'JetBrains Mono', monospace;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      background: #1d1410;
+      font-family: var(--pixel);
+      color: var(--text);
+      -webkit-font-smoothing: none;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .scene {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      padding: 14px;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(ellipse at center, #2a1f17 0%, #1d1410 70%, #120c08 100%);
+    }
+
+    /* ---- The poster card ---- */
+    .poster {
+      position: relative;
+      width: 372px;
+      height: 272px;
+      background: var(--paper);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      box-shadow:
+        0 0 0 3px var(--ink),
+        0 0 0 6px var(--paper),
+        0 0 0 9px var(--ink),
+        0 14px 28px rgba(0,0,0,0.6),
+        0 4px 8px rgba(0,0,0,0.4);
+      z-index: 1;
+    }
+
+    /* Aged paper grain + foxing texture across whole card */
+    .poster::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle at 15% 25%, rgba(120, 80, 30, 0.18) 0, transparent 30%),
+        radial-gradient(circle at 85% 75%, rgba(120, 80, 30, 0.15) 0, transparent 35%),
+        radial-gradient(circle at 70% 15%, rgba(180, 120, 50, 0.12) 0, transparent 18%),
+        radial-gradient(circle at 25% 80%, rgba(80, 50, 20, 0.20) 0, transparent 22%),
+        repeating-linear-gradient(45deg,
+          rgba(80, 50, 20, 0.025) 0 1px,
+          transparent 1px 3px);
+      pointer-events: none;
+      mix-blend-mode: multiply;
+      z-index: 5;
+    }
+
+    /* Vignette */
+    .poster::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 50%, rgba(60, 30, 10, 0.35) 100%);
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    /* ---- Top banner ---- */
+    .banner {
+      position: relative;
+      z-index: 2;
+      background: var(--primary);
+      color: var(--paper);
+      padding: 6px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 3px double var(--paper);
+    }
+
+    .banner::before {
+      /* halftone dots inside the banner */
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(0,0,0,0.15) 0.6px, transparent 1.2px);
+      background-size: 4px 4px;
+      pointer-events: none;
+    }
+
+    .banner-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--pixel);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--paper);
+      position: relative;
+    }
+
+    .star {
+      display: inline-block;
+      width: 11px; height: 11px;
+      background: var(--mustard);
+      clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+    }
+
+    .banner-meta {
+      font-family: var(--pixel);
+      font-size: 9px;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      color: var(--paper);
+      position: relative;
+      opacity: 0.92;
+    }
+
+    /* ---- Hero zone ---- */
+    .hero {
+      position: relative;
+      z-index: 2;
+      padding: 14px 18px 10px;
+      display: grid;
+      grid-template-columns: 1fr 96px;
+      gap: 14px;
+      align-items: center;
+      min-height: 0;
+    }
+
+    .hero-text {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--pixel);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--maroon);
+    }
+    .kicker::before, .kicker::after {
+      content: '';
+      width: 14px;
+      height: 2px;
+      background: var(--maroon);
+    }
+
+    .headline {
+      font-family: var(--pixel);
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 0.95;
+      letter-spacing: 0.01em;
+      color: var(--ink);
+      text-shadow: 2px 2px 0 var(--mustard);
+    }
+    .headline .small {
+      display: block;
+      font-size: 16px;
+      letter-spacing: 0.06em;
+      color: var(--maroon);
+      text-shadow: 1px 1px 0 var(--mustard);
+      margin-top: 2px;
+    }
+
+    .price-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .price-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 3px 8px;
+      background: var(--maroon);
+      color: var(--paper);
+      font-family: var(--pixel);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      box-shadow: 2px 2px 0 var(--ink);
+    }
+    .price-tag .cents { font-size: 7px; vertical-align: super; }
+
+    .price-old {
+      font-family: var(--pixel);
+      font-size: 9px;
+      color: var(--ink-soft);
+      text-decoration: line-through;
+      text-decoration-thickness: 1px;
+    }
+
+    .blurb {
+      font-family: var(--typew);
+      font-size: 10px;
+      line-height: 1.35;
+      color: var(--ink);
+      margin-top: 2px;
+      max-width: 100%;
+    }
+
+    /* Hero emblem (radio-style medallion) */
+    .emblem {
+      position: relative;
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 35%, var(--secondary-light) 0%, var(--secondary) 45%, var(--secondary-dark) 100%);
+      box-shadow:
+        inset 0 2px 2px rgba(255,255,255,0.7),
+        inset 0 -3px 4px rgba(0,0,0,0.4),
+        0 3px 6px rgba(0,0,0,0.35),
+        0 0 0 2px var(--ink);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+    .emblem::before {
+      /* concentric ringed grille */
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border-radius: 50%;
+      background:
+        repeating-radial-gradient(circle at center,
+          var(--secondary-dark) 0 1px,
+          var(--secondary) 1px 3px);
+      box-shadow: inset 0 0 0 2px var(--ink);
+    }
+    .emblem::after {
+      /* center cap */
+      content: '';
+      position: absolute;
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, var(--primary-light) 0%, var(--primary) 50%, var(--primary-dark) 100%);
+      box-shadow:
+        inset 0 1px 1px rgba(255,255,255,0.4),
+        inset 0 -1px 1px rgba(0,0,0,0.4),
+        0 0 0 2px var(--ink);
+    }
+    .emblem .label {
+      position: absolute;
+      bottom: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: var(--pixel);
+      font-size: 7px;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: 0.08em;
+      background: var(--paper);
+      padding: 1px 4px;
+      box-shadow: 0 0 0 1px var(--ink);
+      z-index: 2;
+    }
+
+    /* ---- Bottom strip: marquee + buttons ---- */
+    .footer {
+      position: relative;
+      z-index: 2;
+      padding: 8px 14px 10px;
+      background: var(--ink);
+      color: var(--paper);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border-top: 3px double var(--paper);
+    }
+
+    .marquee {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .marquee-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--pixel);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--mustard);
+    }
+    .marquee-top .live {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 5px;
+      background: var(--danger);
+      color: var(--paper);
+      font-size: 7px;
+    }
+    .marquee-top .live::before {
+      content: '';
+      width: 4px; height: 4px;
+      background: var(--paper);
+      border-radius: 50%;
+    }
+
+    .ticker {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--typew);
+      font-size: 9.5px;
+      color: var(--paper);
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .ticker .num {
+      font-family: var(--pixel);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--mustard);
+    }
+    .ticker .sep { color: var(--secondary-dark); }
+
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 28px;
+      padding: 0 11px;
+      font-family: var(--pixel);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--ink);
+      background: var(--mustard);
+      border: 2px solid var(--ink);
+      box-shadow: 3px 3px 0 var(--paper);
+      cursor: pointer;
+      text-transform: uppercase;
+    }
+    .cta:hover { transform: translate(1px, 1px); box-shadow: 2px 2px 0 var(--paper); }
+    .cta:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--paper); }
+    .cta:focus-visible { outline: 2px dashed var(--mustard); outline-offset: 3px; }
+
+    .cta .arrow {
+      font-family: var(--pixel);
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+      .cta:hover, .cta:active { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <article class="poster">
+
+      <!-- Banner -->
+      <header class="banner">
+        <span class="banner-mark">
+          <span class="star" aria-hidden="true"></span>
+          STARLIGHT DINER
+        </span>
+        <span class="banner-meta">EST. 1958 · RTE 66</span>
+      </header>
+
+      <!-- Hero -->
+      <section class="hero">
+        <div class="hero-text">
+          <span class="kicker" aria-hidden="true">TONIGHT ONLY</span>
+
+          <h1 class="headline">
+            JUKEBOX<br>NIGHT
+            <span class="small">★ FREE REFILLS ★</span>
+          </h1>
+
+          <p class="blurb">
+            Slide into a booth &amp; spin the hits. Burger, fries &amp; shake &mdash; all night long.
+          </p>
+
+          <div class="price-row">
+            <span class="price-tag">$3<span class="cents">99</span></span>
+            <span class="price-old">$5.50</span>
+          </div>
+        </div>
+
+        <!-- Emblem / medallion -->
+        <div class="emblem" aria-hidden="true">
+          <span class="label">AM·FM</span>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <div class="marquee">
+          <div class="marquee-top">
+            <span class="live">LIVE</span>
+            <span>NOW PLAYING</span>
+          </div>
+          <div class="ticker">
+            <span class="num">04</span><span>Elvis</span><span class="sep">·</span>
+            <span class="num">07</span><span>Buddy</span><span class="sep">·</span>
+            <span class="num">12</span><span>Chuck</span>
+          </div>
+        </div>
+
+        <button class="cta">
+          Tune In <span class="arrow" aria-hidden="true">▶</span>
+        </button>
+      </footer>
+
+    </article>
+  </div>
+</body>
+</html>

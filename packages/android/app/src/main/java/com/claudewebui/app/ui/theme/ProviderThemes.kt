@@ -5,7 +5,6 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
@@ -16,15 +15,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 enum class CliProvider(val displayName: String, val id: String) {
     CLAUDE("Claude", "claude"),
     CODEX("Codex", "codex"),
-    GEMINI("Gemini", "gemini"),
-    GLM("GLM", "glm"),
-    KIMI("Kimi", "kimi"),
+    OPENCODE("OpenCode", "opencode"),
+    VIBE("Mistral Vibe", "vibe"),
     UNKNOWN("Unknown", "unknown"),
     ;
 
     companion object {
-        fun fromId(id: String): CliProvider =
-            entries.find { it.id.equals(id, ignoreCase = true) } ?: UNKNOWN
+        fun fromId(id: String): CliProvider = when (id.lowercase()) {
+            "glm", "kimi", "z-ai", "zai" -> OPENCODE
+            "gemini" -> UNKNOWN
+            else -> entries.find { it.id.equals(id, ignoreCase = true) } ?: UNKNOWN
+        }
     }
 }
 
@@ -67,35 +68,25 @@ object ProviderThemes {
             icon = Icons.Filled.Code,
             displayName = "Codex",
         ),
-        CliProvider.GEMINI to ProviderTheme(
-            color = GeminiColor,
-            colorDark = Color(0xFF8AB4F8),
-            containerColor = Color(0xFFE8F0FE),
-            containerColorDark = Color(0xFF102A56),
-            onContainerColor = Color(0xFF1A56C4),
-            onContainerColorDark = Color(0xFF8AB4F8),
-            icon = Icons.Filled.Psychology,
-            displayName = "Gemini",
-        ),
-        CliProvider.GLM to ProviderTheme(
-            color = GlmColor,
-            colorDark = Color(0xFFFFA070),
-            containerColor = Color(0xFFFFF0E8),
-            containerColorDark = Color(0xFF4A1E08),
-            onContainerColor = Color(0xFFCC4400),
-            onContainerColorDark = Color(0xFFFFA070),
-            icon = Icons.Filled.FlashOn,
-            displayName = "GLM",
-        ),
-        CliProvider.KIMI to ProviderTheme(
-            color = KimiColor,
+        CliProvider.OPENCODE to ProviderTheme(
+            color = OpenCodeColor,
             colorDark = Color(0xFFA78BFA),
             containerColor = Color(0xFFF0EBFF),
             containerColorDark = Color(0xFF2E1065),
             onContainerColor = Color(0xFF5B21B6),
             onContainerColorDark = Color(0xFFA78BFA),
+            icon = Icons.Filled.FlashOn,
+            displayName = "OpenCode",
+        ),
+        CliProvider.VIBE to ProviderTheme(
+            color = VibeColor,
+            colorDark = Color(0xFFFCA5A5),
+            containerColor = Color(0xFFFFECEC),
+            containerColorDark = Color(0xFF4A1010),
+            onContainerColor = Color(0xFFB91C1C),
+            onContainerColorDark = Color(0xFFFCA5A5),
             icon = Icons.Filled.Cloud,
-            displayName = "Kimi",
+            displayName = "Mistral Vibe",
         ),
     )
 

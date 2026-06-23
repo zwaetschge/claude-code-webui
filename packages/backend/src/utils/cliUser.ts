@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { User } from '@claude-code-webui/shared';
+import type { User } from '@plum-code-webui/shared';
 import { getDatabase } from '../db';
 
 const CLI_LOCAL_PROVIDERS = ['cli', 'claude', 'codex', 'opencode', 'vibe'] as const;

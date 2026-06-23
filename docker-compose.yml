@@ -11,11 +11,11 @@
 services:
   claude-code-webui:
     build: .
-    image: claude-code-webui:latest
+    image: plum-code-webui:latest
     container_name: claude-code-webui
     restart: unless-stopped
     ports:
-      - '${WEBUI_PORT:-4545}:3001'
+      - '127.0.0.1:${WEBUI_PORT:-4545}:3001'
     shm_size: '${WEBUI_SHM_SIZE:-1gb}'
     extra_hosts:
       # Lets the bundled MCP servers reach host-side services (e.g. android-app-creator on the host bridge)
@@ -23,8 +23,8 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=${TZ:-Europe/Zurich}
-      - CODEX_WEBUI_SANDBOX_MODE=${CODEX_WEBUI_SANDBOX_MODE:-danger-full-access}
-      - CODEX_WEBUI_APPROVAL_POLICY=${CODEX_WEBUI_APPROVAL_POLICY:-never}
+      - CODEX_WEBUI_SANDBOX_MODE=${CODEX_WEBUI_SANDBOX_MODE:-workspace-write}
+      - CODEX_WEBUI_APPROVAL_POLICY=${CODEX_WEBUI_APPROVAL_POLICY:-on-request}
       - CHROME_BIN=${CHROME_BIN:-/usr/local/bin/plum-chromium}
       - CHROMIUM_BIN=${CHROMIUM_BIN:-/usr/local/bin/plum-chromium}
       - CHROMIUM_PATH=${CHROMIUM_PATH:-/usr/local/bin/plum-chromium}
@@ -36,7 +36,7 @@ services:
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=${PUPPETEER_SKIP_CHROMIUM_DOWNLOAD:-1}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:4545}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:4545}
-      - ALLOWED_BASE_PATHS=${ALLOWED_BASE_PATHS:-/workspace}
+      - ALLOWED_BASE_PATHS=${ALLOWED_BASE_PATHS:-/workspace,/mnt/cache/AI/plum-code}
       - CONTAINER_NAME=claude-code-webui
       - PREVIEW_HOSTNAME=${PREVIEW_HOSTNAME:-}
       - 'SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set in .env — run scripts/install.sh or generate with openssl rand -base64 48}'
@@ -44,6 +44,12 @@ services:
       # Email allowlist — REQUIRED for any deployment exposed to the public internet.
       # Empty = no allowlist (only safe behind a private network or SSO proxy).
       - AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}
+      # Optional reverse-proxy SSO (Authelia / ForwardAuth). Only enable when
+      # this service is reachable exclusively through a trusted proxy.
+      - PROXY_AUTH_ENABLED=${PROXY_AUTH_ENABLED:-false}
+      - PROXY_AUTH_EMAIL_HEADERS=${PROXY_AUTH_EMAIL_HEADERS:-}
+      - PROXY_AUTH_USER_HEADERS=${PROXY_AUTH_USER_HEADERS:-}
+      - PROXY_AUTH_NAME_HEADERS=${PROXY_AUTH_NAME_HEADERS:-}
       - SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL:-}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       # Optional CLI provider model overrides
@@ -53,6 +59,8 @@ services:
       - CLI_PROVIDER_CODEX_DEFAULT_MODEL=${CLI_PROVIDER_CODEX_DEFAULT_MODEL:-gpt-5.5}
       - CLI_PROVIDER_OPENCODE_MODELS=${CLI_PROVIDER_OPENCODE_MODELS:-}
       - CLI_PROVIDER_OPENCODE_DEFAULT_MODEL=${CLI_PROVIDER_OPENCODE_DEFAULT_MODEL:-z-ai/glm-5.1}
+      - CLI_PROVIDER_OPENCODE_DEFAULT_AGENT=${CLI_PROVIDER_OPENCODE_DEFAULT_AGENT:-build}
+      - CLI_PROVIDER_OPENCODE_STYLE_PROMPT=${CLI_PROVIDER_OPENCODE_STYLE_PROMPT:-}
       - CLI_PROVIDER_VIBE_MODELS=${CLI_PROVIDER_VIBE_MODELS:-}
       - CLI_PROVIDER_VIBE_DEFAULT_MODEL=${CLI_PROVIDER_VIBE_DEFAULT_MODEL:-mistral-vibe-cli-latest}
       # Mistral Vibe authenticates via MISTRAL_API_KEY. Leave empty to disable vibe.
@@ -63,6 +71,17 @@ services:
       - CODEX_USER_AGENT=${CODEX_USER_AGENT:-}
       - COMFYUI_URL=${COMFYUI_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GODOT_BIN=${GODOT_BIN:-}
+      - GODOT_TIMEOUT_MS=${GODOT_TIMEOUT_MS:-120000}
+      - BLENDER_BIN=${BLENDER_BIN:-blender-headless}
+      - BLENDER_TIMEOUT_MS=${BLENDER_TIMEOUT_MS:-300000}
+      # Oracle MCP defaults. Keep browser automation conservative; callers can
+      # explicitly request model selection/thinking time when needed.
+      - ORACLE_MCP_DEFAULT_ENGINE=${ORACLE_MCP_DEFAULT_ENGINE:-browser}
+      - ORACLE_BROWSER_MODEL=${ORACLE_BROWSER_MODEL:-gpt-5.5-pro}
+      - ORACLE_BROWSER_MODEL_STRATEGY=${ORACLE_BROWSER_MODEL_STRATEGY:-current}
+      - ORACLE_BROWSER_THINKING_TIME=${ORACLE_BROWSER_THINKING_TIME:-}
+      - ORACLE_MCP_BROWSER_TIMEOUT=${ORACLE_MCP_BROWSER_TIMEOUT:-8m}
       # Optional OAuth providers — leave empty to disable
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}

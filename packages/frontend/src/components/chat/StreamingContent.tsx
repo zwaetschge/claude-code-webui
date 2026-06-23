@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Shield,
   ShieldAlert,
@@ -26,6 +26,11 @@ interface StreamingContentProps {
 }
 
 const LIVE_MARKDOWN_CHAR_LIMIT = 6000;
+const WORD_REVEAL_INTERVAL_MS = 64;
+const WORD_REVEAL_SPACE_INTERVAL_MS = 10;
+const WORD_REVEAL_FAST_LAG_CHARS = 420;
+const WORD_REVEAL_MAX_LAG_CHARS = 1100;
+const WORD_REVEAL_DISABLE_CHAR_LIMIT = 24000;
 
 // Strip ANSI escape codes for clean text
 function stripAnsi(text: string): string {
@@ -277,6 +282,103 @@ function parseProviderOutput(content: string, provider: UiProvider): ParsedStrea
   return parseClaudeOutput(content);
 }
 
+function commonPrefixLength(a: string, b: string): number {
+  const max = Math.min(a.length, b.length);
+  let index = 0;
+  while (index < max && a.charCodeAt(index) === b.charCodeAt(index)) {
+    index += 1;
+  }
+  return index;
+}
+
+function takeRevealSlice(remaining: string, maxTokens: number): string {
+  let consumed = '';
+  let rest = remaining;
+
+  for (let index = 0; index < maxTokens && rest; index += 1) {
+    const match = rest.match(/^(\s+|[^\s]+)/);
+    const token = match?.[0] ?? rest.charAt(0);
+    consumed += token;
+    rest = rest.slice(token.length);
+  }
+
+  return consumed;
+}
+
+function useWordRevealText(target: string): string {
+  const [visible, setVisible] = useState('');
+  const targetRef = useRef(target);
+  const visibleRef = useRef('');
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    targetRef.current = target;
+
+    const reducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    if (reducedMotion || target.length > WORD_REVEAL_DISABLE_CHAR_LIMIT) {
+      visibleRef.current = target;
+      setVisible(target);
+      return;
+    }
+
+    if (!target.startsWith(visibleRef.current)) {
+      const prefixLength = commonPrefixLength(target, visibleRef.current);
+      const nextVisible = target.slice(0, prefixLength);
+      visibleRef.current = nextVisible;
+      setVisible(nextVisible);
+    }
+
+    const tick = () => {
+      const current = visibleRef.current;
+      const wanted = targetRef.current;
+
+      if (current === wanted) {
+        timerRef.current = null;
+        return;
+      }
+
+      if (!wanted.startsWith(current)) {
+        const prefixLength = commonPrefixLength(wanted, current);
+        const nextVisible = wanted.slice(0, prefixLength);
+        visibleRef.current = nextVisible;
+        setVisible(nextVisible);
+      } else {
+        const remaining = wanted.slice(current.length);
+        const lag = wanted.length - current.length;
+        const burst =
+          lag > WORD_REVEAL_MAX_LAG_CHARS ? 10 : lag > WORD_REVEAL_FAST_LAG_CHARS ? 4 : 1;
+        const slice = takeRevealSlice(remaining, burst);
+        const nextVisible = current + slice;
+        visibleRef.current = nextVisible;
+        setVisible(nextVisible);
+      }
+
+      const delay = /\s$/.test(visibleRef.current)
+        ? WORD_REVEAL_SPACE_INTERVAL_MS
+        : WORD_REVEAL_INTERVAL_MS;
+      timerRef.current = window.setTimeout(tick, delay);
+    };
+
+    if (timerRef.current === null && targetRef.current !== visibleRef.current) {
+      timerRef.current = window.setTimeout(tick, 0);
+    }
+  }, [target]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+      }
+    },
+    []
+  );
+
+  return visible;
+}
+
 // Trust Dialog Component
 function TrustDialog({
   path,
@@ -462,7 +564,7 @@ function ThinkingIndicator({
       </div>
       <div className="min-w-0">
         <span className="pl-inline-thinking-title">
-          {isIdeating ? `${providerLabel} is ideating` : `${providerLabel} is thinking`}
+          {isIdeating ? `${providerLabel} ideating` : `${providerLabel} thinking`}
           <span className="pl-thinking-dots" aria-hidden="true">
             <span>.</span>
             <span>.</span>
@@ -520,18 +622,27 @@ function LiveStreamingText({ message }: { message: string }) {
 // message arrives; that avoids reparsing a large markdown document every flush.
 function ClaudeResponse({ message, provider }: { message: string; provider: UiProvider }) {
   const shouldUsePlainText = message.length > LIVE_MARKDOWN_CHAR_LIMIT;
+  const visibleMessage = useWordRevealText(message);
+  const isRevealing = visibleMessage.length < message.length;
 
   return (
     <div className="flex gap-3">
       <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
         <Bot className="h-4 w-4 text-primary" />
       </div>
-      <div className={cn('flex-1 min-w-0', streamingContentClass(provider))}>
+      <div
+        className={cn(
+          'flex-1 min-w-0 pl-stream-word-reveal',
+          streamingContentClass(provider),
+          isRevealing && 'is-revealing'
+        )}
+      >
         {shouldUsePlainText ? (
-          <LiveStreamingText message={message} />
+          <LiveStreamingText message={visibleMessage} />
         ) : (
           <MemoizedMarkdown
-            content={message}
+            content={visibleMessage}
+            animateWords
             className="prose prose-sm dark:prose-invert max-w-none"
           />
         )}
@@ -589,7 +700,7 @@ export function StreamingContent({
 
   if (parsed.type === 'response' && parsed.message) {
     return (
-      <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-3 sm:p-4 bg-card border">
+      <Card className="max-w-none border-0 bg-transparent p-0 shadow-none">
         <ClaudeResponse message={parsed.message} provider={resolvedProvider} />
         {parsed.thinkingTime && (
           <div className="mt-3 pt-3 border-t flex items-center gap-2">
@@ -606,7 +717,7 @@ export function StreamingContent({
 
   // Empty or unrecognized - show minimal loading state
   return (
-    <Card className="max-w-[95%] sm:max-w-[85%] md:max-w-[80%] p-0 bg-card border overflow-hidden">
+    <Card className="max-w-none border-0 bg-transparent p-0 shadow-none overflow-hidden">
       <ThinkingIndicator providerLabel={providerLabel} provider={resolvedProvider} />
     </Card>
   );

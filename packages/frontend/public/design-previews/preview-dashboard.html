@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     DASHBOARD DESIGN SYSTEM — 400×300 THUMBNAIL
+     Dark cloud-platform · glass panels · modular grid · data hierarchy
+     ============================================================ */
+  :root {
+    --db-primary: #0C5CAB;
+    --db-primary-hover: #0A4A8A;
+    --db-primary-deep: #083A6E;
+    --db-primary-light: #2E7AC0;
+    --db-primary-bg: rgba(12,92,171,0.16);
+    --db-primary-border: rgba(46,122,192,0.30);
+
+    --db-secondary: #0A4A8A;
+    --db-success: #10B981;
+    --db-warning: #F59E0B;
+    --db-danger: #EF4444;
+
+    /* Extended accents for status */
+    --db-cyan: #06B6D4;
+    --db-violet: #8B5CF6;
+
+    /* Dark surfaces */
+    --db-surface: #09090B;
+    --db-surface-2: #0F0F12;
+    --db-surface-3: #16161B;
+    --db-panel: rgba(22,22,27,0.78);
+    --db-panel-2: rgba(30,30,36,0.65);
+    --db-glass: rgba(255,255,255,0.04);
+    --db-glass-border: rgba(255,255,255,0.08);
+    --db-line: rgba(255,255,255,0.06);
+    --db-line-2: rgba(255,255,255,0.10);
+
+    --db-ink: #FAFAFA;
+    --db-ink-2: #D4D4D8;
+    --db-ink-3: #A1A1AA;
+    --db-ink-4: #71717A;
+    --db-ink-5: #52525B;
+
+    --db-font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --db-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+    --db-r-sm: 4px;
+    --db-r-md: 6px;
+    --db-r-lg: 8px;
+    --db-r-xl: 12px;
+    --db-r-pill: 999px;
+
+    --db-sh-1: 0 1px 2px rgba(0,0,0,0.4);
+    --db-sh-2: 0 4px 14px -3px rgba(0,0,0,0.55), 0 2px 4px -1px rgba(0,0,0,0.3);
+    --db-sh-blue: 0 4px 14px -3px rgba(12,92,171,0.45);
+    --db-sh-inset: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--db-font);
+    font-size: 12px;
+    color: var(--db-ink);
+    background: var(--db-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(280px 160px at 80% -10%, rgba(12,92,171,0.20), transparent 60%),
+      radial-gradient(220px 130px at 0% 110%, rgba(139,92,246,0.10), transparent 60%),
+      var(--db-surface);
+    display: grid;
+    grid-template-rows: 32px auto 1fr 22px;
+    border-right: 1px solid var(--db-glass-border);
+  }
+
+  /* ============ TOP BAR ============ */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--db-line);
+    background: rgba(9,9,11,0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .topbar__left { display: flex; align-items: center; gap: 14px; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .brand__mark {
+    width: 18px; height: 18px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, var(--db-primary) 0%, var(--db-primary-light) 100%);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--db-sh-blue);
+  }
+  .brand__mark svg { width: 11px; height: 11px; }
+  .brand__name {
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: -0.01em;
+    color: var(--db-ink);
+  }
+  .brand__sep {
+    color: var(--db-ink-5);
+    font-family: var(--db-font-mono);
+    font-size: 11px;
+  }
+  .brand__project {
+    font-family: var(--db-font-mono);
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--db-ink-3);
+  }
+
+  .nav {
+    display: flex;
+    gap: 1px;
+    font-size: 10.5px;
+  }
+  .nav a {
+    padding: 4px 9px;
+    border-radius: var(--db-r-sm);
+    text-decoration: none;
+    color: var(--db-ink-3);
+    font-weight: 500;
+    transition: color .15s ease, background .15s ease;
+  }
+  .nav a:hover { color: var(--db-ink); background: var(--db-glass); }
+  .nav a.is-active {
+    color: var(--db-ink);
+    background: var(--db-glass);
+    font-weight: 600;
+  }
+
+  .topbar__right { display: flex; align-items: center; gap: 6px; }
+  .icon-btn {
+    width: 22px; height: 22px;
+    border: 1px solid var(--db-line-2);
+    border-radius: var(--db-r-sm);
+    background: var(--db-glass);
+    display: grid; place-items: center;
+    color: var(--db-ink-3);
+    position: relative;
+  }
+  .icon-btn svg { width: 11px; height: 11px; }
+  .icon-btn__dot {
+    position: absolute; top: -1px; right: -1px;
+    width: 6px; height: 6px;
+    background: var(--db-danger);
+    border: 1.5px solid var(--db-surface);
+    border-radius: 50%;
+  }
+  .avatar {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--db-primary), var(--db-violet));
+    display: grid; place-items: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 8px;
+  }
+
+  /* ============ KPI ROW (glass cards) ============ */
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 8px 14px;
+  }
+  .kpi {
+    background: var(--db-panel);
+    border: 1px solid var(--db-glass-border);
+    border-radius: var(--db-r-lg);
+    padding: 8px 10px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: var(--db-sh-inset);
+  }
+  .kpi__top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 3px;
+  }
+  .kpi__label {
+    font-size: 9.5px;
+    color: var(--db-ink-3);
+    font-weight: 500;
+  }
+  .kpi__icon {
+    width: 18px; height: 18px;
+    border-radius: 4px;
+    background: var(--db-primary-bg);
+    color: var(--db-primary-light);
+    display: grid; place-items: center;
+  }
+  .kpi__icon svg { width: 10px; height: 10px; }
+  .kpi__icon--success { color: var(--db-success); background: rgba(16,185,129,0.15); }
+  .kpi__icon--warning { color: var(--db-warning); background: rgba(245,158,11,0.15); }
+  .kpi__icon--danger { color: var(--db-danger); background: rgba(239,68,68,0.15); }
+
+  .kpi__value {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--db-ink);
+    line-height: 1.1;
+    margin-bottom: 2px;
+  }
+  .kpi__value span {
+    font-family: var(--db-font-mono);
+    font-size: 10px;
+    color: var(--db-ink-3);
+    font-weight: 500;
+  }
+  .kpi__meta {
+    display: flex; align-items: center; gap: 3px;
+    font-family: var(--db-font-mono);
+    font-size: 8.5px;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    font-weight: 600;
+  }
+  .delta svg { width: 7px; height: 7px; }
+  .delta--up { color: var(--db-success); }
+  .delta--down { color: var(--db-danger); }
+  .delta-text { color: var(--db-ink-5); }
+
+  /* ============ MAIN GRID ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.65fr 1fr;
+    gap: 6px;
+    padding: 0 14px 8px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .card {
+    background: var(--db-panel);
+    border: 1px solid var(--db-glass-border);
+    border-radius: var(--db-r-lg);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: var(--db-sh-inset);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .card__head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--db-line);
+  }
+  .card__title {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--db-ink);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .card__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: var(--db-r-pill);
+    background: rgba(16,185,129,0.15);
+    color: var(--db-success);
+    font-family: var(--db-font-mono);
+    font-size: 8px;
+    font-weight: 600;
+  }
+  .card__pill::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--db-success);
+  }
+  .card__meta {
+    font-family: var(--db-font-mono);
+    font-size: 8.5px;
+    color: var(--db-ink-4);
+  }
+
+  /* Chart card with area chart */
+  .chart-body {
+    flex: 1;
+    padding: 8px 10px;
+    position: relative;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .chart-stats {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .chart-value {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--db-ink);
+    line-height: 1;
+  }
+  .chart-value span {
+    font-family: var(--db-font-mono);
+    font-size: 11px;
+    color: var(--db-ink-3);
+    font-weight: 500;
+  }
+  .chart-delta {
+    font-family: var(--db-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--db-success);
+  }
+
+  /* Area chart — SVG-like via CSS */
+  .area-chart {
+    flex: 1;
+    min-height: 50px;
+    position: relative;
+    margin-top: 4px;
+  }
+  .area-chart svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Right card: service list */
+  .services {
+    padding: 4px 0;
+    overflow: hidden;
+  }
+  .service {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--db-line);
+    font-size: 10px;
+  }
+  .service:last-child { border-bottom: none; }
+  .service__name {
+    color: var(--db-ink-2);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .service__dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--db-success);
+    box-shadow: 0 0 6px rgba(16,185,129,0.5);
+  }
+  .service__dot--warning {
+    background: var(--db-warning);
+    box-shadow: 0 0 6px rgba(245,158,11,0.5);
+  }
+  .service__dot--danger {
+    background: var(--db-danger);
+    box-shadow: 0 0 6px rgba(239,68,68,0.5);
+  }
+  .service__meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--db-font-mono);
+    font-size: 8.5px;
+    color: var(--db-ink-4);
+  }
+  .service__ms {
+    color: var(--db-ink-2);
+    font-weight: 600;
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-top: 1px solid var(--db-line);
+    background: rgba(9,9,11,0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    font-family: var(--db-font-mono);
+    font-size: 8.5px;
+    color: var(--db-ink-4);
+    letter-spacing: 0.04em;
+  }
+  .footer__brand {
+    color: var(--db-primary-light);
+    font-weight: 600;
+  }
+  .footer__region {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .footer__region::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--db-success);
+    box-shadow: 0 0 4px var(--db-success);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Dashboard design language preview">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="brand">
+        <span class="brand__mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        </span>
+        <span class="brand__name">stratus</span>
+        <span class="brand__sep">/</span>
+        <span class="brand__project">acme-prod</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Overview</a>
+        <a href="#">Deployments</a>
+        <a href="#">Logs</a>
+        <a href="#">Settings</a>
+      </nav>
+    </div>
+    <div class="topbar__right">
+      <button class="icon-btn" type="button" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <button class="icon-btn" type="button" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="icon-btn__dot"></span>
+      </button>
+      <div class="avatar" aria-label="User">AC</div>
+    </div>
+  </header>
+
+  <!-- ===== KPI ROW ===== -->
+  <section class="kpis">
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Deploys</span>
+        <span class="kpi__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8M5.2 9.2a8 8 0 1 0 13.6 0"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">248</div>
+      <div class="kpi__meta">
+        <span class="delta delta--up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          18%
+        </span>
+      </div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Uptime</span>
+        <span class="kpi__icon kpi__icon--success">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">99.98<span>%</span></div>
+      <div class="kpi__meta">
+        <span class="delta-text">30d</span>
+      </div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Latency</span>
+        <span class="kpi__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">42<span>ms</span></div>
+      <div class="kpi__meta">
+        <span class="delta delta--up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          6ms
+        </span>
+      </div>
+    </div>
+
+    <div class="kpi">
+      <div class="kpi__top">
+        <span class="kpi__label">Errors</span>
+        <span class="kpi__icon kpi__icon--danger">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </span>
+      </div>
+      <div class="kpi__value">3</div>
+      <div class="kpi__meta">
+        <span class="delta delta--down">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          2
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== MAIN GRID ===== -->
+  <section class="main">
+
+    <!-- LEFT: traffic area chart -->
+    <div class="card">
+      <div class="card__head">
+        <h2 class="card__title">Traffic <span class="card__pill">live</span></h2>
+        <span class="card__meta">last 24h</span>
+      </div>
+      <div class="chart-body">
+        <div class="chart-stats">
+          <span class="chart-value">1.24<span>M req</span></span>
+          <span class="chart-delta">+8.2%</span>
+        </div>
+        <div class="area-chart">
+          <svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#2E7AC0" stop-opacity="0.55"/>
+                <stop offset="100%" stop-color="#2E7AC0" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#0C5CAB"/>
+                <stop offset="100%" stop-color="#06B6D4"/>
+              </linearGradient>
+            </defs>
+            <!-- grid lines -->
+            <line x1="0" y1="15" x2="200" y2="15" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>
+            <line x1="0" y1="30" x2="200" y2="30" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>
+            <line x1="0" y1="45" x2="200" y2="45" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>
+            <!-- area -->
+            <path d="M 0 42 L 15 36 L 30 40 L 45 30 L 60 32 L 75 22 L 90 28 L 105 18 L 120 14 L 135 20 L 150 12 L 165 18 L 180 10 L 200 16 L 200 60 L 0 60 Z" fill="url(#areaGrad)"/>
+            <!-- line -->
+            <path d="M 0 42 L 15 36 L 30 40 L 45 30 L 60 32 L 75 22 L 90 28 L 105 18 L 120 14 L 135 20 L 150 12 L 165 18 L 180 10 L 200 16" stroke="url(#lineGrad)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <!-- peak dot -->
+            <circle cx="180" cy="10" r="2.2" fill="#06B6D4"/>
+            <circle cx="180" cy="10" r="4" fill="#06B6D4" opacity="0.3"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: services status -->
+    <div class="card">
+      <div class="card__head">
+        <h2 class="card__title">Services</h2>
+        <span class="card__meta">5 / 6 ok</span>
+      </div>
+      <div class="services">
+        <div class="service">
+          <span class="service__name"><span class="service__dot"></span>api-gateway</span>
+          <span class="service__meta"><span class="service__ms">12ms</span></span>
+        </div>
+        <div class="service">
+          <span class="service__name"><span class="service__dot"></span>auth-svc</span>
+          <span class="service__meta"><span class="service__ms">8ms</span></span>
+        </div>
+        <div class="service">
+          <span class="service__name"><span class="service__dot"></span>billing</span>
+          <span class="service__meta"><span class="service__ms">42ms</span></span>
+        </div>
+        <div class="service">
+          <span class="service__name"><span class="service__dot service__dot--warning"></span>search</span>
+          <span class="service__meta"><span class="service__ms">186ms</span></span>
+        </div>
+        <div class="service">
+          <span class="service__name"><span class="service__dot"></span>webhooks</span>
+          <span class="service__meta"><span class="service__ms">5ms</span></span>
+        </div>
+        <div class="service">
+          <span class="service__name"><span class="service__dot service__dot--danger"></span>edge-cache</span>
+          <span class="service__meta"><span class="service__ms">err</span></span>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__brand">●</span> stratus · cloud · dark</span>
+    <span class="footer__region">fra1 · iad1 · sin1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Energetic — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Limelight&family=JetBrains+Mono:wght@400;500;700&family=Archivo:wght@500;700;800;900&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     ENERGETIC DESIGN SYSTEM — 400×300 THUMBNAIL
+     Vibrant orange · thick 4px borders · geometric · Limelight · punchy
+     ============================================================ */
+  :root {
+    --en-primary: #EA580B;       /* vibrant orange */
+    --en-primary-deep: #C2410C;
+    --en-secondary: #F59E0B;     /* amber */
+    --en-secondary-deep: #D97706;
+    --en-bg: #FFEDD5;            /* warm peach background */
+    --en-surface: #FDBA74;       /* surface tone */
+    --en-text: #EA580C;          /* deep orange text */
+    --en-ink: #7C2D12;           /* deep brown-red ink */
+
+    /* Punchy accent variants */
+    --en-yellow: #FACC15;
+    --en-pink: #EC4899;
+    --en-mint: #10B981;
+    --en-cream: #FFF7ED;
+
+    --en-line: #7C2D12;
+    --en-card: #FFFFFF;
+    --en-card-2: #FFB74D;
+
+    --en-font-display: 'Limelight', 'Archivo Black', sans-serif;
+    --en-font-ui: 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
+    --en-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --en-r-sm: 0px;       /* mostly sharp for energy */
+    --en-r-md: 4px;
+    --en-r-lg: 8px;
+    --en-r-pill: 999px;
+
+    /* Signature: thick 4px borders everywhere */
+    --en-border: 4px solid var(--en-line);
+    --en-border-thick: 5px solid var(--en-line);
+
+    /* Hard shadows — energetic offset */
+    --en-shadow: 5px 5px 0 var(--en-line);
+    --en-shadow-sm: 3px 3px 0 var(--en-line);
+    --en-shadow-lg: 7px 7px 0 var(--en-line);
+    --en-shadow-orange: 5px 5px 0 var(--en-primary-deep);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--en-font-ui);
+    font-size: 12px;
+    color: var(--en-ink);
+    background: var(--en-bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    background:
+      /* confetti dots */
+      radial-gradient(3px 3px at 8% 12%, var(--en-secondary), transparent 50%),
+      radial-gradient(3px 3px at 88% 22%, var(--en-pink), transparent 50%),
+      radial-gradient(2.5px 2.5px at 92% 78%, var(--en-mint), transparent 50%),
+      radial-gradient(3px 3px at 12% 88%, var(--en-yellow), transparent 50%),
+      /* geometric stripe pattern */
+      repeating-linear-gradient(45deg,
+        transparent 0, transparent 14px,
+        rgba(234,88,11,0.06) 14px, rgba(234,88,11,0.06) 16px),
+      var(--en-bg);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    border: var(--en-border-thick);
+  }
+
+  /* ============ TOP NAV (punchy thick-bordered) ============ */
+  .topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--en-primary);
+    border-bottom: var(--en-border);
+    color: #fff;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--en-font-display);
+    font-size: 16px;
+    letter-spacing: 0.02em;
+    color: #fff;
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    background: var(--en-yellow);
+    border: 3px solid var(--en-line);
+    display: grid; place-items: center;
+    color: var(--en-line);
+    transform: rotate(-8deg);
+    /* triangular shape via clip-path */
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    background-clip: padding-box;
+  }
+  .brand__name { font-weight: 400; }
+
+  .nav {
+    display: flex;
+    gap: 4px;
+    font-family: var(--en-font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .nav a {
+    padding: 3px 9px;
+    text-decoration: none;
+    color: #fff;
+    border: 2.5px solid transparent;
+    transition: all .12s ease;
+  }
+  .nav a:hover {
+    background: var(--en-yellow);
+    color: var(--en-line);
+    border-color: var(--en-line);
+  }
+  .nav a.is-active {
+    background: var(--en-line);
+    color: var(--en-yellow);
+    border-color: var(--en-line);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 10px;
+    padding: 12px;
+    align-items: center;
+    position: relative;
+  }
+
+  /* LEFT — massive energetic headline */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    position: relative;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--en-secondary);
+    color: var(--en-line);
+    border: var(--en-border);
+    border-radius: var(--en-r-pill);
+    font-family: var(--en-font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    box-shadow: var(--en-shadow-sm);
+    transform: rotate(-2deg);
+  }
+  .hero__eyebrow::before { content: "★"; }
+
+  .hero__title {
+    font-family: var(--en-font-display);
+    font-size: 48px;
+    line-height: 0.85;
+    letter-spacing: 0.005em;
+    color: var(--en-line);
+    margin: 6px 0 2px;
+    text-transform: uppercase;
+  }
+  .hero__title-accent {
+    color: var(--en-primary);
+    -webkit-text-stroke: 0;
+    background: var(--en-yellow);
+    padding: 0 8px;
+    display: inline-block;
+    border: 4px solid var(--en-line);
+    box-shadow: var(--en-shadow-sm);
+    transform: rotate(-1.5deg);
+    margin: 2px 0;
+  }
+  .hero__title-outline {
+    color: transparent;
+    -webkit-text-stroke: 2px var(--en-line);
+  }
+
+  .hero__sub {
+    font-family: var(--en-font-ui);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--en-ink);
+    max-width: 30ch;
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  /* Punchy thick buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 16px;
+    border: var(--en-border);
+    border-radius: var(--en-r-pill);
+    font-family: var(--en-font-ui);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform .12s ease, box-shadow .12s ease;
+    color: var(--en-line);
+    background: var(--en-card);
+    box-shadow: var(--en-shadow);
+  }
+  .btn--primary {
+    background: var(--en-primary);
+    color: #fff;
+  }
+  .btn--primary:hover {
+    transform: translate(-2px,-2px);
+    box-shadow: var(--en-shadow-lg);
+  }
+  .btn--primary:active {
+    transform: translate(2px,2px);
+    box-shadow: var(--en-shadow-sm);
+  }
+  .btn--ghost {
+    background: var(--en-bg);
+    color: var(--en-line);
+    box-shadow: var(--en-shadow-sm);
+  }
+  .btn--ghost:hover {
+    background: var(--en-yellow);
+    transform: translate(-1px,-1px);
+    box-shadow: 4px 4px 0 var(--en-line);
+  }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — punchy stat cards */
+  .cards {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 6px;
+  }
+  .card {
+    padding: 7px 11px;
+    border: var(--en-border);
+    background: var(--en-card);
+    box-shadow: var(--en-shadow-sm);
+    position: relative;
+  }
+  .card--yellow {
+    background: var(--en-yellow);
+    transform: rotate(-1.5deg);
+  }
+  .card--mint {
+    background: var(--en-mint);
+    color: #fff;
+    transform: rotate(1.2deg);
+  }
+  .card--pink {
+    background: var(--en-pink);
+    color: #fff;
+    transform: rotate(-0.8deg);
+  }
+
+  .card__label {
+    font-family: var(--en-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: inherit;
+    opacity: 0.85;
+  }
+  .card__value {
+    font-family: var(--en-font-display);
+    font-size: 22px;
+    color: var(--en-line);
+    line-height: 1;
+    margin-top: 2px;
+  }
+  .card--mint .card__value,
+  .card--pink .card__value { color: #fff; }
+  .card__sub {
+    font-family: var(--en-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: inherit;
+    opacity: 0.8;
+    margin-top: 1px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* Sticker badge — triangle */
+  .sticker {
+    position: absolute;
+    top: -10px; right: -10px;
+    background: var(--en-primary);
+    color: #fff;
+    border: 3px solid var(--en-line);
+    padding: 3px 8px;
+    font-family: var(--en-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    box-shadow: var(--en-shadow-sm);
+    transform: rotate(15deg);
+    z-index: 2;
+  }
+
+  /* Decorative geometric shapes — energy signatures */
+  .shape {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .shape--star {
+    top: -10px; right: 8px;
+    width: 24px; height: 24px;
+    color: var(--en-pink);
+    transform: rotate(20deg);
+  }
+  .shape--zigzag {
+    bottom: 60px; right: -4px;
+    width: 40px; height: 16px;
+    color: var(--en-mint);
+  }
+  .shape--circle {
+    bottom: 14px; left: 8px;
+    width: 22px; height: 22px;
+    border: 4px solid var(--en-primary);
+    border-radius: 50%;
+    opacity: 0.4;
+  }
+  .shape--bolt {
+    top: 60px; left: 150px;
+    width: 18px; height: 22px;
+    color: var(--en-yellow);
+    transform: rotate(-10deg);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 12px;
+    background: var(--en-line);
+    color: var(--en-yellow);
+    border-top: var(--en-border);
+    font-family: var(--en-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .footer__accent { color: var(--en-secondary); }
+  .footer__pulse {
+    color: var(--en-pink);
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Energetic design language preview">
+
+  <!-- ===== TOP NAV ===== -->
+  <header class="topnav">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">BOOST!</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Go</a>
+      <a href="#">Train</a>
+      <a href="#">Shop</a>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- decorative geometric shapes -->
+    <svg class="shape shape--star" viewBox="0 0 24 24" fill="currentColor" stroke="var(--en-line)" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 14.5 9 22 9.5 16 14 18 22 12 18 6 22 8 14 2 9.5 9.5 9"/></svg>
+    <svg class="shape shape--zigzag" viewBox="0 0 40 16" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="2 8 8 2 14 8 20 2 26 8 32 2 38 8"/></svg>
+    <svg class="shape shape--bolt" viewBox="0 0 24 24" fill="currentColor" stroke="var(--en-line)" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg>
+    <div class="shape shape--circle" aria-hidden="true"></div>
+
+    <!-- LEFT: massive headline -->
+    <article class="hero">
+
+      <span class="hero__eyebrow">NEW · v2 · LIVE</span>
+      <h1 class="hero__title">
+        <span class="hero__title-outline">GO</span><br>
+        <span class="hero__title-accent">HARD!</span>
+      </h1>
+      <p class="hero__sub">Train harder. Move faster. Push past every limit. Built for people who don't quit.</p>
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Start now
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Watch</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: punchy stat cards -->
+    <aside class="cards">
+
+      <div class="card card--yellow">
+        <div class="card__label">athletes</div>
+        <div class="card__value">48K</div>
+        <div class="card__sub">+ going hard</div>
+      </div>
+
+      <div class="card card--mint">
+        <div class="card__label">streak</div>
+        <div class="card__value">28d</div>
+        <div class="card__sub">on fire</div>
+      </div>
+
+      <div class="card card--pink">
+        <div class="sticker">HOT</div>
+        <div class="card__label">record</div>
+        <div class="card__value">1,284</div>
+        <div class="card__sub">pushups today</div>
+      </div>
+
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__accent">⚡</span> energetic · bold · thick · go</span>
+    <span class="footer__pulse">● live ● live ● live</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

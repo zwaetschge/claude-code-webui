@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Material — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MATERIAL DESIGN 3 SYSTEM — 400×300 THUMBNAIL
+     Layered surfaces · elevation · FAB · M3 rounded · state layers
+     ============================================================ */
+  :root {
+    --mt-primary: #6442D6;
+    --mt-primary-deep: #4A2F9E;
+    --mt-on-primary: #FFFFFF;
+    --mt-primary-container: #E8DEFF;
+    --mt-on-primary-container: #1E0A63;
+    --mt-secondary: #C8B3FD;
+    --mt-secondary-deep: #9F87D4;
+    --mt-secondary-container: #EDE3FF;
+    --mt-success: #16A34A;
+    --mt-warning: #D97706;
+    --mt-danger: #DC2626;
+    --mt-error: #B3261E;
+
+    /* M3 surface tonal palette */
+    --mt-surface: #FFFFFF;
+    --mt-surface-1: #F7F4FA;      /* 1dp elevation tint */
+    --mt-surface-2: #F1EDF7;      /* 2dp */
+    --mt-surface-3: #EBE6F4;      /* 3dp */
+    --mt-surface-4: #E8E3F2;      /* 4dp */
+    --mt-surface-5: #E2DDF0;      /* 6dp */
+    --mt-ink: #1B1B1F;
+    --mt-ink-2: #49454F;
+    --mt-ink-3: #7A757F;
+    --mt-ink-4: #9C98A4;
+    --mt-outline: #7A757F;
+    --mt-outline-variant: #CAC4D0;
+
+    --mt-font: 'Roboto', -apple-system, sans-serif;
+    --mt-font-display: 'Inter', 'Roboto', sans-serif;
+    --mt-font-mono: 'Fira Code', ui-monospace, monospace;
+
+    /* M3 elevation shadows */
+    --mt-elev-1: 0 1px 2px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.08);
+    --mt-elev-2: 0 1px 2px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.10);
+    --mt-elev-3: 0 4px 8px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.08);
+    --mt-elev-4: 0 6px 12px rgba(0,0,0,0.14), 0 2px 4px rgba(0,0,0,0.10);
+    --mt-elev-fab: 0 6px 16px rgba(100,66,214,0.35);
+
+    /* M3 radii */
+    --mt-r-xs: 4px;
+    --mt-r-SM: 8px;
+    --mt-r-md: 12px;
+    --mt-r-lg: 16px;
+    --mt-r-xl: 28px;
+    --mt-r-pill: 999px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--mt-font);
+    font-size: 12px;
+    color: var(--mt-ink);
+    background: var(--mt-surface-1);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--mt-surface-1);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ============ TOP APP BAR (M3) ============ */
+  .appbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    height: 40px;
+    background: var(--mt-surface);
+    box-shadow: var(--mt-elev-1);
+    position: relative;
+    z-index: 5;
+  }
+  .appbar__left { display: flex; align-items: center; gap: 10px; }
+  .appbar__menu {
+    width: 24px; height: 24px;
+    display: grid; place-items: center;
+    color: var(--mt-ink-2);
+  }
+  .appbar__menu svg { width: 18px; height: 18px; }
+  .appbar__title {
+    font-family: var(--mt-font-display);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--mt-ink);
+    letter-spacing: -0.005em;
+  }
+
+  .appbar__actions { display: flex; align-items: center; gap: 2px; }
+  .appbar__action {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    display: grid; place-items: center;
+    color: var(--mt-ink-2);
+    cursor: pointer;
+    position: relative;
+  }
+  .appbar__action svg { width: 16px; height: 16px; }
+  .appbar__action__dot {
+    position: absolute;
+    top: 6px; right: 6px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--mt-error);
+    border: 1.5px solid var(--mt-surface);
+  }
+  .appbar__avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--mt-primary);
+    display: grid; place-items: center;
+    color: var(--mt-on-primary);
+    font-weight: 500;
+    font-size: 10px;
+    margin-left: 6px;
+  }
+
+  /* ============ MAIN CONTENT ============ */
+  .content {
+    padding: 12px 16px;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* LEFT — headline + filled button */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+  }
+  .hero__headline {
+    font-family: var(--mt-font-display);
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: var(--mt-ink);
+  }
+  .hero__headline em {
+    font-style: normal;
+    color: var(--mt-primary);
+    font-weight: 700;
+  }
+  .hero__sub {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--mt-ink-2);
+    max-width: 30ch;
+  }
+
+  /* M3 Filled Button */
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .btn-filled {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 20px;
+    border: none;
+    border-radius: var(--mt-r-pill);
+    background: var(--mt-primary);
+    color: var(--mt-on-primary);
+    font-family: var(--mt-font-display);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: none;
+    transition: box-shadow .2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  /* M3 state layer on hover */
+  .btn-filled:hover { box-shadow: inset 0 0 0 1000px rgba(255,255,255,0.08); }
+  .btn-filled:active { box-shadow: inset 0 0 0 1000px rgba(255,255,255,0.12); }
+  .btn-filled svg { width: 16px; height: 16px; }
+
+  .btn-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 36px;
+    padding: 0 12px;
+    border: none;
+    border-radius: var(--mt-r-pill);
+    background: transparent;
+    color: var(--mt-primary);
+    font-family: var(--mt-font-display);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn-text:hover { background: var(--mt-primary-container); }
+
+  /* RIGHT — M3 Card (filled variant) */
+  .card {
+    background: var(--mt-surface);
+    border-radius: var(--mt-r-md);
+    box-shadow: var(--mt-elev-2);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* Card header */
+  .card__head {
+    padding: 12px 14px 8px;
+  }
+  .card__title {
+    font-family: var(--mt-font-display);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--mt-ink);
+  }
+  .card__sub {
+    font-size: 10px;
+    color: var(--mt-ink-3);
+    margin-top: 1px;
+  }
+
+  /* Progress with M3 style */
+  .card__progress {
+    margin: 8px 14px 4px;
+  }
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mt-font-mono);
+    font-size: 9px;
+    color: var(--mt-ink-3);
+    margin-bottom: 3px;
+  }
+  .progress-track {
+    height: 4px;
+    background: var(--mt-surface-3);
+    border-radius: var(--mt-r-pill);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 72%;
+    background: var(--mt-primary);
+    border-radius: var(--mt-r-pill);
+  }
+
+  /* List items with M3 leading icons */
+  .card__list {
+    padding: 4px 0;
+  }
+  .list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    position: relative;
+    transition: background .15s ease;
+  }
+  .list-item:hover { background: var(--mt-surface-2); }
+  .list-item__icon {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--mt-primary-container);
+    color: var(--mt-on-primary-container);
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .list-item__icon svg { width: 16px; height: 16px; }
+  .list-item__icon--green { background: #D1F4DE; color: var(--mt-success); }
+  .list-item__icon--orange { background: #FFE4C8; color: var(--mt-warning); }
+  .list-item__body { flex: 1; min-width: 0; }
+  .list-item__title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--mt-ink);
+    line-height: 1.2;
+  }
+  .list-item__sub {
+    font-size: 9px;
+    color: var(--mt-ink-3);
+    line-height: 1.2;
+  }
+  .list-item__trailing {
+    font-family: var(--mt-font-mono);
+    font-size: 10px;
+    color: var(--mt-ink-2);
+    font-weight: 500;
+  }
+
+  /* FAB — Floating Action Button (M3 signature) */
+  .fab {
+    position: absolute;
+    bottom: 52px; right: 16px;
+    width: 40px; height: 40px;
+    border: none;
+    border-radius: var(--mt-r-md);
+    background: var(--mt-primary-container);
+    color: var(--mt-on-primary-container);
+    display: grid; place-items: center;
+    cursor: pointer;
+    box-shadow: var(--mt-elev-3);
+    z-index: 10;
+    transition: box-shadow .2s ease;
+  }
+  .fab:hover { box-shadow: var(--mt-elev-4); }
+  .fab svg { width: 20px; height: 20px; }
+
+  /* ============ NAVIGATION RAIL / BOTTOM BAR (M3) ============ */
+  .navbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    height: 44px;
+    background: var(--mt-surface-2);
+    border-top: 1px solid var(--mt-outline-variant);
+  }
+  .nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    border-radius: var(--mt-r-xl);
+    transition: background .15s ease;
+  }
+  .nav-item__icon {
+    width: 24px; height: 24px;
+    color: var(--mt-ink-3);
+    display: grid; place-items: center;
+    z-index: 1;
+  }
+  .nav-item__icon svg { width: 20px; height: 20px; }
+  .nav-item__label {
+    font-size: 8px;
+    font-weight: 500;
+    color: var(--mt-ink-3);
+  }
+  /* Active pill — M3 indicator */
+  .nav-item.is-active {
+    background: var(--mt-primary-container);
+    border-radius: var(--mt-r-lg);
+  }
+  .nav-item.is-active .nav-item__icon { color: var(--mt-on-primary-container); }
+  .nav-item.is-active .nav-item__label { color: var(--mt-on-primary-container); font-weight: 600; }
+
+  /* Active indicator dot behind icon */
+  .nav-item.is-active::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    width: 32px; height: 4px;
+    background: var(--mt-on-primary-container);
+    border-radius: var(--mt-r-pill);
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Material design language preview">
+
+  <!-- ===== TOP APP BAR ===== -->
+  <header class="appbar">
+    <div class="appbar__left">
+      <button class="appbar__menu" type="button" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <span class="appbar__title">Inbox</span>
+    </div>
+    <div class="appbar__actions">
+      <button class="appbar__action" type="button" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <button class="appbar__action" type="button" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="appbar__action__dot"></span>
+      </button>
+      <div class="appbar__avatar" aria-label="User">M</div>
+    </div>
+  </header>
+
+  <!-- ===== CONTENT ===== -->
+  <section class="content">
+
+    <!-- LEFT: hero text + filled button -->
+    <article class="hero">
+      <h1 class="hero__headline">
+        Stay on top of<br>
+        <em>everything</em>.
+      </h1>
+      <p class="hero__sub">Smart inbox with AI sorting, priority flags, and one-tap replies. Focus on what matters.</p>
+      <div class="hero__cta">
+        <button class="btn-filled" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          Compose
+        </button>
+        <button class="btn-text" type="button">Learn more</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: M3 list card -->
+    <article class="card">
+      <div class="card__head">
+        <h2 class="card__title">Today</h2>
+        <p class="card__sub">5 items · 2 urgent</p>
+      </div>
+
+      <div class="card__progress">
+        <div class="progress-label">
+          <span>Inbox zero</span>
+          <span>72%</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill"></div></div>
+      </div>
+
+      <div class="card__list">
+        <div class="list-item">
+          <div class="list-item__icon list-item__icon--orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <div class="list-item__body">
+            <div class="list-item__title">Q4 Budget Review</div>
+            <div class="list-item__sub">Due today · 2:00 PM</div>
+          </div>
+          <span class="list-item__trailing">!</span>
+        </div>
+        <div class="list-item">
+          <div class="list-item__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="list-item__body">
+            <div class="list-item__title">Sarah Chen</div>
+            <div class="list-item__sub">Re: Design review</div>
+          </div>
+        </div>
+        <div class="list-item">
+          <div class="list-item__icon list-item__icon--green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          </div>
+          <div class="list-item__body">
+            <div class="list-item__title">Deploy v2.4</div>
+            <div class="list-item__sub">Completed · 1h ago</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- FAB -->
+    <button class="fab" type="button" aria-label="New item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+
+  </section>
+
+  <!-- ===== NAVIGATION BAR (M3 bottom nav) ===== -->
+  <nav class="navbar" aria-label="Bottom navigation">
+    <button class="nav-item is-active" type="button">
+      <span class="nav-item__icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      </span>
+      <span class="nav-item__label">Home</span>
+    </button>
+    <button class="nav-item" type="button">
+      <span class="nav-item__icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </span>
+      <span class="nav-item__label">Calendar</span>
+    </button>
+    <button class="nav-item" type="button">
+      <span class="nav-item__icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </span>
+      <span class="nav-item__label">Settings</span>
+    </button>
+  </nav>
+
+</main>
+
+</body>
+</html>

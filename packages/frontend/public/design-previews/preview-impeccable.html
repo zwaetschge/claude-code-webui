@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Impeccable — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     IMPECCABLE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Editorial poster · cream + burnt orange · amber brand
+     Chakra Petch · alternating sections · warm confident
+     ============================================================ */
+  :root {
+    --ip-primary: #CC8800;        /* amber brand */
+    --ip-primary-deep: #A66E00;
+    --ip-primary-light: #E6A533;
+    --ip-secondary: #C55221;      /* burnt orange */
+    --ip-secondary-deep: #A03D14;
+    --ip-secondary-light: #E07040;
+    --ip-success: #16A34A;
+    --ip-warning: #D97706;
+    --ip-danger: #DC2626;
+
+    --ip-cream: #FFF1DC;          /* warm cream section */
+    --ip-cream-2: #F5E4C8;
+    --ip-surface: #FFFFFF;
+    --ip-ink: #111827;
+    --ip-ink-2: #374151;
+    --ip-ink-3: #6B7280;
+    --ip-ink-4: #9CA3AF;
+    --ip-line: #E5DDC8;
+    --ip-line-2: #F0E8D2;
+
+    --ip-font: 'Chakra Petch', -apple-system, sans-serif;
+    --ip-font-mono: 'JetBrains Mono', monospace;
+
+    --ip-r-sm: 0px;        /* editorial = sharp corners */
+    --ip-r-md: 2px;
+    --ip-r-lg: 4px;
+    --ip-r-pill: 999px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ip-font);
+    font-size: 12px;
+    color: var(--ip-ink);
+    background: var(--ip-cream);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    background: var(--ip-cream);
+  }
+
+  /* ============ MASTHEAD ============ */
+  .masthead {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    background: var(--ip-ink);
+    color: var(--ip-cream);
+    padding: 5px 14px;
+    font-family: var(--ip-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .masthead__accent { color: var(--ip-primary); }
+
+  /* ============ TITLE BAR (cream) ============ */
+  .titlebar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 8px 14px 10px;
+    background: var(--ip-cream);
+    border-bottom: 2px solid var(--ip-ink);
+  }
+  .wordmark {
+    font-family: var(--ip-font);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    color: var(--ip-ink);
+    line-height: 1;
+  }
+  .wordmark span { color: var(--ip-secondary); }
+  .wordmark__sub {
+    display: block;
+    font-family: var(--ip-font-mono);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ip-ink-3);
+    margin-top: 3px;
+  }
+  .titlebar__nav {
+    display: flex;
+    gap: 14px;
+    font-family: var(--ip-font);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ip-ink-3);
+  }
+  .titlebar__nav a {
+    text-decoration: none;
+    color: inherit;
+    padding-bottom: 2px;
+    border-bottom: 2px solid transparent;
+    transition: border-color .15s ease;
+  }
+  .titlebar__nav a:hover { color: var(--ip-ink); }
+  .titlebar__nav a.is-active {
+    color: var(--ip-ink);
+    border-bottom-color: var(--ip-primary);
+    font-weight: 600;
+  }
+
+  /* ============ MAIN (alternating sections) ============ */
+  .body {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    overflow: hidden;
+  }
+
+  /* LEFT — cream editorial section */
+  .article {
+    padding: 12px 14px 10px;
+    border-right: 2px solid var(--ip-ink);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--ip-cream);
+    overflow: hidden;
+  }
+  .article__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--ip-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ip-ink-3);
+  }
+  .article__section {
+    color: var(--ip-secondary);
+    font-weight: 700;
+  }
+  .article__sep { color: var(--ip-ink-4); }
+
+  .article__headline {
+    font-family: var(--ip-font);
+    font-weight: 700;
+    font-size: 26px;
+    line-height: 1.0;
+    letter-spacing: -0.025em;
+    color: var(--ip-ink);
+    margin: 2px 0;
+  }
+  .article__headline em {
+    font-style: normal;
+    color: var(--ip-primary);
+  }
+  .article__headline-stroke {
+    -webkit-text-stroke: 1.5px var(--ip-ink);
+    color: var(--ip-cream);
+  }
+
+  .article__lede {
+    font-family: var(--ip-font);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--ip-ink-2);
+    margin-top: 2px;
+    max-width: 32ch;
+  }
+
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 6px;
+    border-top: 1px solid var(--ip-line);
+    font-family: var(--ip-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ip-ink-3);
+  }
+  .byline__author { color: var(--ip-ink); font-weight: 700; }
+
+  .article__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 4px 0;
+    font-family: var(--ip-font);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ip-ink);
+    border-bottom: 2px solid var(--ip-secondary);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .article__cta::after { content: "→"; margin-left: 4px; color: var(--ip-secondary); }
+
+  /* RIGHT — burnt orange inverted section */
+  .feature {
+    background: var(--ip-secondary);
+    color: var(--ip-cream);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .feature__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--ip-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ip-primary-light);
+  }
+  .feature__label::before {
+    content: "";
+    width: 16px; height: 1.5px;
+    background: var(--ip-primary-light);
+  }
+  .feature__headline {
+    font-family: var(--ip-font);
+    font-weight: 700;
+    font-size: 22px;
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+    color: var(--ip-cream);
+  }
+  .feature__headline em {
+    font-style: normal;
+    color: var(--ip-primary-light);
+    -webkit-text-stroke: 0;
+  }
+  .feature__body {
+    font-family: var(--ip-font);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: rgba(255,241,220,0.85);
+  }
+
+  /* Stats grid in orange section */
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,241,220,0.25);
+  }
+  .stat {
+    padding: 4px 0;
+  }
+  .stat__label {
+    font-family: var(--ip-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255,241,220,0.70);
+  }
+  .stat__value {
+    font-family: var(--ip-font);
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--ip-cream);
+    line-height: 1;
+    margin-top: 2px;
+    letter-spacing: -0.02em;
+  }
+  .stat__value--amber { color: var(--ip-primary-light); }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    background: var(--ip-ink);
+    color: var(--ip-cream);
+    font-family: var(--ip-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .footer__left, .footer__right {
+    padding: 5px 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .footer__center {
+    padding: 5px 14px;
+    background: var(--ip-primary);
+    color: var(--ip-ink);
+    border-left: 2px solid var(--ip-ink);
+    border-right: 2px solid var(--ip-ink);
+  }
+  .footer__accent { color: var(--ip-primary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Impeccable design language preview">
+
+  <!-- ===== MASTHEAD ===== -->
+  <header class="masthead">
+    <span>Vol. 12 · No. 04 · 2025</span>
+    <span class="masthead__accent">★ amber edition</span>
+    <span>$12 · €11</span>
+  </header>
+
+  <!-- ===== TITLE BAR ===== -->
+  <section class="titlebar">
+    <div>
+      <h1 class="wordmark">The <span>Forge</span></h1>
+      <span class="wordmark__sub">craft · work · maker culture</span>
+    </div>
+    <nav class="titlebar__nav" aria-label="Primary">
+      <a href="#" class="is-active">Current</a>
+      <a href="#">Archive</a>
+      <a href="#">Shop</a>
+    </nav>
+  </section>
+
+  <!-- ===== BODY: alternating cream / burnt orange ===== -->
+  <section class="body">
+
+    <!-- LEFT: cream editorial article -->
+    <article class="article">
+      <div class="article__meta">
+        <span class="article__section">Feature</span>
+        <span class="article__sep">·</span>
+        <span>The Cover</span>
+      </div>
+
+      <h2 class="article__headline">
+        On the <em>craft</em><br>
+        of <span class="article__headline-stroke">slow</span> work.
+      </h2>
+
+      <p class="article__lede">
+        In a world built for speed, the deliberate act of making — by hand, with care — has become the rarest form of ambition. We visit the workshops where it still happens.
+      </p>
+
+      <a href="#" class="article__cta">Continue reading</a>
+
+      <div class="byline">
+        <span>By</span>
+        <span class="byline__author">Eleanor Vance</span>
+        <span class="article__sep">·</span>
+        <span>12 min</span>
+        <span class="article__sep">·</span>
+        <span>p. 14</span>
+      </div>
+    </article>
+
+    <!-- RIGHT: burnt orange feature -->
+    <aside class="feature">
+      <span class="feature__label">In this issue</span>
+      <h3 class="feature__headline">
+        <em>Eight</em> makers,<br>
+        one question.
+      </h3>
+      <p class="feature__body">
+        What does it take to build something that lasts? Each story set in full, printed in amber.
+      </p>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="stat__label">Pages</div>
+          <div class="stat__value">128</div>
+        </div>
+        <div class="stat">
+          <div class="stat__label">Makers</div>
+          <div class="stat__value stat__value--amber">23</div>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span class="footer__left">
+      <span class="footer__accent">●</span>
+      impeccable · editorial · warm
+    </span>
+    <span class="footer__center">— forge.press —</span>
+    <span class="footer__right">WCAG AA · v1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

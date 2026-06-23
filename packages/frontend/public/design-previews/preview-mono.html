@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Mono — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     MONO DESIGN SYSTEM — 400×300 THUMBNAIL
+     Hacker-chic · lime+cyan · Space Mono · warm stone · compact
+     ============================================================ */
+  :root {
+    --mo-primary: #37F712;       /* electric lime */
+    --mo-primary-deep: #2BC509;
+    --mo-secondary: #00A6F4;     /* bright cyan */
+    --mo-secondary-deep: #0084C2;
+    --mo-success: #00A63D;
+    --mo-warning: #FE9900;
+    --mo-danger: #FF2157;
+    --mo-info: #00A6F4;
+
+    --mo-surface: #E7E5E4;       /* warm stone */
+    --mo-surface-2: #DDDBD8;
+    --mo-surface-3: #D1CFCB;
+    --mo-surface-dark: #1A1A1A;
+    --mo-surface-dark-2: #242424;
+    --mo-ink: #78716B;           /* warm gray text */
+    --mo-ink-2: #57534E;
+    --mo-ink-3: #A8A29E;
+    --mo-ink-4: #C7C2BD;
+    --mo-ink-dark: #1A1A1A;
+    --mo-ink-dark-2: #3A3A3A;
+    --mo-line: #C7C2BD;
+    --mo-line-2: #D6D3CE;
+    --mo-line-dark: #2E2E2E;
+
+    --mo-font: 'Space Mono', ui-monospace, monospace;
+    --mo-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --mo-r-sm: 2px;
+    --mo-r-md: 4px;
+    --mo-r-lg: 6px;
+    --mo-r-pill: 999px;
+
+    --mo-glow-lime: 0 0 10px rgba(55,247,18,0.40);
+    --mo-glow-cyan: 0 0 10px rgba(0,166,244,0.40);
+    --mo-sh-1: 0 1px 2px rgba(120,113,107,0.10);
+    --mo-sh-2: 0 4px 14px -3px rgba(120,113,107,0.15);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--mo-font);
+    font-size: 11px;
+    color: var(--mo-ink);
+    background: var(--mo-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background:
+      radial-gradient(140px 90px at 90% 5%, rgba(55,247,18,0.06), transparent 60%),
+      radial-gradient(120px 80px at 5% 95%, rgba(0,166,244,0.05), transparent 60%),
+      var(--mo-surface);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--mo-surface-dark);
+    border-radius: var(--mo-r-md);
+    color: var(--mo-surface);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--mo-primary);
+    text-shadow: var(--mo-glow-lime);
+  }
+  .brand__mark {
+    width: 18px; height: 18px;
+    background: var(--mo-primary);
+    border-radius: var(--mo-r-sm);
+    display: grid; place-items: center;
+    color: var(--mo-surface-dark);
+    box-shadow: var(--mo-glow-lime);
+  }
+  .brand__mark::before {
+    content: ">";
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .brand__sep { color: var(--mo-ink-dark-2); }
+  .brand__sub {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--mo-ink-3);
+    font-family: var(--mo-font-mono);
+  }
+
+  .header__right { display: flex; align-items: center; gap: 8px; }
+  .header__status {
+    font-size: 9px;
+    color: var(--mo-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .header__status::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--mo-secondary);
+    box-shadow: var(--mo-glow-cyan);
+  }
+  .header__avatar {
+    width: 22px; height: 22px;
+    background: var(--mo-primary);
+    border-radius: var(--mo-r-sm);
+    display: grid; place-items: center;
+    color: var(--mo-surface-dark);
+    font-weight: 700;
+    font-size: 9px;
+  }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  /* LEFT — terminal hero on dark card */
+  .hero {
+    background: var(--mo-surface-dark);
+    border-radius: var(--mo-r-md);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* Terminal window dots */
+  .hero__dots {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+  .hero__dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+  }
+  .hero__dot--red { background: #FF5F57; }
+  .hero__dot--yellow { background: #FEBC2E; }
+  .hero__dot--green { background: #28C840; }
+
+  .hero__line {
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--mo-ink-3);
+  }
+  .hero__prompt { color: var(--mo-primary); }
+  .hero__cmd { color: var(--mo-surface); }
+  .hero__out { color: var(--mo-ink-3); }
+  .hero__lime { color: var(--mo-primary); text-shadow: var(--mo-glow-lime); }
+  .hero__cyan { color: var(--mo-secondary); }
+  .hero__cursor {
+    display: inline-block;
+    width: 6px; height: 11px;
+    background: var(--mo-primary);
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 6px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 14px;
+    border: none;
+    border-radius: var(--mo-r-sm);
+    font-family: var(--mo-font);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform .1s ease;
+  }
+  .btn--lime {
+    background: var(--mo-primary);
+    color: var(--mo-surface-dark);
+    box-shadow: var(--mo-glow-lime);
+  }
+  .btn--lime:hover { transform: translateY(-1px); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--mo-ink-3);
+    border: 1px solid var(--mo-line-dark);
+  }
+  .btn--ghost:hover { color: var(--mo-primary); border-color: var(--mo-primary); }
+
+  /* RIGHT — member feed card */
+  .feed {
+    background: var(--mo-surface-dark);
+    border-radius: var(--mo-r-md);
+    padding: 8px 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .feed__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px 6px;
+    border-bottom: 1px solid var(--mo-line-dark);
+  }
+  .feed__title {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--mo-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .feed__count {
+    font-family: var(--mo-font-mono);
+    font-size: 9px;
+    color: var(--mo-ink-3);
+  }
+
+  .feed__list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px 0;
+    flex: 1;
+    overflow: hidden;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 12px;
+    font-size: 9.5px;
+    line-height: 1.3;
+    transition: background .12s ease;
+  }
+  .item:hover { background: var(--mo-surface-dark-2); }
+  .item__icon {
+    width: 18px; height: 18px;
+    border-radius: var(--mo-r-sm);
+    display: grid; place-items: center;
+    flex-shrink: 0;
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .item__icon--lime { background: var(--mo-primary); color: var(--mo-surface-dark); }
+  .item__icon--cyan { background: var(--mo-secondary); color: var(--mo-surface); }
+  .item__icon--warn { background: var(--mo-warning); color: var(--mo-surface-dark); }
+  .item__icon--danger { background: var(--mo-danger); color: var(--mo-surface); }
+  .item__body { flex: 1; min-width: 0; }
+  .item__user {
+    color: var(--mo-surface);
+    font-weight: 700;
+  }
+  .item__action {
+    color: var(--mo-ink-3);
+  }
+  .item__action em {
+    font-style: normal;
+    color: var(--mo-primary);
+  }
+  .item__time {
+    color: var(--mo-ink-dark-2);
+    font-family: var(--mo-font-mono);
+    font-size: 8px;
+  }
+
+  /* Stats row */
+  .stats {
+    display: flex;
+    gap: 1px;
+    border-top: 1px solid var(--mo-line-dark);
+    padding: 0;
+  }
+  .stat {
+    flex: 1;
+    padding: 5px 12px;
+    text-align: center;
+  }
+  .stat__value {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--mo-primary);
+    line-height: 1;
+  }
+  .stat__value--cyan { color: var(--mo-secondary); }
+  .stat__label {
+    font-family: var(--mo-font-mono);
+    font-size: 7px;
+    color: var(--mo-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Mono design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark"></span>
+      <span>club.ai</span>
+      <span class="brand__sep">//</span>
+      <span class="brand__sub">private · members</span>
+    </div>
+    <div class="header__right">
+      <span class="header__status">412 online</span>
+      <div class="header__avatar">M</div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: terminal hero -->
+    <article class="hero">
+      <div class="hero__dots">
+        <span class="hero__dot hero__dot--red"></span>
+        <span class="hero__dot hero__dot--yellow"></span>
+        <span class="hero__dot hero__dot--green"></span>
+      </div>
+
+      <div class="hero__line">
+        <span class="hero__prompt">$</span> <span class="hero__cmd">join --club</span>
+      </div>
+      <div class="hero__line hero__out">
+        → connecting to <span class="hero__lime">club.ai</span>...
+      </div>
+      <div class="hero__line hero__out">
+        → <span class="hero__cyan">412</span> builders online
+      </div>
+      <div class="hero__line hero__out">
+        → <span class="hero__lime">access granted.</span> welcome.<span class="hero__cursor"></span>
+      </div>
+
+      <div class="hero__cta">
+        <button class="btn btn--lime" type="button">→ Apply</button>
+        <button class="btn btn--ghost" type="button">Learn more</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: member activity feed -->
+    <aside class="feed">
+      <div class="feed__head">
+        <span class="feed__title">// activity</span>
+        <span class="feed__count">live</span>
+      </div>
+
+      <div class="feed__list">
+        <div class="item">
+          <span class="item__icon item__icon--lime">$</span>
+          <div class="item__body">
+            <span class="item__user">@maya</span>
+            <span class="item__action">shipped <em>v2.0</em></span>
+          </div>
+          <span class="item__time">2m</span>
+        </div>
+        <div class="item">
+          <span class="item__icon item__icon--cyan">▲</span>
+          <div class="item__body">
+            <span class="item__user">@jonas</span>
+            <span class="item__action">hit <em>$4.2k MRR</em></span>
+          </div>
+          <span class="item__time">8m</span>
+        </div>
+        <div class="item">
+          <span class="item__icon item__icon--warn">⚡</span>
+          <div class="item__body">
+            <span class="item__user">@sara</span>
+            <span class="item__action">launched <em>new API</em></span>
+          </div>
+          <span class="item__time">15m</span>
+        </div>
+        <div class="item">
+          <span class="item__icon item__icon--danger">♥</span>
+          <div class="item__body">
+            <span class="item__user">@daniel</span>
+            <span class="item__action">got <em>1.2k users</em></span>
+          </div>
+          <span class="item__time">32m</span>
+        </div>
+        <div class="item">
+          <span class="item__icon item__icon--lime">$</span>
+          <div class="item__body">
+            <span class="item__user">@aicha</span>
+            <span class="item__action">raised <em>$500k</em></span>
+          </div>
+          <span class="item__time">1h</span>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="stat__value">2,847</div>
+          <div class="stat__label">members</div>
+        </div>
+        <div class="stat">
+          <div class="stat__value stat__value--cyan">842</div>
+          <div class="stat__label">shipping</div>
+        </div>
+      </div>
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

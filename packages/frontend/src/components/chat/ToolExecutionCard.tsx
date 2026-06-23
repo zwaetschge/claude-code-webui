@@ -10,7 +10,6 @@ import {
   CheckSquare,
   Cpu,
   Wrench,
-  ChevronDown,
   ChevronRight,
   CheckCircle2,
   XCircle,
@@ -29,8 +28,16 @@ import {
   Code2,
   Smartphone,
 } from 'lucide-react';
-import type { ToolExecution } from '@claude-code-webui/shared';
+import type { ToolExecution } from '@plum-code-webui/shared';
 import { ToolLoader } from './providerAnimations/ToolLoader';
+import { cn } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface ToolExecutionCardProps {
   execution: ToolExecution;
@@ -130,7 +137,204 @@ const getInputPreview = (toolName: string, input: unknown): string => {
   }
 };
 
-// Format full input for expanded view
+function compactText(value: string, maxLength = 96): string {
+  const compacted = value.replace(/\s+/g, ' ').trim();
+  if (compacted.length <= maxLength) return compacted;
+  return `${compacted.slice(0, maxLength - 1).trim()}...`;
+}
+
+function stripShellWrapper(command: string): string {
+  const trimmed = command.trim();
+  const shellMatch = trimmed.match(/^(?:\/bin\/)?(?:ba)?sh\s+-lc\s+(['"])([\s\S]*)\1$/);
+  return shellMatch?.[2] ? shellMatch[2].trim() : trimmed;
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+function getChangeSummary(input: unknown): string | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const inputObj = input as Record<string, unknown>;
+  const changes = inputObj.changes;
+  if (!Array.isArray(changes) || changes.length === 0) return null;
+
+  const files = changes
+    .map((change) => {
+      if (!change || typeof change !== 'object') return null;
+      const changeObj = change as Record<string, unknown>;
+      const path = String(
+        changeObj.path || changeObj.file || changeObj.file_path || changeObj.filename || ''
+      );
+      return path ? basename(path) : null;
+    })
+    .filter((value): value is string => !!value);
+
+  if (files.length === 0) {
+    return `Updates ${changes.length} file${changes.length === 1 ? '' : 's'}`;
+  }
+
+  const uniqueFiles = Array.from(new Set(files));
+  if (uniqueFiles.length === 1) return `Updates ${uniqueFiles[0]}`;
+  return `Updates ${uniqueFiles.length} files`;
+}
+
+function describeShellCommand(command: string): { title: string; description: string } {
+  const inner = stripShellWrapper(command);
+  const lower = inner.toLowerCase();
+  const commandPreview = compactText(inner, 110);
+
+  if (lower.includes('plum-rebuild.sh')) {
+    return {
+      title: 'Deploying rebuild',
+      description: 'Asks the rebuild sidecar to rebuild and restart the WebUI.',
+    };
+  }
+  if (lower.includes('rebuild-robot-status') || lower.includes('rebuild-robot.log')) {
+    return {
+      title: 'Checking rebuild status',
+      description: 'Reads the rebuild sidecar status and recent deploy log.',
+    };
+  }
+  if (
+    lower.includes('typecheck') ||
+    lower.includes('tsc --noemit') ||
+    lower.includes('tsc --noemit')
+  ) {
+    return { title: 'Checking TypeScript', description: 'Runs the frontend/backend type checker.' };
+  }
+  if (lower.includes('prettier --write')) {
+    return {
+      title: 'Formatting code',
+      description: 'Applies the repository formatter to the touched files.',
+    };
+  }
+  if (lower.includes('prettier --check')) {
+    return {
+      title: 'Checking formatting',
+      description: 'Verifies files against the repository formatter.',
+    };
+  }
+  if (lower.startsWith('rg ') || lower.includes(' rg ')) {
+    return {
+      title: 'Searching codebase',
+      description: 'Finds matching files and symbols in the project.',
+    };
+  }
+  if (
+    lower.startsWith('sed ') ||
+    lower.startsWith('cat ') ||
+    lower.startsWith('nl ') ||
+    lower.startsWith('tail ') ||
+    lower.startsWith('head ')
+  ) {
+    return {
+      title: 'Reading project files',
+      description: 'Loads the relevant source or log context.',
+    };
+  }
+  if (lower.startsWith('curl ') || lower.includes(' curl ')) {
+    return {
+      title: 'Checking service response',
+      description: 'Calls a local or remote endpoint to verify behavior.',
+    };
+  }
+  if (lower.startsWith('ss ') || lower.startsWith('netstat ') || lower.includes(' lsof ')) {
+    return {
+      title: 'Checking open ports',
+      description: 'Inspects which services are listening locally.',
+    };
+  }
+  if (lower.startsWith('git status')) {
+    return { title: 'Checking git status', description: 'Reviews the current worktree state.' };
+  }
+  if (lower.startsWith('git diff')) {
+    return { title: 'Reviewing changes', description: 'Reads the diff for the current edits.' };
+  }
+  if (lower.includes('pnpm') && lower.includes('build')) {
+    return {
+      title: 'Building app',
+      description: 'Compiles the project to catch build-time issues.',
+    };
+  }
+  if (lower.includes('pnpm') && lower.includes('test')) {
+    return { title: 'Running tests', description: 'Executes the relevant test suite.' };
+  }
+
+  return { title: 'Running command', description: commandPreview };
+}
+
+function getToolNarrative(
+  toolName: string,
+  input: unknown,
+  fallbackLabel: string
+): { title: string; description: string; detail: string } {
+  const preview = getInputPreview(toolName, input);
+  const normalized = toolName.replace(/[_\s.-]/g, '').toLowerCase();
+  const detail = preview ? compactText(stripShellWrapper(preview), 140) : '';
+
+  if (
+    normalized.includes('bash') ||
+    normalized.includes('shell') ||
+    normalized.includes('command')
+  ) {
+    const shell = describeShellCommand(preview);
+    return { ...shell, detail };
+  }
+
+  if (toolName === 'Task' || toolName === 'Agent') {
+    return {
+      title: fallbackLabel,
+      description: detail || 'Runs a focused subagent task.',
+      detail,
+    };
+  }
+
+  if (
+    normalized.includes('edit') ||
+    normalized.includes('write') ||
+    normalized.includes('filechange')
+  ) {
+    const changeSummary = getChangeSummary(input);
+    return {
+      title: changeSummary || (detail ? `Editing ${basename(detail)}` : 'Editing files'),
+      description: changeSummary ? 'Applies source changes.' : detail || 'Applies source changes.',
+      detail,
+    };
+  }
+
+  if (normalized.includes('read')) {
+    return {
+      title: detail ? `Reading ${basename(detail)}` : 'Reading files',
+      description: detail || 'Loads source context.',
+      detail,
+    };
+  }
+
+  if (normalized.includes('grep') || normalized.includes('glob') || normalized.includes('search')) {
+    return {
+      title: 'Searching project',
+      description: detail || 'Finds matching files and symbols.',
+      detail,
+    };
+  }
+
+  if (normalized.includes('todo')) {
+    return {
+      title: 'Updating task list',
+      description: 'Keeps the active work checklist in sync.',
+      detail,
+    };
+  }
+
+  return {
+    title: fallbackLabel,
+    description: detail || 'Runs a tool step.',
+    detail,
+  };
+}
+
+// Format full input for the detail dialog.
 const formatInput = (toolName: string, input: unknown): { label: string; value: string }[] => {
   if (!input) return [];
   if (typeof input === 'string') return [{ label: 'Input', value: input }];
@@ -142,7 +346,7 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
     case 'Bash':
       if (inputObj.command) result.push({ label: 'Command', value: String(inputObj.command) });
       if (inputObj.description)
-        result.push({ label: 'Description', value: String(inputObj.description) });
+        result.push({ label: 'Working directory', value: String(inputObj.description) });
       if (inputObj.timeout) result.push({ label: 'Timeout', value: `${inputObj.timeout}ms` });
       break;
     case 'Read':
@@ -152,13 +356,7 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
       break;
     case 'Write':
       if (inputObj.file_path) result.push({ label: 'File', value: String(inputObj.file_path) });
-      if (inputObj.content)
-        result.push({
-          label: 'Content',
-          value:
-            String(inputObj.content).substring(0, 500) +
-            (String(inputObj.content).length > 500 ? '...' : ''),
-        });
+      if (inputObj.content) result.push({ label: 'Content', value: String(inputObj.content) });
       break;
     case 'Edit':
       if (inputObj.file_path) result.push({ label: 'File', value: String(inputObj.file_path) });
@@ -186,13 +384,7 @@ const formatInput = (toolName: string, input: unknown): { label: string; value: 
     case 'Agent':
       if (inputObj.description)
         result.push({ label: 'Description', value: String(inputObj.description) });
-      if (inputObj.prompt)
-        result.push({
-          label: 'Prompt',
-          value:
-            String(inputObj.prompt).substring(0, 500) +
-            (String(inputObj.prompt).length > 500 ? '...' : ''),
-        });
+      if (inputObj.prompt) result.push({ label: 'Prompt', value: String(inputObj.prompt) });
       if (inputObj.subagent_type)
         result.push({ label: 'Agent Type', value: String(inputObj.subagent_type) });
       break;
@@ -238,23 +430,48 @@ const StatusIcon = ({ status }: { status: 'started' | 'completed' | 'error' }) =
   }
 };
 
+function buildDetailedExplanation(params: {
+  description: string;
+  toolName: string;
+  status: ToolExecution['status'];
+  duration: number | null;
+  isSubagent: boolean;
+}): string {
+  const statusText =
+    params.status === 'started'
+      ? 'This action is still running.'
+      : params.status === 'error'
+        ? 'This action failed.'
+        : 'This action completed.';
+  const durationText =
+    params.duration != null ? ` Runtime: ${formatDuration(params.duration)}.` : '';
+  const toolText = params.isSubagent
+    ? ` It launched a focused ${params.toolName} workflow.`
+    : ` Tool: ${params.toolName}.`;
+  return `${params.description} ${statusText}${durationText}${toolText}`
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export const ToolExecutionCard = memo(function ToolExecutionCard({
   execution,
 }: ToolExecutionCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const { icon: Icon, label } = getToolDisplay(execution.toolName, execution.input);
+  const narrative = execution.actionSummary
+    ? {
+        title: execution.actionSummary.title,
+        description: execution.actionSummary.explanation,
+        detail: getInputPreview(execution.toolName, execution.input),
+      }
+    : getToolNarrative(execution.toolName, execution.input, label);
+  const summaryPending = execution.actionSummary?.source === 'agent-pending';
 
-  const hasInput = execution.input;
-  const hasOutput = execution.result || execution.error;
-  const isExpandable = hasInput || hasOutput;
-  const isClickable = isExpandable && execution.status !== 'started';
+  const hasInput = execution.input !== undefined && execution.input !== null;
+  const hasOutput = Boolean(execution.result || execution.error);
+  const hasDetails = hasInput || hasOutput || Boolean(narrative.description);
 
-  // Get preview text for collapsed view
-  const preview = getInputPreview(execution.toolName, execution.input);
   const formattedInput = formatInput(execution.toolName, execution.input);
-
-  // Truncate preview for display
-  const truncatedPreview = preview.length > 80 ? preview.substring(0, 80) + '...' : preview;
 
   // Duration
   const duration = execution.completedAt ? execution.completedAt - execution.timestamp : null;
@@ -264,107 +481,115 @@ export const ToolExecutionCard = memo(function ToolExecutionCard({
   // activity is obvious at a glance in the message timeline.
   const isSubagent = execution.toolName === 'Task' || execution.toolName === 'Agent';
 
-  const containerClass = isSubagent
-    ? `flex flex-col gap-1 px-3 py-2 rounded-lg text-xs border-l-2 border border-primary/40 border-l-primary bg-primary/5 ${
-        isRunning ? 'shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]' : ''
-      }`
-    : 'flex flex-col gap-1 px-3 py-2 bg-muted/30 rounded-lg text-xs border border-border/50';
+  const containerClass = cn(
+    'tool-card',
+    isSubagent && 'is-subagent',
+    isRunning && 'is-running',
+    summaryPending && 'is-summary-pending',
+    execution.status === 'completed' && 'is-completed',
+    execution.status === 'error' && 'is-error'
+  );
+  const kindLabel = isSubagent ? 'Agent' : label;
+  const detailExplanation = buildDetailedExplanation({
+    description: narrative.description,
+    toolName: execution.toolName,
+    status: execution.status,
+    duration,
+    isSubagent,
+  });
 
   return (
-    <div className={containerClass}>
-      {/* Header row */}
-      <div
-        className={`flex items-center gap-2 ${isClickable ? 'cursor-pointer hover:opacity-80' : ''}`}
-        onClick={() => isClickable && setExpanded(!expanded)}
+    <>
+      <button
+        type="button"
+        className={cn(containerClass, hasDetails && 'is-clickable')}
+        onClick={() => setDetailOpen(true)}
+        aria-label={`Open details for ${narrative.title}`}
       >
-        {isRunning ? (
-          <span
-            className={`flex items-center justify-center w-6 h-6 flex-shrink-0 ${isSubagent ? 'text-primary' : 'text-primary'}`}
-          >
-            <ToolLoader toolName={execution.toolName} size={24} />
+        <span className="tool-card-head">
+          {isRunning ? (
+            <span className="tool-card-icon is-loader">
+              <ToolLoader toolName={execution.toolName} size={24} />
+            </span>
+          ) : (
+            <span className="tool-card-icon">
+              <Icon className="h-4 w-4" />
+            </span>
+          )}
+          <span className="tool-card-copy">
+            <span className="tool-card-title-row">
+              <span className="tool-card-title">{narrative.title}</span>
+              <span className="tool-card-kind">{summaryPending ? 'Template' : kindLabel}</span>
+            </span>
+            <span className="tool-card-description">{narrative.description}</span>
           </span>
-        ) : isSubagent ? (
-          <Icon className="h-4 w-4 text-primary flex-shrink-0" />
-        ) : (
-          <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-        )}
-        <span className={`font-medium ${isSubagent ? 'text-primary' : 'text-foreground'}`}>
-          {label}
+          {isRunning ? (
+            <LiveDuration startedAt={execution.timestamp} />
+          ) : duration != null ? (
+            <span className={cn('tool-card-duration', duration > 5000 && 'is-slow')}>
+              {formatDuration(duration)}
+            </span>
+          ) : null}
+          <ChevronRight className="tool-card-chevron h-3 w-3" />
+          <StatusIcon status={execution.status} />
         </span>
-        {isSubagent && (
-          <span className="inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 flex-shrink-0">
-            Subagent
-          </span>
-        )}
-        {truncatedPreview && (
-          <code className="text-muted-foreground truncate flex-1 font-mono text-xs bg-muted/50 px-1 rounded">
-            {truncatedPreview}
-          </code>
-        )}
-        {/* Duration badge */}
-        {isRunning ? (
-          <LiveDuration startedAt={execution.timestamp} />
-        ) : duration != null ? (
-          <span
-            className={`text-[10px] font-mono tabular-nums ml-1 ${duration > 5000 ? 'text-amber-400' : 'text-muted-foreground'}`}
-          >
-            {formatDuration(duration)}
-          </span>
-        ) : null}
-        {isExpandable && (
-          <>
-            {expanded ? (
-              <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-            ) : (
-              <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-            )}
-          </>
-        )}
-        <StatusIcon status={execution.status} />
-      </div>
+      </button>
 
-      {/* Expanded content */}
-      {expanded && (
-        <div className="mt-2 space-y-2 pl-6">
-          {/* Input details */}
-          {formattedInput.length > 0 && (
-            <div className="space-y-1">
-              {formattedInput.map((item, idx) => (
-                <div key={idx} className="flex flex-col gap-0.5">
-                  <span className="text-muted-foreground text-[10px] uppercase tracking-wide">
-                    {item.label}
-                  </span>
-                  <pre className="p-2 bg-muted/50 rounded text-xs overflow-auto max-h-40 whitespace-pre-wrap break-all text-foreground font-mono">
-                    {item.value}
-                  </pre>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Output/Result */}
-          {execution.result && (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-muted-foreground text-[10px] uppercase tracking-wide">
-                Output
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="tool-detail-dialog">
+          <DialogHeader className="tool-detail-header">
+            <div className="tool-detail-heading">
+              <span className="tool-detail-icon">
+                <Icon className="h-4 w-4" />
               </span>
-              <pre className="p-2 bg-muted/50 rounded text-xs overflow-auto max-h-60 whitespace-pre-wrap break-all text-foreground font-mono">
-                {execution.result}
-              </pre>
+              <div className="min-w-0">
+                <DialogTitle className="tool-detail-title">{narrative.title}</DialogTitle>
+                <DialogDescription className="tool-detail-description">
+                  {kindLabel} · {execution.status}
+                  {duration != null ? ` · ${formatDuration(duration)}` : ''}
+                </DialogDescription>
+              </div>
             </div>
+          </DialogHeader>
+
+          <section className="tool-detail-summary">
+            <span className="tool-detail-section-label">What happened</span>
+            <p>{detailExplanation}</p>
+          </section>
+
+          {formattedInput.length > 0 && (
+            <section className="tool-detail-section">
+              <span className="tool-detail-section-label">Raw input</span>
+              <div className="tool-detail-stack">
+                {formattedInput.map((item, idx) => (
+                  <div key={idx} className="tool-detail-raw-block">
+                    <span className="tool-detail-raw-label">{item.label}</span>
+                    <pre>{item.value}</pre>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
 
-          {/* Error */}
-          {execution.error && (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-red-400 text-[10px] uppercase tracking-wide">Error</span>
-              <pre className="p-2 bg-red-500/10 rounded text-xs overflow-auto max-h-40 whitespace-pre-wrap break-all text-red-400 font-mono">
-                {execution.error}
-              </pre>
-            </div>
+          {execution.result && (
+            <section className="tool-detail-section">
+              <span className="tool-detail-section-label">Raw output</span>
+              <div className="tool-detail-raw-block">
+                <pre>{execution.result}</pre>
+              </div>
+            </section>
           )}
-        </div>
-      )}
-    </div>
+
+          {execution.error && (
+            <section className="tool-detail-section">
+              <span className="tool-detail-section-label is-error">Error</span>
+              <div className="tool-detail-raw-block is-error">
+                <pre>{execution.error}</pre>
+              </div>
+            </section>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 });

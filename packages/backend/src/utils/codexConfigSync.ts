@@ -4,9 +4,10 @@
  * Idempotently ensures `~/.codex/config.toml` has:
  *   1. Sane WebUI defaults (model, reasoning, sandbox).
  *   2. Two [profiles.*] presets (fast / deep) for the UI's profile selector.
- *   3. MCP servers ported from Claude's settings.json so Codex sessions get
- *      the same `generate_image`, `android_*`, etc. tools that Claude sessions
- *      have. Claude format `{type, command, args, env}` →
+ *   3. MCP servers ported from Claude's settings.json plus Codex-only local
+ *      MCPs so Codex sessions get the same `generate_image`, `android_*`, etc.
+ *      tools that Claude sessions have, plus Codex-specific helpers like
+ *      Oracle. Claude format `{type, command, args, env}` →
  *      Codex TOML `[mcp_servers.<name>] command/args + .env block`.
  *
  * Runs once at backend startup. Existing keys are preserved unless the
@@ -22,6 +23,16 @@ import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from './codexDe
 
 const MANAGED_BLOCK_START = '# >>> webui-managed defaults >>>';
 const MANAGED_BLOCK_END = '# <<< webui-managed defaults <<<';
+const CODEX_ONLY_MCP_SERVERS: Record<string, ClaudeMcpServer> = {
+  oracle: {
+    command: 'node',
+    args: ['/app/scripts/mcp-servers/oracle.mjs'],
+    env: {
+      ORACLE_HOME_DIR: '/home/node/.codex/oracle',
+      npm_config_cache: '/home/node/.npm-global/cache',
+    },
+  },
+};
 
 interface ClaudeMcpServer {
   type?: 'stdio' | 'http';
@@ -84,9 +95,13 @@ function renderMcpServers(servers: Record<string, ClaudeMcpServer>): string {
 function buildManagedBlock(claudeSettings: ClaudeSettings | null): string {
   const approvalPolicy = getCodexWebuiApprovalPolicy();
   const sandboxMode = getCodexWebuiSandboxMode();
+  const codexMcpServers = {
+    ...(claudeSettings?.mcpServers || {}),
+    ...CODEX_ONLY_MCP_SERVERS,
+  };
   const sections: string[] = [
     MANAGED_BLOCK_START,
-    '# Managed by claude-code-webui — do not edit by hand inside this block.',
+    '# Managed by plum-code-webui — do not edit by hand inside this block.',
     '# Custom config outside the markers is preserved across rewrites.',
     '',
     '# WebUI defaults',
@@ -98,8 +113,9 @@ function buildManagedBlock(claudeSettings: ClaudeSettings | null): string {
     '',
     '# Profile presets exposed in the WebUI UI ("/codex profile fast" etc.)',
     '[profiles.fast]',
-    'model = "gpt-5.4-mini"',
+    'model = "gpt-5.5"',
     'model_reasoning_effort = "low"',
+    'service_tier = "fast"',
     '',
     '[profiles.balanced]',
     'model = "gpt-5.5"',
@@ -110,9 +126,12 @@ function buildManagedBlock(claudeSettings: ClaudeSettings | null): string {
     'model_reasoning_effort = "xhigh"',
   ];
 
-  if (claudeSettings?.mcpServers && Object.keys(claudeSettings.mcpServers).length > 0) {
-    sections.push('', '# MCP servers (mirrored from ~/.claude/settings.json)');
-    sections.push(renderMcpServers(claudeSettings.mcpServers));
+  if (Object.keys(codexMcpServers).length > 0) {
+    sections.push(
+      '',
+      '# MCP servers (mirrored from ~/.claude/settings.json + Codex-only local servers)'
+    );
+    sections.push(renderMcpServers(codexMcpServers));
   }
 
   sections.push('', MANAGED_BLOCK_END);
@@ -131,9 +150,10 @@ function spliceManagedBlock(existing: string, newBlock: string): string {
     const before = existing.slice(0, startIdx);
     return `${before.trimEnd()}\n${newBlock}\n`;
   }
-  const before = existing.slice(0, startIdx);
-  const after = existing.slice(endIdx + MANAGED_BLOCK_END.length);
-  return `${before.trimEnd()}\n${newBlock}\n${after.trimStart()}`;
+  const before = existing.slice(0, startIdx).trimEnd();
+  const after = existing.slice(endIdx + MANAGED_BLOCK_END.length).trimStart();
+  const parts = [before, newBlock, after].filter((part) => part.length > 0);
+  return `${parts.join('\n')}\n`;
 }
 
 function escapeRegExp(value: string): string {
@@ -183,7 +203,11 @@ export async function syncCodexConfig(
   }
 
   const managedBlock = buildManagedBlock(claudeSettings);
-  const mirroredServerNames = claudeSettings?.mcpServers ? Object.keys(claudeSettings.mcpServers) : [];
+  const mirroredServerNames = claudeSettings?.mcpServers
+    ? Object.keys(claudeSettings.mcpServers)
+    : [];
+  const localServerCount = Object.keys(CODEX_ONLY_MCP_SERVERS).length;
+  const totalServerCount = mirroredServerNames.length + localServerCount;
 
   await fs.mkdir(codexHome, { recursive: true });
 
@@ -195,7 +219,9 @@ export async function syncCodexConfig(
   }
 
   const dedupedExisting =
-    mirroredServerNames.length > 0 ? removeMirroredMcpTables(existing, mirroredServerNames) : existing;
+    mirroredServerNames.length > 0
+      ? removeMirroredMcpTables(existing, mirroredServerNames)
+      : existing;
   const updated = spliceManagedBlock(dedupedExisting, managedBlock);
 
   // Skip write if nothing changed (idempotent across restarts)
@@ -204,6 +230,5 @@ export async function syncCodexConfig(
   }
 
   await fs.writeFile(configPath, updated, 'utf-8');
-  const mcpCount = claudeSettings?.mcpServers ? Object.keys(claudeSettings.mcpServers).length : 0;
-  return `codex config.toml updated at ${configPath} (${mcpCount} MCP servers mirrored)`;
+  return `codex config.toml updated at ${configPath} (${mirroredServerNames.length} mirrored + ${localServerCount} local MCP servers, ${totalServerCount} total)`;
 }

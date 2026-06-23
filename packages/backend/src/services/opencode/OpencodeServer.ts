@@ -5,11 +5,17 @@ import http from 'http';
 import os from 'os';
 import path from 'path';
 import { URL } from 'url';
-import type { SessionMode } from '@claude-code-webui/shared';
-import { buildOpenCodePermissionRules } from '../cli-providers.js';
+import type { SessionMode } from '@plum-code-webui/shared';
+import { buildOpenCodePermissionRules, CLI_PROVIDERS } from '../cli-providers.js';
 import { config } from '../../config.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
-import { buildOpenCodePromptText } from './sessionContext.js';
+import { buildOpenCodeCommandEnv } from '../../utils/opencodeCatalog.js';
+import {
+  buildOpenCodeProviderCredentialEnv,
+  getOpenCodeProviderCredentialFingerprint,
+} from '../../utils/opencodeProviderKeys.js';
+import { syncOpenCodeConfig } from '../../utils/providerLinks.js';
+import { buildOpenCodePromptText, getOpenCodePrimaryAgent } from './sessionContext.js';
 
 const DEBUG_LOG = '/app/packages/backend/data/oc-debug.log';
 function ocDbg(line: string): void {
@@ -37,6 +43,55 @@ export type OpencodeEvent = Record<string, unknown> & {
 
 type Handler = (event: OpencodeEvent) => void;
 
+type OpenCodeMessageSnapshot = {
+  info?: Record<string, unknown>;
+  parts?: Array<Record<string, unknown>>;
+};
+
+export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
+  textLens: Map<string, number>;
+  toolStatus: Map<string, string>;
+  finishedMessages: Set<string>;
+} {
+  const textLens = new Map<string, number>();
+  const toolStatus = new Map<string, string>();
+  const finishedMessages = new Set<string>();
+
+  for (const msg of data) {
+    const info = msg.info as Record<string, unknown> | undefined;
+    if (!info || info.role !== 'assistant') continue;
+    const messageId = typeof info.id === 'string' ? info.id : undefined;
+
+    for (const part of msg.parts || []) {
+      const partId = typeof part.id === 'string' ? part.id : undefined;
+      const partType = typeof part.type === 'string' ? part.type : undefined;
+      if (!partId || !partType) continue;
+
+      if (partType === 'text' || partType === 'reasoning') {
+        const text = typeof part.text === 'string' ? part.text : '';
+        textLens.set(partId, text.length);
+        continue;
+      }
+
+      if (partType === 'tool') {
+        const stateField = part.state as { status?: string } | undefined;
+        toolStatus.set(partId, stateField?.status ?? '');
+        continue;
+      }
+
+      if (partType === 'step-start' || partType === 'step-finish') {
+        textLens.set(partId, 1);
+      }
+    }
+
+    if (messageId && isTerminalOpenCodeAssistantMessage(msg)) {
+      finishedMessages.add(messageId);
+    }
+  }
+
+  return { textLens, toolStatus, finishedMessages };
+}
+
 interface PromptOptions {
   text: string;
   /** `providerID/modelID` slash-form, as stored in cli-providers. */
@@ -48,6 +103,15 @@ interface PromptOptions {
   directory?: string;
   /** Plum WebUI session id for MCP bridge attribution. */
   webuiSessionId?: string;
+  /** WebUI user id, used to bind the singleton server to the right provider keys. */
+  userId?: string;
+}
+
+type OpenCodeRunOptions = Omit<PromptOptions, 'text'>;
+
+interface CommandOptions extends OpenCodeRunOptions {
+  command: string;
+  arguments?: string;
 }
 
 interface CreateSessionOptions {
@@ -56,6 +120,7 @@ interface CreateSessionOptions {
   mode?: SessionMode;
   variant?: string | null;
   allowedDirectories?: string[];
+  userId?: string;
 }
 
 const READY_LINE_RE = /opencode server listening on (http:\/\/[^\s]+)/i;
@@ -76,6 +141,8 @@ class OpencodeServer {
   // emitted while disconnected are lost — opencode SSE isn't replayable).
   private sseConnected = false;
   private sseReadyWaiters: Array<() => void> = [];
+  private credentialOwnerUserId: string | null = null;
+  private credentialFingerprint: string | null = null;
 
   // sessionID (opencode's, not webui's) → handler
   private handlers = new Map<string, Handler>();
@@ -100,6 +167,7 @@ class OpencodeServer {
       finishedMessages: Set<string>;
       // idle flag: once we emit session.idle we stop polling
       idled: boolean;
+      observedChange: boolean;
       // Timestamp when the last assistant message landed in a terminal state
       // (finish=stop). We wait 2s of no further activity before firing idle —
       // opencode's multi-step loop creates a fresh assistant message per step
@@ -117,35 +185,59 @@ class OpencodeServer {
    * Ensure the `opencode serve` process is running and the SSE subscription
    * is live. Returns the base URL once ready. Idempotent.
    */
-  async ensureStarted(): Promise<string> {
+  async ensureStarted(userId?: string): Promise<string> {
+    const configSync = userId ? syncOpenCodeConfig({ quiet: true, userId }) : null;
     if (this.baseUrl && this.proc && !this.proc.killed) {
+      if (configSync?.updated && userId) {
+        await this.restart(userId);
+        if (this.baseUrl) return this.baseUrl;
+      }
+      if (userId) {
+        const nextFingerprint = getOpenCodeProviderCredentialFingerprint(userId);
+        if (
+          this.credentialOwnerUserId !== userId ||
+          this.credentialFingerprint !== nextFingerprint
+        ) {
+          await this.restart(userId);
+          if (this.baseUrl) return this.baseUrl;
+        }
+      }
       return this.baseUrl;
     }
     if (this.startPromise) return this.startPromise;
 
-    this.startPromise = this.startInternal().catch((err) => {
+    this.startPromise = this.startInternal(userId).catch((err) => {
       this.startPromise = null;
       throw err;
     });
     return this.startPromise;
   }
 
-  private startInternal(): Promise<string> {
+  private startInternal(userId?: string): Promise<string> {
     return new Promise<string>((resolve, reject) => {
+      this.shuttingDown = false;
+      this.sseConnected = false;
+      this.sseReconnectDelayMs = 500;
+      this.credentialOwnerUserId = userId || null;
+      this.credentialFingerprint = getOpenCodeProviderCredentialFingerprint(userId);
+
       const env = {
-        ...process.env,
+        ...buildOpenCodeCommandEnv(),
         ...buildIntegrationEnv(),
-        OPENCODE_CONFIG_DIR: path.join(os.homedir(), '.config', 'opencode'),
-        OPENCODE_DATA_DIR: path.join(os.homedir(), '.local', 'share', 'opencode'),
+        ...buildOpenCodeProviderCredentialEnv(userId),
         WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
         WEBUI_HOOK_SECRET: config.hookSecret,
         WEBUI_SESSION_CONTEXT_FILE,
       };
 
-      const proc = cpSpawn('opencode', ['serve', '--port', '0', '--hostname', '127.0.0.1'], {
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      const proc = cpSpawn(
+        CLI_PROVIDERS.opencode.command,
+        ['serve', '--port', '0', '--hostname', '127.0.0.1'],
+        {
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
 
       this.proc = proc;
       let ready = false;
@@ -401,7 +493,7 @@ class OpencodeServer {
 
   /** Create a new opencode session, returns the session ID. */
   async createSession(cwd: string, opts: CreateSessionOptions = {}): Promise<string> {
-    await this.ensureStarted();
+    await this.ensureStarted(opts.userId);
     await this.waitForSseReady();
     const url = `${this.baseUrl}/session?directory=${encodeURIComponent(cwd)}`;
     const body: Record<string, unknown> = {};
@@ -413,7 +505,8 @@ class OpencodeServer {
         ...(opts.variant ? { variant: normalizeVariant(opts.variant) } : {}),
       };
     }
-    if (opts.agent) body.agent = opts.agent;
+    const agent = opts.agent || getOpenCodePrimaryAgent();
+    if (agent) body.agent = agent;
     body.permission = buildOpenCodePermissionRules(opts.mode, {
       workingDirectory: cwd,
       allowedDirectories: opts.allowedDirectories,
@@ -437,20 +530,31 @@ class OpencodeServer {
    * connection while the model runs.
    */
   async sendPrompt(opencodeSessionId: string, opts: PromptOptions): Promise<void> {
-    await this.ensureStarted();
+    await this.ensureStarted(opts.userId);
     // SSE events emitted while the stream is disconnected are not buffered
     // or replayed by opencode — they're just dropped. Block here until the
     // stream is open so the model's output doesn't land in a dead window.
     await this.waitForSseReady();
+    await this.primePollingState(opencodeSessionId);
     this.writeWebuiSessionContext(opencodeSessionId, opts);
     const body: Record<string, unknown> = {
-      parts: [{ type: 'text', text: buildOpenCodePromptText(opts.text, opts.webuiSessionId) }],
+      parts: [
+        {
+          type: 'text',
+          text: buildOpenCodePromptText(opts.text, {
+            webuiSessionId: opts.webuiSessionId,
+            mode: opts.mode,
+            reasoningLevel: opts.variant,
+          }),
+        },
+      ],
     };
     if (opts.model) {
       const model = splitModel(opts.model);
       if (model) body.model = model;
     }
-    if (opts.agent) body.agent = opts.agent;
+    const agent = opts.agent || getOpenCodePrimaryAgent();
+    if (agent) body.agent = agent;
     if (opts.variant) body.variant = normalizeVariant(opts.variant);
 
     // NOTE: Do not pass a `tools` map here. When `tools` is present in the
@@ -475,7 +579,160 @@ class OpencodeServer {
     this.startPolling(opencodeSessionId);
   }
 
-  private writeWebuiSessionContext(opencodeSessionId: string, opts: PromptOptions): void {
+  /**
+   * Execute an OpenCode-native slash command through the server command API.
+   * This preserves command semantics for /init, /review, /security-review, etc.
+   * instead of sending the slash command as plain chat text.
+   */
+  async sendCommand(opencodeSessionId: string, opts: CommandOptions): Promise<void> {
+    await this.ensureStarted(opts.userId);
+    await this.waitForSseReady();
+    await this.primePollingState(opencodeSessionId);
+    this.writeWebuiSessionContext(opencodeSessionId, opts);
+
+    const body: Record<string, unknown> = {
+      command: opts.command,
+      arguments: opts.arguments ?? '',
+    };
+    if (opts.model) body.model = opts.model;
+    const agent = opts.agent || getOpenCodePrimaryAgent();
+    if (agent) body.agent = agent;
+    if (opts.variant) body.variant = normalizeVariant(opts.variant);
+
+    const qs = opts.directory ? `?directory=${encodeURIComponent(opts.directory)}` : '';
+    const url = `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/command${qs}`;
+    ocDbg(
+      `[OC-COMMAND] sid=${opencodeSessionId} command=${opts.command} args=${JSON.stringify(opts.arguments ?? '').slice(0, 120)}`
+    );
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    ocDbg(`[OC-COMMAND] response status=${res.status}`);
+    if (!res.ok) {
+      throw new Error(`sendCommand failed: ${res.status} ${await res.text()}`);
+    }
+    this.startPolling(opencodeSessionId);
+  }
+
+  async compactSession(opencodeSessionId: string, opts: OpenCodeRunOptions = {}): Promise<boolean> {
+    await this.ensureStarted(opts.userId);
+    await this.waitForSseReady();
+    const url = `${this.baseUrl}/api/session/${encodeURIComponent(opencodeSessionId)}/compact`;
+    const res = await fetch(url, { method: 'POST' });
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      throw new Error(`compactSession failed: ${res.status} ${await res.text()}`);
+    }
+    return true;
+  }
+
+  async replyQuestion(
+    requestId: string,
+    answers: unknown,
+    opencodeSessionId?: string
+  ): Promise<boolean> {
+    await this.ensureStarted();
+    if (opencodeSessionId) {
+      const sessionUrl = `${this.baseUrl}/api/session/${encodeURIComponent(
+        opencodeSessionId
+      )}/question/request/${encodeURIComponent(requestId)}/reply`;
+      const sessionRes = await fetch(sessionUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers }),
+      });
+      if (sessionRes.ok) return true;
+      if (sessionRes.status !== 404) {
+        throw new Error(
+          `question v2 reply failed: ${sessionRes.status} ${await sessionRes.text()}`
+        );
+      }
+    }
+
+    const url = `${this.baseUrl}/question/${encodeURIComponent(requestId)}/reply`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    });
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      throw new Error(`question reply failed: ${res.status} ${await res.text()}`);
+    }
+    return true;
+  }
+
+  async rejectQuestion(requestId: string, opencodeSessionId?: string): Promise<boolean> {
+    await this.ensureStarted();
+    if (opencodeSessionId) {
+      const sessionUrl = `${this.baseUrl}/api/session/${encodeURIComponent(
+        opencodeSessionId
+      )}/question/request/${encodeURIComponent(requestId)}/reject`;
+      const sessionRes = await fetch(sessionUrl, { method: 'POST' });
+      if (sessionRes.ok) return true;
+      if (sessionRes.status !== 404) {
+        throw new Error(
+          `question v2 reject failed: ${sessionRes.status} ${await sessionRes.text()}`
+        );
+      }
+    }
+
+    const url = `${this.baseUrl}/question/${encodeURIComponent(requestId)}/reject`;
+    const res = await fetch(url, { method: 'POST' });
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      throw new Error(`question reject failed: ${res.status} ${await res.text()}`);
+    }
+    return true;
+  }
+
+  private async primePollingState(opencodeSessionId: string): Promise<void> {
+    if (!this.baseUrl) return;
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/message`
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as OpenCodeMessageSnapshot[];
+      const snapshot = collectOpenCodePollCursor(data);
+      const prior = this.pollState.get(opencodeSessionId);
+      const textLens = prior?.textLens ?? new Map<string, number>();
+      const toolStatus = prior?.toolStatus ?? new Map<string, string>();
+      const finishedMessages = prior?.finishedMessages ?? new Set<string>();
+
+      for (const [partId, length] of snapshot.textLens) {
+        textLens.set(partId, length);
+      }
+      for (const [partId, status] of snapshot.toolStatus) {
+        toolStatus.set(partId, status);
+      }
+      for (const messageId of snapshot.finishedMessages) {
+        finishedMessages.add(messageId);
+      }
+
+      this.pollState.set(opencodeSessionId, {
+        textLens,
+        toolStatus,
+        finishedMessages,
+        idled: false,
+        observedChange: false,
+        idleCandidateAt: null,
+        startedAt: Date.now(),
+      });
+      ocDbg(
+        `[OC-POLL] primed sid=${opencodeSessionId} text=${textLens.size} tools=${toolStatus.size} finished=${finishedMessages.size}`
+      );
+    } catch (err) {
+      ocDbg(`[OC-POLL] prime failed sid=${opencodeSessionId} ${String(err).slice(0, 200)}`);
+    }
+  }
+
+  private writeWebuiSessionContext(
+    opencodeSessionId: string,
+    opts: Pick<PromptOptions, 'webuiSessionId' | 'directory'>
+  ): void {
     if (!opts.webuiSessionId) return;
     try {
       fs.writeFileSync(
@@ -510,6 +767,7 @@ class OpencodeServer {
       toolStatus: prior?.toolStatus ?? new Map(),
       finishedMessages: prior?.finishedMessages ?? new Set(),
       idled: false,
+      observedChange: false,
       idleCandidateAt: null,
       startedAt: Date.now(),
     });
@@ -548,6 +806,24 @@ class OpencodeServer {
       return;
     }
 
+    if (!state.observedChange && Date.now() - state.startedAt > 120 * 1000) {
+      ocDbg(`[OC-POLL] no-progress sid=${opencodeSessionId}`);
+      state.idled = true;
+      this.dispatch({
+        type: 'session.error',
+        properties: {
+          sessionID: opencodeSessionId,
+          error: {
+            message:
+              'OpenCode did not produce any output within 120s. Check that the selected provider/model is configured and present in `opencode models`.',
+          },
+        },
+      });
+      this.dispatch({ type: 'session.idle', properties: { sessionID: opencodeSessionId } });
+      this.stopPolling(opencodeSessionId);
+      return;
+    }
+
     const res = await fetch(
       `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/message`
     );
@@ -564,6 +840,24 @@ class OpencodeServer {
       if (!info || info.role !== 'assistant') continue;
       const messageId = info.id as string;
 
+      const assistantError = extractOpenCodeAssistantErrorMessage(msg);
+      if (assistantError && messageId && !state.finishedMessages.has(messageId)) {
+        state.finishedMessages.add(messageId);
+        state.idled = true;
+        this.dispatch({
+          type: 'session.error',
+          properties: {
+            sessionID: opencodeSessionId,
+            error: {
+              message: assistantError,
+            },
+          },
+        });
+        this.dispatch({ type: 'session.idle', properties: { sessionID: opencodeSessionId } });
+        this.stopPolling(opencodeSessionId);
+        return;
+      }
+
       // We still iterate parts of already-finished messages in case opencode
       // back-fills anything; diffs against textLens/toolStatus make this cheap.
       for (const part of msg.parts || []) {
@@ -577,6 +871,7 @@ class OpencodeServer {
           if (text.length > prev) {
             state.textLens.set(partId, text.length);
             sawChange = true;
+            state.observedChange = true;
             this.dispatch({
               type: 'message.part.updated',
               properties: {
@@ -594,6 +889,7 @@ class OpencodeServer {
           if (status !== prev) {
             state.toolStatus.set(partId, status);
             sawChange = true;
+            state.observedChange = true;
             this.dispatch({
               type: 'message.part.updated',
               properties: {
@@ -609,6 +905,7 @@ class OpencodeServer {
           if (!state.textLens.has(partId)) {
             state.textLens.set(partId, 1);
             sawChange = true;
+            state.observedChange = true;
             this.dispatch({
               type: 'message.part.updated',
               properties: {
@@ -626,11 +923,7 @@ class OpencodeServer {
     // finish reason. finish=stop (or error) = the loop exited; finish=
     // tool-calls/length = step ended, loop will continue with another message.
     const last = data[data.length - 1];
-    const lastInfo = last?.info as Record<string, unknown> | undefined;
-    const lastRole = lastInfo?.role;
-    const lastFinish = lastInfo?.finish as string | undefined;
-    const TERMINAL = new Set(['stop', 'error', 'content-filter']);
-    const isTerminal = lastRole === 'assistant' && !!lastFinish && TERMINAL.has(lastFinish);
+    const isTerminal = isTerminalOpenCodeAssistantMessage(last);
 
     if (sawChange) {
       // Any observable progress resets the idle grace period.
@@ -643,7 +936,7 @@ class OpencodeServer {
       } else if (Date.now() - state.idleCandidateAt >= 2000) {
         // 2s of quiet with a terminal finish — the run really is over.
         state.idled = true;
-        const lastId = lastInfo?.id as string | undefined;
+        const lastId = last?.info?.id as string | undefined;
         if (lastId) state.finishedMessages.add(lastId);
         this.dispatch({
           type: 'session.idle',
@@ -670,9 +963,27 @@ class OpencodeServer {
   async replyPermission(
     requestId: string,
     reply: 'once' | 'always' | 'reject',
-    message?: string
+    message?: string,
+    opencodeSessionId?: string
   ): Promise<boolean> {
     await this.ensureStarted();
+    if (opencodeSessionId) {
+      const sessionUrl = `${this.baseUrl}/api/session/${encodeURIComponent(
+        opencodeSessionId
+      )}/permission/request/${encodeURIComponent(requestId)}/reply`;
+      const sessionRes = await fetch(sessionUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
+      });
+      if (sessionRes.ok) return true;
+      if (sessionRes.status !== 404) {
+        throw new Error(
+          `permission v2 reply failed: ${sessionRes.status} ${await sessionRes.text()}`
+        );
+      }
+    }
+
     const url = `${this.baseUrl}/permission/${encodeURIComponent(requestId)}/reply`;
     const res = await fetch(url, {
       method: 'POST',
@@ -729,6 +1040,19 @@ class OpencodeServer {
     }
     this.proc = null;
     this.baseUrl = null;
+    this.startPromise = null;
+    this.sseConnected = false;
+    this.sseLoopRunning = false;
+    this.sseReadyWaiters.splice(0);
+    this.credentialOwnerUserId = null;
+    this.credentialFingerprint = null;
+  }
+
+  async restart(userId?: string): Promise<string | null> {
+    const shouldRestart = Boolean(this.proc || this.baseUrl || this.startPromise);
+    await this.shutdown();
+    this.shuttingDown = false;
+    return shouldRestart ? this.ensureStarted(userId) : null;
   }
 }
 
@@ -774,3 +1098,92 @@ function sleep(ms: number): Promise<void> {
 
 // Singleton — import this directly rather than instantiating.
 export const opencodeServer = new OpencodeServer();
+
+export function isTerminalOpenCodeAssistantMessage(
+  message:
+    | {
+        info?: Record<string, unknown>;
+        parts?: Array<Record<string, unknown>>;
+      }
+    | undefined
+): boolean {
+  const info = message?.info;
+  if (!info || info.role !== 'assistant') return false;
+
+  if (extractOpenCodeAssistantErrorMessage(message)) return true;
+
+  const finish = info.finish as string | undefined;
+  if (!finish) return false;
+
+  const TERMINAL_FINISHES = new Set(['stop', 'error', 'content-filter']);
+  if (TERMINAL_FINISHES.has(finish)) return true;
+
+  const time = info.time as Record<string, unknown> | undefined;
+  const completedAt = time?.completed;
+  const parts = message.parts || [];
+  const hasStepFinish = parts.some((part) => part.type === 'step-finish');
+  const hasToolError = parts.some((part) => {
+    if (part.type !== 'tool') return false;
+    const toolState = part.state as { status?: string } | undefined;
+    return toolState?.status === 'error';
+  });
+
+  return (
+    finish === 'unknown' && (hasToolError || (hasStepFinish && typeof completedAt === 'number'))
+  );
+}
+
+export function extractOpenCodeAssistantErrorMessage(
+  message:
+    | {
+        info?: Record<string, unknown>;
+      }
+    | undefined
+): string | null {
+  const info = message?.info;
+  if (!info || info.role !== 'assistant') return null;
+
+  const error = info.error as
+    | {
+        message?: unknown;
+        name?: unknown;
+        data?: {
+          message?: unknown;
+          responseBody?: unknown;
+        };
+      }
+    | undefined;
+  if (!error || typeof error !== 'object') return null;
+
+  if (typeof error.data?.message === 'string' && error.data.message.trim()) {
+    return error.data.message.trim();
+  }
+
+  if (typeof error.message === 'string' && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  if (typeof error.data?.responseBody === 'string' && error.data.responseBody.trim()) {
+    try {
+      const parsed = JSON.parse(error.data.responseBody) as {
+        error?: { message?: unknown };
+        message?: unknown;
+      };
+      const parsedMessage =
+        typeof parsed.error?.message === 'string'
+          ? parsed.error.message
+          : typeof parsed.message === 'string'
+            ? parsed.message
+            : '';
+      if (parsedMessage.trim()) return parsedMessage.trim();
+    } catch {
+      // Fall through to the generic provider error below.
+    }
+  }
+
+  if (typeof error.name === 'string' && error.name.trim()) {
+    return `OpenCode provider error: ${error.name.trim()}`;
+  }
+
+  return 'OpenCode provider error';
+}

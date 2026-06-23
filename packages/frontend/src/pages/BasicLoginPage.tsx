@@ -9,6 +9,13 @@ import { useAuthStore } from '@/stores/authStore';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { UI_PROVIDER_META } from '@/lib/providers';
 import { PlumBackground } from '@/components/effects/PlumBackground';
+import { api } from '@/services/api';
+
+const PROXY_ERROR_MESSAGES: Record<string, string> = {
+  disabled: 'Proxy sign-in is disabled on this instance.',
+  missing_email_header: 'Authelia sign-in reached the app, but no email header was forwarded.',
+  email_not_allowed: 'Your Authelia email is not allowed on this instance.',
+};
 
 export function BasicLoginPage() {
   const navigate = useNavigate();
@@ -28,12 +35,35 @@ export function BasicLoginPage() {
     fromState?.pathname && fromState.pathname !== '/login'
       ? `${fromState.pathname}${fromState.search ?? ''}${fromState.hash ?? ''}`
       : '/';
+  const proxyError = new URLSearchParams(location.search).get('proxy_error');
+  const displayedError = error || (proxyError ? PROXY_ERROR_MESSAGES[proxyError] || proxyError : null);
 
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
       navigate(from, { replace: true });
     }
   }, [isAuthLoading, isAuthenticated, navigate, from]);
+
+  useEffect(() => {
+    if (proxyError || isAuthLoading || isAuthenticated) return;
+
+    let cancelled = false;
+    api
+      .get<{
+        success: boolean;
+        data: { enabled: boolean };
+      }>('/auth/proxy/status')
+      .then((response) => {
+        if (cancelled || !response.data.success || !response.data.data.enabled) return;
+        const params = new URLSearchParams({ returnTo: from });
+        window.location.replace(`/auth/proxy?${params.toString()}`);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [from, isAuthLoading, isAuthenticated, proxyError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,18 +89,12 @@ export function BasicLoginPage() {
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center gap-10 px-6 py-12 lg:grid lg:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-6 text-center lg:text-left">
-          <div className="flex items-center justify-center gap-3 lg:justify-start">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-card/80 shadow-lg ring-1 ring-border/60 backdrop-blur-sm">
-              <img src="/logos/plum.png" alt="Plum Code WebUI" className="h-7 w-7 object-contain" />
-            </div>
-            <div className="text-left">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-muted-foreground">
-                Plum Code WebUI
-              </p>
-              <p className="text-sm text-muted-foreground">
-                A violet command center for CLI coding
-              </p>
-            </div>
+          <div className="flex justify-center lg:justify-start">
+            <img
+              src="/logos/plum-banner.png"
+              alt="Plum Code WebUI"
+              className="h-auto w-64 max-w-full object-contain"
+            />
           </div>
 
           <div className="space-y-3">
@@ -121,10 +145,10 @@ export function BasicLoginPage() {
           </CardHeader>
           <CardContent className="pt-2">
             <form onSubmit={handleSubmit} className="space-y-4">
-              {error && (
+              {displayedError && (
                 <div className="flex items-center gap-3 rounded-xl bg-destructive/10 border border-destructive/20 p-4 text-sm text-destructive animate-scale-in">
                   <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                  <p>{error}</p>
+                  <p>{displayedError}</p>
                 </div>
               )}
 

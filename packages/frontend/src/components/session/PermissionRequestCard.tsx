@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { socketService } from '@/services/socket';
 import { cn } from '@/lib/utils';
-import type { PermissionDenial } from '@claude-code-webui/shared';
+import type { PermissionDenial } from '@plum-code-webui/shared';
 import { useProviderStore } from '@/stores/providerStore';
 import { UI_PROVIDER_META } from '@/lib/providers';
 

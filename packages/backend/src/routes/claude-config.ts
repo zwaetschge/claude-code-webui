@@ -6,8 +6,8 @@ import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { isValidGitHubRepo, isValidGitUrl, sanitizeShellArg } from '../utils/sanitize';
 import { resolveConfigHome } from '../utils/configPaths';
-import { syncExternalSkills } from '../utils/skillSync';
 import { importSkillFromBuffer } from '../utils/skillImport';
+import { listSkillLibrary } from '../utils/skillLibrary';
 
 const router = Router();
 
@@ -18,17 +18,6 @@ interface AgentInfo {
   tools?: string[];
   model?: string;
   filePath: string;
-  source: 'user' | 'project';
-  enabled: boolean;
-}
-
-interface SkillInfo {
-  id: string;
-  name: string;
-  description: string;
-  allowedTools?: string[];
-  model?: string;
-  dirPath: string;
   source: 'user' | 'project';
   enabled: boolean;
 }
@@ -166,49 +155,6 @@ async function readAgentsFromDir(dir: string, source: 'user' | 'project'): Promi
   return agents;
 }
 
-// Read skills from a directory
-async function readSkillsFromDir(dir: string, source: 'user' | 'project'): Promise<SkillInfo[]> {
-  const skills: SkillInfo[] = [];
-
-  try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-
-      // Check if skill is disabled (folder name ends with .disabled)
-      const isDisabled = entry.name.endsWith('.disabled');
-      const baseName = entry.name.replace('.disabled', '');
-
-      const skillDir = path.join(dir, entry.name);
-      const skillFile = path.join(skillDir, 'SKILL.md');
-
-      try {
-        const content = await fs.readFile(skillFile, 'utf-8');
-        const { frontmatter, body } = parseMarkdownFrontmatter(content);
-
-        const name = frontmatter.name || baseName;
-        skills.push({
-          id: `${source}-${baseName}`,
-          name,
-          description: frontmatter.description || body.substring(0, 200),
-          allowedTools: frontmatter['allowed-tools']?.split(',').map((t) => t.trim()),
-          model: frontmatter.model,
-          dirPath: skillDir,
-          source,
-          enabled: !isDisabled,
-        });
-      } catch {
-        // No SKILL.md or can't read it
-      }
-    }
-  } catch {
-    // Directory doesn't exist or can't be read
-  }
-
-  return skills;
-}
-
 // GET /api/claude-config/agents - List all agents
 router.get(
   '/agents',
@@ -226,20 +172,41 @@ router.get(
   })
 );
 
-// GET /api/claude-config/skills - List all skills
+// GET /api/claude-config/skills - List normal capability skills.
+// Design/theme and persona/writing packs are exposed through /style-library.
 router.get(
   '/skills',
   requireAuth,
   asyncHandler(async (req, res) => {
     const configHome = resolveConfigHome(req.query.provider);
-    const userSkillsDir = path.join(configHome, 'skills');
-
-    await syncExternalSkills(configHome);
-    const userSkills = await readSkillsFromDir(userSkillsDir, 'user');
+    const library = String(req.query.library || 'skill');
+    const kind = library === 'design' || library === 'writing' ? library : 'skill';
+    const userSkills = await listSkillLibrary(configHome, { kind });
 
     res.json({
       success: true,
       data: userSkills,
+    });
+  })
+);
+
+// GET /api/claude-config/style-library - List session-selectable style templates
+router.get(
+  '/style-library',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const configHome = resolveConfigHome(req.query.provider);
+    const [designStyles, writingStyles] = await Promise.all([
+      listSkillLibrary(configHome, { kind: 'design', enabledOnly: true }),
+      listSkillLibrary(configHome, { kind: 'writing', enabledOnly: true }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        designStyles,
+        writingStyles,
+      },
     });
   })
 );

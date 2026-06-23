@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Command } from '@claude-code-webui/shared';
+import { Command } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Terminal, User, FolderGit } from 'lucide-react';

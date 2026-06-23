@@ -27,7 +27,7 @@ enum class ConnectionState {
 }
 
 /**
- * Manages the Socket.IO real-time connection to the Claude Code WebUI backend.
+ * Manages the Socket.IO real-time connection to the Plum Code WebUI backend.
  *
  * Provides:
  * - Connection lifecycle management (connect, disconnect, auto-reconnect)
@@ -290,7 +290,6 @@ class SocketManager {
                 SessionMode.AUTO_ACCEPT -> "auto-accept"
                 SessionMode.MANUAL -> "manual"
                 SessionMode.DANGER -> "danger"
-                SessionMode.ORCHESTRATION -> "orchestration"
             })
         }
         socket?.emit("session:set-mode", data)
@@ -667,5 +666,5 @@ data class GeneratedImageData(
     val imageBase64: String? = null,
     val mimeType: String,
     val prompt: String,
-    val generator: String = "gemini"
+    val generator: String = "codex"
 )

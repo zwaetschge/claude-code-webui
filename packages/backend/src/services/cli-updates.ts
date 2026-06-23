@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
-import type { CliProviderUpdateResponse, CLIProvider } from '@claude-code-webui/shared';
+import type { CliProviderUpdateResponse, CLIProvider } from '@plum-code-webui/shared';
 import { getCliEnv, getNpmPrefix } from '../utils/cliPaths.js';
 
 const execAsync = promisify(exec);
@@ -12,7 +12,7 @@ export const CLI_UPDATE_PROVIDERS = ['claude', 'codex', 'opencode', 'vibe'] as c
 
 const CLI_UPDATE_COMMANDS: Record<CLIProvider, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code@latest',
-  codex: 'npm install -g @openai/codex@latest',
+  codex: 'npm install -g @openai/codex@0.135.0',
   opencode: 'npm install -g opencode-ai@latest',
   // Vibe ships as a Python package installed via pipx — fall back to fresh install
   // when no existing pipx env is present so first-time provision also works.

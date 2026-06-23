@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Notification icon for Claude Code WebUI (24dp, white/transparent only).
+  Notification icon for Plum Code WebUI (24dp, white/transparent only).
   Android requires notification icons to be single-color (white) on transparent.
-  Design: simplified "C" arc matching the launcher icon aesthetic.
+  Design: simplified code mark from the Plum Code launcher icon.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
@@ -10,17 +10,25 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
 
-    <!-- Open "C" arc — stroke style, white -->
     <path
         android:strokeColor="#FFFFFF"
         android:strokeWidth="2"
         android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"
-        android:pathData="M17,7 A8,8 0 1 0 17,17" />
+        android:pathData="M9,7 L4,12 L9,17" />
 
-    <!-- Cursor dot -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M18,12 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M14,6 L10,18" />
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M15,7 L20,12 L15,17" />
 
 </vector>

@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Dragon Ball Z — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Bowlby+One&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     DRAGON BALL Z DESIGN SYSTEM — 400×300 THUMBNAIL
+     Cell Saga era · Toei cel colors · angular · hard · blocky
+     Flame ki aura with outlines · spot blacks · no soft shading
+     ============================================================ */
+  :root {
+    /* ---- Toei Cel Palette (skill-specified) ---- */
+    --dz-orange:    #E8761C;   /* gi main / logo top */
+    --dz-orange-2:  #B54820;   /* gi shadow */
+    --dz-orange-3:  #FF8F1C;   /* logo top alt */
+    --dz-blue:      #1C419B;   /* sash / königsblau */
+    --dz-blue-2:    #0F2A6B;   /* blue shadow */
+    --dz-gold:      #F5D13A;   /* SSJ gold / logo bottom / accent */
+    --dz-gold-2:    #FFF280;   /* SSJ highlight */
+    --dz-gold-3:    #C8A018;   /* gold shadow */
+    --dz-red:       #D82820;   /* hero letter Z */
+    --dz-red-2:     #8A1818;   /* red shadow */
+
+    --dz-skin:      #F5D0A8;
+    --dz-skin-2:    #C88C5A;
+
+    --dz-ink:       #1A1A1A;   /* hair / outlines (never pure #000) */
+    --dz-ink-2:     #0A0A0A;
+    --dz-ink-3:     #3E3E4A;   /* hair highlight w/ blue tint */
+
+    --dz-sky-top:   #F5A050;   /* sunset orange */
+    --dz-sky-mid:   #F08538;
+    --dz-sky-bot:   #D85020;
+    --dz-cloud:     #FFFFFF;
+    --dz-cloud-sh:  #C8C0B0;
+    --dz-rock:      #A88858;   /* warm wasteland */
+    --dz-rock-2:    #7A6038;
+    --dz-rock-3:    #5A4828;
+
+    --dz-cyan:      #7EC8F5;   /* SS2 electric sparks */
+    --dz-cyan-2:    #2A8AD8;
+
+    /* fonts — angular blocky */
+    --dz-font-d:  'Bowlby One', 'Russo One', Impact, sans-serif;
+    --dz-font-a:  'Russo One', Impact, sans-serif;
+    --dz-font-m:  'JetBrains Mono', ui-monospace, monospace;
+
+    /* hard offset shadows ONLY — no blur */
+    --dz-sh-ink:    3px 3px 0 var(--dz-ink);
+    --dz-sh-ink-l:  4px 4px 0 var(--dz-ink);
+    --dz-sh-ink-xl: 5px 5px 0 var(--dz-ink);
+    --dz-sh-red:    4px 4px 0 var(--dz-red-2);
+    --dz-sh-gold:   4px 4px 0 var(--dz-gold-3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--dz-font-a);
+    font-size: 12px;
+    color: var(--dz-ink);
+    background: var(--dz-sky-top);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — sunset sky with flat clouds + wasteland silhouette
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background:
+      /* radial speed-lines burst from upper-right (energy impact) */
+      repeating-conic-gradient(
+        from 200deg at 88% 18%,
+        rgba(245,209,58,0.10) 0deg 1.5deg,
+        transparent 1.5deg 4deg
+      ),
+      /* sunset sky gradient — ONLY place gradient is allowed */
+      linear-gradient(180deg,
+        var(--dz-sky-top) 0%,
+        var(--dz-sky-mid) 45%,
+        var(--dz-sky-bot) 78%,
+        var(--dz-rock-3) 78.5%,
+        var(--dz-rock-2) 100%);
+    isolation: isolate;
+  }
+
+  /* ---- flat cumulus clouds (white w/ hard outline + grey shadow block) ---- */
+  .cloud {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .cloud svg { display: block; }
+
+  /* ---- wasteland rock pillars (angular silhouettes) ---- */
+  .waste {
+    position: absolute;
+    z-index: 1;
+    left: 0; right: 0; bottom: 0;
+    height: 70px;
+    pointer-events: none;
+  }
+
+  /* ---- ki flame aura behind Z (gold tongues w/ orange outline) ---- */
+  .aura {
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* ============================================================
+     FRAME
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 5;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 14px 18px 12px;
+    gap: 8px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* brand mark: 4-star dragon ball */
+  .ball {
+    position: relative;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 32% 32%, var(--dz-orange-3) 0%, var(--dz-orange) 55%, var(--dz-orange-2) 100%);
+    border: 2px solid var(--dz-ink);
+    box-shadow: var(--dz-sh-ink);
+    overflow: hidden;
+  }
+  .ball::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 28% 28%, rgba(255,255,255,0.55) 0%, transparent 28%);
+  }
+  .ball::after {
+    content: "★";
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--dz-red);
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1;
+    text-shadow: 1px 1px 0 var(--dz-ink);
+  }
+  .brand__name {
+    font-family: var(--dz-font-a);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--dz-cloud);
+    text-shadow: 2px 2px 0 var(--dz-ink), -1px -1px 0 var(--dz-red-2);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--dz-font-a);
+    font-size: 9.5px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .nav a {
+    text-decoration: none;
+    color: var(--dz-cloud);
+    padding: 4px 8px;
+    border: 1.5px solid var(--dz-cloud);
+    text-shadow: 1px 1px 0 var(--dz-ink);
+    transition: background .12s ease, color .12s ease;
+  }
+  .nav a:hover {
+    background: var(--dz-cloud);
+    color: var(--dz-red);
+    text-shadow: none;
+  }
+  .nav a.is-active {
+    background: var(--dz-gold);
+    color: var(--dz-ink);
+    border-color: var(--dz-ink);
+    text-shadow: none;
+    box-shadow: var(--dz-sh-ink);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 12px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ============================================================
+     LEFT: DBZ TITLE LOGO COMPOSITION
+     Authentic Toei logo grammar:
+       - "DRAGON BALL" orange→gold vertical gradient
+       - 4-6px black outline via stacked text-shadow
+       - Oversized red "Z" with gold outline + white parallelogram highlight
+       - Small red 4-point star in Z's lower-right quadrant
+       - Italic 8° skew, blocky angular font
+     ============================================================ */
+  .logo {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-left: 4px;
+    transform: skewX(-6deg);
+  }
+  .logo__row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 0.9;
+  }
+  .logo__main {
+    font-family: var(--dz-font-d);
+    font-size: 28px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    line-height: 0.9;
+    background: linear-gradient(180deg,
+      var(--dz-orange-3) 0%,
+      var(--dz-orange) 45%,
+      var(--dz-gold) 100%);
+    -webkit-background-clip: text;
+            background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    /* hard stacked outline — no blur */
+    filter:
+      drop-shadow(2px 0 0 var(--dz-ink))
+      drop-shadow(-2px 0 0 var(--dz-ink))
+      drop-shadow(0 2px 0 var(--dz-ink))
+      drop-shadow(0 -2px 0 var(--dz-ink))
+      drop-shadow(3px 3px 0 var(--dz-ink));
+  }
+  /* hero letter Z — oversized, red, gold outline */
+  .logo__z {
+    position: relative;
+    font-family: var(--dz-font-d);
+    font-size: 56px;
+    font-weight: 400;
+    line-height: 0.8;
+    letter-spacing: -0.02em;
+    color: var(--dz-red);
+    margin-left: -2px;
+    /* gold outline via stacked drop-shadow */
+    filter:
+      drop-shadow(2px 0 0 var(--dz-gold))
+      drop-shadow(-2px 0 0 var(--dz-gold))
+      drop-shadow(0 2px 0 var(--dz-gold))
+      drop-shadow(0 -2px 0 var(--dz-gold))
+      drop-shadow(0 0 0 var(--dz-gold))
+      drop-shadow(3px 3px 0 var(--dz-ink));
+  }
+  /* white parallelogram highlight on upper-left of Z */
+  .logo__z::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 4px;
+    width: 16px;
+    height: 6px;
+    background: var(--dz-cloud);
+    transform: skewX(-30deg);
+    opacity: 0.85;
+    pointer-events: none;
+    z-index: 2;
+  }
+  /* small red 4-point star in Z's lower-right quadrant */
+  .logo__z::after {
+    content: "";
+    position: absolute;
+    bottom: 4px;
+    right: 2px;
+    width: 10px;
+    height: 10px;
+    background:
+      linear-gradient(var(--dz-red), var(--dz-red)) center/100% 2px no-repeat,
+      linear-gradient(var(--dz-red), var(--dz-red)) center/2px 100% no-repeat;
+    z-index: 3;
+  }
+
+  .logo__tag {
+    font-family: var(--dz-font-a);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--dz-cloud);
+    text-shadow: 1.5px 1.5px 0 var(--dz-ink);
+    margin-top: 4px;
+    padding-left: 2px;
+  }
+  .logo__tag b { color: var(--dz-gold); font-weight: 400; }
+
+  /* ============================================================
+     RIGHT: POWER LEVEL CARD (DBZ game-UI style)
+     Black bg, gold beveled border, ki flame icon, stat,
+     level indicator, electric spark accents.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 12px 12px 11px;
+    background: var(--dz-ink);
+    border: 3px solid var(--dz-gold);
+    box-shadow:
+      inset 0 0 0 1.5px var(--dz-ink),
+      inset 0 0 0 3px var(--dz-gold-3),
+      var(--dz-sh-ink-l);
+    color: var(--dz-cloud);
+    overflow: hidden;
+  }
+  /* inner bevel highlight — sharp */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg,
+      var(--dz-red) 0%,
+      var(--dz-orange) 35%,
+      var(--dz-gold) 70%,
+      var(--dz-cyan) 100%);
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .card__label {
+    font-family: var(--dz-font-a);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dz-gold);
+    text-shadow: 1px 1px 0 var(--dz-red-2);
+  }
+  .card__form {
+    font-family: var(--dz-font-d);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--dz-cloud);
+    background: var(--dz-red);
+    padding: 2px 7px;
+    border: 1.5px solid var(--dz-ink);
+    box-shadow: 1.5px 1.5px 0 var(--dz-gold-3);
+    letter-spacing: 0.04em;
+    line-height: 1.1;
+  }
+
+  .power {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 9px;
+  }
+  .power__value {
+    font-family: var(--dz-font-d);
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    color: var(--dz-gold);
+    text-shadow:
+      2px 0 0 var(--dz-red-2),
+      -1px 0 0 var(--dz-red-2),
+      0 2px 0 var(--dz-red-2),
+      0 -1px 0 var(--dz-red-2),
+      2px 2px 0 var(--dz-ink);
+  }
+  .power__unit {
+    font-family: var(--dz-font-a);
+    font-size: 8.5px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dz-cloud);
+    opacity: 0.85;
+  }
+
+  /* ki flame meter — flame tongues (sharp, with outline) */
+  .meter {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 22px;
+    margin-bottom: 9px;
+  }
+  .meter i {
+    flex: 1;
+    background: var(--dz-gold);
+    border: 1px solid var(--dz-orange-2);
+    min-height: 3px;
+    /* flame tongue shape via clip-path */
+    clip-path: polygon(50% 0%, 100% 30%, 80% 100%, 20% 100%, 0% 30%);
+  }
+  .meter i.dim {
+    background: var(--dz-orange);
+  }
+  .meter i.peak {
+    background: var(--dz-cloud);
+    border-color: var(--dz-gold);
+  }
+
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 7px;
+    border-top: 2px solid var(--dz-gold-3);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    background: var(--dz-gold);
+    color: var(--dz-ink);
+    font-family: var(--dz-font-a);
+    font-size: 8.5px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    border: 1.5px solid var(--dz-ink);
+    box-shadow: 1.5px 1.5px 0 var(--dz-red-2);
+  }
+  /* mini ki flame icon inside chip */
+  .chip__ki {
+    width: 7px; height: 9px;
+    background: var(--dz-red);
+    clip-path: polygon(50% 0%, 100% 40%, 75% 100%, 25% 100%, 0% 40%);
+  }
+  .meta {
+    font-family: var(--dz-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--dz-cyan);
+    text-transform: uppercase;
+  }
+
+  /* SS2 electric spark decorations on card corners */
+  .spark {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .spark--tr { top: -6px; right: -4px; }
+  .spark--bl { bottom: 24px; left: -6px; }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 6px;
+    border-top: 2px solid var(--dz-ink);
+  }
+  .footer__stats {
+    display: flex;
+    gap: 14px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    line-height: 1.05;
+  }
+  .stat__k {
+    font-family: var(--dz-font-d);
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1;
+    color: var(--dz-gold);
+    letter-spacing: 0.02em;
+    text-shadow:
+      1.5px 0 0 var(--dz-ink),
+      -1px 0 0 var(--dz-ink),
+      0 1.5px 0 var(--dz-ink),
+      0 -1px 0 var(--dz-ink);
+  }
+  .stat__k span {
+    font-family: var(--dz-font-a);
+    font-size: 9px;
+    color: var(--dz-cloud);
+    font-weight: 400;
+    margin-left: 3px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-shadow: 1px 1px 0 var(--dz-ink);
+  }
+  .stat__l {
+    font-family: var(--dz-font-a);
+    font-size: 7.5px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dz-cloud);
+    text-shadow: 1px 1px 0 var(--dz-ink);
+    margin-top: 1px;
+  }
+  .footer__meta {
+    font-family: var(--dz-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dz-cloud);
+    text-shadow: 1px 1px 0 var(--dz-ink);
+  }
+  .footer__meta b { color: var(--dz-gold); font-weight: 700; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Dragon Ball Z design language preview — Cell Saga era">
+
+  <!-- ===== flat cumulus clouds (white, hard outline, grey shadow block) ===== -->
+  <div class="cloud" style="top: 28px; left: 24px;">
+    <svg width="68" height="22" viewBox="0 0 68 22" fill="none" aria-hidden="true">
+      <!-- outline -->
+      <path d="M8 18 Q2 18 2 13 Q2 8 8 8 Q9 2 16 2 Q22 2 24 7 Q30 4 36 7 Q42 3 48 7 Q56 4 62 9 Q66 10 66 14 Q66 18 60 18 Z"
+            fill="#1A1A1A" transform="translate(1.5 1.5)"/>
+      <!-- shadow block -->
+      <path d="M10 16 Q5 16 5 13 Q14 13 24 13 Q36 13 48 13 Q58 13 63 13 Q63 17 58 17 Z"
+            fill="#C8C0B0"/>
+      <!-- main white -->
+      <path d="M8 18 Q2 18 2 13 Q2 8 8 8 Q9 2 16 2 Q22 2 24 7 Q30 4 36 7 Q42 3 48 7 Q56 4 62 9 Q66 10 66 14 Q66 18 60 18 Z"
+            fill="#FFFFFF"/>
+    </svg>
+  </div>
+  <div class="cloud" style="top: 50px; right: 80px;">
+    <svg width="52" height="18" viewBox="0 0 52 18" fill="none" aria-hidden="true">
+      <path d="M6 15 Q1 15 1 11 Q1 6 6 6 Q8 1 14 1 Q20 1 22 5 Q28 3 32 5 Q40 3 46 8 Q50 9 50 12 Q50 15 45 15 Z"
+            fill="#1A1A1A" transform="translate(1.2 1.2)"/>
+      <path d="M7 13 Q3 13 14 13 Q26 13 38 13 Q46 13 47 13 Q47 14 44 14 Z"
+            fill="#C8C0B0"/>
+      <path d="M6 15 Q1 15 1 11 Q1 6 6 6 Q8 1 14 1 Q20 1 22 5 Q28 3 32 5 Q40 3 46 8 Q50 9 50 12 Q50 15 45 15 Z"
+            fill="#FFFFFF"/>
+    </svg>
+  </div>
+
+  <!-- ===== wasteland rock pillars (angular silhouettes) ===== -->
+  <svg class="waste" viewBox="0 0 400 70" preserveAspectRatio="none" aria-hidden="true">
+    <!-- back layer -->
+    <path d="M0 70 L0 42 L40 42 L52 28 L70 42 L100 42 L114 30 L128 42 L170 42 L170 70 Z"
+          fill="#5A4828"/>
+    <!-- mid pillars -->
+    <path d="M150 70 L150 36 L172 18 L188 36 L210 36 L222 22 L240 36 L260 36 L260 70 Z"
+          fill="#7A6038"/>
+    <!-- front jagged rocks (outline) -->
+    <path d="M0 70 L0 52 L18 52 L30 38 L46 52 L80 52 L96 40 L114 52 L150 52 L168 34 L188 52 L224 52 L240 40 L258 52 L290 52 L308 36 L326 52 L360 52 L376 44 L392 52 L400 52 L400 70 Z"
+          fill="#1A1A1A"/>
+    <!-- front rocks fill (orange-tinted warm) -->
+    <path d="M2 70 L2 54 L20 54 L32 40 L48 54 L82 54 L98 42 L116 54 L152 54 L170 36 L190 54 L226 54 L242 42 L260 54 L292 54 L310 38 L328 54 L362 54 L378 46 L394 54 L400 54 L400 70 Z"
+          fill="#A88858"/>
+    <!-- crack lines -->
+    <path d="M40 50 L48 58 M120 48 L128 56 M210 50 L218 58 M310 48 L318 56"
+          stroke="#5A4828" stroke-width="1.5" fill="none"/>
+  </svg>
+
+  <!-- ===== KI FLAME AURA behind the Z (gold tongues with orange outline) ===== -->
+  <svg class="aura" style="left: 110px; top: 60px;" width="120" height="140" viewBox="0 0 120 140" aria-hidden="true">
+    <!-- outer orange outline tongues -->
+    <path d="M60 138 L40 100 L52 95 L30 70 L46 68 L20 40 L42 38 L10 10 L38 16 L60 0 L82 16 L110 10 L78 38 L100 40 L74 68 L90 70 L68 95 L80 100 Z"
+          fill="#FF8F1C"/>
+    <!-- inner gold flame tongues (sharp) -->
+    <path d="M60 134 L46 100 L56 96 L40 72 L52 70 L34 44 L48 42 L26 16 L44 20 L60 6 L76 20 L94 16 L72 42 L86 44 L68 70 L80 72 L64 96 L74 100 Z"
+          fill="#F5D13A"/>
+    <!-- white inner core tongues -->
+    <path d="M60 130 L52 102 L58 98 L48 76 L56 74 L44 50 L52 48 L40 26 L48 28 L60 16 L72 28 L80 26 L68 48 L76 50 L64 74 L72 76 L62 98 L68 102 Z"
+          fill="#FFFFFF" opacity="0.85"/>
+  </svg>
+
+  <!-- ===== SS2 electric spark fragments around the card ===== -->
+  <svg class="spark spark--tr" width="22" height="30" viewBox="0 0 22 30" aria-hidden="true">
+    <path d="M14 0 L8 10 L13 12 L4 22 L10 22 L2 30 L16 18 L11 16 L20 4 Z"
+          fill="#7EC8F5" stroke="#2A8AD8" stroke-width="1.5" stroke-linejoin="round"/>
+  </svg>
+  <svg class="spark spark--bl" width="18" height="24" viewBox="0 0 18 24" aria-hidden="true">
+    <path d="M10 0 L4 8 L8 10 L2 18 L6 18 L0 24 L12 14 L8 12 L16 2 Z"
+          fill="#7EC8F5" stroke="#2A8AD8" stroke-width="1.5" stroke-linejoin="round"/>
+  </svg>
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="ball" aria-hidden="true"></span>
+        <span class="brand__name">Saiyan Hub</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Saga</a>
+        <a href="#">Fighters</a>
+        <a href="#">Battles</a>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: DBZ logo composition -->
+      <div class="logo">
+        <div class="logo__row">
+          <span class="logo__main">DRAGON</span>
+        </div>
+        <div class="logo__row">
+          <span class="logo__main">BALL</span>
+          <span class="logo__z" aria-label="Z">Z</span>
+        </div>
+        <div class="logo__tag">Cell Saga · <b>Peak Power</b></div>
+      </div>
+
+      <!-- RIGHT: power level card -->
+      <div class="card" aria-label="Power level readout">
+        <div class="card__head">
+          <span class="card__label">Power Level</span>
+          <span class="card__form">SSJ2</span>
+        </div>
+
+        <div class="power">
+          <span class="power__value">9,999</span>
+          <span class="power__unit">ki</span>
+        </div>
+
+        <div class="meter" aria-hidden="true">
+          <i class="dim" style="height:32%"></i>
+          <i class="dim" style="height:46%"></i>
+          <i style="height:40%"></i>
+          <i style="height:58%"></i>
+          <i style="height:50%"></i>
+          <i style="height:70%"></i>
+          <i class="peak" style="height:96%"></i>
+          <i style="height:82%"></i>
+        </div>
+
+        <div class="card__row">
+          <span class="chip"><span class="chip__ki" aria-hidden="true"></span>Charging</span>
+          <span class="meta">Lv.12 · ↑ +500</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">7<span>balls</span></span>
+          <span class="stat__l">Dragon</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">SSJ<span>3</span></span>
+          <span class="stat__l">Max Form</span>
+        </div>
+      </div>
+      <span class="footer__meta">DBZ · <b>#E8761C</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

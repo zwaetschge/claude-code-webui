@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enterprise — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=Oswald:wght@400;500;600;700&family=Ubuntu+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     ENTERPRISE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Dark teal · orange accent · workflow automation · data-driven
+     ============================================================ */
+  :root {
+    --en-primary: #072C2C;       /* deep teal */
+    --en-primary-2: #0A3D3D;
+    --en-secondary: #FF5F03;     /* vibrant orange */
+    --en-secondary-2: #FF7A30;
+    --en-success: #16A34A;
+    --en-warning: #D97706;
+    --en-danger: #DC2626;
+
+    --en-surface: #EDEADE;       /* beige paper */
+    --en-surface-2: #E3DFD0;
+    --en-surface-3: #F5F2E8;
+    --en-card: #FFFFFF;
+    --en-ink: #111827;
+    --en-ink-2: #374151;
+    --en-ink-3: #6B7280;
+    --en-ink-4: #9CA3AF;
+    --en-line: #D1CCBE;
+    --en-line-2: #E5E1D3;
+    --en-on-teal: #E8F0F0;
+    --en-on-orange: #FFFFFF;
+
+    --en-font: 'Ubuntu', -apple-system, BlinkMacSystemFont, sans-serif;
+    --en-font-display: 'Oswald', 'Ubuntu', sans-serif;
+    --en-font-mono: 'Ubuntu Mono', ui-monospace, monospace;
+
+    --en-r-sm: 3px;
+    --en-r-md: 5px;
+    --en-r-lg: 8px;
+    --en-r-pill: 999px;
+
+    --en-sh-1: 0 1px 2px rgba(7,44,44,0.06);
+    --en-sh-2: 0 4px 12px -2px rgba(7,44,44,0.10), 0 2px 4px -1px rgba(7,44,44,0.05);
+    --en-sh-orange: 0 4px 12px -2px rgba(255,95,3,0.30);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--en-font);
+    font-size: 12px;
+    color: var(--en-ink);
+    background: var(--en-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--en-surface);
+    display: grid;
+    grid-template-rows: 32px 1fr 22px;
+    border-right: 1px solid var(--en-line);
+  }
+
+  /* ============ TOP BAR ============ */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: var(--en-primary);
+    color: var(--en-on-teal);
+  }
+  .topbar__left { display: flex; align-items: center; gap: 14px; }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--en-font-display);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--en-on-teal);
+  }
+  .brand__mark {
+    width: 18px; height: 18px;
+    background: var(--en-secondary);
+    border-radius: var(--en-r-sm);
+    display: grid; place-items: center;
+    color: var(--en-on-orange);
+    box-shadow: var(--en-sh-orange);
+  }
+  .brand__mark svg { width: 11px; height: 11px; }
+  .brand__sep { color: rgba(232,240,240,0.4); font-weight: 400; }
+  .brand__project {
+    font-family: var(--en-font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: rgba(232,240,240,0.7);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .nav {
+    display: flex;
+    gap: 1px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    font-family: var(--en-font-display);
+    font-weight: 500;
+    letter-spacing: 0.06em;
+  }
+  .nav a {
+    padding: 3px 8px;
+    border-radius: var(--en-r-sm);
+    text-decoration: none;
+    color: rgba(232,240,240,0.7);
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--en-on-teal); background: rgba(255,255,255,0.08); }
+  .nav a.is-active {
+    color: var(--en-on-teal);
+    background: rgba(255,255,255,0.12);
+  }
+
+  .topbar__right { display: flex; align-items: center; gap: 6px; }
+  .run-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    background: var(--en-secondary);
+    color: var(--en-on-orange);
+    border: none;
+    border-radius: var(--en-r-sm);
+    font-family: var(--en-font-display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: var(--en-sh-orange);
+  }
+  .run-btn svg { width: 9px; height: 9px; }
+  .avatar {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--en-secondary);
+    color: var(--en-on-orange);
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 8px;
+  }
+
+  /* ============ MAIN GRID ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 8px;
+    padding: 10px 12px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* LEFT — workflow canvas with nodes */
+  .canvas {
+    background: var(--en-card);
+    border: 1px solid var(--en-line);
+    border-radius: var(--en-r-md);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--en-sh-1);
+    min-height: 0;
+  }
+  .canvas__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--en-line-2);
+    background: var(--en-surface-3);
+  }
+  .canvas__title {
+    font-family: var(--en-font-display);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--en-ink);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .canvas__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    background: rgba(22,163,74,0.12);
+    color: var(--en-success);
+    border-radius: var(--en-r-pill);
+    font-family: var(--en-font-mono);
+    font-size: 7.5px;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .canvas__pill::before {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--en-success);
+  }
+  .canvas__meta {
+    font-family: var(--en-font-mono);
+    font-size: 8px;
+    color: var(--en-ink-4);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  /* SVG canvas with workflow nodes */
+  .flow {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    background:
+      radial-gradient(circle, rgba(7,44,44,0.08) 0.8px, transparent 1px) 0 0 / 12px 12px;
+  }
+  .flow svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* RIGHT — data sources panel */
+  .panel {
+    background: var(--en-card);
+    border: 1px solid var(--en-line);
+    border-radius: var(--en-r-md);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--en-sh-1);
+    min-height: 0;
+  }
+  .panel__head {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--en-line-2);
+    background: var(--en-surface-3);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel__title {
+    font-family: var(--en-font-display);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--en-ink);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .panel__add {
+    width: 16px; height: 16px;
+    border: 1px solid var(--en-line);
+    border-radius: var(--en-r-sm);
+    background: var(--en-card);
+    color: var(--en-ink-3);
+    display: grid; place-items: center;
+    cursor: pointer;
+  }
+  .panel__add svg { width: 9px; height: 9px; }
+
+  .sources {
+    padding: 4px 0;
+    overflow: hidden;
+    flex: 1;
+  }
+  .source {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--en-line-2);
+    font-size: 10px;
+  }
+  .source:last-child { border-bottom: none; }
+  .source__icon {
+    width: 18px; height: 18px;
+    border-radius: var(--en-r-sm);
+    display: grid; place-items: center;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .source__icon svg { width: 10px; height: 10px; }
+  .source__icon--teal { background: var(--en-primary); }
+  .source__icon--orange { background: var(--en-secondary); }
+  .source__icon--green { background: var(--en-success); }
+  .source__icon--gray { background: var(--en-ink-3); }
+  .source__body { flex: 1; min-width: 0; }
+  .source__name {
+    font-weight: 500;
+    color: var(--en-ink);
+    font-size: 10px;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .source__type {
+    font-family: var(--en-font-mono);
+    font-size: 8px;
+    color: var(--en-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .source__status {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--en-success);
+    flex-shrink: 0;
+  }
+  .source__status--off { background: var(--en-ink-4); }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: var(--en-primary);
+    color: rgba(232,240,240,0.6);
+    font-family: var(--en-font-mono);
+    font-size: 8.5px;
+    letter-spacing: 0.06em;
+  }
+  .footer__accent { color: var(--en-secondary); }
+  .footer__live {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--en-on-teal);
+  }
+  .footer__live::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--en-success);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Enterprise design language preview">
+
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="brand">
+        <span class="brand__mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        </span>
+        <span>FLOWBASE</span>
+        <span class="brand__sep">/</span>
+        <span class="brand__project">q4-pipeline</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Flows</a>
+        <a href="#">Data</a>
+        <a href="#">AI</a>
+        <a href="#">Logs</a>
+      </nav>
+    </div>
+    <div class="topbar__right">
+      <button class="run-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+        Run
+      </button>
+      <div class="avatar" aria-label="User">AC</div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN GRID ===== -->
+  <section class="main">
+
+    <!-- LEFT: workflow canvas with nodes -->
+    <div class="canvas">
+      <div class="canvas__head">
+        <span class="canvas__title">
+          Pipeline
+          <span class="canvas__pill">running</span>
+        </span>
+        <span class="canvas__meta">4 nodes · 2.3s avg</span>
+      </div>
+      <div class="flow">
+        <svg viewBox="0 0 240 170" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <polygon points="0 0, 6 3, 0 6" fill="#072C2C" opacity="0.5"/>
+            </marker>
+            <marker id="arrowhead-orange" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <polygon points="0 0, 6 3, 0 6" fill="#FF5F03"/>
+            </marker>
+          </defs>
+
+          <!-- connections -->
+          <path d="M 60 45 L 100 45" stroke="#072C2C" stroke-width="1.5" fill="none" opacity="0.4" marker-end="url(#arrowhead)"/>
+          <path d="M 170 45 C 200 45, 200 85, 170 85" stroke="#072C2C" stroke-width="1.5" fill="none" opacity="0.4" marker-end="url(#arrowhead)"/>
+          <path d="M 60 125 C 100 125, 100 85, 100 85" stroke="#072C2C" stroke-width="1.5" fill="none" opacity="0.4" marker-end="url(#arrowhead)"/>
+          <path d="M 170 85 C 210 85, 210 125, 170 125" stroke="#FF5F03" stroke-width="2" fill="none" marker-end="url(#arrowhead-orange)"/>
+
+          <!-- Node 1: Source (teal) -->
+          <g transform="translate(10, 30)">
+            <rect width="50" height="30" rx="5" fill="#072C2C" stroke="#072C2C" stroke-width="1"/>
+            <text x="25" y="14" text-anchor="middle" font-family="Oswald, sans-serif" font-size="7" font-weight="600" fill="#E8F0F0" letter-spacing="0.5">SOURCE</text>
+            <text x="25" y="23" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="6" fill="#FF5F03">postgres</text>
+            <circle cx="50" cy="15" r="2.5" fill="#16A34A"/>
+          </g>
+
+          <!-- Node 2: Transform (white) -->
+          <g transform="translate(100, 30)">
+            <rect width="70" height="30" rx="5" fill="#FFFFFF" stroke="#072C2C" stroke-width="1.5"/>
+            <text x="35" y="14" text-anchor="middle" font-family="Oswald, sans-serif" font-size="7" font-weight="600" fill="#072C2C" letter-spacing="0.5">TRANSFORM</text>
+            <text x="35" y="23" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="6" fill="#6B7280">sql · filter</text>
+          </g>
+
+          <!-- Node 3: AI (orange — highlighted) -->
+          <g transform="translate(100, 70)">
+            <rect width="70" height="30" rx="5" fill="#FF5F03" stroke="#FF5F03" stroke-width="1.5"/>
+            <text x="35" y="14" text-anchor="middle" font-family="Oswald, sans-serif" font-size="7" font-weight="600" fill="#FFFFFF" letter-spacing="0.5">✦ AI MODEL</text>
+            <text x="35" y="23" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="6" fill="rgba(255,255,255,0.85)">classify · v2</text>
+          </g>
+
+          <!-- Node 4: Source 2 (gray) -->
+          <g transform="translate(10, 110)">
+            <rect width="50" height="30" rx="5" fill="#FFFFFF" stroke="#6B7280" stroke-width="1" stroke-dasharray="2,1.5"/>
+            <text x="25" y="14" text-anchor="middle" font-family="Oswald, sans-serif" font-size="7" font-weight="600" fill="#6B7280" letter-spacing="0.5">WEBHOOK</text>
+            <text x="25" y="23" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="6" fill="#9CA3AF">incoming</text>
+            <circle cx="50" cy="15" r="2.5" fill="#9CA3AF"/>
+          </g>
+
+          <!-- Node 5: Output (teal) -->
+          <g transform="translate(120, 110)">
+            <rect width="50" height="30" rx="5" fill="#072C2C" stroke="#072C2C" stroke-width="1"/>
+            <text x="25" y="14" text-anchor="middle" font-family="Oswald, sans-serif" font-size="7" font-weight="600" fill="#E8F0F0" letter-spacing="0.5">OUTPUT</text>
+            <text x="25" y="23" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="6" fill="#FF5F03">slack</text>
+            <circle cx="50" cy="15" r="2.5" fill="#16A34A"/>
+          </g>
+
+          <!-- node labels -->
+          <text x="35" y="78" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="5" fill="#9CA3AF">2.1k rows</text>
+          <text x="135" y="78" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="5" fill="#9CA3AF">1.8k out</text>
+          <text x="135" y="118" text-anchor="middle" font-family="Ubuntu Mono, monospace="5" font-size="5" fill="#FF5F03">94% acc</text>
+          <text x="145" y="158" text-anchor="middle" font-family="Ubuntu Mono, monospace" font-size="5" fill="#9CA3AF">sent · 1.7k</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- RIGHT: data sources -->
+    <div class="panel">
+      <div class="panel__head">
+        <span class="panel__title">Sources</span>
+        <button class="panel__add" type="button" aria-label="Add source">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div class="sources">
+        <div class="source">
+          <span class="source__icon source__icon--teal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>
+          </span>
+          <div class="source__body">
+            <div class="source__name">Postgres · prod</div>
+            <div class="source__type">database</div>
+          </div>
+          <span class="source__status"></span>
+        </div>
+        <div class="source">
+          <span class="source__icon source__icon--orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </span>
+          <div class="source__body">
+            <div class="source__name">AI · classify v2</div>
+            <div class="source__type">model</div>
+          </div>
+          <span class="source__status"></span>
+        </div>
+        <div class="source">
+          <span class="source__icon source__icon--green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/></svg>
+          </span>
+          <div class="source__body">
+            <div class="source__name">Slack · #alerts</div>
+            <div class="source__type">webhook</div>
+          </div>
+          <span class="source__status"></span>
+        </div>
+        <div class="source">
+          <span class="source__icon source__icon--gray">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          </span>
+          <div class="source__body">
+            <div class="source__name">Data lake · s3</div>
+            <div class="source__source-type">storage</div>
+            <div class="source__type">storage</div>
+          </div>
+          <span class="source__status source__status--off"></span>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__accent">●</span> flowbase · automate · data + ai</span>
+    <span class="footer__live">last run · 2.3s · success</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

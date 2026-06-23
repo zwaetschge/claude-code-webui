@@ -10,17 +10,22 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { execFile, execFileSync, execSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import type {
   CodexServiceTier,
   CodexWebSearchMode,
   ProviderCapabilities,
   SessionMode,
-} from '@claude-code-webui/shared';
+} from '@plum-code-webui/shared';
 import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from '../utils/codexDefaults';
+import {
+  discoverOpenCodeCliModels,
+  getOpenCodeModelIdsForProviders,
+} from '../utils/opencodeCatalog';
 
 const execFileAsync = promisify(execFile);
+const CODEX_UNRAID_DEFAULT_ALLOWED_DIRS = ['/mnt/user', '/mnt/cache'];
 
 export type CLIProvider = 'claude' | 'codex' | 'opencode' | 'vibe';
 
@@ -54,6 +59,8 @@ const CLI_PROVIDER_MODELS: Record<CLIProvider, string[]> = {
   // whatever was last fetched. gpt-5.5 is the new default (codex CLI 0.130+).
   codex: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.2'],
   opencode: [
+    'opencode-go/kimi-k2.7',
+    'opencode/kimi-k2.7',
     'z-ai/glm-5.1',
     'z-ai/glm-5',
     'anthropic/claude-sonnet-4-5',
@@ -79,6 +86,8 @@ const MODEL_DISPLAY_LABELS: Record<string, string> = {
   'gpt-5.3-codex': 'GPT 5.3 Codex',
   'gpt-5.2': 'GPT 5.2',
   // OpenCode (provider/model format)
+  'opencode-go/kimi-k2.7': 'Kimi K2.7 (OpenCode Go)',
+  'opencode/kimi-k2.7': 'Kimi K2.7',
   'z-ai/glm-5.1': 'GLM 5.1',
   'z-ai/glm-5': 'GLM 5',
   'anthropic/claude-sonnet-4-5': 'Claude Sonnet 4.5',
@@ -90,15 +99,79 @@ const MODEL_DISPLAY_LABELS: Record<string, string> = {
   'devstral-small-latest': 'Devstral Small',
 };
 
+function normalizeAllowedDirectory(dir: string): string | null {
+  const trimmed = dir.trim();
+  if (!trimmed) return null;
+  if (!path.isAbsolute(trimmed)) return null;
+
+  try {
+    const resolved = path.resolve(trimmed);
+    if (resolved === path.parse(resolved).root) return null;
+    if (!fs.existsSync(resolved)) return null;
+    return resolved;
+  } catch {
+    return null;
+  }
+}
+
+function parseAllowedBasePaths(): string[] {
+  const configured = (process.env.ALLOWED_BASE_PATHS || '')
+    .split(',')
+    .map((dir) => normalizeAllowedDirectory(dir))
+    .filter((dir): dir is string => !!dir);
+
+  if (configured.length > 0) return configured;
+
+  return CODEX_UNRAID_DEFAULT_ALLOWED_DIRS.map((dir) => normalizeAllowedDirectory(dir)).filter(
+    (dir): dir is string => !!dir
+  );
+}
+
+function getCodexAllowedDirectories(options: {
+  allowedDirectories?: string[];
+  workingDirectory?: string;
+}): string[] {
+  const workingDirectory = options.workingDirectory
+    ? normalizeAllowedDirectory(options.workingDirectory)
+    : null;
+  const seen = new Set<string>();
+
+  return [...parseAllowedBasePaths(), ...(options.allowedDirectories || [])]
+    .map((dir) => normalizeAllowedDirectory(dir))
+    .filter((dir): dir is string => !!dir)
+    .filter((dir) => {
+      if (workingDirectory && dir === workingDirectory) return false;
+      if (seen.has(dir)) return false;
+      seen.add(dir);
+      return true;
+    });
+}
+
 // ── CLI Model Discovery ──────────────────────────────────────────────
 
 /**
  * Find a CLI binary's real path.
  */
 function findCliBinary(command: string): string | null {
+  const candidates = command.includes('/')
+    ? [command.replace(/^~/, os.homedir())]
+    : [`/home/node/.npm-global/bin/${command}`, `/usr/local/bin/${command}`, `/usr/bin/${command}`];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
   try {
+    const pathParts = (process.env.PATH || '').split(':').filter(Boolean);
+    for (const item of ['/home/node/.npm-global/bin', '/usr/local/bin', '/usr/bin']) {
+      if (!pathParts.includes(item)) pathParts.unshift(item);
+    }
     const p = execFileSync('which', [command], {
       encoding: 'utf-8',
+      env: { ...process.env, PATH: pathParts.join(':') },
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     return p ? fs.realpathSync(p) : null;
@@ -341,9 +414,6 @@ function formatCodexLabel(modelId: string): string {
 function discoverOpenCode(): void {
   try {
     const homeDir = os.homedir();
-    // Honor CLI_PROVIDER_OPENCODE_CREDENTIALS_PATH (default ~/.local/share/opencode)
-    // so operators can relocate OpenCode state without forking the backend.
-    // Config path follows XDG config convention independently.
     const authDir = (
       getProviderEnv('opencode', 'CREDENTIALS_PATH') ||
       path.join(homeDir, '.local', 'share', 'opencode')
@@ -389,8 +459,22 @@ function discoverOpenCode(): void {
       }
     }
 
-    // 2. Auth file: derive model set from enabled providers
-    if (!hasExplicitAllowList && fs.existsSync(authPath)) {
+    // 2. Live OpenCode CLI output covers authenticated providers plus providers
+    // configured through environment variables. It is intentionally not the
+    // complete provider list; the Settings provider browser uses models.dev for
+    // that. Here we keep the session selector to runnable/default models.
+    if (!hasExplicitAllowList) {
+      const liveProviders = discoverOpenCodeCliModels();
+      for (const [providerId, models] of Object.entries(liveProviders)) {
+        for (const modelId of models) {
+          userModels.push(`${providerId}/${modelId}`);
+        }
+      }
+    }
+
+    // 3. Auth file fallback: derive model set from enabled providers via the
+    // same models.dev catalog used by the Settings page.
+    if (!hasExplicitAllowList && userModels.length === 0 && fs.existsSync(authPath)) {
       try {
         const raw = fs.readFileSync(authPath, 'utf-8');
         const auth = JSON.parse(raw) as Record<string, unknown>;
@@ -398,33 +482,8 @@ function discoverOpenCode(): void {
           (id) => typeof auth[id] === 'object' && auth[id] !== null
         );
 
-        // Prefer live data from `opencode models`: it knows every provider the
-        // installed CLI can route to, including ones not in our hardcoded
-        // PROVIDER_DEFAULT_MODELS map (e.g. ollama-cloud). Keep the static map
-        // as a fallback so discovery still works if the CLI is missing.
-        let resolved = false;
-        try {
-          const cliRaw = execSync('opencode models 2>&1', {
-            encoding: 'utf-8',
-            timeout: 10_000,
-          });
-          for (const line of cliRaw.split('\n')) {
-            const trimmed = line.trim();
-            const slash = trimmed.indexOf('/');
-            if (slash <= 0 || /\s/.test(trimmed)) continue;
-            const providerId = trimmed.slice(0, slash);
-            const modelId = trimmed.slice(slash + 1);
-            if (!providerId || !modelId) continue;
-            if (configuredProviders.includes(providerId)) {
-              userModels.push(`${providerId}/${modelId}`);
-              resolved = true;
-            }
-          }
-        } catch {
-          // `opencode models` unavailable — fall back to static map
-        }
-
-        if (!resolved) {
+        userModels.push(...getOpenCodeModelIdsForProviders(configuredProviders));
+        if (userModels.length === 0) {
           for (const providerId of configuredProviders) {
             for (const model of PROVIDER_DEFAULT_MODELS[providerId] ?? []) {
               userModels.push(`${providerId}/${model}`);
@@ -659,6 +718,45 @@ function getDiscoveredModels(provider: CLIProvider): string[] {
   return discoveredModels[provider] ?? CLI_PROVIDER_MODELS[provider];
 }
 
+export function resolveOpenCodeConfiguredModel(
+  selectedModel: string | null | undefined,
+  configuredModels: string[]
+): string | null {
+  const selected =
+    typeof selectedModel === 'string' && selectedModel.trim() ? selectedModel.trim() : null;
+  const configured = configuredModels
+    .map((model) => model.trim())
+    .filter((model) => model.length > 0);
+
+  if (configured.length === 0) {
+    return selected;
+  }
+
+  return selected && configured.includes(selected) ? selected : configured[0]!;
+}
+
+export function resolveCliProviderSelectedModel(
+  provider: CLIProvider,
+  userSelectedModel: string | null | undefined,
+  configuredModels: string[],
+  sessionSelectedModel?: string | null
+): string | null {
+  const userSelected =
+    typeof userSelectedModel === 'string' && userSelectedModel.trim()
+      ? userSelectedModel.trim()
+      : null;
+  const sessionSelected =
+    typeof sessionSelectedModel === 'string' && sessionSelectedModel.trim()
+      ? sessionSelectedModel.trim()
+      : null;
+
+  if (provider !== 'opencode') {
+    return sessionSelected ?? userSelected;
+  }
+
+  return resolveOpenCodeConfiguredModel(sessionSelected ?? userSelected, configuredModels);
+}
+
 function parseEnvModels(provider: CLIProvider): string[] | undefined {
   const raw = getProviderEnv(provider, 'MODELS');
   if (!raw) return undefined;
@@ -678,6 +776,10 @@ function envOr(provider: CLIProvider, key: string, fallback: string): string {
   return getProviderEnv(provider, key) || fallback;
 }
 
+function defaultCliCommand(provider: CLIProvider, command: string): string {
+  return envOr(provider, 'COMMAND', findCliBinary(command) ?? command);
+}
+
 // Insertion order matters: routes/cli-providers.ts uses Object.values() so the
 // frontend picker lists providers in this order. Codex is the primary going
 // forward; Claude is intentionally last (legacy) since claude -p is being
@@ -686,7 +788,7 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
   codex: {
     id: 'codex',
     name: 'Codex',
-    command: envOr('codex', 'COMMAND', 'codex'),
+    command: defaultCliCommand('codex', 'codex'),
     icon: '🟢',
     credentialsPath: envOr('codex', 'CREDENTIALS_PATH', '~/.codex'),
     // Codex CLI itself is single-shot per turn, but the WebUI simulates streaming
@@ -716,7 +818,7 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
   opencode: {
     id: 'opencode',
     name: 'OpenCode',
-    command: envOr('opencode', 'COMMAND', 'opencode'),
+    command: defaultCliCommand('opencode', 'opencode'),
     icon: '⚡',
     // OpenCode writes auth/tokens to ~/.local/share/opencode/auth.json per XDG.
     // Config lives at ~/.config/opencode/opencode.json but absence of a config
@@ -746,7 +848,7 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
   vibe: {
     id: 'vibe',
     name: 'Mistral Vibe',
-    command: envOr('vibe', 'COMMAND', 'vibe'),
+    command: defaultCliCommand('vibe', 'vibe'),
     icon: '🟣',
     // Vibe state lives in ~/.vibe by default; we override per-session via VIBE_HOME
     // at spawn time so each WebUI chat is an isolated agent session.
@@ -778,7 +880,7 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
   claude: {
     id: 'claude',
     name: 'Claude Code',
-    command: envOr('claude', 'COMMAND', 'claude'),
+    command: defaultCliCommand('claude', 'claude'),
     icon: '🟠',
     credentialsPath: envOr('claude', 'CREDENTIALS_PATH', '~/.claude'),
     supportsStreamJson: true,
@@ -868,14 +970,18 @@ export function getCLIArgs(
     case 'codex': {
       // Codex CLI 0.130 non-interactive: `codex exec [resume <id>] [opts] [prompt]`
       // Native resume preferred when a sessionId is known. Note: `codex exec resume`
-      // accepts a NARROWER flag set than `codex exec` — no --sandbox, no --add-dir;
-      // those settings are inherited from the resumed thread.
+      // accepts a NARROWER flag set than `codex exec` — no --sandbox, no --add-dir.
+      // Danger deployments can still bypass the inherited sandbox via resume's bypass flag.
       const isReview = options.codexExecCommand?.type === 'review';
       const isResume = !!(options.resumeSessionId && config.supportsResume);
       if (isReview) {
         args.push('exec', '--json');
       } else if (isResume) {
-        args.push('exec', 'resume', options.resumeSessionId as string, '--json');
+        args.push('exec', 'resume');
+        if (shouldBypassCodexResumeSandbox(options.mode)) {
+          args.push('--dangerously-bypass-approvals-and-sandbox');
+        }
+        args.push(options.resumeSessionId as string, '--json');
       } else {
         args.push('exec', '--json');
       }
@@ -885,8 +991,15 @@ export function getCLIArgs(
         args.push(...getCodexApprovalArgs(options.mode));
       }
 
+      const useFastTier = options.serviceTier === 'fast' || options.reasoningLevel === 'fast';
+      // Fast mode is a service-tier setting, not a model shortcut. Keep the
+      // session/default model unless the caller explicitly pinned one.
       if (options.model) {
         args.push('--model', options.model);
+      }
+
+      if (useFastTier) {
+        args.push('-c', 'service_tier="fast"');
       }
 
       // Reasoning effort. Valid Codex values: none | minimal | low | medium | high | xhigh.
@@ -900,8 +1013,9 @@ export function getCLIArgs(
         veryhigh: 'xhigh',
         max: 'xhigh',
       };
+      const requestedEffort = options.reasoningLevel === 'fast' ? null : options.reasoningLevel;
       const rawEffort =
-        options.mode === 'planning' && !options.reasoningLevel ? 'high' : options.reasoningLevel;
+        requestedEffort ?? (options.mode === 'planning' ? 'high' : useFastTier ? 'low' : undefined);
       let effort: (typeof VALID_EFFORTS)[number] | undefined;
       if (rawEffort) {
         const normalized = rawEffort.toLowerCase().trim();
@@ -915,11 +1029,6 @@ export function getCLIArgs(
         args.push('-c', `model_reasoning_effort="${effort}"`);
       }
 
-      if (options.serviceTier === 'fast') {
-        args.push('-c', 'features.fast_mode=true');
-        args.push('-c', 'service_tier="fast"');
-      }
-
       if (options.webSearchMode && options.webSearchMode !== 'auto') {
         args.push('-c', `web_search="${options.webSearchMode}"`);
       }
@@ -930,8 +1039,9 @@ export function getCLIArgs(
       }
 
       // --add-dir is exec-only (resume inherits from the original session).
-      if (!isResume && options.allowedDirectories) {
-        for (const dir of options.allowedDirectories) {
+      // Include deployment-level base paths so Codex can write mounted Unraid shares.
+      if (!isResume && options.mode !== 'danger') {
+        for (const dir of getCodexAllowedDirectories(options)) {
           args.push('--add-dir', dir);
         }
       }
@@ -1206,6 +1316,14 @@ function getCodexApprovalArgs(mode?: SessionMode): string[] {
     default:
       return ['--sandbox', defaultSandbox, '-c', `approval_policy="${defaultApproval}"`];
   }
+}
+
+function shouldBypassCodexResumeSandbox(mode?: SessionMode): boolean {
+  if (mode === 'danger') return true;
+  if (mode === 'planning' || mode === 'manual') return false;
+  return (
+    getCodexWebuiSandboxMode() === 'danger-full-access' && getCodexWebuiApprovalPolicy() === 'never'
+  );
 }
 
 /**

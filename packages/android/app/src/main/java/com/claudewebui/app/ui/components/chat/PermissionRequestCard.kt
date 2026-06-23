@@ -131,7 +131,7 @@ fun PermissionRequestCard(
                         color = if (isDestructive) Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = "Claude wants to use a tool",
+                        text = "The active agent wants to use a tool",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,

@@ -1,4 +1,13 @@
-import { useEffect, useRef, useState, useCallback, useMemo, type ReactElement } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  type FormEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -19,36 +28,44 @@ import {
   Loader2,
   MessageSquare,
   Code2,
-  Star,
   FolderKey,
+  Palette,
   X,
-  Activity,
   Pencil,
   RotateCcw,
   Settings,
   Square,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  PenLine,
+  Smartphone,
+  Hand,
+  Zap,
+  Sparkles,
+  Network,
+  Link2,
+  SendHorizontal,
 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Card } from '@/components/ui/card';
 import { StreamingContent } from '@/components/chat/StreamingContent';
-import { ContextPopover } from '@/components/session/SessionControls';
-import { SessionSettingsChip } from '@/components/session/SessionSettingsChip';
 import { AllowedDirectoriesDialog } from '@/components/session/AllowedDirectoriesDialog';
 import { PermissionRequestCard } from '@/components/session/PermissionRequestCard';
 import { EditorPanel } from '@/components/code-editor';
 import { WorkspaceFiles } from '@/components/files';
 import { AgentsEditor } from '@/components/agents-editor';
 import { MemoryViewer } from '@/components/memory-viewer';
-import { ToolLogPanel } from '@/components/session/ToolLogPanel';
 import { RunCockpit, type RunCockpitSection } from '@/components/session/RunCockpit';
 import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
+import { OracleBrowserPanel } from '@/components/session/OracleBrowserPanel';
 import { CompactBoundaryCard } from '@/components/chat/CompactBoundaryCard';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { ToolDetailDialog } from '@/components/session/ToolDetailDialog';
+import { AndroidDevicePanel } from '@/components/session/AndroidDevicePanel';
+import { SessionStyleLibraryPanel } from '@/components/session/SessionStyleLibraryPanel';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import {
   useSessionStore,
@@ -56,8 +73,8 @@ import {
   type TodoItem,
   type GeneratedImage,
   type OpenFile,
+  type SubagentRun,
 } from '@/stores/sessionStore';
-import { useProviderStore } from '@/stores/providerStore';
 import { usePanelDockStore, type DockablePanel } from '@/stores/panelDockStore';
 import { useShallow } from 'zustand/react/shallow';
 import { api } from '@/services/api';
@@ -70,15 +87,22 @@ import type {
   Command,
   CommandExecutionResult,
   SessionMode,
+  SessionSurface,
   PermissionAction,
   CLIProvider,
   UserSettings,
   ToolExecution,
-} from '@claude-code-webui/shared';
+  UsageSnapshot,
+  ActiveFollowupMode,
+  SessionDelegation,
+  SessionPeerLink,
+} from '@plum-code-webui/shared';
+import { normalizeUsageSnapshot } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { PermissionApprovalDialog } from '@/components/chat/PermissionApprovalDialog';
+import { QuestionApprovalDialog } from '@/components/chat/QuestionApprovalDialog';
 import {
   CLI_PROVIDER_DEFAULT_MODEL,
   CLI_PROVIDER_LABEL,
@@ -86,6 +110,7 @@ import {
   toCliProvider,
   type UiProvider,
 } from '@/lib/providers';
+import { TASK_WORKFLOWS } from '@/lib/taskWorkflows';
 import { toast } from '@/hooks/use-toast';
 
 function generateId() {
@@ -98,10 +123,203 @@ const EMPTY_TODOS: TodoItem[] = [];
 const EMPTY_IMAGES: GeneratedImage[] = [];
 const EMPTY_TOOL_EXECUTIONS: ToolExecution[] = [];
 const EMPTY_OPEN_FILES: OpenFile[] = [];
+const EMPTY_AGENT_RUNS: SubagentRun[] = [];
 const IDLE_ACTIVITY: ActivityState = { type: 'idle' };
-type WorkspaceSheetPanel = Exclude<DockablePanel, 'files'>;
+type WorkspaceSheetPanel = Exclude<DockablePanel, 'files' | 'tools'>;
 type MobileSheetPanel = WorkspaceSheetPanel | 'settings';
-const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = ['tasks', 'config', 'tools'];
+type RightMenuGroupId = 'view' | 'runtime' | 'styles' | 'workspace';
+const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = [
+  'tasks',
+  'mesh',
+  'designStyle',
+  'writingStyle',
+  'android',
+  'browser',
+];
+const STYLE_PANEL_KEYS: WorkspaceSheetPanel[] = ['designStyle', 'writingStyle'];
+const DEFAULT_RIGHT_MENU_GROUPS: Record<RightMenuGroupId, boolean> = {
+  view: true,
+  runtime: true,
+  styles: true,
+  workspace: false,
+};
+const ACTIVE_FOLLOWUP_MODE_DEFAULT: ActiveFollowupMode = 'queue';
+const AUTO_GOAL_MIN_CHARS = 220;
+const AUTO_GOAL_MAX_CHARS = 3200;
+const AUTO_GOAL_ACTION_HINT =
+  /\b(add|build|connect|create|debug|design|finish|fix|implement|integrate|migrate|polish|refactor|rewrite|ship|test|update|wire)\b/i;
+
+const SESSION_MODE_OPTIONS: Array<{
+  value: SessionMode;
+  label: string;
+  description: string;
+  icon: typeof Brain;
+}> = [
+  {
+    value: 'planning',
+    label: 'Plan mode',
+    description: 'Plans but asks before executing',
+    icon: Brain,
+  },
+  {
+    value: 'auto-accept',
+    label: 'Auto mode',
+    description: 'Automatically approve safe operations',
+    icon: CheckCircle,
+  },
+  {
+    value: 'manual',
+    label: 'Manual mode',
+    description: 'Approve each operation manually',
+    icon: Hand,
+  },
+  {
+    value: 'danger',
+    label: 'YOLO mode',
+    description: 'Skip all confirmations',
+    icon: Zap,
+  },
+];
+
+function isActiveFollowupMode(value: string | null): value is ActiveFollowupMode {
+  return value === 'queue' || value === 'steer';
+}
+
+function buildAutoGoalObjective(message: string): string | null {
+  const trimmed = message.trim();
+  if (!trimmed || trimmed.startsWith('/')) return null;
+
+  const lineCount = trimmed.split(/\n/).filter((line) => line.trim()).length;
+  const hasLongShape =
+    trimmed.length >= AUTO_GOAL_MIN_CHARS ||
+    lineCount >= 4 ||
+    (trimmed.length >= 140 && AUTO_GOAL_ACTION_HINT.test(trimmed));
+
+  if (!hasLongShape) return null;
+
+  const compact = trimmed.replace(/\s+/g, ' ');
+  const clipped =
+    compact.length > AUTO_GOAL_MAX_CHARS
+      ? `${compact.slice(0, AUTO_GOAL_MAX_CHARS - 3).trim()}...`
+      : compact;
+
+  return `Work through this request end-to-end and maintain an updated todo list: ${clipped}`;
+}
+
+function selectFreshestUsage(
+  storeUsage: UsageSnapshot | undefined,
+  telemetryUsage: UsageSnapshot | null | undefined
+): UsageSnapshot | undefined {
+  if (!storeUsage) return telemetryUsage ?? undefined;
+  if (!telemetryUsage) return storeUsage;
+  if (storeUsage.totalTokens <= 0 && telemetryUsage.totalTokens > 0) return telemetryUsage;
+  if (storeUsage.contextUsedPercent >= 100 && telemetryUsage.contextUsedPercent < 100) {
+    return telemetryUsage;
+  }
+  const storeMs = storeUsage.recordedAt ? Date.parse(storeUsage.recordedAt) : 0;
+  const telemetryMs = telemetryUsage.recordedAt ? Date.parse(telemetryUsage.recordedAt) : 0;
+  if (telemetryMs > storeMs) return telemetryUsage;
+  if (
+    telemetryMs === storeMs &&
+    storeUsage.contextUsedPercent >= 100 &&
+    telemetryUsage.contextUsedPercent < 100
+  ) {
+    return telemetryUsage;
+  }
+  return storeUsage;
+}
+
+function formatTimelineTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+}
+
+type ChatTimelineMarker = {
+  key: string;
+  index: number;
+  time: string;
+  title: string;
+  kind: 'user' | 'assistant' | 'tool' | 'image';
+};
+
+function ChatQuickTimeline({
+  markers,
+  activeIndex,
+  onJump,
+}: {
+  markers: ChatTimelineMarker[];
+  activeIndex: number;
+  onJump: (index: number) => void;
+}) {
+  if (markers.length < 3) return null;
+
+  return (
+    <nav className="chat-quick-timeline" aria-label="Chat timeline">
+      <div className="chat-quick-timeline-track" aria-hidden="true" />
+      {markers.map((marker, markerIndex) => (
+        <button
+          key={marker.key}
+          type="button"
+          className={cn(
+            'chat-quick-timeline-dot',
+            `is-${marker.kind}`,
+            marker.index === activeIndex && 'is-active'
+          )}
+          style={{
+            top: `${markers.length === 1 ? 50 : (markerIndex / (markers.length - 1)) * 100}%`,
+          }}
+          aria-label={`Jump to ${marker.title} at ${marker.time}`}
+          title={`${marker.time} · ${marker.title}`}
+          onClick={() => onJump(marker.index)}
+        >
+          <span>{marker.time}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function TimelineContinuation({
+  timestamp,
+  icon,
+  label,
+  children,
+}: {
+  timestamp: number;
+  icon: ReactNode;
+  label: string;
+  children: ReactNode;
+}) {
+  const time = formatTimelineTime(timestamp);
+  return (
+    <div className="timeline-continuation">
+      <div className="timeline-continuation-rail">
+        {time && (
+          <span className="rail-time" title={new Date(timestamp).toLocaleString()}>
+            {time}
+          </span>
+        )}
+        <span className="timeline-continuation-marker" aria-label={label} title={label}>
+          {icon}
+        </span>
+      </div>
+      <div className="timeline-continuation-body">{children}</div>
+    </div>
+  );
+}
 
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
@@ -111,6 +329,7 @@ export function SessionPage() {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [visibleTimelineRange, setVisibleTimelineRange] = useState({ startIndex: 0, endIndex: 0 });
   // Floating header + input overlay: measure their heights so the scroll area
   // below gets matching top/bottom padding. Without this, content scrolls
   // completely behind the bars and the top/bottom rows are permanently hidden.
@@ -126,10 +345,12 @@ export function SessionPage() {
     currentUsage,
     currentTodos,
     currentActiveAgent,
+    currentAgentRuns,
     currentGeneratedImages,
     currentToolExecutions,
     currentQueue,
     currentPendingPermission,
+    currentPendingQuestion,
     currentOpenFiles,
   } = useSessionStore(
     useShallow((s) => {
@@ -141,10 +362,12 @@ export function SessionPage() {
         currentUsage: s.usage[sid],
         currentTodos: s.todos[sid] ?? EMPTY_TODOS,
         currentActiveAgent: s.activeAgent[sid] ?? null,
+        currentAgentRuns: s.agentRuns[sid] ?? EMPTY_AGENT_RUNS,
         currentGeneratedImages: s.generatedImages[sid] ?? EMPTY_IMAGES,
         currentToolExecutions: s.toolExecutions[sid] ?? EMPTY_TOOL_EXECUTIONS,
         currentQueue: s.queueState[sid] ?? null,
         currentPendingPermission: s.pendingPermissions[sid] ?? null,
+        currentPendingQuestion: s.pendingQuestions[sid] ?? null,
         currentOpenFiles: s.openFiles[sid] ?? EMPTY_OPEN_FILES,
       };
     })
@@ -156,14 +379,23 @@ export function SessionPage() {
   const clearStreamingContent = useSessionStore((s) => s.clearStreamingContent);
   const openFileInStore = useSessionStore((s) => s.openFile);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const setAgentRuns = useSessionStore((s) => s.setAgentRuns);
 
   const [showSavedIndicator, setShowSavedIndicator] = useState(false);
   const [selectedCliTool, setSelectedCliTool] = useState<string | null>(null);
   const [isExecutingTool, _setIsExecutingTool] = useState(false);
   const cliToolAbortRef = useRef<AbortController | null>(null);
+  const autoGoalBySessionRef = useRef<Record<string, string>>({});
   const [showAllowedDirsDialog, setShowAllowedDirsDialog] = useState(false);
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [mobileSheetPanel, setMobileSheetPanel] = useState<MobileSheetPanel | null>(null);
+  const [goalDraft, setGoalDraft] = useState('');
+  const [meshTargetSessionId, setMeshTargetSessionId] = useState('');
+  const [meshRoleDraft, setMeshRoleDraft] = useState('peer consultant');
+  const [meshDelegationTargetId, setMeshDelegationTargetId] = useState('');
+  const [meshDelegationDraft, setMeshDelegationDraft] = useState(
+    'Bitte pruefe diese Frage aus deinem Session-Kontext und antworte knapp mit Begruendung.'
+  );
 
   useEffect(() => {
     const handler = () => setShowAllowedDirsDialog(true);
@@ -171,18 +403,50 @@ export function SessionPage() {
     return () => window.removeEventListener('command:open-allowed-dirs', handler);
   }, []);
 
+  useEffect(() => {
+    const handler = () => setMobileSheetPanel('settings');
+    window.addEventListener('session:open-mobile-right-menu', handler);
+    return () => window.removeEventListener('session:open-mobile-right-menu', handler);
+  }, []);
+
   const [selectedToolDetail, setSelectedToolDetail] = useState<
     (typeof currentToolExecutions)[0] | null
   >(null);
   const loadedModeForSessionRef = useRef<string | null>(null);
 
-  const { uiProvider, setProvider } = useProviderStore();
   const pinnedPanels = usePanelDockStore((s) => s.pinned);
   const togglePinPanel = usePanelDockStore((s) => s.togglePin);
   const setPinnedPanel = usePanelDockStore((s) => s.setPinned);
   const unpinAllPanels = usePanelDockStore((s) => s.unpinAll);
-  const anyPanelPinned = DOCKED_PANEL_KEYS.some((panel) => pinnedPanels[panel]);
   const sessionModeStorageKey = useMemo(() => (id ? `sessionMode:${id}` : null), [id]);
+  const activeFollowupModeStorageKey = useMemo(
+    () => (id ? `activeFollowupMode:${id}` : null),
+    [id]
+  );
+  const [activeFollowupMode, setActiveFollowupMode] = useState<ActiveFollowupMode>(
+    ACTIVE_FOLLOWUP_MODE_DEFAULT
+  );
+
+  useEffect(() => {
+    if (!activeFollowupModeStorageKey || typeof window === 'undefined') {
+      setActiveFollowupMode(ACTIVE_FOLLOWUP_MODE_DEFAULT);
+      return;
+    }
+
+    const stored = window.localStorage.getItem(activeFollowupModeStorageKey);
+    setActiveFollowupMode(isActiveFollowupMode(stored) ? stored : ACTIVE_FOLLOWUP_MODE_DEFAULT);
+  }, [activeFollowupModeStorageKey]);
+
+  const handleActiveFollowupModeChange = useCallback(
+    (checked: boolean) => {
+      const next: ActiveFollowupMode = checked ? 'steer' : 'queue';
+      setActiveFollowupMode(next);
+      if (activeFollowupModeStorageKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(activeFollowupModeStorageKey, next);
+      }
+    },
+    [activeFollowupModeStorageKey]
+  );
 
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'smooth' });
@@ -243,16 +507,33 @@ export function SessionPage() {
     },
   });
 
-  const updateSettingsMutation = useMutation({
-    mutationFn: async (data: Partial<UserSettings>) => {
-      const response = await api.put<ApiResponse<UserSettings>>('/api/settings', data);
-      return response.data;
+  const { data: meshSessions } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
+      return response.data.data || [];
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+  });
+
+  const meshPeersQuery = useQuery({
+    queryKey: ['session-peers', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<SessionPeerLink[]>>(
+        `/api/sessions/${id}/peers`
+      );
+      return response.data.data || [];
     },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+  });
+
+  const meshDelegationsQuery = useQuery({
+    queryKey: ['session-delegations', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<SessionDelegation[]>>(
+        `/api/sessions/${id}/delegations`
+      );
+      return response.data.data || [];
     },
   });
 
@@ -268,6 +549,19 @@ export function SessionPage() {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('chat.rightDockCollapsed') === '1';
   });
+  const [rightMenuGroupsOpen, setRightMenuGroupsOpen] = useState<Record<RightMenuGroupId, boolean>>(
+    () => {
+      if (typeof window === 'undefined') return DEFAULT_RIGHT_MENU_GROUPS;
+      try {
+        const saved = window.localStorage.getItem('chat.rightMenuGroupsOpen');
+        if (!saved) return DEFAULT_RIGHT_MENU_GROUPS;
+        const parsed = JSON.parse(saved) as Partial<Record<RightMenuGroupId, boolean>>;
+        return { ...DEFAULT_RIGHT_MENU_GROUPS, ...parsed };
+      } catch {
+        return DEFAULT_RIGHT_MENU_GROUPS;
+      }
+    }
+  );
   const [runCockpitOpen, setRunCockpitOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('chat.runCockpitOpen') === '1';
@@ -285,6 +579,33 @@ export function SessionPage() {
       return next;
     });
   }, []);
+  const toggleRightMenuGroup = useCallback(
+    (groupId: RightMenuGroupId) => {
+      if (rightDockCollapsed) {
+        setRightDockCollapsed(false);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('chat.rightDockCollapsed', '0');
+        }
+        setRightMenuGroupsOpen((prev) => {
+          const next = { ...prev, [groupId]: true };
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem('chat.rightMenuGroupsOpen', JSON.stringify(next));
+          }
+          return next;
+        });
+        return;
+      }
+
+      setRightMenuGroupsOpen((prev) => {
+        const next = { ...prev, [groupId]: !prev[groupId] };
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('chat.rightMenuGroupsOpen', JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    [rightDockCollapsed]
+  );
   const openRunCockpitSection = useCallback(
     (section: RunCockpitSection = 'overview') => {
       unpinAllPanels();
@@ -296,23 +617,6 @@ export function SessionPage() {
     },
     [unpinAllPanels]
   );
-  const toggleRunCockpit = useCallback(() => {
-    setRunCockpitOpen((prev) => {
-      const next = !prev;
-      if (next) {
-        unpinAllPanels();
-        setRunCockpitTarget((target) => ({
-          section: target.section || 'overview',
-          version: target.version + 1,
-        }));
-      }
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('chat.runCockpitOpen', next ? '1' : '0');
-      }
-      return next;
-    });
-  }, [unpinAllPanels]);
-
   const closeActivityRails = useCallback(() => {
     setRunCockpitOpen(false);
     if (typeof window !== 'undefined') {
@@ -332,19 +636,6 @@ export function SessionPage() {
       }
     },
     [closeActivityRails, pinnedPanels, setPinnedPanel, unpinAllPanels]
-  );
-
-  const openWorkspacePanel = useCallback(
-    (panel: WorkspaceSheetPanel) => {
-      const isDesktop =
-        typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches;
-      if (isDesktop) {
-        openRightPanel(panel);
-      } else {
-        setMobileSheetPanel(panel);
-      }
-    },
-    [openRightPanel]
   );
 
   const hasOpenFiles = currentOpenFiles.length > 0;
@@ -381,15 +672,6 @@ export function SessionPage() {
         .sort((a, b) => a.timestamp - b.timestamp || a._sortIdx - b._sortIdx)
         .map(({ _sortIdx, ...rest }) => rest as TimelineItem),
     [sessionMessages, currentGeneratedImages, currentToolExecutions]
-  );
-
-  // Get recent tool executions for showing during activity (last 5 completed or in-progress)
-  const recentTools = useMemo(
-    () =>
-      currentToolExecutions
-        .filter((t) => t.status === 'started' || t.status === 'completed')
-        .slice(-5),
-    [currentToolExecutions]
   );
 
   // Live ref of the current timeline so Run turn jumps always read
@@ -429,12 +711,23 @@ export function SessionPage() {
     });
   }, [hasLiveAssistantTimelinePoint, timeline]);
 
+  const compactMessageNumbers = useMemo(() => {
+    let compactCount = 0;
+    const byId = new Map<string, number>();
+    for (const message of sessionMessages) {
+      if (message.id?.startsWith('compact-')) {
+        compactCount += 1;
+        byId.set(message.id, compactCount);
+      }
+    }
+    return { compactCount, byId };
+  }, [sessionMessages]);
+
   const footerConnectsToAssistantTurn = useMemo(() => {
     if (!hasLiveAssistantTimelinePoint) return false;
     const lastItem = timeline[timeline.length - 1];
     return (
-      !!lastItem &&
-      (lastItem.type !== 'message' || (lastItem.data as Message).role === 'assistant')
+      !!lastItem && (lastItem.type !== 'message' || (lastItem.data as Message).role === 'assistant')
     );
   }, [hasLiveAssistantTimelinePoint, timeline]);
 
@@ -445,6 +738,10 @@ export function SessionPage() {
     if (idx >= 0) {
       virtuosoRef.current?.scrollToIndex({ index: idx, behavior: 'smooth', align: 'start' });
     }
+  }, []);
+
+  const jumpToTimelineIndex = useCallback((index: number) => {
+    virtuosoRef.current?.scrollToIndex({ index, behavior: 'smooth', align: 'start' });
   }, []);
 
   const jumpToMessageFromRun = useCallback(
@@ -586,6 +883,7 @@ export function SessionPage() {
     getToolDisplay: typeof getToolDisplay;
     formatElapsed: typeof formatElapsed;
     clearStreamingContent: typeof clearStreamingContent;
+    openRunCockpitSection: (section: RunCockpitSection) => void;
     footerConnectsToAssistantTurn: boolean;
   } | null>(null);
 
@@ -594,8 +892,10 @@ export function SessionPage() {
       const sid = footerDepsRef.current?.id ?? '';
       const footerActivity = useSessionStore((s) => s.activity[sid] ?? IDLE_ACTIVITY);
       const footerActiveAgent = useSessionStore((s) => s.activeAgent[sid] ?? null);
+      const footerAgentRuns = useSessionStore((s) => s.agentRuns[sid] ?? EMPTY_AGENT_RUNS);
       const footerStreamingContent = useSessionStore((s) => s.streamingContent[sid] ?? '');
       const footerPermissionRequest = useSessionStore((s) => s.permissionRequests[sid] ?? null);
+      const footerActiveAgents = footerAgentRuns.filter((agent) => agent.status === 'started');
       const [footerNow, setFooterNow] = useState(() => Date.now());
       useEffect(() => {
         const intervalId = window.setInterval(() => setFooterNow(Date.now()), 1000);
@@ -605,6 +905,16 @@ export function SessionPage() {
       if (!deps) {
         return <div aria-hidden style={{ height: '8px' }} />;
       }
+      const footerHasAgentActivity = !!footerActiveAgent || footerActiveAgents.length > 0;
+      const footerThinkingDetail =
+        footerActivity.type === 'thinking' ? footerActivity.message?.trim() || '' : '';
+      const normalizedThinkingDetail = footerThinkingDetail
+        .toLowerCase()
+        .replace(/\.+$/g, '')
+        .trim();
+      const hideThinkingDetail =
+        normalizedThinkingDetail === `${deps.providerLabel.toLowerCase()} is thinking` ||
+        normalizedThinkingDetail === `${deps.providerLabel.toLowerCase()} thinking`;
       return (
         <div
           className={cn(
@@ -617,12 +927,14 @@ export function SessionPage() {
               correct chronological position with a live spinner + duration and
               persists after completion. The footer only handles state with no
               timeline equivalent: thinking and active subagents. */}
-          {(footerActivity.type === 'thinking' || footerActiveAgent) &&
+          {(footerActivity.type === 'thinking' ||
+            footerActiveAgent ||
+            footerActiveAgents.length > 0) &&
             !footerStreamingContent && (
               <div className="turn-asst pl-thinking-turn animate-fade-in">
                 <div className="ai-rail">
                   <div className="ai-mark pl-thinking-mark" title={deps.providerLabel}>
-                    {footerActiveAgent ? (
+                    {footerActiveAgent || footerActiveAgents.length > 0 ? (
                       <>
                         <Brain className="h-4 w-4" />
                         <span className="pl-thinking-ping" />
@@ -637,13 +949,31 @@ export function SessionPage() {
                   <div className="ai-thread" />
                 </div>
                 <div className="ai-body">
-                  <div className="pl-thinking-body">
+                  <div
+                    className={cn('pl-thinking-body', footerHasAgentActivity && 'is-clickable')}
+                    role={footerHasAgentActivity ? 'button' : undefined}
+                    tabIndex={footerHasAgentActivity ? 0 : undefined}
+                    onClick={() => {
+                      if (footerHasAgentActivity) deps.openRunCockpitSection('agents');
+                    }}
+                    onKeyDown={(event) => {
+                      if (!footerHasAgentActivity) return;
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        deps.openRunCockpitSection('agents');
+                      }
+                    }}
+                  >
                     <div className="pl-thinking-title">
                       {footerActiveAgent ? (
-                        <>Agent: {deps.getAgentDisplay(footerActiveAgent.agentType)}</>
+                        footerActiveAgents.length > 1 ? (
+                          <>Subagents: {footerActiveAgents.length} running</>
+                        ) : (
+                          <>Agent: {deps.getAgentDisplay(footerActiveAgent.agentType)}</>
+                        )
                       ) : (
                         <>
-                          {deps.providerLabel} is thinking
+                          {deps.providerLabel} thinking
                           <span className="pl-thinking-dots" aria-hidden="true">
                             <span>.</span>
                             <span>.</span>
@@ -660,9 +990,9 @@ export function SessionPage() {
                           ? ` (${deps.formatElapsed(footerNow - footerActiveAgent.startedAt)})`
                           : ''}
                       </div>
-                    ) : footerActivity.type === 'thinking' && footerActivity.message ? (
+                    ) : footerThinkingDetail && !hideThinkingDetail ? (
                       <div className="pl-thinking-detail">
-                        {footerActivity.message}
+                        {footerThinkingDetail}
                         {footerActivity.messageStartedAt
                           ? ` (${deps.formatElapsed(footerNow - footerActivity.messageStartedAt)})`
                           : ''}
@@ -749,21 +1079,131 @@ export function SessionPage() {
       return null;
     },
     enabled: !!id,
+    refetchInterval: 4000,
+    refetchIntervalInBackground: true,
   });
 
-  const sessionProvider = session?.cliProvider ?? toCliProvider(uiProvider);
+  const sessionProvider = session?.cliProvider ?? toCliProvider();
+  const sessionSurface = session?.surface ?? 'code';
+  const isTaskSurface = sessionSurface === 'task';
   const sessionUiProvider = toUiProvider(sessionProvider);
   const providerLabel = CLI_PROVIDER_LABEL[sessionProvider];
-  const hasLiveRunActivity = hasLiveAssistantFooter || currentActivity.type === 'tool';
-  const hasQueuedRunWork = !!currentQueue?.busy;
+  const sessionRuntime = session?.runtime;
+  const sessionTelemetryUsage = session?.telemetry?.usage ?? null;
+  const visibleUsage = normalizeUsageSnapshot(
+    sessionProvider === 'codex' && sessionTelemetryUsage
+      ? sessionTelemetryUsage
+      : selectFreshestUsage(currentUsage, sessionTelemetryUsage)
+  );
+  const contextEventStats = session?.telemetry
+    ? {
+        contextSnapshots: session.telemetry.contextSnapshots,
+        compactEvents: session.telemetry.compactEvents,
+      }
+    : compactMessageNumbers.compactCount > 0
+      ? {
+          contextSnapshots: 0,
+          compactEvents: compactMessageNumbers.compactCount,
+        }
+      : undefined;
+  const compactIndexOffset = Math.max(
+    0,
+    (contextEventStats?.compactEvents ?? compactMessageNumbers.compactCount) -
+      compactMessageNumbers.compactCount
+  );
+  const hasRuntimeRunActivity =
+    !!sessionRuntime?.busy ||
+    !!sessionRuntime?.streaming ||
+    !!sessionRuntime?.subagents?.some((agent) => agent.status === 'started');
+  const hasLiveRunActivity =
+    hasLiveAssistantFooter || currentActivity.type === 'tool' || hasRuntimeRunActivity;
+  const hasQueuedRunWork =
+    !!currentQueue?.busy ||
+    (sessionRuntime?.queueDepth ?? 0) > 0 ||
+    (sessionRuntime?.queueItems?.length ?? 0) > 0;
   const isActive = hasLiveRunActivity || hasQueuedRunWork;
-  const composerQueuesWhileActive = sessionProvider === 'codex';
+  const supportsActiveFollowups = sessionProvider === 'codex' || sessionProvider === 'opencode';
+  const supportsSteeredFollowups = sessionProvider === 'codex';
+  const composerActiveFollowupMode: ActiveFollowupMode | undefined = supportsActiveFollowups
+    ? supportsSteeredFollowups
+      ? activeFollowupMode
+      : 'queue'
+    : undefined;
+  const activeSendFollowupMode: ActiveFollowupMode | undefined =
+    supportsActiveFollowups && isActive ? composerActiveFollowupMode : undefined;
+  const composerQueuesWhileActive =
+    sessionProvider === 'opencode' || (supportsSteeredFollowups && activeFollowupMode === 'queue');
+  const composerSteersWhileActive = supportsSteeredFollowups && activeFollowupMode === 'steer';
   const canInterruptActiveRun =
-    hasLiveRunActivity || (!composerQueuesWhileActive && hasQueuedRunWork);
+    hasLiveRunActivity ||
+    (!composerQueuesWhileActive && !composerSteersWhileActive && hasQueuedRunWork);
+  const quickTimelineMarkers = useMemo<ChatTimelineMarker[]>(() => {
+    const raw = timeline
+      .map((item, index): ChatTimelineMarker | null => {
+        const time = formatTimelineTime(item.timestamp);
+        if (item.type === 'message') {
+          const message = item.data;
+          if (message.id?.startsWith('compact-')) return null;
+          return {
+            key: `message-${message.id || item.timestamp}`,
+            index,
+            time,
+            title: message.role === 'user' ? 'You' : providerLabel,
+            kind: message.role === 'user' ? 'user' : 'assistant',
+          };
+        }
+        if (item.type === 'tool') {
+          return {
+            key: `tool-${item.data.toolId}`,
+            index,
+            time,
+            title: item.data.actionSummary?.title || item.data.toolName,
+            kind: 'tool',
+          };
+        }
+        return {
+          key: `image-${item.data.timestamp}`,
+          index,
+          time,
+          title: 'Generated image',
+          kind: 'image',
+        };
+      })
+      .filter((marker): marker is ChatTimelineMarker => marker !== null);
+
+    const maxMarkers = 30;
+    if (raw.length <= maxMarkers) return raw;
+
+    const sampled: ChatTimelineMarker[] = [];
+    const seen = new Set<number>();
+    for (let i = 0; i < maxMarkers; i += 1) {
+      const rawIndex = Math.round((i / (maxMarkers - 1)) * (raw.length - 1));
+      const marker = raw[rawIndex];
+      if (marker && !seen.has(marker.index)) {
+        sampled.push(marker);
+        seen.add(marker.index);
+      }
+    }
+    return sampled;
+  }, [providerLabel, timeline]);
+  const visibleTimelineIndex = Math.round(
+    (visibleTimelineRange.startIndex + visibleTimelineRange.endIndex) / 2
+  );
+  const activeQuickTimelineIndex = useMemo(() => {
+    if (quickTimelineMarkers.length === 0) return visibleTimelineIndex;
+    return quickTimelineMarkers.reduce((nearest, marker) =>
+      Math.abs(marker.index - visibleTimelineIndex) < Math.abs(nearest.index - visibleTimelineIndex)
+        ? marker
+        : nearest
+    ).index;
+  }, [quickTimelineMarkers, visibleTimelineIndex]);
 
   useEffect(() => {
     if (!id || !session) {
       return;
+    }
+    if (session.runtime?.subagents?.length) {
+      setAgentRuns(id, session.runtime.subagents);
     }
     if (loadedModeForSessionRef.current !== id) {
       // Prefer the DB-persisted mode so the choice follows the user across browsers;
@@ -782,7 +1222,7 @@ export function SessionPage() {
       }
       loadedModeForSessionRef.current = id;
     }
-  }, [id, session, sessionModeStorageKey, getStoredSessionMode, allowedSessionModes]);
+  }, [id, session, sessionModeStorageKey, getStoredSessionMode, allowedSessionModes, setAgentRuns]);
 
   // Keep the footer's live dependencies fresh. The stable memoized Footer
   // component reads from this ref every render, so updates here propagate
@@ -796,11 +1236,27 @@ export function SessionPage() {
     getToolDisplay,
     formatElapsed,
     clearStreamingContent,
+    openRunCockpitSection,
     footerConnectsToAssistantTurn,
   };
+  const configuredModelsForProvider = settings?.cliProviderModelLists?.[sessionProvider] || [];
+  const rawSelectedModel = session?.cliModel || '';
+  const selectedModel =
+    sessionProvider === 'opencode' &&
+    rawSelectedModel &&
+    configuredModelsForProvider.length > 0 &&
+    !configuredModelsForProvider.includes(rawSelectedModel)
+      ? ''
+      : rawSelectedModel;
+  const resolvedOpenCodeDefaultModel = (() => {
+    if (sessionProvider !== 'opencode') return '';
+    return configuredModelsForProvider[0] || CLI_PROVIDER_DEFAULT_MODEL.opencode;
+  })();
   const resolvedDefaultModel =
-    settings?.cliProviderModels?.[sessionProvider] || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider];
-  const selectedModel = settings?.cliProviderModels?.[sessionProvider] || '';
+    selectedModel ||
+    (sessionProvider === 'opencode'
+      ? resolvedOpenCodeDefaultModel
+      : CLI_PROVIDER_DEFAULT_MODEL[sessionProvider]);
   const modelSelectValue = selectedModel || '__default__';
   const currentProviderInfo = cliProviders?.find((provider) => provider.id === sessionProvider);
   const modelLabels = useMemo(() => {
@@ -813,9 +1269,17 @@ export function SessionPage() {
     return (labelled || raw).toString();
   })();
   const modelOptions = useMemo(() => {
+    const configuredModels = settings?.cliProviderModelLists?.[sessionProvider] || [];
+    if (sessionProvider === 'opencode') {
+      return Array.from(new Set(configuredModels));
+    }
+
     const options = new Set<string>();
     const providerModels = currentProviderInfo?.models || [];
     for (const model of providerModels) {
+      options.add(model);
+    }
+    for (const model of configuredModels) {
       options.add(model);
     }
     if (selectedModel) {
@@ -826,9 +1290,14 @@ export function SessionPage() {
       options.add(defaultModel);
     }
     return Array.from(options);
-  }, [currentProviderInfo, sessionProvider, selectedModel]);
-  const selectedReasoning = settings?.cliProviderReasoning?.[sessionProvider] || '';
+  }, [currentProviderInfo, sessionProvider, selectedModel, settings?.cliProviderModelLists]);
+  const showDefaultModelOption =
+    sessionProvider !== 'opencode' || configuredModelsForProvider.length > 0;
+  const selectedReasoning = session?.cliReasoning || '';
   const reasoningSelectValue = selectedReasoning || '__default__';
+  const selectedServiceTier = session?.cliServiceTier || '';
+  const serviceTierSelectValue = selectedServiceTier || '__default__';
+  const fastModeActive = sessionProvider === 'codex' && serviceTierSelectValue === 'fast';
   const reasoningOptions = useMemo(() => {
     if (sessionProvider === 'claude') {
       return [
@@ -860,95 +1329,9 @@ export function SessionPage() {
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
       { value: 'high', label: 'High' },
-      { value: 'extra_high', label: 'Extra High' },
+      { value: 'xhigh', label: 'XHigh' },
     ];
   }, [sessionProvider]);
-  const quickPrompts = useMemo(
-    () => [
-      { heading: 'Prompts' },
-      { label: 'Plan', value: 'Plan the approach and outline the steps.' },
-      { label: 'Debug', value: 'Find the root cause and propose a fix.' },
-      { label: 'Refactor', value: 'Refactor for clarity and safer defaults.' },
-      { label: 'Tests', value: 'Add or update tests for this change.' },
-      { label: 'Explain', value: 'Explain the code and key decisions.' },
-
-      { heading: 'Session' },
-      { label: 'New session', value: '/new', hint: '/new' },
-      { label: 'Rename session', value: '/rename ', hint: '/rename' },
-      { label: 'Reset context', value: '/reset', hint: '/reset' },
-      { label: 'Resume', value: '/resume', hint: '/resume' },
-      { label: 'Continue', value: '/continue', hint: '/continue' },
-      { label: 'Clear screen', value: '/clear', hint: '/clear' },
-      { label: 'Compact history', value: '/compact', hint: '/compact' },
-      { label: 'Copy last response', value: '/copy', hint: '/copy' },
-      { label: 'Export conversation', value: '/export', hint: '/export' },
-
-      { heading: 'WebUI' },
-      { label: 'Help', value: '/help', hint: '/help' },
-      { label: 'Theme & settings', value: '/theme', hint: '/theme' },
-      { label: 'Permissions', value: '/permissions', hint: '/permissions' },
-      { label: 'Diff / Git', value: '/diff', hint: '/diff' },
-      { label: 'Doctor', value: '/doctor', hint: '/doctor' },
-      { label: 'Send feedback', value: '/feedback', hint: '/feedback' },
-
-      { heading: sessionProvider === 'codex' ? 'Codex Workflows' : 'Provider Workflows' },
-      { label: 'Context window', value: '/context', hint: '/context' },
-      { label: 'Memory', value: '/memory', hint: '/memory' },
-      { label: 'Model', value: '/model', hint: '/model' },
-      { label: 'Status', value: '/status', hint: '/status' },
-      { label: 'Cost', value: '/cost', hint: '/cost' },
-      ...(sessionProvider === 'codex'
-        ? [
-            { label: 'Review changes', value: '/review', hint: '/review' },
-            { label: 'Review vs branch', value: '/review --base ', hint: '/review --base' },
-            { label: 'Set goal', value: '/goal ', hint: '/goal' },
-            { label: 'Generate image', value: '/imagegen ', hint: '/imagegen' },
-            { label: 'Feature flags', value: '/features', hint: '/features' },
-            { label: 'Web search', value: '/web-search', hint: '/web-search' },
-            { label: 'Subagents', value: '/subagents', hint: '/subagents' },
-          ]
-        : [
-            { label: 'Plan mode', value: '/plan', hint: '/plan' },
-            { label: 'Init project', value: '/init', hint: '/init' },
-            { label: 'Review PR', value: '/review', hint: '/review' },
-            { label: 'Security review', value: '/security-review', hint: '/security-review' },
-          ]),
-      { label: 'Agents', value: '/agents', hint: '/agents' },
-      { label: 'MCP', value: '/mcp', hint: '/mcp' },
-      { label: 'Hooks', value: '/hooks', hint: '/hooks' },
-      { label: 'Skills', value: '/skills', hint: '/skills' },
-      ...(sessionProvider === 'claude'
-        ? [
-            { label: 'Debug info', value: '/debug', hint: '/debug' },
-            { label: 'Effort', value: '/effort', hint: '/effort' },
-            { label: 'Recap', value: '/recap', hint: '/recap' },
-            { label: 'BTW notes', value: '/btw ', hint: '/btw' },
-            { label: 'Add directory', value: '/add-dir ', hint: '/add-dir' },
-            { label: 'Claude API', value: '/claude-api', hint: '/claude-api' },
-            { label: 'Simplify code', value: '/simplify', hint: '/simplify' },
-            { label: 'Batch', value: '/batch', hint: '/batch' },
-            { label: 'Loop', value: '/loop ', hint: '/loop' },
-            { label: 'Proactive mode', value: '/proactive', hint: '/proactive' },
-            {
-              label: 'Fewer permission prompts',
-              value: '/less-permission-prompts',
-              hint: '/less-permission-prompts',
-            },
-          ]
-        : []),
-      { label: 'Usage', value: '/usage', hint: '/usage' },
-      ...(sessionProvider === 'claude'
-        ? [
-            { label: 'Insights', value: '/insights', hint: '/insights' },
-            { label: 'Stats', value: '/stats', hint: '/stats' },
-            { label: 'Schedule', value: '/schedule', hint: '/schedule' },
-            { label: 'Routines', value: '/routines', hint: '/routines' },
-          ]
-        : []),
-      { label: 'Fast mode', value: '/fast', hint: '/fast' },
-    ],
-    [sessionProvider]
-  );
   // Fetch messages
   const { isLoading: messagesLoading } = useQuery({
     queryKey: ['messages', id],
@@ -977,20 +1360,6 @@ export function SessionPage() {
 
   const queryClient = useQueryClient();
 
-  // Star/unstar session mutation
-  const starMutation = useMutation({
-    mutationFn: async () => {
-      const response = await api.patch<ApiResponse<{ starred: boolean }>>(
-        `/api/sessions/${id}/star`
-      );
-      return response.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session', id] });
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    },
-  });
-
   const providerMutation = useMutation({
     mutationFn: async (provider: CLIProvider) => {
       const response = await api.patch<ApiResponse<Session>>(`/api/sessions/${id}/provider`, {
@@ -1011,6 +1380,167 @@ export function SessionPage() {
           description: 'Session restarted with the new provider. Resend the last prompt if needed.',
         });
       }
+    },
+  });
+
+  const sessionModelMutation = useMutation({
+    mutationFn: async (model: string | null) => {
+      const response = await api.patch<ApiResponse<Session>>(`/api/sessions/${id}/model`, {
+        model,
+      });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      if (data.success && data.data && id) {
+        queryClient.setQueryData(['session', id], data.data);
+        useSessionStore.getState().updateSession(id, data.data);
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        toast({
+          title: 'Model updated',
+          description:
+            session?.status === 'running'
+              ? 'Restarting session to apply the new model.'
+              : 'Restart the session to apply the new model.',
+        });
+        if (session?.status === 'running') {
+          socketService.restartSession(id);
+        }
+      }
+    },
+  });
+
+  const sessionReasoningMutation = useMutation({
+    mutationFn: async (reasoning: string | null) => {
+      const response = await api.patch<ApiResponse<Session>>(`/api/sessions/${id}/reasoning`, {
+        reasoning,
+      });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      if (data.success && data.data && id) {
+        queryClient.setQueryData(['session', id], data.data);
+        useSessionStore.getState().updateSession(id, data.data);
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        toast({
+          title: 'Reasoning updated',
+          description:
+            session?.status === 'running'
+              ? 'Restarting session to apply the new reasoning level.'
+              : 'Restart the session to apply the new reasoning level.',
+        });
+        if (session?.status === 'running') {
+          socketService.restartSession(id);
+        }
+      }
+    },
+  });
+
+  const sessionServiceTierMutation = useMutation({
+    mutationFn: async (serviceTier: string | null) => {
+      const response = await api.patch<ApiResponse<Session>>(`/api/sessions/${id}/service-tier`, {
+        serviceTier,
+      });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      if (data.success && data.data && id) {
+        queryClient.setQueryData(['session', id], data.data);
+        useSessionStore.getState().updateSession(id, data.data);
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        toast({
+          title: data.data.cliServiceTier === 'fast' ? 'Fast enabled' : 'Fast disabled',
+          description:
+            session?.status === 'running'
+              ? 'Restarting session to apply Fast mode.'
+              : 'Restart the session to apply Fast mode.',
+        });
+        if (session?.status === 'running') {
+          socketService.restartSession(id);
+        }
+      }
+    },
+  });
+
+  const sessionSurfaceMutation = useMutation({
+    mutationFn: async (surface: SessionSurface) => {
+      const response = await api.patch<ApiResponse<Session>>(`/api/sessions/${id}/surface`, {
+        surface,
+      });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      if (data.success && data.data && id) {
+        queryClient.setQueryData(['session', id], data.data);
+        useSessionStore.getState().updateSession(id, data.data);
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Surface update failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const linkPeerMutation = useMutation({
+    mutationFn: async ({ targetSessionId, role }: { targetSessionId: string; role: string }) => {
+      const response = await api.post<ApiResponse<SessionPeerLink>>(`/api/sessions/${id}/peers`, {
+        targetSessionId,
+        role: role.trim() || null,
+      });
+      return response.data.data;
+    },
+    onSuccess: (peer) => {
+      queryClient.invalidateQueries({ queryKey: ['session-peers', id] });
+      if (peer?.targetSessionId) setMeshDelegationTargetId(peer.targetSessionId);
+      toast({
+        title: 'Peer linked',
+        description: peer?.target?.name ? `${peer.target.name} can now be consulted.` : undefined,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Peer link failed', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const unlinkPeerMutation = useMutation({
+    mutationFn: async (targetSessionId: string) => {
+      await api.delete(`/api/sessions/${id}/peers/${encodeURIComponent(targetSessionId)}`);
+      return targetSessionId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session-peers', id] });
+      toast({ title: 'Peer unlinked' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Unlink failed', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const createDelegationMutation = useMutation({
+    mutationFn: async ({ toSessionId, content }: { toSessionId: string; content: string }) => {
+      const response = await api.post<ApiResponse<SessionDelegation>>(
+        `/api/sessions/${id}/delegations`,
+        {
+          toSessionId,
+          content,
+          kind: 'consult',
+        }
+      );
+      return response.data.data;
+    },
+    onSuccess: (delegation) => {
+      queryClient.invalidateQueries({ queryKey: ['session-delegations', id] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      toast({
+        title: 'Delegation sent',
+        description: delegation?.correlationId,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Delegation failed', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -1100,14 +1630,10 @@ export function SessionPage() {
   }, [id, sessionModeStorageKey]);
 
   useEffect(() => {
-    if (!session?.cliProvider) {
-      return;
+    if (isTaskSurface && mainView !== 'chat') {
+      setMainView('chat');
     }
-    const nextUiProvider = toUiProvider(session.cliProvider);
-    if (nextUiProvider !== uiProvider) {
-      setProvider(nextUiProvider);
-    }
-  }, [session?.cliProvider, setProvider, uiProvider]);
+  }, [isTaskSurface, mainView]);
 
   // Show a brief indicator when an assistant message is persisted
   useEffect(() => {
@@ -1135,14 +1661,29 @@ export function SessionPage() {
     return () => window.clearTimeout(timeout);
   }, [showSavedIndicator]);
 
+  const maybeAutoSetGoal = useCallback(
+    (message: string) => {
+      if (!id || sessionProvider !== 'codex' || currentTodos.length > 0) return;
+
+      const objective = buildAutoGoalObjective(message);
+      if (!objective) return;
+      if (autoGoalBySessionRef.current[id] === objective) return;
+
+      autoGoalBySessionRef.current[id] = objective;
+      socketService.sendMessage(id, `/goal ${objective}`);
+    },
+    [currentTodos.length, id, sessionProvider]
+  );
+
   // Callbacks for ChatInput
   const handleSendMessage = useCallback(
     (message: string) => {
       if (!id) return;
-      socketService.sendMessage(id, message);
+      maybeAutoSetGoal(message);
+      socketService.sendMessage(id, message, undefined, activeSendFollowupMode);
       clearStreamingContent(id);
     },
-    [id, clearStreamingContent]
+    [id, maybeAutoSetGoal, activeSendFollowupMode, clearStreamingContent]
   );
 
   const handleSendMessageWithFiles = useCallback(
@@ -1150,13 +1691,14 @@ export function SessionPage() {
       if (!id) return;
       setIsSending(true);
       try {
-        await socketService.sendMessageWithFiles(id, message, files);
+        maybeAutoSetGoal(message);
+        await socketService.sendMessageWithFiles(id, message, files, activeSendFollowupMode);
         clearStreamingContent(id);
       } finally {
         setIsSending(false);
       }
     },
-    [id, clearStreamingContent]
+    [id, maybeAutoSetGoal, activeSendFollowupMode, clearStreamingContent]
   );
 
   const handleCommandExecute = useCallback(
@@ -1182,16 +1724,16 @@ export function SessionPage() {
             sessionId: id,
             currentModel: resolvedDefaultModel || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider],
             provider: sessionProvider,
-            usage: currentUsage
+            usage: visibleUsage
               ? {
-                  inputTokens: currentUsage.inputTokens,
-                  outputTokens: currentUsage.outputTokens,
-                  cacheReadTokens: currentUsage.cacheReadTokens,
-                  cacheCreationTokens: currentUsage.cacheCreationTokens,
-                  totalTokens: currentUsage.totalTokens,
-                  contextWindow: currentUsage.contextWindow,
-                  contextUsedPercent: currentUsage.contextUsedPercent,
-                  cost: currentUsage.totalCostUsd,
+                  inputTokens: visibleUsage.inputTokens,
+                  outputTokens: visibleUsage.outputTokens,
+                  cacheReadTokens: visibleUsage.cacheReadTokens,
+                  cacheCreationTokens: visibleUsage.cacheCreationTokens,
+                  totalTokens: visibleUsage.totalTokens,
+                  contextWindow: visibleUsage.contextWindow,
+                  contextUsedPercent: visibleUsage.contextUsedPercent,
+                  cost: visibleUsage.totalCostUsd,
                 }
               : undefined,
           }
@@ -1216,6 +1758,17 @@ export function SessionPage() {
           case 'forward_to_cli':
             if (result.response) socketService.sendMessage(id, result.response);
             break;
+
+          case 'open_login': {
+            const provider =
+              typeof data.provider === 'string' && data.provider ? data.provider : 'codex';
+            window.location.href = `/auth/${encodeURIComponent(provider)}`;
+            toast({
+              title: 'Login',
+              description: `Opening ${provider} login flow.`,
+            });
+            break;
+          }
 
           case 'rename_session': {
             const name = typeof data.name === 'string' ? data.name : '';
@@ -1300,7 +1853,12 @@ export function SessionPage() {
 
           case 'open_settings': {
             const tab = typeof data.tab === 'string' ? data.tab : undefined;
-            navigate(tab ? `/settings?tab=${encodeURIComponent(tab)}` : '/settings');
+            const section = typeof data.section === 'string' ? data.section : undefined;
+            const params = new URLSearchParams();
+            if (tab) params.set('tab', tab);
+            if (section) params.set('section', section);
+            const query = params.toString();
+            navigate(query ? `/settings?${query}` : '/settings');
             break;
           }
 
@@ -1332,67 +1890,14 @@ export function SessionPage() {
               `- Session ID: \`${id}\``,
               `- Provider: ${sessionProvider}`,
               `- Model: ${resolvedDefaultModel || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider]}`,
-              sessionProvider === 'codex'
-                ? `- Service tier: ${settings?.cliProviderServiceTiers?.codex === 'fast' ? 'fast' : 'standard'}`
-                : null,
               `- Working directory: ${session?.workingDirectory ?? 'none'}`,
               `- Status: ${session?.status ?? 'unknown'}`,
               `- Messages: ${sessionMessages.length}`,
-              currentUsage
-                ? `- Usage: ${currentUsage.inputTokens.toLocaleString()} in / ${currentUsage.outputTokens.toLocaleString()} out, $${currentUsage.totalCostUsd.toFixed(4)}`
+              visibleUsage
+                ? `- Usage: ${visibleUsage.inputTokens.toLocaleString()} in / ${visibleUsage.outputTokens.toLocaleString()} out, $${visibleUsage.totalCostUsd.toFixed(4)}`
                 : '- Usage: no data',
             ].filter((line): line is string => typeof line === 'string');
             appendAssistant(lines.join('\n'));
-            break;
-          }
-
-          case 'toggle_fast': {
-            if (sessionProvider !== 'codex') {
-              if (result.response) socketService.sendMessage(id, result.response);
-              break;
-            }
-
-            const isCurrentlyFast = settings?.cliProviderServiceTiers?.codex === 'fast';
-            if (data.statusOnly === true) {
-              appendAssistant(
-                isCurrentlyFast
-                  ? 'Codex fast mode is enabled. The next Codex turn uses `service_tier="fast"`.'
-                  : 'Codex fast mode is disabled. The next Codex turn uses the standard service tier.'
-              );
-              break;
-            }
-
-            const shouldEnable =
-              typeof data.enabled === 'boolean' ? data.enabled : !isCurrentlyFast;
-
-            const nextServiceTiers: Partial<Record<CLIProvider, 'fast'>> = {
-              ...(settings?.cliProviderServiceTiers || {}),
-            };
-
-            if (shouldEnable) {
-              nextServiceTiers.codex = 'fast';
-            } else {
-              delete nextServiceTiers.codex;
-            }
-
-            updateSettingsMutation.mutate(
-              {
-                cliProviderServiceTiers: nextServiceTiers,
-              },
-              {
-                onSuccess: () => {
-                  toast({
-                    title: shouldEnable ? 'Fast mode enabled' : 'Fast mode disabled',
-                    description: shouldEnable
-                      ? 'Codex will use the fast service tier without changing model or reasoning.'
-                      : 'Codex will use the standard service tier.',
-                  });
-                  if (session?.status === 'running') {
-                    socketService.restartSession(id);
-                  }
-                },
-              }
-            );
             break;
           }
 
@@ -1411,16 +1916,14 @@ export function SessionPage() {
       id,
       session?.workingDirectory,
       session?.status,
-      currentUsage,
+      visibleUsage,
       sessionMessages,
       sessionProvider,
       resolvedDefaultModel,
-      settings,
       setMessages,
       addMessage,
       navigate,
       queryClient,
-      updateSettingsMutation,
     ]
   );
 
@@ -1436,41 +1939,18 @@ export function SessionPage() {
 
   const applyModelSelection = (value: string) => {
     if (!sessionProvider) return;
-    const current = settings?.cliProviderModels?.[sessionProvider] || '';
+    if (!id) return;
+    const current = session?.cliModel || '';
     const nextValue = value === '__default__' ? '' : value.trim();
     if (nextValue === current) return;
 
-    const next: Partial<Record<CLIProvider, string>> = {
-      ...(settings?.cliProviderModels || {}),
-    };
-    if (nextValue) {
-      next[sessionProvider] = nextValue;
-    } else {
-      delete next[sessionProvider];
-    }
-
-    updateSettingsMutation.mutate(
-      { cliProviderModels: next },
-      {
-        onSuccess: () => {
-          toast({
-            title: 'Model updated',
-            description:
-              session?.status === 'running'
-                ? 'Restarting session to apply the new model.'
-                : 'Restart the session to apply the new model.',
-          });
-          if (session?.status === 'running') {
-            handleRestart();
-          }
-        },
-      }
-    );
+    sessionModelMutation.mutate(nextValue || null);
   };
 
   const applyReasoningSelection = (value: string) => {
     if (!sessionProvider) return;
-    const current = settings?.cliProviderReasoning?.[sessionProvider] || '';
+    if (!id) return;
+    const current = session?.cliReasoning || '';
     const nextValue =
       value === '__default__'
         ? ''
@@ -1480,32 +1960,29 @@ export function SessionPage() {
             .replace(/[\s-]+/g, '_');
     if (nextValue === current) return;
 
-    const next: Partial<Record<CLIProvider, string>> = {
-      ...(settings?.cliProviderReasoning || {}),
-    };
-    if (nextValue) {
-      next[sessionProvider] = nextValue;
-    } else {
-      delete next[sessionProvider];
-    }
+    sessionReasoningMutation.mutate(nextValue || null);
+  };
 
-    updateSettingsMutation.mutate(
-      { cliProviderReasoning: next },
-      {
-        onSuccess: () => {
-          toast({
-            title: 'Reasoning updated',
-            description:
-              session?.status === 'running'
-                ? 'Restarting session to apply the new reasoning level.'
-                : 'Restart the session to apply the new reasoning level.',
-          });
-          if (session?.status === 'running') {
-            handleRestart();
-          }
-        },
-      }
-    );
+  const applyServiceTierSelection = (value: string) => {
+    if (sessionProvider !== 'codex') return;
+    if (!id) return;
+    const current = session?.cliServiceTier || '';
+    const nextValue = value === '__default__' ? '' : value.trim().toLowerCase();
+    if (nextValue === current) return;
+
+    sessionServiceTierMutation.mutate(nextValue || null);
+  };
+
+  const handleFastModeToggle = () => {
+    applyServiceTierSelection(fastModeActive ? '__default__' : 'fast');
+  };
+
+  const applySurfaceSelection = (surface: SessionSurface) => {
+    if (!id || surface === sessionSurface) return;
+    sessionSurfaceMutation.mutate(surface);
+    if (surface === 'task') {
+      setMainView('chat');
+    }
   };
 
   const handleModeChange = useCallback(
@@ -1549,6 +2026,36 @@ export function SessionPage() {
     [id, currentPendingPermission]
   );
 
+  const handleQuestionResponse = useCallback(
+    async (answers: string[][]) => {
+      if (!id || !currentPendingQuestion) return;
+      try {
+        await socketService.respondToQuestion(
+          id,
+          currentPendingQuestion.requestId,
+          answers,
+          currentPendingQuestion.providerSessionId
+        );
+      } catch (error) {
+        console.error('Failed to respond to OpenCode question:', error);
+      }
+    },
+    [id, currentPendingQuestion]
+  );
+
+  const handleQuestionReject = useCallback(async () => {
+    if (!id || !currentPendingQuestion) return;
+    try {
+      await socketService.rejectQuestion(
+        id,
+        currentPendingQuestion.requestId,
+        currentPendingQuestion.providerSessionId
+      );
+    } catch (error) {
+      console.error('Failed to reject OpenCode question:', error);
+    }
+  }, [id, currentPendingQuestion]);
+
   const handleCancelCliTool = () => {
     if (cliToolAbortRef.current) {
       cliToolAbortRef.current.abort();
@@ -1561,65 +2068,75 @@ export function SessionPage() {
     clearStreamingContent(id);
   }, [clearStreamingContent, id]);
 
-  const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
-  const runningToolsCount = recentTools.filter((t) => t.status === 'started').length;
-  const queuedTurnsCount = currentQueue?.depth ?? 0;
-  const runAttentionCount = queuedTurnsCount + runningToolsCount;
+  const handleGoalSubmit = useCallback(
+    async (event?: FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+      const objective = goalDraft.trim();
+      if (!objective || !id) return;
 
-  const composerActions = useMemo(
-    () => [
-      {
-        id: 'run',
-        label: runCockpitOpen ? 'Hide running' : 'Running',
-        icon: <Activity className="h-3.5 w-3.5" />,
-        onSelect: toggleRunCockpit,
-        badge: runAttentionCount,
-        active: runCockpitOpen,
-      },
-      {
-        id: 'files',
-        label: 'Files',
-        icon: <FolderOpen className="h-3.5 w-3.5" />,
-        onSelect: () => setMainView('files'),
-      },
-      {
-        id: 'tasks',
-        label: 'Tasks',
-        icon: <ListTodo className="h-3.5 w-3.5" />,
-        onSelect: () => openWorkspacePanel('tasks'),
-        badge: pendingTasksCount,
-      },
-      {
-        id: 'tools',
-        label: 'Tools',
-        icon: <Wrench className="h-3.5 w-3.5" />,
-        onSelect: () => openWorkspacePanel('tools'),
-        badge: runningToolsCount,
-        badgePulse: runningToolsCount > 0,
-      },
-      {
-        id: 'config',
-        label: 'Config',
-        icon: <Brain className="h-3.5 w-3.5" />,
-        onSelect: () => openWorkspacePanel('config'),
-      },
-      {
-        id: 'session',
-        label: 'Session settings',
-        icon: <Settings className="h-3.5 w-3.5" />,
-        onSelect: () => setMobileSheetPanel('settings'),
-      },
-    ],
-    [
-      openWorkspacePanel,
-      pendingTasksCount,
-      runAttentionCount,
-      runCockpitOpen,
-      runningToolsCount,
-      toggleRunCockpit,
-    ]
+      await handleCommandExecute(`/goal ${objective}`);
+      setGoalDraft('');
+    },
+    [goalDraft, handleCommandExecute, id]
   );
 
+  const meshPeers = meshPeersQuery.data || [];
+  const meshPeerTargetIds = useMemo(
+    () => new Set(meshPeers.filter((peer) => peer.enabled).map((peer) => peer.targetSessionId)),
+    [meshPeers]
+  );
+  const meshAvailableSessions = useMemo(
+    () =>
+      (meshSessions || [])
+        .filter((candidate) => candidate.id !== id && !meshPeerTargetIds.has(candidate.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [id, meshPeerTargetIds, meshSessions]
+  );
+  const meshDelegationTargets = useMemo(() => {
+    const linked = meshPeers
+      .filter((peer) => peer.enabled)
+      .map((peer) => ({
+        id: peer.target.id,
+        name: peer.target.name,
+        provider: peer.target.cliProvider,
+        status: peer.target.status,
+      }));
+    const linkedIds = new Set(linked.map((peer) => peer.id));
+    const fallback = (meshSessions || [])
+      .filter((candidate) => candidate.id !== id && !linkedIds.has(candidate.id))
+      .map((candidate) => ({
+        id: candidate.id,
+        name: candidate.name,
+        provider: candidate.cliProvider,
+        status: candidate.status,
+      }));
+    return [...linked, ...fallback].sort((a, b) => a.name.localeCompare(b.name));
+  }, [id, meshPeers, meshSessions]);
+  const meshRecentDelegations = (meshDelegationsQuery.data || []).slice(0, 8);
+
+  useEffect(() => {
+    if (
+      meshTargetSessionId &&
+      meshAvailableSessions.some((item) => item.id === meshTargetSessionId)
+    ) {
+      return;
+    }
+    setMeshTargetSessionId(meshAvailableSessions[0]?.id || '');
+  }, [meshAvailableSessions, meshTargetSessionId]);
+
+  useEffect(() => {
+    if (
+      meshDelegationTargetId &&
+      meshDelegationTargets.some((item) => item.id === meshDelegationTargetId)
+    ) {
+      return;
+    }
+    setMeshDelegationTargetId(meshDelegationTargets[0]?.id || '');
+  }, [meshDelegationTargetId, meshDelegationTargets]);
+
+  const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
+  const completedTasksCount = currentTodos.filter((t) => t.status === 'completed').length;
+  const totalTasksCount = currentTodos.length;
   if (sessionLoading || messagesLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1636,48 +2153,312 @@ export function SessionPage() {
     );
   }
 
-  const tasksBody =
-    currentTodos.length === 0 ? (
-      <div className="text-center py-8 px-4 text-sm text-muted-foreground flex flex-col items-center gap-2">
-        <div className="w-10 h-10 rounded-full bg-foreground/5 flex items-center justify-center">
-          <ListTodo className="h-5 w-5 text-muted-foreground/50" />
+  const goalObjective = goalDraft.trim();
+  const canUseCodexGoal = sessionProvider === 'codex';
+  const goalObjectiveTooLong = goalObjective.length > 4000;
+  const visibleDockedPanels: WorkspaceSheetPanel[] = isTaskSurface
+    ? ['tasks', 'mesh', 'designStyle', 'writingStyle', 'browser']
+    : DOCKED_PANEL_KEYS;
+  const hasVisiblePinnedPanel = visibleDockedPanels.some((panel) => pinnedPanels[panel]);
+  const activeStyleCount = (session.designStyleSkill ? 1 : 0) + (session.writingStyleSkill ? 1 : 0);
+  const styleMenuPanels = visibleDockedPanels.filter((panel) => STYLE_PANEL_KEYS.includes(panel));
+  const workspaceMenuPanels = visibleDockedPanels.filter(
+    (panel) => !STYLE_PANEL_KEYS.includes(panel)
+  );
+  const hasPinnedWorkspacePanel = workspaceMenuPanels.some((panel) => pinnedPanels[panel]);
+  const handleStyleSessionUpdated = (updatedSession: Session) => {
+    queryClient.setQueryData(['session', id], updatedSession);
+    if (id) {
+      useSessionStore.getState().updateSession(id, updatedSession);
+    }
+    queryClient.invalidateQueries({ queryKey: ['sessions'] });
+  };
+
+  const tasksBody = (
+    <div className="session-goal-task-panel">
+      <form className="session-goal-card" onSubmit={handleGoalSubmit}>
+        <div className="session-goal-card-header">
+          <span className="session-goal-icon">
+            <ListTodo className="h-4 w-4" />
+          </span>
+          <span className="session-goal-copy">
+            <span className="session-goal-title">Goal</span>
+            <span className="session-goal-kicker">{canUseCodexGoal ? '/goal' : 'Codex only'}</span>
+          </span>
         </div>
-        <span>No active tasks</span>
-      </div>
-    ) : (
-      <div className="p-2 space-y-1.5">
-        {currentTodos.map((todo, index) => (
-          <div
-            key={index}
-            className={cn(
-              'flex items-start gap-2.5 p-2.5 rounded-lg text-xs transition-all',
-              todo.status === 'completed' && 'bg-foreground/[0.02] text-muted-foreground',
-              todo.status === 'in_progress' && 'bg-primary/10 border border-primary/30 shadow-sm',
-              todo.status === 'pending' && 'bg-foreground/[0.03]'
-            )}
+        <textarea
+          className="session-goal-input"
+          value={goalDraft}
+          onChange={(event) => setGoalDraft(event.target.value)}
+          disabled={!canUseCodexGoal}
+          rows={3}
+          maxLength={4200}
+          placeholder={
+            canUseCodexGoal ? 'Objective for this session' : 'Switch to Codex to set a goal'
+          }
+        />
+        <div className="session-goal-footer">
+          <span className={cn('session-goal-status', goalObjectiveTooLong && 'is-error')}>
+            {!canUseCodexGoal
+              ? 'Unavailable'
+              : goalObjectiveTooLong
+                ? 'Max 4,000 chars'
+                : 'Auto on long tasks'}
+          </span>
+          <button
+            type="submit"
+            className="session-goal-submit"
+            disabled={!canUseCodexGoal || !goalObjective || goalObjectiveTooLong}
           >
-            <div className="shrink-0 mt-0.5">
-              {todo.status === 'completed' && (
-                <CheckCircle className="h-4 w-4 text-emerald-500/80" />
-              )}
-              {todo.status === 'in_progress' && (
-                <Loader2 className="h-4 w-4 text-primary animate-spin" />
-              )}
-              {todo.status === 'pending' && <Circle className="h-4 w-4 text-muted-foreground/60" />}
-            </div>
-            <p
+            Set /goal
+          </button>
+        </div>
+      </form>
+
+      {currentTodos.length === 0 ? (
+        <div className="session-task-empty">
+          <div className="session-task-empty-icon">
+            <ListTodo className="h-5 w-5" />
+          </div>
+          <span>No active tasks</span>
+        </div>
+      ) : (
+        <div className="session-task-list">
+          {currentTodos.map((todo, index) => (
+            <div
+              key={index}
               className={cn(
-                'flex-1 leading-relaxed',
-                todo.status === 'completed' && 'line-through opacity-70',
-                todo.status === 'in_progress' && 'font-medium text-foreground'
+                'flex items-start gap-2.5 p-2.5 rounded-lg text-xs transition-all',
+                todo.status === 'completed' && 'bg-foreground/[0.02] text-muted-foreground',
+                todo.status === 'in_progress' && 'bg-primary/10 border border-primary/30 shadow-sm',
+                todo.status === 'pending' && 'bg-foreground/[0.03]'
               )}
             >
-              {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
-            </p>
+              <div className="shrink-0 mt-0.5">
+                {todo.status === 'completed' && (
+                  <CheckCircle className="h-4 w-4 text-emerald-500/80" />
+                )}
+                {todo.status === 'in_progress' && (
+                  <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                )}
+                {todo.status === 'pending' && (
+                  <Circle className="h-4 w-4 text-muted-foreground/60" />
+                )}
+              </div>
+              <p
+                className={cn(
+                  'flex-1 leading-relaxed',
+                  todo.status === 'completed' && 'line-through opacity-70',
+                  todo.status === 'in_progress' && 'font-medium text-foreground'
+                )}
+              >
+                {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const meshBody = (
+    <div className="flex h-full flex-col gap-3 overflow-auto p-3 text-sm">
+      <form
+        className="rounded-lg border border-border/70 bg-background/60 p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!meshTargetSessionId) return;
+          linkPeerMutation.mutate({
+            targetSessionId: meshTargetSessionId,
+            role: meshRoleDraft,
+          });
+        }}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground">
+            <Link2 className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Link Peer</div>
+            <div className="text-[11px] text-muted-foreground">Session-to-session route</div>
           </div>
-        ))}
+        </div>
+        <div className="space-y-2">
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
+            value={meshTargetSessionId}
+            onChange={(event) => setMeshTargetSessionId(event.target.value)}
+          >
+            {meshAvailableSessions.length === 0 ? (
+              <option value="">No unlinked sessions</option>
+            ) : (
+              meshAvailableSessions.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name} · {CLI_PROVIDER_LABEL[candidate.cliProvider]}
+                </option>
+              ))
+            )}
+          </select>
+          <input
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
+            value={meshRoleDraft}
+            onChange={(event) => setMeshRoleDraft(event.target.value)}
+            placeholder="Peer role"
+          />
+          <button
+            type="submit"
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!meshTargetSessionId || linkPeerMutation.isPending}
+          >
+            {linkPeerMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="h-3.5 w-3.5" />
+            )}
+            Link session
+          </button>
+        </div>
+      </form>
+
+      <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground">
+            <Network className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Peers</div>
+            <div className="text-[11px] text-muted-foreground">{meshPeers.length} linked</div>
+          </div>
+        </div>
+        {meshPeersQuery.isLoading ? (
+          <div className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Loading peers
+          </div>
+        ) : meshPeers.length === 0 ? (
+          <div className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            No peers linked.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {meshPeers.map((peer) => (
+              <div
+                key={peer.id}
+                className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {peer.target.name}
+                  </div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {CLI_PROVIDER_LABEL[peer.target.cliProvider]} · {peer.role || 'peer'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Unlink peer"
+                  onClick={() => unlinkPeerMutation.mutate(peer.targetSessionId)}
+                  disabled={unlinkPeerMutation.isPending}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-    );
+
+      <form
+        className="rounded-lg border border-border/70 bg-background/60 p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const content = meshDelegationDraft.trim();
+          if (!meshDelegationTargetId || !content) return;
+          createDelegationMutation.mutate({
+            toSessionId: meshDelegationTargetId,
+            content,
+          });
+        }}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground">
+            <SendHorizontal className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Consult</div>
+            <div className="text-[11px] text-muted-foreground">Queue work in another session</div>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
+            value={meshDelegationTargetId}
+            onChange={(event) => setMeshDelegationTargetId(event.target.value)}
+          >
+            {meshDelegationTargets.length === 0 ? (
+              <option value="">No target sessions</option>
+            ) : (
+              meshDelegationTargets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.name} · {CLI_PROVIDER_LABEL[target.provider]}
+                </option>
+              ))
+            )}
+          </select>
+          <textarea
+            className="min-h-[108px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-xs leading-relaxed"
+            value={meshDelegationDraft}
+            onChange={(event) => setMeshDelegationDraft(event.target.value)}
+            maxLength={50_000}
+          />
+          <button
+            type="submit"
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={
+              !meshDelegationTargetId ||
+              !meshDelegationDraft.trim() ||
+              createDelegationMutation.isPending
+            }
+          >
+            {createDelegationMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <SendHorizontal className="h-3.5 w-3.5" />
+            )}
+            Send consult
+          </button>
+        </div>
+      </form>
+
+      <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+        <div className="mb-2 text-xs font-semibold text-foreground">Recent Delegations</div>
+        {meshRecentDelegations.length === 0 ? (
+          <div className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            No delegations yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {meshRecentDelegations.map((delegation) => (
+              <div key={delegation.id} className="rounded-md bg-muted/30 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="truncate font-medium text-foreground">
+                    {delegation.toSessionName || delegation.toSessionId}
+                  </span>
+                  <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-muted-foreground">
+                    {delegation.status}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                  {delegation.content}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   const renderConfigBody = (heightClass: string) => (
     <div className={cn('flex flex-col', heightClass)}>
@@ -1719,12 +2500,8 @@ export function SessionPage() {
     </div>
   );
 
-  const renderToolsBody = (heightClass: string) => (
-    <ToolLogPanel executions={currentToolExecutions} className={heightClass} />
-  );
-
   const panelMeta: Record<
-    DockablePanel,
+    Exclude<DockablePanel, 'tools'>,
     { title: string; icon: ReactElement; badge?: ReactElement | null }
   > = {
     files: {
@@ -1733,46 +2510,97 @@ export function SessionPage() {
       badge: null,
     },
     tasks: {
-      title: 'Tasks',
+      title: 'Goal & Tasks',
       icon: <ListTodo className="h-3.5 w-3.5" />,
       badge:
         pendingTasksCount > 0 ? <span className="panel-badge">{pendingTasksCount}</span> : null,
+    },
+    mesh: {
+      title: 'Session Mesh',
+      icon: <Network className="h-3.5 w-3.5" />,
+      badge: meshPeers.length > 0 ? <span className="panel-badge">{meshPeers.length}</span> : null,
     },
     config: {
       title: 'Config',
       icon: <Brain className="h-3.5 w-3.5" />,
       badge: null,
     },
-    tools: {
-      title: 'Tools',
-      icon: <Wrench className="h-3.5 w-3.5" />,
-      badge:
-        runningToolsCount > 0 ? (
-          <span className="panel-badge panel-badge-pulse">{runningToolsCount}</span>
-        ) : null,
+    designStyle: {
+      title: 'Design Styles',
+      icon: <Palette className="h-3.5 w-3.5" />,
+      badge: session.designStyleSkill ? <span className="panel-badge">On</span> : null,
+    },
+    writingStyle: {
+      title: 'Writing Styles',
+      icon: <PenLine className="h-3.5 w-3.5" />,
+      badge: session.writingStyleSkill ? <span className="panel-badge">On</span> : null,
+    },
+    browser: {
+      title: 'Browser',
+      icon: <Globe className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    android: {
+      title: 'Android',
+      icon: <Smartphone className="h-3.5 w-3.5" />,
+      badge: session.androidDeviceSerial ? <span className="panel-badge">1</span> : null,
     },
   };
 
   const renderDockedPanel = (panel: WorkspaceSheetPanel) => {
     const meta = panelMeta[panel];
-    let body: ReactElement;
+    let body: ReactElement | null = null;
     if (panel === 'tasks') body = <div className="h-full overflow-auto">{tasksBody}</div>;
+    else if (panel === 'mesh') body = meshBody;
     else if (panel === 'config') body = renderConfigBody('h-full');
-    else body = renderToolsBody('h-full');
+    else if (panel === 'designStyle') {
+      body = (
+        <SessionStyleLibraryPanel
+          sessionId={session.id}
+          provider={sessionProvider}
+          kind="design"
+          selectedSkill={session.designStyleSkill}
+          onSessionUpdated={handleStyleSessionUpdated}
+          className="h-full"
+        />
+      );
+    } else if (panel === 'writingStyle') {
+      body = (
+        <SessionStyleLibraryPanel
+          sessionId={session.id}
+          provider={sessionProvider}
+          kind="writing"
+          selectedSkill={session.writingStyleSkill}
+          onSessionUpdated={handleStyleSessionUpdated}
+          className="h-full"
+        />
+      );
+    } else if (panel === 'android') {
+      body = <AndroidDevicePanel sessionId={session.id} className="h-full" />;
+    } else if (panel === 'browser') {
+      body = <OracleBrowserPanel sessionId={session.id} className="h-full" />;
+    }
+
+    if (!body) return null;
 
     return (
       <div
         key={panel}
-        className="flex-1 min-h-0 flex flex-col border-b border-border/40 last:border-b-0 bg-background/40"
+        className={cn(
+          'session-docked-panel',
+          panel === 'browser' && 'session-docked-browser-panel'
+        )}
       >
-        <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-foreground/5 bg-muted/30">
-          <span className="text-muted-foreground shrink-0">{meta.icon}</span>
-          <span className="text-xs font-medium flex-1 truncate">{meta.title}</span>
+        <div className="session-docked-panel-header">
+          <span className="session-docked-panel-icon">{meta.icon}</span>
+          <span className="session-docked-panel-title">{meta.title}</span>
           {meta.badge}
           <button
+            type="button"
             onClick={() => togglePinPanel(panel)}
-            className="p-1 rounded-md hover:bg-foreground/10 transition-colors shrink-0 text-muted-foreground hover:text-foreground"
+            className="session-docked-panel-close"
             title="Unpin panel"
+            aria-label={`Close ${meta.title}`}
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -1795,7 +2623,8 @@ export function SessionPage() {
       activity={currentActivity}
       todos={currentTodos}
       tools={currentToolExecutions}
-      usage={currentUsage}
+      agents={currentAgentRuns}
+      usage={visibleUsage}
       queue={currentQueue}
       onClose={() => {
         setRunCockpitOpen(false);
@@ -1810,44 +2639,388 @@ export function SessionPage() {
     />
   );
 
-  const renderSessionSettingsChip = () => (
-    <SessionSettingsChip
-      mode={sessionMode}
-      onModeChange={handleModeChange}
-      provider={sessionProvider}
-      providers={cliProviders?.map((p) => ({
-        id: p.id,
-        name: p.name,
-        available: p.available,
-      }))}
-      onProviderChange={(p) => providerMutation.mutate(p)}
-      modelValue={modelSelectValue}
-      modelOptions={modelOptions}
-      modelLabels={modelLabels}
-      resolvedDefaultModel={resolvedDefaultModel}
-      onModelChange={applyModelSelection}
-      reasoningValue={reasoningSelectValue}
-      reasoningOptions={
-        ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider)
-          ? reasoningOptions
-          : undefined
-      }
-      onReasoningChange={
-        ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider)
-          ? applyReasoningSelection
-          : undefined
-      }
-      reasoningLabel={sessionProvider === 'claude' ? 'Effort' : 'Reasoning'}
-      codexFastMode={settings?.cliProviderServiceTiers?.codex === 'fast'}
-      cliTools={cliTools}
-      selectedCliTool={selectedCliTool}
-      onCliToolChange={setSelectedCliTool}
-    />
+  const renderRuntimeField = ({
+    id: fieldId,
+    label,
+    value,
+    icon,
+    children,
+  }: {
+    id: string;
+    label: string;
+    value?: string;
+    icon: ReactElement;
+    children: ReactNode;
+  }) => (
+    <label className="session-runtime-field" htmlFor={fieldId}>
+      <span className="session-runtime-icon">{icon}</span>
+      <span className="session-runtime-copy">
+        <span className="session-runtime-label">{label}</span>
+        <span className="session-runtime-value">{value}</span>
+      </span>
+      <span className="session-runtime-caret" aria-hidden="true">
+        <ChevronDown className="h-3.5 w-3.5" />
+      </span>
+      {children}
+    </label>
   );
+
+  const renderSessionRuntimeControls = (variant: 'sidebar' | 'mobile' = 'sidebar') => {
+    const fieldId = (name: string) => `session-runtime-${variant}-${name}`;
+    const activeMode =
+      SESSION_MODE_OPTIONS.find((option) => option.value === sessionMode) ??
+      SESSION_MODE_OPTIONS[1]!;
+    const ActiveModeIcon = activeMode.icon;
+    const providerOptions =
+      cliProviders?.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        available: provider.available,
+      })) ?? [];
+    const currentProvider = providerOptions.find((option) => option.id === sessionProvider);
+    const modelLabel =
+      modelSelectValue === '__default__'
+        ? `Default${resolvedDefaultModel ? ` · ${modelLabels[resolvedDefaultModel] || resolvedDefaultModel}` : ''}`
+        : modelLabels[modelSelectValue] || modelSelectValue;
+    const showReasoningControls = ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider);
+    const reasoningValueLabel =
+      reasoningSelectValue === '__default__'
+        ? 'Default'
+        : reasoningOptions.find((option) => option.value === reasoningSelectValue)?.label ||
+          reasoningSelectValue;
+    const activeTool = selectedCliTool
+      ? cliTools?.find((tool) => tool.id === selectedCliTool)
+      : null;
+    const surfaceValueLabel = sessionSurface === 'task' ? 'Task' : 'Code';
+    const SurfaceIcon = sessionSurface === 'task' ? ListTodo : Code2;
+
+    return (
+      <div className={cn('session-runtime-controls', variant === 'mobile' && 'is-mobile')}>
+        {renderRuntimeField({
+          id: fieldId('surface'),
+          label: 'Surface',
+          value: surfaceValueLabel,
+          icon: <SurfaceIcon className="h-3.5 w-3.5" />,
+          children: (
+            <select
+              id={fieldId('surface')}
+              className="session-runtime-select"
+              value={sessionSurface}
+              onChange={(event) => applySurfaceSelection(event.target.value as SessionSurface)}
+              aria-label="Session surface"
+            >
+              <option value="code">Code</option>
+              <option value="task">Task</option>
+            </select>
+          ),
+        })}
+
+        {renderRuntimeField({
+          id: fieldId('mode'),
+          label: 'Mode',
+          value: activeMode.label,
+          icon: <ActiveModeIcon className="h-3.5 w-3.5" />,
+          children: (
+            <select
+              id={fieldId('mode')}
+              className="session-runtime-select"
+              value={sessionMode}
+              onChange={(event) => handleModeChange(event.target.value as SessionMode)}
+              aria-label="Session mode"
+            >
+              {SESSION_MODE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ),
+        })}
+
+        {providerOptions.length > 0 &&
+          renderRuntimeField({
+            id: fieldId('provider'),
+            label: 'Provider',
+            value: currentProvider?.name ?? CLI_PROVIDER_LABEL[sessionProvider],
+            icon: <ProviderLogo provider={toUiProvider(sessionProvider)} className="h-3.5 w-3.5" />,
+            children: (
+              <select
+                id={fieldId('provider')}
+                className="session-runtime-select"
+                value={sessionProvider}
+                onChange={(event) => providerMutation.mutate(event.target.value as CLIProvider)}
+                aria-label="Session provider"
+              >
+                {providerOptions.map((provider) => (
+                  <option key={provider.id} value={provider.id} disabled={!provider.available}>
+                    {provider.name}
+                    {!provider.available ? ' (not installed)' : ''}
+                  </option>
+                ))}
+              </select>
+            ),
+          })}
+
+        {renderRuntimeField({
+          id: fieldId('model'),
+          label: 'Model',
+          value: modelLabel,
+          icon: <Sparkles className="h-3.5 w-3.5" />,
+          children: (
+            <select
+              id={fieldId('model')}
+              className="session-runtime-select"
+              value={modelSelectValue}
+              onChange={(event) => applyModelSelection(event.target.value)}
+              aria-label="Session model"
+            >
+              {showDefaultModelOption && (
+                <option value="__default__">
+                  Default
+                  {resolvedDefaultModel
+                    ? ` (${modelLabels[resolvedDefaultModel] || resolvedDefaultModel})`
+                    : ''}
+                </option>
+              )}
+              {modelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {modelLabels[model] || model}
+                </option>
+              ))}
+            </select>
+          ),
+        })}
+
+        {showReasoningControls &&
+          renderRuntimeField({
+            id: fieldId('reasoning'),
+            label: sessionProvider === 'claude' ? 'Effort' : 'Reasoning',
+            value: reasoningValueLabel,
+            icon: <Brain className="h-3.5 w-3.5" />,
+            children: (
+              <select
+                id={fieldId('reasoning')}
+                className="session-runtime-select"
+                value={reasoningSelectValue}
+                onChange={(event) => applyReasoningSelection(event.target.value)}
+                aria-label="Session reasoning"
+              >
+                <option value="__default__">Default</option>
+                {reasoningOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ),
+          })}
+
+        {cliTools &&
+          cliTools.length > 0 &&
+          renderRuntimeField({
+            id: fieldId('cli-tool'),
+            label: 'CLI Tool',
+            value: activeTool?.name ?? 'No tool',
+            icon: <Wrench className="h-3.5 w-3.5" />,
+            children: (
+              <select
+                id={fieldId('cli-tool')}
+                className="session-runtime-select"
+                value={selectedCliTool ?? ''}
+                onChange={(event) => setSelectedCliTool(event.target.value || null)}
+                aria-label="CLI tool"
+              >
+                <option value="">No tool</option>
+                {cliTools.map((tool) => (
+                  <option key={tool.id} value={tool.id}>
+                    {tool.name}
+                  </option>
+                ))}
+              </select>
+            ),
+          })}
+
+        {variant === 'sidebar' && (
+          <div className="session-runtime-actions">
+            <button
+              type="button"
+              className="session-runtime-action"
+              onClick={handleInterrupt}
+              disabled={!hasLiveRunActivity && !hasQueuedRunWork && session.status !== 'running'}
+              title="Interrupt session"
+            >
+              <Square className="h-3.5 w-3.5" />
+              <span>Interrupt</span>
+            </button>
+            <button
+              type="button"
+              className="session-runtime-action"
+              onClick={handleRestart}
+              title="Restart session"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Restart</span>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const activeTodo =
     currentTodos.find((todo) => todo.status === 'in_progress') ??
     currentTodos.find((todo) => todo.status === 'pending');
+  const activeTodoText =
+    activeTodo?.status === 'in_progress' && activeTodo.activeForm
+      ? activeTodo.activeForm
+      : activeTodo?.content;
+  const activeAgentLabel = currentActiveAgent
+    ? getAgentDisplay(currentActiveAgent.agentType)
+    : currentAgentRuns.find((agent) => agent.status === 'started')?.agentType ||
+      (session.runtime?.currentAgentType
+        ? getAgentDisplay(session.runtime.currentAgentType)
+        : undefined);
+
+  const activeToolLabel =
+    currentActivity.type === 'tool'
+      ? getToolDisplay(currentActivity.toolName || '').label
+      : currentToolExecutions.find((tool) => tool.status === 'started')?.actionSummary?.title ||
+        (session.runtime?.currentToolName
+          ? getToolDisplay(session.runtime.currentToolName).label
+          : undefined);
+  const runtimeActivityDetail =
+    session.runtime?.activitySummary ||
+    session.runtime?.currentAgentDescription ||
+    activeToolLabel ||
+    (session.runtime?.currentAgentType
+      ? `${getAgentDisplay(session.runtime.currentAgentType)} running`
+      : undefined);
+  const queuedDepth = currentQueue?.depth ?? session.runtime?.queueDepth ?? 0;
+  const taskHeaderTone =
+    session.status === 'error'
+      ? 'error'
+      : isActive
+        ? 'working'
+        : pendingTasksCount > 0
+          ? 'ready'
+          : 'idle';
+  const taskHeaderStatusLabel =
+    session.status === 'error'
+      ? 'Needs attention'
+      : isActive
+        ? composerSteersWhileActive
+          ? 'Steering'
+          : 'Working'
+        : pendingTasksCount > 0
+          ? 'Ready'
+          : 'Idle';
+  const taskHeaderDetail =
+    currentActivity.message ||
+    activeToolLabel ||
+    runtimeActivityDetail ||
+    (activeAgentLabel ? `${activeAgentLabel} running` : undefined) ||
+    activeTodoText ||
+    session.lastMessage ||
+    'No active task yet';
+  const taskProgressLabel =
+    totalTasksCount > 0
+      ? `${completedTasksCount}/${totalTasksCount} done`
+      : canUseCodexGoal
+        ? 'No plan yet'
+        : 'No task list';
+  const taskComposerStatusLabel = isActive
+    ? composerSteersWhileActive
+      ? 'Steering active run'
+      : composerQueuesWhileActive
+        ? queuedDepth > 0
+          ? `${queuedDepth} queued`
+          : 'Follow-up queue'
+        : 'Run active'
+    : selectedCliTool
+      ? selectedToolName || 'Tool selected'
+      : '';
+  const taskComposerStatusDetail =
+    activeTodoText ||
+    currentActivity.message ||
+    runtimeActivityDetail ||
+    (activeAgentLabel ? `${activeAgentLabel} running` : undefined) ||
+    (isActive && composerQueuesWhileActive ? 'Waiting behind current run.' : undefined) ||
+    (isActive && composerSteersWhileActive ? 'Updating current run.' : undefined) ||
+    '';
+
+  const renderTaskWorkbenchHeader = () => {
+    if (!isTaskSurface) return null;
+
+    return (
+      <div className="task-workbench-topbar-inner">
+        <div className="task-workbench-heading">
+          <span className={cn('task-workbench-status-dot', `is-${taskHeaderTone}`)} />
+          <div className="task-workbench-titleblock">
+            <span className="task-workbench-eyebrow">Task mode</span>
+            <h1>{session.name}</h1>
+          </div>
+        </div>
+
+        <div className="task-workbench-state" title={taskHeaderDetail}>
+          <span className="task-workbench-state-label">{taskHeaderStatusLabel}</span>
+          <strong>{taskHeaderDetail}</strong>
+        </div>
+
+        <div className="task-workbench-metrics" aria-label="Task status">
+          <span>
+            <ListTodo className="h-3.5 w-3.5" />
+            {taskProgressLabel}
+          </span>
+          {queuedDepth > 0 && (
+            <span>
+              <MessageSquare className="h-3.5 w-3.5" />
+              {queuedDepth} queued
+            </span>
+          )}
+          {visibleUsage && (
+            <span>
+              <Brain className="h-3.5 w-3.5" />
+              {Math.round(visibleUsage.contextUsedPercent)}%
+            </span>
+          )}
+        </div>
+
+        <div className="task-workbench-actions">
+          <button
+            type="button"
+            className="task-workbench-action"
+            onClick={() => openRunCockpitSection(isActive ? 'overview' : 'turns')}
+            title="Open run view"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Run</span>
+          </button>
+          <button
+            type="button"
+            className="task-workbench-action"
+            onClick={() => openRightPanel('tasks')}
+            title="Open goal and tasks"
+          >
+            <ListTodo className="h-3.5 w-3.5" />
+            <span>Tasks</span>
+          </button>
+          <button
+            type="button"
+            className={cn('task-workbench-action', canInterruptActiveRun && 'is-danger')}
+            onClick={canInterruptActiveRun ? handleInterrupt : handleRestart}
+            title={canInterruptActiveRun ? 'Stop active run' : 'Restart session'}
+          >
+            {canInterruptActiveRun ? (
+              <Square className="h-3.5 w-3.5" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+            <span>{canInterruptActiveRun ? 'Stop' : 'Restart'}</span>
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const renderTodoStrip = (mode: 'desktop' | 'mobile') => {
     if (!activeTodo || pendingTasksCount === 0) return null;
@@ -1908,18 +3081,63 @@ export function SessionPage() {
       <span className="session-side-menu-icon">{icon}</span>
       <span className="session-side-menu-label">{label}</span>
       {badge && badge > 0 ? (
-        <span className={cn('session-side-menu-badge', badgePulse && 'is-pulsing')}>
-          {badge}
-        </span>
+        <span className={cn('session-side-menu-badge', badgePulse && 'is-pulsing')}>{badge}</span>
       ) : null}
     </button>
   );
 
-  const renderPanelMenuItem = (panel: WorkspaceSheetPanel) => {
+  const renderSideMenuGroup = ({
+    id: groupId,
+    label,
+    icon,
+    children,
+    open,
+    badge,
+    badgePulse,
+  }: {
+    id: RightMenuGroupId;
+    label: string;
+    icon: ReactElement;
+    children: ReactNode;
+    open?: boolean;
+    badge?: number;
+    badgePulse?: boolean;
+  }) => {
+    const isOpen = open ?? rightMenuGroupsOpen[groupId];
+    return (
+      <div className={cn('session-side-menu-group', isOpen && 'is-open')}>
+        <button
+          type="button"
+          className={cn('session-side-menu-group-trigger', isOpen && 'is-open')}
+          onClick={() => toggleRightMenuGroup(groupId)}
+          aria-expanded={isOpen}
+          title={label}
+        >
+          <span className="session-side-menu-icon">{icon}</span>
+          <span className="session-side-menu-group-title">{label}</span>
+          {badge && badge > 0 ? (
+            <span className={cn('session-side-menu-badge', badgePulse && 'is-pulsing')}>
+              {badge}
+            </span>
+          ) : null}
+          <span className="session-side-menu-group-caret">
+            <ChevronRight className="h-3 w-3" />
+          </span>
+        </button>
+        {isOpen && <div className="session-side-menu-group-body">{children}</div>}
+      </div>
+    );
+  };
+
+  const renderPanelMenuItem = (panel: WorkspaceSheetPanel, nested = false) => {
     const meta = panelMeta[panel];
     const isActive = pinnedPanels[panel];
-    const badgeCount =
-      panel === 'tasks' ? pendingTasksCount : panel === 'tools' ? runningToolsCount : 0;
+    let badgeCount = 0;
+    if (panel === 'tasks') badgeCount = pendingTasksCount;
+    else if (panel === 'mesh') badgeCount = meshPeers.length;
+    else if (panel === 'designStyle' && session.designStyleSkill) badgeCount = 1;
+    else if (panel === 'writingStyle' && session.writingStyleSkill) badgeCount = 1;
+    else if (panel === 'android' && session.androidDeviceSerial) badgeCount = 1;
 
     return renderSideMenuItem({
       id: `panel-${panel}`,
@@ -1928,8 +3146,8 @@ export function SessionPage() {
       onClick: () => openRightPanel(panel),
       active: isActive,
       badge: badgeCount,
-      badgePulse: panel === 'tools' && runningToolsCount > 0,
       title: isActive ? `Close ${meta.title}` : `Open ${meta.title}`,
+      nested,
     });
   };
 
@@ -1956,38 +3174,80 @@ export function SessionPage() {
                 <MessageSquare className="h-4 w-4" />
                 <span>Chat</span>
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMainView('editor');
-                  setMobileSheetPanel(null);
-                }}
-                disabled={!hasOpenFiles}
-                className={cn(mainView === 'editor' && 'is-active')}
-              >
-                <Code2 className="h-4 w-4" />
-                <span>Code</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMainView('files');
-                  setMobileSheetPanel(null);
-                }}
-                className={cn(mainView === 'files' && 'is-active')}
-              >
-                <FolderOpen className="h-4 w-4" />
-                <span>Files</span>
-              </button>
+              {!isTaskSurface && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMainView('editor');
+                      setMobileSheetPanel(null);
+                    }}
+                    disabled={!hasOpenFiles}
+                    className={cn(mainView === 'editor' && 'is-active')}
+                  >
+                    <Code2 className="h-4 w-4" />
+                    <span>Code</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMainView('files');
+                      setMobileSheetPanel(null);
+                    }}
+                    className={cn(mainView === 'files' && 'is-active')}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    <span>Files</span>
+                  </button>
+                </>
+              )}
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-foreground/[0.025] p-3">
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-foreground">Provider</div>
-                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {providerLabel}
-                </div>
+            <div className="session-runtime-mobile-card">
+              {renderSessionRuntimeControls('mobile')}
+            </div>
+            <div className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Styles
               </div>
-              {renderSessionSettingsChip()}
+              <div className="grid grid-cols-2 gap-2">
+                {styleMenuPanels.map((panel) => {
+                  const meta = panelMeta[panel];
+                  return (
+                    <button
+                      key={panel}
+                      type="button"
+                      onClick={() => setMobileSheetPanel(panel)}
+                      className="mobile-sheet-command"
+                    >
+                      {meta.icon}
+                      <span>{meta.title}</span>
+                      {meta.badge}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Workspace
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {workspaceMenuPanels.map((panel) => {
+                  const meta = panelMeta[panel];
+                  return (
+                    <button
+                      key={panel}
+                      type="button"
+                      onClick={() => setMobileSheetPanel(panel)}
+                      className="mobile-sheet-command"
+                    >
+                      {meta.icon}
+                      <span>{meta.title}</span>
+                      {meta.badge}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -2066,7 +3326,35 @@ export function SessionPage() {
           {mobileSheetPanel === 'tasks' && (
             <div className="h-[56dvh] overflow-auto">{tasksBody}</div>
           )}
-          {mobileSheetPanel === 'tools' && renderToolsBody('h-[56dvh]')}
+          {mobileSheetPanel === 'mesh' && (
+            <div className="h-[76dvh] overflow-auto">{meshBody}</div>
+          )}
+          {mobileSheetPanel === 'browser' && (
+            <OracleBrowserPanel sessionId={session.id} className="h-[76dvh]" />
+          )}
+          {mobileSheetPanel === 'android' && (
+            <AndroidDevicePanel sessionId={session.id} className="h-[76dvh]" />
+          )}
+          {mobileSheetPanel === 'designStyle' && (
+            <SessionStyleLibraryPanel
+              sessionId={session.id}
+              provider={sessionProvider}
+              kind="design"
+              selectedSkill={session.designStyleSkill}
+              onSessionUpdated={handleStyleSessionUpdated}
+              className="h-[76dvh]"
+            />
+          )}
+          {mobileSheetPanel === 'writingStyle' && (
+            <SessionStyleLibraryPanel
+              sessionId={session.id}
+              provider={sessionProvider}
+              kind="writing"
+              selectedSkill={session.writingStyleSkill}
+              onSessionUpdated={handleStyleSessionUpdated}
+              className="h-[76dvh]"
+            />
+          )}
           {mobileSheetPanel === 'config' && renderConfigBody('h-[56dvh]')}
         </div>
       </div>
@@ -2074,92 +3362,30 @@ export function SessionPage() {
   };
 
   return (
-    <div ref={rootShellRef} className="flex h-full min-h-0 relative overflow-hidden">
+    <div
+      ref={rootShellRef}
+      className={cn(
+        'flex h-full min-h-0 relative overflow-hidden',
+        isTaskSurface ? 'session-surface-task' : 'session-surface-code'
+      )}
+    >
       {/* Main column: layered chat viewport with transparent topbar/composer overlays */}
       <div
         className={cn(
           'session-main-column flex-1 min-h-0 flex flex-col overflow-hidden',
-          mainView === 'chat' && 'session-chat-layered'
+          mainView === 'chat' && 'session-chat-layered',
+          isTaskSurface && 'session-task-main'
         )}
       >
-        {/* Session Header */}
-        <div ref={headerBarRef} className="chat-topbar shrink-0">
-          <div className="flex-1 flex items-center gap-2 md:gap-3 min-w-0 flex-nowrap md:flex-wrap">
-            {/* Title cluster */}
-            <div className="hidden md:block min-w-0 flex-1 md:flex-none md:max-w-[260px] lg:max-w-[340px] xl:max-w-[400px]">
-              <h2 className="text-[13px] font-semibold tracking-display flex items-center gap-1.5">
-                <ProviderLogo
-                  provider={sessionUiProvider}
-                  className="h-5 w-5 shrink-0 object-contain"
-                />
-                <button
-                  onClick={() => starMutation.mutate()}
-                  disabled={starMutation.isPending}
-                  className="hover:scale-110 active:scale-95 transition-transform shrink-0"
-                  title={session.starred ? 'Unstar session' : 'Star session'}
-                >
-                  <Star
-                    className={cn(
-                      'h-4 w-4 transition-colors',
-                      session.starred
-                        ? 'text-amber-500 fill-amber-500'
-                        : 'text-muted-foreground hover:text-amber-400'
-                    )}
-                  />
-                </button>
-                <span className="truncate min-w-0">{session.name}</span>
-                <span
-                  className={cn(
-                    'inline-block h-2 w-2 rounded-full shrink-0',
-                    session.status === 'running' && 'bg-primary animate-pulse',
-                    session.status === 'stopped' && 'bg-gray-400',
-                    session.status === 'error' && 'bg-red-500'
-                  )}
-                />
-              </h2>
-              <button
-                onClick={() => setShowAllowedDirsDialog(true)}
-                className="mt-0.5 flex items-center gap-1 text-[10px] font-mono text-muted-foreground/70 hover:text-foreground/90 transition-colors max-w-full truncate"
-                title={`Working directory: ${session.workingDirectory} — click to manage allowed directories`}
-              >
-                <FolderOpen className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate">{session.workingDirectory}</span>
-                {currentUsage && currentUsage.totalTokens > 0 && (
-                  <span
-                    className="ml-1 shrink-0 text-emerald-500/80 tabular-nums"
-                    title={`Input: ${currentUsage.inputTokens.toLocaleString()} · Output: ${currentUsage.outputTokens.toLocaleString()} · Cache read: ${currentUsage.cacheReadTokens.toLocaleString()}`}
-                  >
-                    ·{' '}
-                    {currentUsage.totalCostUsd < 0.01
-                      ? `$${currentUsage.totalCostUsd.toFixed(4)}`
-                      : `$${currentUsage.totalCostUsd.toFixed(2)}`}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* Divider — subtle vertical separator */}
-            <div className="hidden md:block w-px h-8 bg-border/40 shrink-0" />
-
-            {/* Flex spacer — pushes right cluster to the edge */}
-            <div className="hidden md:block flex-1" />
-
-            {/* Right controls — session settings + context */}
-            <div className="chat-action-bar flex items-center gap-1.5 shrink-0 ml-auto md:ml-0">
-              {/* Consolidated Session Settings */}
-              {renderSessionSettingsChip()}
-
-              {/* Context bar (status indicator) */}
-              {currentUsage && (
-                <ContextPopover
-                  usage={currentUsage}
-                  className="desktop-context-trigger"
-                  showLabel
-                />
-              )}
-
-            </div>
-          </div>
+        {/* Session Header measurement point; visible runtime controls live in the right menu. */}
+        <div
+          ref={headerBarRef}
+          className={cn(
+            'chat-topbar shrink-0',
+            isTaskSurface ? 'task-workbench-topbar' : 'is-empty'
+          )}
+        >
+          {renderTaskWorkbenchHeader()}
         </div>
 
         {/* Main Content - Chat or Editor */}
@@ -2184,21 +3410,61 @@ export function SessionPage() {
             />
           ) : (
             <>
-              <div className="chat-edge-fade chat-edge-fade-top" aria-hidden="true" />
-              <div className="chat-edge-fade chat-edge-fade-bottom" aria-hidden="true" />
-              {timeline.length === 0 && !currentStreamingContent && (
-                <div className="flex items-center justify-center h-full text-center">
-                  <div>
-                    <div className="p-4 rounded-full bg-muted/50 mb-4 mx-auto w-fit">
-                      <Image className="h-8 w-8 text-muted-foreground/50" />
+              {timeline.length === 0 &&
+                !currentStreamingContent &&
+                (isTaskSurface ? (
+                  <div className="task-empty-state">
+                    <div className="task-empty-mark">
+                      <MessageSquare className="h-7 w-7" />
                     </div>
-                    <p className="text-muted-foreground mb-1">Start a conversation</p>
-                    <p className="text-xs text-muted-foreground/70">
-                      Type a message or paste/drop an image
-                    </p>
+                    <h2>{session.name}</h2>
+                    <p>Pick a starting point or write a specific task below.</p>
+                    <div className="task-workflow-grid">
+                      {TASK_WORKFLOWS.map((workflow) => {
+                        const WorkflowIcon =
+                          workflow.id === 'quick-brief'
+                            ? FileText
+                            : workflow.id === 'research-brief'
+                              ? Globe
+                              : workflow.id === 'draft-message'
+                                ? MessageSquare
+                                : workflow.id === 'plan-project'
+                                  ? ListTodo
+                                  : workflow.id === 'creative-direction'
+                                    ? Sparkles
+                                    : workflow.id === 'decision-support'
+                                      ? Brain
+                                      : ListTodo;
+                        return (
+                          <button
+                            key={workflow.id}
+                            type="button"
+                            onClick={() => handleSendMessage(workflow.prompt)}
+                          >
+                            <span>
+                              <WorkflowIcon className="h-3.5 w-3.5" />
+                              {workflow.shortTitle}
+                            </span>
+                            <small>{workflow.description}</small>
+                            <em>{workflow.meta}</em>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                ) : (
+                  <div className="flex items-center justify-center h-full text-center">
+                    <div>
+                      <div className="p-4 rounded-full bg-muted/50 mb-4 mx-auto w-fit">
+                        <Image className="h-8 w-8 text-muted-foreground/50" />
+                      </div>
+                      <p className="text-muted-foreground mb-1">Start a conversation</p>
+                      <p className="text-xs text-muted-foreground/70">
+                        Type a message or paste/drop an image
+                      </p>
+                    </div>
+                  </div>
+                ))}
 
               {/* Virtualized timeline: messages and generated images sorted by timestamp */}
               {timeline.length > 0 && (
@@ -2225,7 +3491,19 @@ export function SessionPage() {
                     if (item.type === 'message') {
                       const message = item.data;
                       if (message.id?.startsWith('compact-')) {
-                        content = <CompactBoundaryCard content={message.content} />;
+                        const compactIndex = message.id
+                          ? compactMessageNumbers.byId.get(message.id)
+                          : undefined;
+                        content = (
+                          <CompactBoundaryCard
+                            content={message.content}
+                            compactIndex={
+                              typeof compactIndex === 'number'
+                                ? compactIndex + compactIndexOffset
+                                : undefined
+                            }
+                          />
+                        );
                       } else {
                         content = (
                           <MessageBubble
@@ -2235,44 +3513,88 @@ export function SessionPage() {
                             provider={sessionUiProvider}
                             modelLabel={asstModelLabel}
                             assistantName={providerLabel}
+                            showAssistantIdentity={
+                              message.role === 'assistant' ? !!turnSegment?.startsAfterUser : true
+                            }
                           />
                         );
                       }
                     } else if (item.type === 'tool') {
-                      content = <ToolExecutionCard execution={item.data} />;
+                      content = (
+                        <TimelineContinuation
+                          timestamp={item.timestamp}
+                          label={isTaskSurface ? 'Work update' : 'Tool action'}
+                          icon={
+                            isTaskSurface ? (
+                              <ListTodo className="h-3.5 w-3.5" />
+                            ) : (
+                              <Terminal className="h-3.5 w-3.5" />
+                            )
+                          }
+                        >
+                          {isTaskSurface ? (
+                            <div className={cn('task-progress-card', `is-${item.data.status}`)}>
+                              <span className="task-progress-dot" />
+                              <span>
+                                <strong>
+                                  {item.data.status === 'completed'
+                                    ? 'Step completed'
+                                    : item.data.status === 'error'
+                                      ? 'Needs attention'
+                                      : 'Working'}
+                                </strong>
+                                <small>
+                                  {item.data.actionSummary?.title ||
+                                    item.data.actionSummary?.explanation ||
+                                    'Plum is applying the requested task.'}
+                                </small>
+                              </span>
+                            </div>
+                          ) : (
+                            <ToolExecutionCard execution={item.data} />
+                          )}
+                        </TimelineContinuation>
+                      );
                     } else {
                       const img = item.data;
                       content = (
-                        <Card className="p-3 sm:p-4 bg-muted/40 border-border/60">
-                          <div className="flex items-center gap-2 mb-3">
-                            <div className="p-1.5 rounded-full bg-muted/60">
-                              <Image className="h-4 w-4 text-primary" />
+                        <TimelineContinuation
+                          timestamp={item.timestamp}
+                          label="Generated image"
+                          icon={<Image className="h-3.5 w-3.5" />}
+                        >
+                          <Card className="p-3 sm:p-4 bg-muted/40 border-border/60">
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="p-1.5 rounded-full bg-muted/60">
+                                <Image className="h-4 w-4 text-primary" />
+                              </div>
+                              <span className="text-sm font-medium text-foreground">
+                                Generated Image
+                              </span>
                             </div>
-                            <span className="text-sm font-medium text-foreground">
-                              Generated Image
-                            </span>
-                          </div>
-                          {img.imageBase64 && (
-                            <img
-                              src={`data:${img.mimeType};base64,${img.imageBase64}`}
-                              alt={img.prompt}
-                              className="max-w-full rounded-lg border border-border/60 cursor-pointer hover:opacity-90 transition-opacity mb-3"
-                              onClick={() => {
-                                const link = document.createElement('a');
-                                link.href = `data:${img.mimeType};base64,${img.imageBase64}`;
-                                link.download = `generated-image-${img.timestamp}.png`;
-                                link.click();
-                              }}
-                            />
-                          )}
-                          <p className="text-xs text-muted-foreground italic">"{img.prompt}"</p>
-                        </Card>
+                            {img.imageBase64 && (
+                              <img
+                                src={`data:${img.mimeType};base64,${img.imageBase64}`}
+                                alt={img.prompt}
+                                className="max-w-full rounded-lg border border-border/60 cursor-pointer hover:opacity-90 transition-opacity mb-3"
+                                onClick={() => {
+                                  const link = document.createElement('a');
+                                  link.href = `data:${img.mimeType};base64,${img.imageBase64}`;
+                                  link.download = `generated-image-${img.timestamp}.png`;
+                                  link.click();
+                                }}
+                              />
+                            )}
+                            <p className="text-xs text-muted-foreground italic">"{img.prompt}"</p>
+                          </Card>
+                        </TimelineContinuation>
                       );
                     }
                     return (
                       <div
                         className={cn(
-                          'mx-auto max-w-[760px] w-full px-4 sm:px-7 animate-fade-in',
+                          'mx-auto w-full px-4 sm:px-7 animate-fade-in',
+                          isTaskSurface ? 'task-timeline-item max-w-[840px]' : 'max-w-[760px]',
                           isInTurn ? 'asst-turn-item' : 'pb-9',
                           isInTurn && turnSegment?.startsAfterUser && 'asst-turn-start',
                           isInTurn && turnSegment?.continuesBefore && 'asst-turn-link-before',
@@ -2286,6 +3608,20 @@ export function SessionPage() {
                     );
                   }}
                   components={virtuosoComponents}
+                  rangeChanged={(range) =>
+                    setVisibleTimelineRange({
+                      startIndex: range.startIndex,
+                      endIndex: range.endIndex,
+                    })
+                  }
+                />
+              )}
+
+              {timeline.length > 0 && mainView === 'chat' && (
+                <ChatQuickTimeline
+                  markers={quickTimelineMarkers}
+                  activeIndex={activeQuickTimelineIndex}
+                  onJump={jumpToTimelineIndex}
                 />
               )}
 
@@ -2325,13 +3661,24 @@ export function SessionPage() {
                 commands={commands}
                 selectedToolName={selectedToolName}
                 selectedCliTool={selectedCliTool}
-                quickPrompts={quickPrompts}
-                composerActions={composerActions}
                 disabled={session.status === 'error'}
                 isSending={isSending}
                 isExecutingTool={isExecutingTool}
                 isActive={isActive}
                 queuesWhileActive={composerQueuesWhileActive}
+                steersWhileActive={composerSteersWhileActive}
+                surface={sessionSurface}
+                activeStatusLabel={taskComposerStatusLabel}
+                activeStatusDetail={taskComposerStatusDetail}
+                activeFollowupMode={composerActiveFollowupMode}
+                onActiveFollowupModeChange={
+                  supportsSteeredFollowups ? handleActiveFollowupModeChange : undefined
+                }
+                fastModeActive={fastModeActive}
+                fastModePending={sessionServiceTierMutation.isPending}
+                onFastModeToggle={sessionProvider === 'codex' ? handleFastModeToggle : undefined}
+                queueDepth={queuedDepth}
+                onOpenRun={() => openRunCockpitSection('overview')}
               />
             </div>
           </div>
@@ -2343,6 +3690,18 @@ export function SessionPage() {
       <div
         className={cn('session-right-dock hidden md:flex', rightDockCollapsed && 'is-collapsed')}
       >
+        {(runCockpitOpen || hasVisiblePinnedPanel) && (
+          <div
+            className={cn(
+              'session-docked-panel-column',
+              !runCockpitOpen && pinnedPanels.browser && 'is-browser-active'
+            )}
+          >
+            {runCockpitOpen
+              ? renderRunCockpitPanel()
+              : visibleDockedPanels.map((p) => (pinnedPanels[p] ? renderDockedPanel(p) : null))}
+          </div>
+        )}
         <nav className="session-right-menu" aria-label="Session menu">
           <div className="session-right-menu-header">
             <button
@@ -2358,158 +3717,71 @@ export function SessionPage() {
                 <ChevronRight className="h-3.5 w-3.5" />
               )}
             </button>
-            <span className="session-right-menu-title">Session</span>
           </div>
 
           <div className="session-side-menu-scroll">
-            <div className="session-side-menu-section">
-              {renderSideMenuItem({
-                id: 'view-chat',
-                label: 'Chat view',
-                icon: <MessageSquare className="h-3.5 w-3.5" />,
-                onClick: () => setMainView('chat'),
-                active: mainView === 'chat',
-              })}
-              {hasOpenFiles &&
-                renderSideMenuItem({
-                  id: 'view-editor',
-                  label: 'Editor view',
-                  icon: <Code2 className="h-3.5 w-3.5" />,
-                  onClick: () => setMainView('editor'),
-                  active: mainView === 'editor',
-                })}
-              {renderSideMenuItem({
-                id: 'view-files',
-                label: 'Files view',
-                icon: <FolderOpen className="h-3.5 w-3.5" />,
-                onClick: () => setMainView('files'),
-                active: mainView === 'files',
-              })}
-            </div>
+            {renderSideMenuGroup({
+              id: 'view',
+              label: 'View',
+              icon: <MessageSquare className="h-3.5 w-3.5" />,
+              children: (
+                <>
+                  {renderSideMenuItem({
+                    id: 'view-chat',
+                    label: 'Chat view',
+                    icon: <MessageSquare className="h-3.5 w-3.5" />,
+                    onClick: () => setMainView('chat'),
+                    active: mainView === 'chat',
+                    nested: true,
+                  })}
+                  {!isTaskSurface &&
+                    hasOpenFiles &&
+                    renderSideMenuItem({
+                      id: 'view-editor',
+                      label: 'Editor view',
+                      icon: <Code2 className="h-3.5 w-3.5" />,
+                      onClick: () => setMainView('editor'),
+                      active: mainView === 'editor',
+                      nested: true,
+                    })}
+                  {!isTaskSurface &&
+                    renderSideMenuItem({
+                      id: 'view-files',
+                      label: 'Files view',
+                      icon: <FolderOpen className="h-3.5 w-3.5" />,
+                      onClick: () => setMainView('files'),
+                      active: mainView === 'files',
+                      nested: true,
+                    })}
+                </>
+              ),
+            })}
 
-            <div className="session-side-menu-separator" />
+            {renderSideMenuGroup({
+              id: 'runtime',
+              label: 'Runtime',
+              icon: <Sparkles className="h-3.5 w-3.5" />,
+              children: <>{!rightDockCollapsed && renderSessionRuntimeControls('sidebar')}</>,
+            })}
 
-            <div className="session-side-menu-section">
-              {renderSideMenuItem({
-                id: 'rename-session',
-                label: 'Rename session',
-                icon: <Pencil className="h-3.5 w-3.5" />,
-                onClick: () => setShowRenameDialog(true),
-              })}
-              {renderSideMenuItem({
-                id: 'manage-directories',
-                label: 'Manage directories',
-                icon: <FolderKey className="h-3.5 w-3.5" />,
-                onClick: () => setShowAllowedDirsDialog(true),
-              })}
-            </div>
+            {renderSideMenuGroup({
+              id: 'styles',
+              label: 'Styles',
+              icon: <Palette className="h-3.5 w-3.5" />,
+              badge: activeStyleCount,
+              children: <>{styleMenuPanels.map((panel) => renderPanelMenuItem(panel, true))}</>,
+            })}
 
-            <div className="session-side-menu-separator" />
-
-            <div className="session-side-menu-section">
-              {renderSideMenuItem({
-                id: 'run-overview',
-                label: 'Run',
-                icon: <Activity className="h-3.5 w-3.5" />,
-                onClick: () => openRunCockpitSection('overview'),
-                active: runCockpitOpen && runCockpitTarget.section === 'overview',
-                badge: runAttentionCount,
-                badgePulse: runningToolsCount > 0,
-              })}
-              <div className="session-side-menu-subgroup">
-                {renderSideMenuItem({
-                  id: 'run-queue',
-                  label: 'Queue',
-                  icon: <MessageSquare className="h-3.5 w-3.5" />,
-                  onClick: () => openRunCockpitSection('queue'),
-                  active: runCockpitOpen && runCockpitTarget.section === 'queue',
-                  badge: queuedTurnsCount,
-                  nested: true,
-                })}
-                {renderSideMenuItem({
-                  id: 'run-diff',
-                  label: 'Diff',
-                  icon: <FileText className="h-3.5 w-3.5" />,
-                  onClick: () => openRunCockpitSection('diff'),
-                  active: runCockpitOpen && runCockpitTarget.section === 'diff',
-                  nested: true,
-                })}
-                {renderSideMenuItem({
-                  id: 'run-verify',
-                  label: 'Verify',
-                  icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-                  onClick: () => openRunCockpitSection('verify'),
-                  active: runCockpitOpen && runCockpitTarget.section === 'verify',
-                  nested: true,
-                })}
-                {renderSideMenuItem({
-                  id: 'run-turns',
-                  label: 'Turns',
-                  icon: <MessageSquare className="h-3.5 w-3.5" />,
-                  onClick: () => openRunCockpitSection('turns'),
-                  active: runCockpitOpen && runCockpitTarget.section === 'turns',
-                  nested: true,
-                })}
-                {renderSideMenuItem({
-                  id: 'run-tools',
-                  label: 'Recent tools',
-                  icon: <Wrench className="h-3.5 w-3.5" />,
-                  onClick: () => openRunCockpitSection('tools'),
-                  active: runCockpitOpen && runCockpitTarget.section === 'tools',
-                  badge: runningToolsCount,
-                  badgePulse: runningToolsCount > 0,
-                  nested: true,
-                })}
-                {renderSideMenuItem({
-                  id: 'run-review',
-                  label: 'Review changes',
-                  icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-                  onClick: () => {
-                    openRunCockpitSection('diff');
-                    handleReviewChanges();
-                  },
-                  nested: true,
-                })}
-                {renderSideMenuItem({
-                  id: 'run-stop',
-                  label: 'Stop',
-                  icon: <Square className="h-3.5 w-3.5" />,
-                  onClick: handleInterrupt,
-                  disabled: session.status !== 'running' && !hasLiveRunActivity,
-                  nested: true,
-                })}
-              {isExecutingTool &&
-                renderSideMenuItem({
-                  id: 'cancel-active-tool',
-                  label: 'Cancel active tool',
-                  icon: <X className="h-3.5 w-3.5" />,
-                  onClick: handleCancelCliTool,
-                  nested: true,
-                })}
-              {renderSideMenuItem({
-                id: 'run-restart',
-                label: 'Restart',
-                icon: <RotateCcw className="h-3.5 w-3.5" />,
-                onClick: handleRestart,
-                nested: true,
-              })}
-              </div>
-            </div>
-
-            <div className="session-side-menu-separator" />
-
-            <div className="session-side-menu-section">
-              {DOCKED_PANEL_KEYS.map((panel) => renderPanelMenuItem(panel))}
-            </div>
+            {renderSideMenuGroup({
+              id: 'workspace',
+              label: 'Workspace',
+              icon: <FolderOpen className="h-3.5 w-3.5" />,
+              open: rightMenuGroupsOpen.workspace || hasPinnedWorkspacePanel,
+              badge: pendingTasksCount + meshPeers.length + (session.androidDeviceSerial ? 1 : 0),
+              children: <>{workspaceMenuPanels.map((panel) => renderPanelMenuItem(panel, true))}</>,
+            })}
           </div>
         </nav>
-        {(runCockpitOpen || anyPanelPinned) && (
-          <div className="session-docked-panel-column">
-            {runCockpitOpen
-              ? renderRunCockpitPanel()
-              : DOCKED_PANEL_KEYS.map((p) => (pinnedPanels[p] ? renderDockedPanel(p) : null))}
-          </div>
-        )}
       </div>
 
       {runCockpitOpen && <div className="md:hidden">{renderRunCockpitPanel('rail')}</div>}
@@ -2530,6 +3802,15 @@ export function SessionPage() {
         <PermissionApprovalDialog
           permission={currentPendingPermission}
           onRespond={handlePermissionResponse}
+          providerLabel={providerLabel}
+        />
+      )}
+
+      {currentPendingQuestion && (
+        <QuestionApprovalDialog
+          question={currentPendingQuestion}
+          onRespond={handleQuestionResponse}
+          onReject={handleQuestionReject}
           providerLabel={providerLabel}
         />
       )}

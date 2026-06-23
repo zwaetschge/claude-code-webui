@@ -13,7 +13,7 @@ import {
   Edit3,
   Wrench,
 } from 'lucide-react';
-import type { PendingPermission, PermissionAction } from '@claude-code-webui/shared';
+import type { PendingPermission, PermissionAction } from '@plum-code-webui/shared';
 import { useProviderStore } from '@/stores/providerStore';
 import { UI_PROVIDER_META } from '@/lib/providers';
 

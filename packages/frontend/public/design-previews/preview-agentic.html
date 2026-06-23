@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agentic — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;0,800;0,900;1,500;1,700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     AGENTIC — 400×300 THUMBNAIL PREVIEW
+     Conversational AI-first · bold · modern · delegated task flows
+     ============================================================ */
+  :root {
+    --ag-primary: #FF5701;
+    --ag-primary-press: #E04E00;
+    --ag-secondary: #F6F6F1;
+    --ag-success: #16A34A;
+    --ag-warning: #D97706;
+    --ag-danger: #DC2626;
+    --ag-surface: #FFFFFF;
+    --ag-surface-2: #FBFBF8;
+    --ag-surface-sunken: #EFEEE8;
+    --ag-ink: #111827;
+    --ag-ink-2: #41454F;
+    --ag-ink-3: #7A7F8B;
+    --ag-line: #E6E4DD;
+    --ag-line-soft: #F0EEE7;
+    --ag-on-primary: #FFFFFF;
+    --ag-font-display: 'Playfair Display', Georgia, serif;
+    --ag-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --r-sm: 4px;
+    --r-md: 7px;
+    --r-lg: 12px;
+    --r-pill: 999px;
+    --shadow-md: 0 6px 16px -6px rgba(17,24,39,0.18), 0 1px 3px rgba(17,24,39,0.08);
+    --shadow-orange: 0 8px 18px -6px rgba(255,87,1,0.45);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ag-font-display);
+    color: var(--ag-ink);
+    background:
+      radial-gradient(300px 200px at 90% -10%, rgba(255,87,1,0.14), transparent 60%),
+      radial-gradient(240px 160px at -10% 110%, rgba(255,87,1,0.08), transparent 55%),
+      var(--ag-secondary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--ag-surface);
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: 28px 1fr 26px;
+    border-right: 1px solid var(--ag-line);
+  }
+
+  /* ===== Topbar ===== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--ag-line-soft);
+    background: var(--ag-surface);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--ag-font-display);
+    font-weight: 900;
+    font-size: 13px;
+    letter-spacing: -0.02em;
+    color: var(--ag-ink);
+  }
+  .brand__dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--ag-primary);
+    box-shadow: 0 0 0 3px rgba(255,87,1,0.18);
+  }
+  .topbar__tag {
+    font-family: var(--ag-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--ag-ink-3);
+    letter-spacing: 0.04em;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 16px;
+    padding: 0 8px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--ag-line);
+    background: var(--ag-surface-2);
+    font-family: var(--ag-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--ag-ink-2);
+  }
+  .pill--accent {
+    background: var(--ag-primary);
+    border-color: var(--ag-primary);
+    color: var(--ag-on-primary);
+    font-weight: 700;
+  }
+
+  /* ===== Main 2-column ===== */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 14px 14px 10px;
+    align-items: stretch;
+  }
+
+  /* LEFT — headline + composer */
+  .left {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-width: 0;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--ag-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ag-primary);
+    margin-bottom: 6px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 14px; height: 1.5px;
+    background: var(--ag-primary);
+  }
+  .headline {
+    font-family: var(--ag-font-display);
+    font-weight: 800;
+    font-size: 26px;
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+    color: var(--ag-ink);
+    margin-bottom: 6px;
+  }
+  .headline em {
+    font-style: italic;
+    font-weight: 500;
+    color: var(--ag-primary);
+  }
+  .lede {
+    font-family: var(--ag-font-display);
+    font-weight: 400;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--ag-ink-2);
+    margin-bottom: 8px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 10px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: var(--ag-primary);
+    color: var(--ag-on-primary);
+    font-family: var(--ag-font-display);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: var(--shadow-orange);
+    align-self: flex-start;
+  }
+  .btn svg { width: 10px; height: 10px; }
+
+  /* RIGHT — delegation card (signature element) */
+  .conv {
+    background: var(--ag-surface-2);
+    border: 1px solid var(--ag-line);
+    border-radius: var(--r-md);
+    padding: 9px 10px;
+    box-shadow: var(--shadow-md);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+  .conv__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .conv__title {
+    font-family: var(--ag-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ag-ink-3);
+  }
+  .conv__dots { display: flex; gap: 3px; }
+  .conv__dots span {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--ag-line);
+  }
+  .conv__dots span:last-child { background: var(--ag-primary); }
+
+  .msg {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+  }
+  .avatar {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: grid; place-items: center;
+    font-family: var(--ag-font-mono);
+    font-size: 7px;
+    font-weight: 700;
+  }
+  .avatar--user {
+    background: var(--ag-surface-sunken);
+    color: var(--ag-ink-2);
+    border: 1px solid var(--ag-line);
+  }
+  .avatar--ai {
+    background: var(--ag-primary);
+    color: var(--ag-on-primary);
+  }
+  .bubble {
+    background: var(--ag-surface);
+    border: 1px solid var(--ag-line-soft);
+    border-radius: var(--r-sm);
+    padding: 6px 8px;
+    font-family: var(--ag-font-display);
+    font-size: 9.5px;
+    line-height: 1.35;
+    color: var(--ag-ink);
+    flex: 1;
+    min-width: 0;
+  }
+  .bubble__meta {
+    font-family: var(--ag-font-mono);
+    font-size: 7px;
+    color: var(--ag-ink-3);
+    margin-bottom: 2px;
+    letter-spacing: 0.04em;
+  }
+  .bubble--ai { border-left: 2px solid var(--ag-primary); }
+  .outcome {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 4px;
+    padding: 2px 5px;
+    background: rgba(22,163,74,0.10);
+    border: 1px solid rgba(22,163,74,0.28);
+    border-radius: 3px;
+    font-family: var(--ag-font-mono);
+    font-size: 7.5px;
+    font-weight: 700;
+    color: var(--ag-success);
+  }
+  .outcome svg { width: 8px; height: 8px; }
+
+  /* ===== Footer ribbon ===== */
+  .ribbon {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: var(--ag-ink);
+    color: #fff;
+  }
+  .ribbon__quote {
+    font-family: var(--ag-font-display);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 11px;
+  }
+  .ribbon__mono {
+    font-family: var(--ag-font-mono);
+    font-size: 8.5px;
+    letter-spacing: 0.08em;
+    color: #B8BCC7;
+    text-transform: uppercase;
+  }
+  .ribbon__dot { color: var(--ag-primary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="agentic — design language preview">
+
+  <header class="topbar">
+    <div class="brand">agentic<span class="brand__dot"></span></div>
+    <div style="display:flex;gap:5px;align-items:center;">
+      <span class="pill">v1</span>
+      <span class="pill pill--accent">preview</span>
+    </div>
+  </header>
+
+  <section class="main">
+
+    <div class="left">
+      <div>
+        <div class="eyebrow">Conversational · AI-first</div>
+        <h1 class="headline">Delegate.<br>Don't <em>operate</em>.</h1>
+        <p class="lede">Minimal controls. Clear outcomes. Turn intent into a finished task in one exchange.</p>
+      </div>
+      <button class="btn" type="button">
+        Start a task
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+
+    <div class="conv" aria-label="Delegated task example">
+      <div class="conv__bar">
+        <span class="conv__title">agent · session</span>
+        <span class="conv__dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      </div>
+
+      <div class="msg">
+        <div class="avatar avatar--user" aria-hidden="true">YOU</div>
+        <div class="bubble">
+          <div class="bubble__meta">10:41 · intent</div>
+          Reschedule tomorrow's standups to Friday.
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="avatar avatar--ai" aria-hidden="true">AI</div>
+        <div class="bubble bubble--ai">
+          <div class="bubble__meta">10:41 · delegated</div>
+          Moved 3 events, drafted invites, cleared conflicts.
+          <div class="outcome">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            done
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <footer class="ribbon">
+    <p class="ribbon__quote">"Outcomes over operations."</p>
+    <p class="ribbon__mono"><span class="ribbon__dot">●</span> agentic · bold · 8pt</p>
+  </footer>
+
+</main>
+
+</body>
+</html>

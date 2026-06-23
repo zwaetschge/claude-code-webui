@@ -14,7 +14,7 @@ import {
 import { api } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface CommitDiff {

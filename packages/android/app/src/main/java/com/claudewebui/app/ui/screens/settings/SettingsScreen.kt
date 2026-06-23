@@ -361,7 +361,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Terminal,
                     iconTint = AntiqueBrass,
                     title = "CLI Tools",
-                    subtitle = "Manage tools available to Claude",
+                    subtitle = "Manage tools available to CLI providers",
                     onClick = onNavigateToCliTools,
                 )
 
@@ -394,7 +394,7 @@ fun SettingsScreen(
                     icon = Icons.Default.Notifications,
                     iconTint = MaterialTheme.colorScheme.primary,
                     title = "Push notifications",
-                    subtitle = "Get notified when Claude finishes a task",
+                    subtitle = "Get notified when a session finishes a task",
                     checked = state.notificationsEnabled,
                     onCheckedChange = viewModel::setNotificationsEnabled,
                 )

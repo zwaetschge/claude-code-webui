@@ -29,6 +29,8 @@ services:
     #   - FRONTEND_URL=https://code.example.com
     #   - CORS_ALLOWED_ORIGINS=https://code.example.com
     #   - ALLOWED_BASE_PATHS=/mnt/host
+    #   # Optional: point Godot MCP at a mounted Godot 4 binary.
+    #   - GODOT_BIN=/opt/godot/Godot_v4_linux.x86_64
 
     # Example: replace the relative ./data, ./config defaults with absolute host paths.
     # volumes:
@@ -37,6 +39,8 @@ services:
     #   - /opt/claude-webui/config/codex:/home/node/.codex
     #   - /opt/claude-webui/config/opencode:/home/node/.opencode
     #   - /opt/projects:/workspace
+    #   # Optional: mount a host Godot binary directory for the Godot MCP.
+    #   - /opt/godot:/opt/godot:ro
     #   # Required for the repair-bot self-rebuild flow:
     #   - /var/run/docker.sock:/var/run/docker.sock
 

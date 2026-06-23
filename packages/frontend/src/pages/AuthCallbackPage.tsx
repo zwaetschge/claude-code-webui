@@ -1,8 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { api } from '@/services/api';
-import { getStoredUiProvider } from '@/lib/providers';
 
 export function AuthCallbackPage() {
   const navigate = useNavigate();
@@ -20,9 +18,9 @@ export function AuthCallbackPage() {
 
     if (token) {
       setToken(token).then(() => {
-        const storedProvider = getStoredUiProvider();
-        api.put('/api/settings', { uiProvider: storedProvider }).catch(() => {});
-        navigate('/');
+        const returnTo = searchParams.get('returnTo');
+        const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/';
+        navigate(safeReturnTo);
       });
     } else {
       navigate('/connect');

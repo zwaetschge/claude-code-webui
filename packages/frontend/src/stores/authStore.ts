@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { User } from '@claude-code-webui/shared';
+import type { User } from '@plum-code-webui/shared';
 import { api, ApiError } from '@/services/api';
 
 interface AuthState {

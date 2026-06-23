@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
 import { api } from '@/services/api';
-import type { ApiResponse } from '@claude-code-webui/shared';
+import type { ApiResponse } from '@plum-code-webui/shared';
 import { useProviderStore } from '@/stores/providerStore';
 import { UI_PROVIDER_META } from '@/lib/providers';
 

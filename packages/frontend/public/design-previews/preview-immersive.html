@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Immersive — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     IMMERSIVE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Deep-green canvas · white cards · thick borders · hard shadows
+     Oswald display · arcade-sign buttons · decorative depth blocks
+     ============================================================ */
+  :root {
+    --im-primary: #00592B;        /* deep brand green canvas */
+    --im-primary-deep: #003D1D;
+    --im-secondary: #0023D1;      /* cobalt blue decorative */
+    --im-tertiary: #FF1493;       /* hot pink decorative */
+    --im-success: #16A34A;
+    --im-warning: #D97706;
+    --im-danger: #DC2626;
+
+    --im-surface: #FFFFFF;
+    --im-ink: #111827;
+    --im-ink-2: #374151;
+    --im-ink-3: #6B7280;
+    --im-line: #E5E7EB;
+
+    --im-font: 'Oswald', -apple-system, sans-serif;
+    --im-font-mono: 'JetBrains Mono', monospace;
+
+    --im-border: 3px solid var(--im-ink);
+    --im-border-thick: 4px solid var(--im-ink);
+    --im-shadow-hard: 5px 5px 0 var(--im-ink);
+    --im-shadow-hard-sm: 3px 3px 0 var(--im-ink);
+    --im-shadow-hard-lg: 7px 7px 0 var(--im-ink);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--im-font);
+    font-size: 12px;
+    color: var(--im-ink);
+    background: var(--im-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    /* Single continuous brand-green canvas — no section alternation */
+    background:
+      radial-gradient(circle at 80% 20%, rgba(0,35,209,0.15), transparent 50%),
+      radial-gradient(circle at 20% 80%, rgba(255,20,147,0.10), transparent 50%),
+      var(--im-primary);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 12px;
+    gap: 8px;
+  }
+
+  /* Decorative geometric depth blocks behind cards */
+  .deco {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .deco--blue {
+    top: 40px; right: 8px;
+    width: 60px; height: 60px;
+    background: var(--im-secondary);
+    border-radius: 8px;
+    transform: rotate(12deg);
+  }
+  .deco--pink {
+    bottom: 50px; left: 8px;
+    width: 50px; height: 50px;
+    background: var(--im-tertiary);
+    border-radius: 50%;
+    transform: rotate(-8deg);
+  }
+  .deco--blue-2 {
+    top: 130px; left: 130px;
+    width: 36px; height: 36px;
+    background: var(--im-secondary);
+    border-radius: 4px;
+    transform: rotate(-15deg);
+    opacity: 0.6;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 14px;
+    background: var(--im-surface);
+    border: var(--im-border);
+    border-radius: 0;
+    box-shadow: var(--im-shadow-hard-sm);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    background: var(--im-primary);
+    border: 2.5px solid var(--im-ink);
+    display: grid; place-items: center;
+    color: var(--im-surface);
+  }
+  .brand__mark svg { width: 12px; height: 12px; }
+  .brand__name {
+    font-family: var(--im-font);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--im-ink);
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+    font-family: var(--im-font);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .nav a {
+    padding: 3px 9px;
+    text-decoration: none;
+    color: var(--im-ink-2);
+    border: 2.5px solid transparent;
+    transition: all .12s ease;
+  }
+  .nav a:hover { border-color: var(--im-ink); background: var(--im-primary); color: var(--im-surface); }
+  .nav a.is-active {
+    background: var(--im-ink);
+    color: var(--im-surface);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 10px;
+    align-items: center;
+  }
+
+  /* LEFT — white hero card on green canvas */
+  .hero {
+    background: var(--im-surface);
+    border: var(--im-border-thick);
+    box-shadow: var(--im-shadow-hard);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+  }
+
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 2px 10px;
+    background: var(--im-tertiary);
+    color: var(--im-surface);
+    border: 2.5px solid var(--im-ink);
+    font-family: var(--im-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transform: skewX(-6deg);
+  }
+
+  .hero__title {
+    font-family: var(--im-font);
+    font-size: 38px;
+    font-weight: 700;
+    line-height: 0.88;
+    letter-spacing: -0.01em;
+    text-transform: uppercase;
+    color: var(--im-ink);
+    margin: 4px 0 2px;
+  }
+  .hero__title-green {
+    color: var(--im-primary);
+  }
+  .hero__title-blue {
+    color: var(--im-secondary);
+  }
+
+  .hero__sub {
+    font-family: var(--im-font);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--im-ink-2);
+    max-width: 28ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  /* Skewed arcade-sign buttons — grow on hover */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 14px;
+    background: var(--im-surface);
+    border: var(--im-border);
+    font-family: var(--im-font);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--im-ink);
+    transform: skewX(-6deg);
+    box-shadow: var(--im-shadow-hard-sm);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover {
+    transform: skewX(-6deg) translate(-2px,-2px);
+    box-shadow: var(--im-shadow-hard-lg);
+  }
+  .btn:active {
+    transform: skewX(-6deg) translate(2px,2px);
+    box-shadow: 1px 1px 0 var(--im-ink);
+  }
+  .btn--green {
+    background: var(--im-primary);
+    color: var(--im-surface);
+  }
+  .btn--ghost {
+    background: transparent;
+    border-color: var(--im-ink);
+    color: var(--im-ink);
+    box-shadow: none;
+    transform: skewX(-6deg);
+  }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* RIGHT — white stat cards */
+  .cards {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+  }
+  .card {
+    background: var(--im-surface);
+    border: var(--im-border);
+    box-shadow: var(--im-shadow-hard-sm);
+    padding: 9px 12px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    position: relative;
+  }
+  .card__icon {
+    width: 28px; height: 28px;
+    background: var(--im-primary);
+    border: 2.5px solid var(--im-ink);
+    display: grid; place-items: center;
+    color: var(--im-surface);
+    flex-shrink: 0;
+  }
+  .card__icon--blue { background: var(--im-secondary); }
+  .card__icon--pink { background: var(--im-tertiary); }
+  .card__icon svg { width: 14px; height: 14px; }
+  .card__body { flex: 1; min-width: 0; }
+  .card__label {
+    font-family: var(--im-font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--im-ink-3);
+    line-height: 1;
+  }
+  .card__value {
+    font-family: var(--im-font);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--im-ink);
+    line-height: 1;
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+  }
+  .card__value span {
+    font-family: var(--im-font-mono);
+    font-size: 11px;
+    color: var(--im-ink-3);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .card__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--im-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--im-primary);
+    margin-top: 1px;
+  }
+  .card__sub svg { width: 7px; height: 7px; }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 14px;
+    background: var(--im-surface);
+    border: var(--im-border);
+    box-shadow: var(--im-shadow-hard-sm);
+    font-family: var(--im-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--im-ink-3);
+  }
+  .footer__accent { color: var(--im-primary); }
+  .footer__live {
+    color: var(--im-surface);
+    background: var(--im-primary);
+    padding: 1px 7px;
+    border: 2px solid var(--im-ink);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .footer__live::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--im-success);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Immersive design language preview">
+
+  <!-- decorative depth blocks -->
+  <div class="deco deco--blue" aria-hidden="true"></div>
+  <div class="deco deco--pink" aria-hidden="true"></div>
+  <div class="deco deco--blue-2" aria-hidden="true"></div>
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><polyline points="12 22 12 11"/><polyline points="22 8.5 12 11"/><polyline points="2 8.5 12 11"/></svg>
+      </span>
+      <span class="brand__name">VERDANT</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Explore</a>
+      <a href="#">Story</a>
+      <a href="#">Play</a>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: hero card -->
+    <article class="hero">
+      <span class="hero__eyebrow">★ Chapter 01</span>
+      <h1 class="hero__title">
+        <span class="hero__title-green">STEP</span><br>
+        INTO<br>
+        THE <span class="hero__title-blue">WILD</span>
+      </h1>
+      <p class="hero__sub">An interactive exhibit through the world's last great forests. Explore, learn, play — one leaf at a time.</p>
+      <div class="hero__cta">
+        <button class="btn btn--green" type="button">
+          Enter
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Trailer</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: stat cards -->
+    <aside class="cards">
+
+      <div class="card">
+        <div class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Explorers</div>
+          <div class="card__value">84<span>k</span></div>
+          <div class="card__sub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+            32%
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__icon card__icon--pink">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
+        </div>
+        <div class="card__body">
+          <div class="card__label">Species found</div>
+          <div class="card__value">1,284</div>
+          <div class="card__sub" style="color:var(--im-tertiary);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            +12 today
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__accent">●</span> verdant · immersive · exhibit</span>
+    <span class="footer__live">live · 14k exploring</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

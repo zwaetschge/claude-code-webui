@@ -5,7 +5,7 @@ import * as pty from 'node-pty';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../db';
 import { AppError } from '../middleware/errorHandler';
-import type { CliTool, CliToolExecution } from '@claude-code-webui/shared';
+import type { CliTool, CliToolExecution } from '@plum-code-webui/shared';
 
 const router = Router();
 

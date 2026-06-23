@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bento — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     BENTO DESIGN SYSTEM — 400×300 THUMBNAIL PREVIEW
+     Modular grid · card blocks · warm cream paper · soft contrast
+     ============================================================ */
+  :root {
+    --bn-primary: #FAD4C0;        /* peach */
+    --bn-primary-ink: #8C4A2B;     /* readable ink on peach */
+    --bn-secondary: #80A1C1;       /* dusty blue */
+    --bn-secondary-ink: #2B4A66;   /* readable ink on dusty blue */
+    --bn-success: #16A34A;
+    --bn-warning: #D97706;
+    --bn-danger: #DC2626;
+
+    --bn-surface: #FFF5E6;         /* cream paper */
+    --bn-surface-2: #FBF1E0;       /* slightly deeper cream */
+    --bn-card: #FFFFFF;
+    --bn-card-soft: #FDF8F0;
+    --bn-ink: #111827;
+    --bn-ink-2: #3F3F46;
+    --bn-ink-3: #71717A;
+    --bn-ink-4: #A1A1AA;
+    --bn-line: #EFE5D4;
+    --bn-line-2: #F5EEDF;
+
+    --bn-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --bn-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    /* Spacing: 4/8/12/16/24/32 */
+    --bn-r-sm: 8px;
+    --bn-r-md: 12px;
+    --bn-r-lg: 16px;
+    --bn-r-xl: 22px;
+
+    --bn-sh-1: 0 1px 2px rgba(17,24,39,0.04);
+    --bn-sh-2: 0 6px 18px -6px rgba(140,74,43,0.10), 0 2px 4px -1px rgba(17,24,39,0.04);
+
+    --bn-gap: 8px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--bn-font);
+    font-size: 12px;
+    color: var(--bn-ink);
+    background:
+      radial-gradient(180px 120px at 100% 0%, rgba(250,212,192,0.45), transparent 60%),
+      radial-gradient(160px 100px at 0% 100%, rgba(128,161,193,0.18), transparent 60%),
+      var(--bn-surface);
+    -webkit-font-smoothing: antialiased;
+    padding: 10px;
+  }
+
+  .bento {
+    width: 380px;
+    height: 280px;
+    display: grid;
+    grid-template-columns: 1.3fr 1fr 1fr;
+    grid-template-rows: auto 1fr 1fr;
+    gap: var(--bn-gap);
+  }
+
+  /* ===== BENTO CARD BASE ===== */
+  .card {
+    background: var(--bn-card);
+    border: 1px solid var(--bn-line);
+    border-radius: var(--bn-r-lg);
+    padding: 12px;
+    box-shadow: var(--bn-sh-1);
+    overflow: hidden;
+    position: relative;
+    transition: transform .2s ease, box-shadow .2s ease;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .card:hover { transform: translateY(-1px); box-shadow: var(--bn-sh-2); }
+
+  .card__label {
+    font-family: var(--bn-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--bn-ink-3);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .card__label::before {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--bn-secondary);
+  }
+
+  /* ===== HERO CARD (spans 2 cols, top) ===== */
+  .card--hero {
+    grid-column: span 2;
+    grid-row: span 1;
+    background: linear-gradient(135deg, var(--bn-primary) 0%, #F7C8B0 100%);
+    border-color: #F0C0A8;
+    color: var(--bn-primary-ink);
+    justify-content: space-between;
+  }
+  .card--hero .card__label {
+    color: rgba(140,74,43,0.7);
+  }
+  .card--hero .card__label::before { background: var(--bn-primary-ink); }
+  .card--hero__title {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    color: var(--bn-primary-ink);
+    margin: 6px 0 4px;
+  }
+  .card--hero__title em {
+    font-style: normal;
+    color: var(--bn-secondary-ink);
+    background: rgba(255,255,255,0.55);
+    padding: 0 6px;
+    border-radius: 4px;
+  }
+  .card--hero__sub {
+    font-size: 10px;
+    color: rgba(140,74,43,0.75);
+    line-height: 1.4;
+  }
+  .card--hero__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin-top: 6px;
+    height: 20px;
+    padding: 0 9px;
+    background: var(--bn-primary-ink);
+    color: #FFF;
+    border-radius: var(--bn-r-sm);
+    font-size: 9.5px;
+    font-weight: 700;
+    font-family: var(--bn-font-mono);
+    letter-spacing: 0.04em;
+    border: none;
+    cursor: pointer;
+  }
+  .card--hero__cta svg { width: 9px; height: 9px; }
+
+  /* ===== DECO CIRCLE in hero corner ===== */
+  .card--hero::after {
+    content: "";
+    position: absolute;
+    top: -28px; right: -28px;
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    border: 1.5px solid rgba(255,255,255,0.32);
+  }
+
+  /* ===== AVATAR / MINI NAV CARD (top-right) ===== */
+  .card--user {
+    grid-row: span 1;
+    background: var(--bn-secondary);
+    border-color: #6A8AAD;
+    color: #fff;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 10px;
+  }
+  .card--user__avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: #fff;
+    color: var(--bn-secondary-ink);
+    display: grid; place-items: center;
+    font-weight: 800;
+    font-size: 11px;
+    margin-bottom: 4px;
+    border: 2px solid rgba(255,255,255,0.5);
+  }
+  .card--user__name {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.1;
+  }
+  .card--user__meta {
+    font-family: var(--bn-font-mono);
+    font-size: 8px;
+    color: rgba(255,255,255,0.7);
+    margin-top: 2px;
+  }
+
+  /* ===== KPI CARD ===== */
+  .card--kpi {
+    grid-row: span 1;
+  }
+  .card--kpi__value {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: var(--bn-ink);
+    line-height: 1.1;
+    margin: 4px 0 2px;
+    font-family: var(--bn-font);
+  }
+  .card--kpi__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    font-family: var(--bn-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .delta svg { width: 8px; height: 8px; }
+  .delta--up { color: var(--bn-success); }
+  .delta--down { color: var(--bn-danger); }
+  .delta-text { color: var(--bn-ink-4); font-weight: 400; }
+
+  /* ===== FEATURED CHART CARD (spans 2 cols, middle row) ===== */
+  .card--chart {
+    grid-column: span 2;
+    grid-row: span 1;
+  }
+  .card--chart__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .card--chart__title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--bn-ink);
+  }
+  .card--chart__meta {
+    font-family: var(--bn-font-mono);
+    font-size: 8.5px;
+    color: var(--bn-ink-4);
+  }
+  /* Stacked bar chart */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 48px;
+    margin-top: 2px;
+  }
+  .bars__col {
+    flex: 1;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 1.5px;
+    border-radius: 3px 3px 0 0;
+    overflow: hidden;
+  }
+  .bars__seg {
+    width: 100%;
+    border-radius: 1.5px 1.5px 0 0;
+  }
+  .bars__seg--primary { background: var(--bn-primary); }
+  .bars__seg--secondary { background: var(--bn-secondary); }
+  .bars__seg--accent { background: linear-gradient(180deg, var(--bn-primary) 0%, #E89878 100%); }
+  .bars__label {
+    text-align: center;
+    font-family: var(--bn-font-mono);
+    font-size: 7px;
+    color: var(--bn-ink-4);
+    margin-top: 3px;
+  }
+  .bars__labels {
+    display: flex;
+    gap: 3px;
+  }
+  .bars__labels span {
+    flex: 1;
+    text-align: center;
+    font-family: var(--bn-font-mono);
+    font-size: 7px;
+    color: var(--bn-ink-4);
+    margin-top: 3px;
+  }
+
+  /* ===== STATUS / TOKEN CARD (bottom-right) ===== */
+  .card--status {
+    grid-row: span 1;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 0;
+    border-bottom: 1px dashed var(--bn-line-2);
+  }
+  .status-row:last-child { border-bottom: none; }
+  .status-row__label {
+    font-size: 9px;
+    color: var(--bn-ink-2);
+    font-weight: 500;
+  }
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .dot--success { background: var(--bn-success); }
+  .dot--warning { background: var(--bn-warning); }
+  .dot--danger { background: var(--bn-danger); }
+  .status-row__val {
+    font-family: var(--bn-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--bn-ink);
+  }
+  .status-row__val--muted { color: var(--bn-ink-3); }
+
+  /* ===== TOKEN / COLOR CARD (bottom-left) ===== */
+  .card--tokens {
+    grid-row: span 1;
+  }
+  .palette {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .palette__row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .palette__chip {
+    width: 18px; height: 18px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    border: 1px solid var(--bn-line);
+  }
+  .palette__chip--primary { background: var(--bn-primary); }
+  .palette__chip--secondary { background: var(--bn-secondary); }
+  .palette__chip--success { background: var(--bn-success); }
+  .palette__chip--surface { background: var(--bn-surface); }
+  .palette__name {
+    font-family: var(--bn-font-mono);
+    font-size: 8.5px;
+    color: var(--bn-ink-3);
+    font-weight: 600;
+  }
+  .palette__hex {
+    font-family: var(--bn-font-mono);
+    font-size: 8px;
+    color: var(--bn-ink-4);
+    margin-left: auto;
+  }
+
+  /* ===== MIDDLE COLUMN SPACING =====
+     Cards in middle column from row 2 to row 3 */
+</style>
+</head>
+<body>
+
+<main class="bento" aria-label="Bento design language preview">
+
+  <!-- HERO CARD — top-left, spans 2 cols -->
+  <article class="card card--hero">
+    <span class="card__label">Bento · v1</span>
+    <div>
+      <h1 class="card--hero__title">Modular<br><em>by design</em></h1>
+      <p class="card--hero__sub">A grid of blocks that breathe — content finds its natural size.</p>
+    </div>
+    <button class="card--hero__cta" type="button">
+      Start
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </button>
+  </article>
+
+  <!-- USER CARD — top-right -->
+  <article class="card card--user">
+    <div class="card--user__avatar">NL</div>
+    <div class="card--user__name">Noa Lindgren</div>
+    <div class="card--user__meta">plan · pro</div>
+  </article>
+
+  <!-- KPI CARD — middle-left (row 2 col 1) -->
+  <article class="card card--kpi">
+    <span class="card__label">Sessions</span>
+    <div class="card--kpi__value">12,438</div>
+    <div class="card--kpi__sub">
+      <span class="delta delta--up">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+        8.2%
+      </span>
+      <span class="delta-text">7d</span>
+    </div>
+  </article>
+
+  <!-- CHART CARD — middle, spans 2 cols (row 2 col 2-3) -->
+  <article class="card card--chart">
+    <div class="card--chart__top">
+      <span class="card--chart__title">Weekly activity</span>
+      <span class="card--chart__meta">mon — sun</span>
+    </div>
+    <div class="bars" aria-hidden="true">
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--primary" style="height: 40%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 20%; opacity:.7"></div>
+      </div>
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--primary" style="height: 55%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 18%; opacity:.7"></div>
+      </div>
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--accent" style="height: 92%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 22%; opacity:.7"></div>
+      </div>
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--primary" style="height: 70%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 16%; opacity:.7"></div>
+      </div>
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--primary" style="height: 60%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 19%; opacity:.7"></div>
+      </div>
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--primary" style="height: 35%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 24%; opacity:.7"></div>
+      </div>
+      <div class="bars__col">
+        <div class="bars__seg bars__seg--primary" style="height: 50%"></div>
+        <div class="bars__seg bars__seg--secondary" style="height: 20%; opacity:.7"></div>
+      </div>
+    </div>
+    <div class="bars__labels" aria-hidden="true">
+      <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+    </div>
+  </article>
+
+  <!-- TOKEN CARD — bottom-left (row 3 col 1) -->
+  <article class="card card--tokens">
+    <span class="card__label">Palette</span>
+    <div class="palette">
+      <div class="palette__row">
+        <div class="palette__chip palette__chip--primary"></div>
+        <span class="palette__name">primary</span>
+        <span class="palette__hex">FAD4C0</span>
+      </div>
+      <div class="palette__row">
+        <div class="palette__chip palette__chip--secondary"></div>
+        <span class="palette__name">secondary</span>
+        <span class="palette__hex">80A1C1</span>
+      </div>
+      <div class="palette__row">
+        <div class="palette__chip palette__chip--surface"></div>
+        <span class="palette__name">surface</span>
+        <span class="palette__hex">FFF5E6</span>
+      </div>
+    </div>
+  </article>
+
+  <!-- STATUS CARD — bottom-right (row 3 col 2) -->
+  <article class="card card--status">
+    <span class="card__label">System</span>
+    <div style="margin-top:4px;">
+      <div class="status-row">
+        <span class="status-row__label"><span class="dot dot--success"></span>API</span>
+        <span class="status-row__val">200</span>
+      </div>
+      <div class="status-row">
+        <span class="status-row__label"><span class="dot dot--success"></span>DB</span>
+        <span class="status-row__val">12ms</span>
+      </div>
+      <div class="status-row">
+        <span class="status-row__label"><span class="dot dot--warning"></span>Cache</span>
+        <span class="status-row__val status-row__val--muted">warming</span>
+      </div>
+    </div>
+  </article>
+
+  <!-- Mini stat card bottom-right corner -->
+  <article class="card card--kpi">
+    <span class="card__label">Storage</span>
+    <div class="card--kpi__value" style="font-size:16px;">68<span style="font-size:10px;color:var(--bn-ink-3);">%</span></div>
+    <!-- progress bar -->
+    <div style="height:5px;background:var(--bn-line-2);border-radius:99px;overflow:hidden;margin-top:4px;">
+      <div style="height:100%;width:68%;background:linear-gradient(90deg,var(--bn-primary),var(--bn-secondary));border-radius:99px;"></div>
+    </div>
+    <div class="card--kpi__sub" style="margin-top:3px;">
+      <span class="delta-text">6.8 / 10 GB</span>
+    </div>
+  </article>
+
+</main>
+
+</body>
+</html>

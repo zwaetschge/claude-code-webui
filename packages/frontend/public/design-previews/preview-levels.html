@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Levels — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     LEVELS DESIGN SYSTEM — 400×300 THUMBNAIL
+     Conversion-focused · dark primary · violet accent · trust+clarity
+     ============================================================ */
+  :root {
+    --lv-primary: #27272A;        /* dark zinc */
+    --lv-primary-deep: #18181B;
+    --lv-secondary: #8B5CF6;      /* violet accent */
+    --lv-secondary-deep: #7C3AED;
+    --lv-secondary-light: #A78BFA;
+    --lv-secondary-bg: #F5F3FF;
+    --lv-success: #16A34A;
+    --lv-warning: #D97706;
+    --lv-danger: #DC2626;
+
+    --lv-surface: #FFFFFF;
+    --lv-surface-2: #FAFAFA;
+    --lv-surface-3: #F4F4F5;
+    --lv-ink: #111827;
+    --lv-ink-2: #374151;
+    --lv-ink-3: #6B7280;
+    --lv-ink-4: #9CA3AF;
+    --lv-line: #E5E7EB;
+    --lv-line-2: #F3F4F6;
+
+    --lv-font: 'Inter', -apple-system, sans-serif;
+    --lv-font-mono: 'JetBrains Mono', monospace;
+
+    --lv-r-sm: 4px;
+    --lv-r-md: 8px;
+    --lv-r-lg: 12px;
+    --lv-r-pill: 999px;
+
+    --lv-sh-1: 0 1px 2px rgba(17,24,39,0.05);
+    --lv-sh-2: 0 4px 14px -3px rgba(17,24,39,0.08), 0 2px 4px -1px rgba(17,24,39,0.04);
+    --lv-sh-violet: 0 6px 18px -3px rgba(139,92,246,0.35);
+    --lv-sh-card: 0 8px 28px -6px rgba(17,24,39,0.12), 0 4px 8px -2px rgba(17,24,39,0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--lv-font);
+    font-size: 12px;
+    color: var(--lv-ink);
+    background: var(--lv-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: var(--lv-surface);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    padding: 16px 20px;
+    gap: 14px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: -0.02em;
+    color: var(--lv-primary);
+  }
+  .brand__mark {
+    width: 22px; height: 22px;
+    background: var(--lv-primary);
+    border-radius: var(--lv-r-md);
+    display: grid; place-items: center;
+    color: var(--lv-surface);
+    position: relative;
+  }
+  .brand__mark::after {
+    content: "";
+    position: absolute;
+    width: 8px; height: 8px;
+    background: var(--lv-secondary);
+    border-radius: 2px;
+  }
+  .nav {
+    display: flex;
+    gap: 18px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--lv-ink-3);
+  }
+  .nav a {
+    text-decoration: none;
+    color: inherit;
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--lv-ink); }
+  .nav a.is-active { color: var(--lv-ink); font-weight: 700; }
+  .signin {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--lv-ink-2);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+  .signin:hover { color: var(--lv-secondary); }
+
+  /* ============ MAIN ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 20px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* LEFT — conversion hero */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 3px 10px;
+    background: var(--lv-secondary-bg);
+    color: var(--lv-secondary-deep);
+    border-radius: var(--lv-r-pill);
+    font-family: var(--lv-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .hero__eyebrow::before {
+    content: "★";
+    color: var(--lv-secondary);
+  }
+
+  .hero__title {
+    font-family: var(--lv-font);
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    color: var(--lv-ink);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--lv-secondary);
+  }
+
+  .hero__sub {
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--lv-ink-3);
+    max-width: 30ch;
+  }
+
+  /* Primary CTA — conversion-focused, prominent */
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 38px;
+    padding: 0 18px;
+    border: none;
+    border-radius: var(--lv-r-md);
+    font-family: var(--lv-font);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  /* THE conversion button — violet, large, glowing */
+  .btn--convert {
+    background: var(--lv-secondary);
+    color: var(--lv-surface);
+    box-shadow: var(--lv-sh-violet);
+    height: 40px;
+  }
+  .btn--convert:hover {
+    transform: translateY(-1px);
+    background: var(--lv-secondary-deep);
+    box-shadow: 0 10px 28px -4px rgba(139,92,246,0.45);
+  }
+  .btn--ghost {
+    background: transparent;
+    color: var(--lv-ink-2);
+    padding: 0 4px;
+    height: auto;
+    font-weight: 600;
+  }
+  .btn--ghost:hover { color: var(--lv-secondary); }
+  .btn svg { width: 13px; height: 13px; }
+
+  /* Trust signals row */
+  .trust {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding-top: 8px;
+    border-top: 1px solid var(--lv-line-2);
+  }
+  .trust__item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--lv-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--lv-ink-3);
+  }
+  .trust__item svg { width: 12px; height: 12px; color: var(--lv-ink-4); }
+  .trust__stars {
+    display: flex;
+    gap: 1px;
+    color: #FBBF24;
+  }
+  .trust__stars svg { width: 11px; height: 11px; color: #FBBF24; }
+
+  /* RIGHT — social proof / pricing card */
+  .proof {
+    background: var(--lv-surface);
+    border: 1px solid var(--lv-line);
+    border-radius: var(--lv-r-lg);
+    padding: 16px;
+    box-shadow: var(--lv-sh-card);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* Trust badge ribbon */
+  .proof::before {
+    content: "MOST POPULAR";
+    position: absolute;
+    top: 10px; right: -28px;
+    background: var(--lv-secondary);
+    color: var(--lv-surface);
+    font-family: var(--lv-font-mono);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    padding: 2px 32px;
+    transform: rotate(35deg);
+    box-shadow: var(--lv-sh-violet);
+  }
+
+  .proof__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--lv-line-2);
+  }
+  .proof__plan {
+    font-family: var(--lv-font);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--lv-ink);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .proof__billing {
+    font-family: var(--lv-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--lv-ink-3);
+  }
+
+  .proof__price {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .proof__price-value {
+    font-family: var(--lv-font);
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--lv-ink);
+    line-height: 1;
+  }
+  .proof__price-currency {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--lv-ink-2);
+  }
+  .proof__price-period {
+    font-family: var(--lv-font-mono);
+    font-size: 10px;
+    color: var(--lv-ink-3);
+    font-weight: 500;
+  }
+
+  /* Feature checklist */
+  .features {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .feature {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--lv-ink-2);
+    font-weight: 500;
+  }
+  .feature__check {
+    width: 14px; height: 14px;
+    background: var(--lv-secondary-bg);
+    color: var(--lv-secondary-deep);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .feature__check svg { width: 8px; height: 8px; stroke-width: 3; }
+
+  /* Conversion mini CTA inside card */
+  .proof__cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 32px;
+    background: var(--lv-primary);
+    color: var(--lv-surface);
+    border: none;
+    border-radius: var(--lv-r-md);
+    font-family: var(--lv-font);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .15s ease;
+    margin-top: 4px;
+  }
+  .proof__cta:hover { background: var(--lv-secondary-deep); }
+  .proof__cta svg { width: 11px; height: 11px; }
+
+  .proof__guarantee {
+    text-align: center;
+    font-family: var(--lv-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--lv-ink-4);
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Levels design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span>Levels</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Product</a>
+      <a href="#">Pricing</a>
+      <a href="#">Customers</a>
+    </nav>
+    <button class="signin" type="button">Sign in →</button>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <section class="main">
+
+    <!-- LEFT: conversion hero -->
+    <article class="hero">
+      <span class="hero__eyebrow">★ 30-day free trial</span>
+      <h1 class="hero__title">Close <em>3×</em> more<br>deals, faster.</h1>
+      <p class="hero__sub">The CRM that removes friction from every step. Built for speed, designed for trust.</p>
+      <div class="hero__cta">
+        <button class="btn btn--convert" type="button">
+          Start free trial
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Watch demo</button>
+      </div>
+      <!-- Trust signals -->
+      <div class="trust">
+        <span class="trust__item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          SOC 2
+        </span>
+        <span class="trust__item">
+          <span class="trust__stars" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4.5 2 7L12 16l-6.5 4.5 2-7L2 9h7z"/></svg>
+          </span>
+          4.9 · 2,847
+        </span>
+      </div>
+    </article>
+
+    <!-- RIGHT: pricing card -->
+    <aside class="proof">
+      <div class="proof__head">
+        <span class="proof__plan">Pro plan</span>
+        <span class="proof__billing">/ month</span>
+      </div>
+
+      <div class="proof__price">
+        <span class="proof__price-currency">$</span>
+        <span class="proof__price-value">49</span>
+        <span class="proof__price-period">/ user / mo</span>
+      </div>
+
+      <div class="features">
+        <div class="feature">
+          <span class="feature__check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          Unlimited deals & contacts
+        </div>
+        <div class="feature">
+          <span class="feature__check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          AI-powered lead scoring
+        </div>
+        <div class="feature">
+          <span class="feature__check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          Advanced analytics
+        </div>
+        <div class="feature">
+          <span class="feature__check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          Priority support
+        </div>
+      </div>
+
+      <button class="proof__cta" type="button">
+        Start free trial
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+      <p class="proof__guarantee">No credit card · Cancel anytime</p>
+    </aside>
+
+  </section>
+
+</main>
+
+</body>
+</html>

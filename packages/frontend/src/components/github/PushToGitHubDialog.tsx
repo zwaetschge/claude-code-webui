@@ -14,7 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Loader2, Github, Upload, Plus, AlertTriangle } from 'lucide-react';
 import { api } from '@/services/api';
-import type { GitHubRepo } from '@claude-code-webui/shared';
+import type { GitHubRepo } from '@plum-code-webui/shared';
 import { CreateRepoDialog } from './CreateRepoDialog';
 
 interface PushToGitHubDialogProps {

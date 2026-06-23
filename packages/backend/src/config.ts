@@ -43,7 +43,27 @@ const envSchema = z.object({
   // (anyone with valid OAuth + basic-auth bypass can sign in — only safe behind
   // a private network or Authelia).
   AUTH_ALLOWED_EMAILS: z.string().optional(),
+  // Trust authenticated user identity from a reverse proxy / ForwardAuth layer
+  // such as Authelia. Disabled by default because request headers are trivial to
+  // spoof unless the app is only reachable through a trusted proxy.
+  PROXY_AUTH_ENABLED: z.string().optional(),
+  PROXY_AUTH_EMAIL_HEADERS: z.string().optional(),
+  PROXY_AUTH_USER_HEADERS: z.string().optional(),
+  PROXY_AUTH_NAME_HEADERS: z.string().optional(),
 });
+
+function parseBoolean(value: string | undefined, fallback = false): boolean {
+  if (value === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function parseHeaderList(value: string | undefined, fallback: string[]): string[] {
+  const parsed = (value || '')
+    .split(',')
+    .map((header) => header.trim().toLowerCase())
+    .filter((header) => header.length > 0);
+  return parsed.length > 0 ? parsed : fallback;
+}
 
 function loadConfig() {
   const parsed = envSchema.safeParse(process.env);
@@ -116,6 +136,24 @@ function loadConfig() {
       // login is accepted. Set AUTH_ALLOWED_EMAILS to lock down a public
       // deployment to known operators.
       allowedEmails,
+    },
+    proxyAuth: {
+      enabled: parseBoolean(env.PROXY_AUTH_ENABLED),
+      emailHeaders: parseHeaderList(env.PROXY_AUTH_EMAIL_HEADERS, [
+        'remote-email',
+        'x-forwarded-email',
+        'x-auth-request-email',
+      ]),
+      userHeaders: parseHeaderList(env.PROXY_AUTH_USER_HEADERS, [
+        'remote-user',
+        'x-forwarded-user',
+        'x-auth-request-user',
+      ]),
+      nameHeaders: parseHeaderList(env.PROXY_AUTH_NAME_HEADERS, [
+        'remote-name',
+        'x-forwarded-name',
+        'x-auth-request-preferred-username',
+      ]),
     },
     claude: {
       oauthEnabled: env.CLAUDE_OAUTH_ENABLED, // Enabled by default (set CLAUDE_OAUTH_ENABLED=false to disable)

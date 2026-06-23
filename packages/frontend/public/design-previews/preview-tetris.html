@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Tetris — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     TETRIS DESIGN SYSTEM — 400×300 THUMBNAIL
+     Iconic block game · Bangers display · premium playful
+     Purple/cyan/yellow palette · neon glows · tetromino blocks
+     ============================================================ */
+  :root {
+    --tt-bg:       #1C202B;   /* deep night-blue */
+    --tt-bg-2:     #14171F;
+    --tt-surface:  #DFE7FF;   /* light blue surface */
+    --tt-surface-2:#C9D6F5;
+    --tt-surface-3:#B3C2EB;
+    --tt-text:     #1C398E;   /* deep blue text */
+    --tt-text-2:   #2D4FB0;
+
+    --tt-primary:  #1C202B;   /* deep bg as primary */
+    --tt-secondary:#7107E7;   /* neon violet */
+    --tt-secondary-2:#5B06BD;
+    --tt-success:  #16A34A;
+    --tt-warning:  #D97706;
+    --tt-danger:   #DC2626;
+    --tt-info:     #0EA5E9;
+
+    /* tetromino block colors — the iconic 7 */
+    --tt-i: #00E5FF;   /* cyan I */
+    --tt-o: #FFD600;   /* yellow O */
+    --tt-t: #B855F6;   /* purple T */
+    --tt-s: #00E676;   /* green S */
+    --tt-z: #FF1744;   /* red Z */
+    --tt-j: #2979FF;   /* blue J */
+    --tt-l: #FF6D00;   /* orange L */
+
+    --tt-font-d:  'Bangers', 'Impact', sans-serif;
+    --tt-font-m:  'JetBrains Mono', ui-monospace, monospace;
+
+    /* neon glow shadows */
+    --tt-glow-v: 0 0 12px rgba(113,7,231,0.6), 0 0 24px rgba(113,7,231,0.3);
+    --tt-glow-c: 0 0 12px rgba(0,229,255,0.6), 0 0 24px rgba(0,229,255,0.3);
+    --tt-glow-y: 0 0 12px rgba(255,214,0,0.6), 0 0 24px rgba(255,214,0,0.3);
+    --tt-shadow-hard: 4px 4px 0 var(--tt-bg);
+    --tt-shadow-hard-v: 4px 4px 0 var(--tt-secondary);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--tt-font-m);
+    font-size: 12px;
+    color: var(--tt-text);
+    background: var(--tt-surface);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ============================================================
+     POSTER — light blue surface with falling tetrominoes bg
+     ============================================================ */
+  .poster {
+    position: relative;
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 60% 50% at 85% 15%, rgba(113,7,231,0.10) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 12% 88%, rgba(0,229,255,0.10) 0%, transparent 60%),
+      linear-gradient(180deg, var(--tt-surface) 0%, var(--tt-surface-2) 100%);
+    isolation: isolate;
+  }
+  /* subtle dot grid — arcade feel */
+  .grid {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image:
+      linear-gradient(rgba(28,57,142,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(28,57,142,0.06) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  /* falling tetrominoes in corners — pure decoration */
+  .falling {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.55;
+  }
+  .falling--tl { top: 14px; left: 14px; }
+  .falling--br { bottom: 14px; right: 14px; }
+
+  /* ============================================================
+     FRAME — compact density
+     ============================================================ */
+  .frame {
+    position: relative;
+    z-index: 2;
+    width: 400px;
+    height: 300px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 14px 18px 12px;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* logo: O-tetromino + wordmark */
+  .brand__mark {
+    width: 28px; height: 28px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 2px;
+    filter: drop-shadow(2px 2px 0 var(--tt-bg));
+  }
+  .brand__mark span {
+    background: var(--tt-o);
+    border: 1.5px solid var(--tt-bg);
+  }
+  .brand__name {
+    font-family: var(--tt-font-d);
+    font-size: 30px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    color: var(--tt-text);
+    line-height: 1;
+    text-shadow: 2px 2px 0 var(--tt-secondary);
+  }
+  .brand__name em {
+    font-style: normal;
+    color: var(--tt-secondary);
+    text-shadow: 2px 2px 0 var(--tt-text);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--tt-font-m);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .nav a {
+    text-decoration: none;
+    color: var(--tt-text-2);
+    padding: 4px 8px;
+    transition: background .12s ease, color .12s ease;
+  }
+  .nav a:hover { background: var(--tt-surface-3); color: var(--tt-text); }
+  .nav a.is-active {
+    color: #fff;
+    background: var(--tt-secondary);
+    box-shadow: var(--tt-shadow-hard);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 14px;
+    align-items: center;
+    min-height: 0;
+  }
+
+  /* ---- LEFT: hero ---- */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 3px 9px;
+    background: var(--tt-o);
+    color: var(--tt-bg);
+    border: 1.5px solid var(--tt-bg);
+    box-shadow: var(--tt-shadow-hard);
+    font-family: var(--tt-font-m);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .hero__eyebrow::before { content: "★"; }
+  .hero__title {
+    font-family: var(--tt-font-d);
+    font-size: 42px;
+    font-weight: 400;
+    line-height: 0.92;
+    letter-spacing: 0.03em;
+    color: var(--tt-text);
+    text-shadow: 3px 3px 0 var(--tt-secondary), 6px 6px 0 var(--tt-o);
+    margin-top: 2px;
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--tt-secondary);
+    text-shadow: 3px 3px 0 var(--tt-text), 6px 6px 0 var(--tt-i);
+  }
+  .hero__sub {
+    font-family: var(--tt-font-m);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--tt-text-2);
+    max-width: 32ch;
+    margin-top: 2px;
+  }
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 14px;
+    border: 2px solid var(--tt-bg);
+    border-radius: 0;
+    font-family: var(--tt-font-d);
+    font-size: 17px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: transform .1s ease, box-shadow .1s ease;
+  }
+  .btn--primary {
+    background: var(--tt-secondary);
+    color: #fff;
+    box-shadow: var(--tt-shadow-hard);
+    text-shadow: 1px 1px 0 var(--tt-secondary-2);
+  }
+  .btn--primary:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--tt-bg);
+  }
+  .btn--ghost {
+    background: var(--tt-surface);
+    color: var(--tt-text);
+    border-color: var(--tt-bg);
+    box-shadow: var(--tt-shadow-hard);
+  }
+  .btn--ghost:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 5px 5px 0 var(--tt-bg);
+    background: var(--tt-o);
+  }
+
+  /* ============================================================
+     RIGHT: SCORE CARD
+     Tetris signature — blocky, high-contrast, neon glows,
+     tetromino stats, level indicator, next-piece preview.
+     ============================================================ */
+  .card {
+    position: relative;
+    padding: 12px 12px 11px;
+    background: var(--tt-bg);
+    border: 2px solid var(--tt-bg);
+    box-shadow: var(--tt-shadow-hard-v);
+    color: #fff;
+    overflow: hidden;
+  }
+  /* neon top stripe */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg,
+      var(--tt-i) 0%, var(--tt-o) 25%, var(--tt-t) 50%,
+      var(--tt-s) 75%, var(--tt-z) 100%);
+  }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 9px;
+  }
+  .card__label {
+    font-family: var(--tt-font-d);
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--tt-o);
+    letter-spacing: 0.06em;
+    line-height: 1;
+  }
+  .card__level {
+    font-family: var(--tt-font-m);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--tt-i);
+    text-transform: uppercase;
+    text-shadow: 0 0 6px rgba(0,229,255,0.6);
+  }
+
+  .score {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .score__value {
+    font-family: var(--tt-font-d);
+    font-size: 36px;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    color: #fff;
+    text-shadow: 0 0 10px rgba(255,255,255,0.4);
+  }
+  .score__delta {
+    font-family: var(--tt-font-m);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--tt-s);
+    text-shadow: 0 0 6px rgba(0,230,118,0.6);
+  }
+  .score__delta::before { content: "↑"; margin-right: 2px; }
+
+  /* next piece preview — mini tetromino */
+  .next {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 9px;
+  }
+  .next__label {
+    font-family: var(--tt-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--tt-text);
+    opacity: 0.7;
+  }
+  .next__piece {
+    display: grid;
+    grid-template-columns: repeat(4, 7px);
+    grid-template-rows: repeat(2, 7px);
+    gap: 1px;
+  }
+  .next__piece i {
+    background: transparent;
+  }
+  .next__piece i.on {
+    background: var(--tt-t);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.4), 0 0 4px rgba(184,85,246,0.7);
+  }
+
+  /* tetromino stat row */
+  .card__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 8px;
+    border-top: 2px dashed rgba(255,255,255,0.15);
+  }
+  .stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tetro {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .tetro__block {
+    width: 10px; height: 10px;
+    border: 1px solid rgba(255,255,255,0.3);
+  }
+  .tetro__block.i { background: var(--tt-i); box-shadow: 0 0 4px rgba(0,229,255,0.6); }
+  .tetro__block.o { background: var(--tt-o); box-shadow: 0 0 4px rgba(255,214,0,0.6); }
+  .tetro__block.t { background: var(--tt-t); box-shadow: 0 0 4px rgba(184,85,246,0.6); }
+  .tetro__num {
+    font-family: var(--tt-font-m);
+    font-size: 8px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.02em;
+  }
+  .lines {
+    font-family: var(--tt-font-m);
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--tt-o);
+    letter-spacing: 0.04em;
+  }
+  .lines b {
+    font-family: var(--tt-font-d);
+    font-size: 16px;
+    font-weight: 400;
+    color: #fff;
+    text-shadow: 0 0 8px rgba(255,255,255,0.4);
+    margin-left: 2px;
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 2px solid var(--tt-text);
+    padding-top: 8px;
+  }
+  .footer__stats {
+    display: flex;
+    gap: 14px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0px;
+    line-height: 1.05;
+  }
+  .stat__k {
+    font-family: var(--tt-font-d);
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--tt-text);
+    letter-spacing: 0.04em;
+    line-height: 1;
+    text-shadow: 2px 2px 0 var(--tt-secondary);
+  }
+  .stat__k span {
+    font-family: var(--tt-font-m);
+    font-size: 9px;
+    color: var(--tt-text-2);
+    font-weight: 700;
+    margin-left: 3px;
+    text-shadow: none;
+    letter-spacing: 0.04em;
+  }
+  .stat__l {
+    font-family: var(--tt-font-m);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--tt-text-2);
+  }
+  .footer__meta {
+    font-family: var(--tt-font-m);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--tt-text-2);
+  }
+  .footer__meta b { color: var(--tt-secondary); font-weight: 800; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Tetris design language preview — iconic block game">
+
+  <div class="grid" aria-hidden="true"></div>
+  <!-- falling tetromino decorations -->
+  <svg class="falling falling--tl" width="50" height="60" viewBox="0 0 50 60" aria-hidden="true">
+    <!-- T-piece -->
+    <rect x="4" y="4" width="12" height="12" fill="#B855F6" stroke="#1C202B" stroke-width="2"/>
+    <rect x="18" y="4" width="12" height="12" fill="#B855F6" stroke="#1C202B" stroke-width="2"/>
+    <rect x="32" y="4" width="12" height="12" fill="#B855F6" stroke="#1C202B" stroke-width="2"/>
+    <rect x="18" y="18" width="12" height="12" fill="#B855F6" stroke="#1C202B" stroke-width="2"/>
+    <!-- I-piece -->
+    <rect x="6" y="40" width="12" height="12" fill="#00E5FF" stroke="#1C202B" stroke-width="2"/>
+    <rect x="20" y="40" width="12" height="12" fill="#00E5FF" stroke="#1C202B" stroke-width="2"/>
+    <rect x="34" y="40" width="12" height="12" fill="#00E5FF" stroke="#1C202B" stroke-width="2"/>
+  </svg>
+  <svg class="falling falling--br" width="50" height="60" viewBox="0 0 50 60" aria-hidden="true">
+    <!-- L-piece -->
+    <rect x="6" y="6" width="12" height="12" fill="#FF6D00" stroke="#1C202B" stroke-width="2"/>
+    <rect x="6" y="20" width="12" height="12" fill="#FF6D00" stroke="#1C202B" stroke-width="2"/>
+    <rect x="6" y="34" width="12" height="12" fill="#FF6D00" stroke="#1C202B" stroke-width="2"/>
+    <rect x="20" y="34" width="12" height="12" fill="#FF6D00" stroke="#1C202B" stroke-width="2"/>
+    <!-- S-piece -->
+    <rect x="30" y="20" width="10" height="10" fill="#00E676" stroke="#1C202B" stroke-width="2"/>
+    <rect x="40" y="20" width="10" height="10" fill="#00E676" stroke="#1C202B" stroke-width="2"/>
+    <rect x="25" y="30" width="10" height="10" fill="#00E676" stroke="#1C202B" stroke-width="2"/>
+    <rect x="35" y="30" width="10" height="10" fill="#00E676" stroke="#1C202B" stroke-width="2"/>
+  </svg>
+
+  <div class="frame">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span class="brand__name">BLO<em>CK</em>S</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Play</a>
+        <a href="#">Scores</a>
+        <a href="#">Modes</a>
+      </nav>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <!-- LEFT: hero -->
+      <article class="hero">
+        <span class="hero__eyebrow">High score</span>
+        <h1 class="hero__title">Stack <em>it</em> up!</h1>
+        <p class="hero__sub">The iconic block game, reborn. Clear lines, chase combos, climb the leaderboard.</p>
+        <div class="hero__cta">
+          <button class="btn btn--primary" type="button">Play now</button>
+          <button class="btn btn--ghost" type="button">Scores</button>
+        </div>
+      </article>
+
+      <!-- RIGHT: score card -->
+      <div class="card" aria-label="High score summary">
+        <div class="card__head">
+          <span class="card__label">Your score</span>
+          <span class="card__level">Lv. 12</span>
+        </div>
+
+        <div class="score">
+          <span class="score__value">999,999</span>
+          <span class="score__delta">+4,200</span>
+        </div>
+
+        <div class="next">
+          <span class="next__label">Next</span>
+          <span class="next__piece" aria-hidden="true">
+            <i></i><i class="on"></i><i class="on"></i><i class="on"></i>
+            <i></i><i></i><i class="on"></i><i></i>
+          </span>
+        </div>
+
+        <div class="card__row">
+          <div class="stats">
+            <div class="tetro">
+              <span class="tetro__block i"></span>
+              <span class="tetro__num">8</span>
+            </div>
+            <div class="tetro">
+              <span class="tetro__block o"></span>
+              <span class="tetro__num">5</span>
+            </div>
+            <div class="tetro">
+              <span class="tetro__block t"></span>
+              <span class="tetro__num">7</span>
+            </div>
+          </div>
+          <span class="lines">Lines<b>48</b></span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <div class="footer__stats">
+        <div class="stat">
+          <span class="stat__k">7<span>pieces</span></span>
+          <span class="stat__l">Tetrominoes</span>
+        </div>
+        <div class="stat">
+          <span class="stat__k">∞<span></span></span>
+          <span class="stat__l">Levels</span>
+        </div>
+      </div>
+      <span class="footer__meta">Tetris · <b>#7107E7</b></span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

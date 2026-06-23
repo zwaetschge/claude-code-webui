@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expressive — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500;1,600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     EXPRESSIVE DESIGN SYSTEM — 400×300 THUMBNAIL
+     Hot pink + royal blue · IBM Plex Mono · personality-driven
+     ============================================================ */
+  :root {
+    --ex-primary: #db2777;        /* hot pink */
+    --ex-primary-deep: #be185d;
+    --ex-primary-bg: #fdf2f8;
+    --ex-secondary: #2563eb;      /* royal blue */
+    --ex-secondary-deep: #1d4ed8;
+    --ex-secondary-bg: #eff6ff;
+    --ex-success: #16A34A;
+    --ex-warning: #D97706;
+    --ex-danger: #DC2626;
+
+    /* Extra personality accents */
+    --ex-yellow: #facc15;
+    --ex-mint: #34d399;
+    --ex-violet: #8b5cf6;
+
+    --ex-surface: #FFFFFF;
+    --ex-surface-2: #FAFAFA;
+    --ex-ink: #111827;
+    --ex-ink-2: #374151;
+    --ex-ink-3: #6B7280;
+    --ex-ink-4: #9CA3AF;
+    --ex-line: #E5E7EB;
+    --ex-line-2: #F3F4F6;
+
+    --ex-font: 'IBM Plex Mono', ui-monospace, monospace;
+
+    --ex-r-sm: 6px;
+    --ex-r-md: 10px;
+    --ex-r-lg: 14px;
+    --ex-r-xl: 20px;
+    --ex-r-pill: 999px;
+
+    --ex-sh-1: 0 1px 2px rgba(17,24,39,0.05);
+    --ex-sh-2: 0 6px 20px -6px rgba(219,39,119,0.20), 0 2px 6px -1px rgba(17,24,39,0.05);
+    --ex-sh-blue: 0 6px 20px -6px rgba(37,99,235,0.25);
+    --ex-sh-pink: 0 6px 20px -6px rgba(219,39,119,0.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--ex-font);
+    font-size: 12px;
+    color: var(--ex-ink);
+    background:
+      radial-gradient(180px 120px at 100% 0%, rgba(219,39,119,0.08), transparent 60%),
+      radial-gradient(180px 120px at 0% 100%, rgba(37,99,235,0.06), transparent 60%),
+      var(--ex-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame {
+    width: 400px;
+    height: 300px;
+    padding: 12px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 10px;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--ex-ink);
+    border-radius: var(--ex-r-md);
+    color: #fff;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .brand__mark {
+    width: 20px; height: 20px;
+    background: var(--ex-primary);
+    border-radius: var(--ex-r-sm);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--ex-sh-pink);
+    transform: rotate(-6deg);
+  }
+  .brand__mark::before {
+    content: "★";
+    font-size: 11px;
+    line-height: 1;
+  }
+  .brand__name { color: #fff; }
+  .brand__name em {
+    font-style: normal;
+    color: var(--ex-primary);
+  }
+  .brand__sep { color: var(--ex-ink-4); margin: 0 6px; }
+  .brand__sub {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--ex-ink-4);
+  }
+
+  .nav {
+    display: flex;
+    gap: 4px;
+    font-size: 10px;
+  }
+  .nav a {
+    padding: 3px 9px;
+    border-radius: var(--ex-r-pill);
+    text-decoration: none;
+    color: rgba(255,255,255,0.6);
+    font-weight: 500;
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: #fff; background: rgba(255,255,255,0.1); }
+  .nav a.is-active {
+    background: var(--ex-primary);
+    color: #fff;
+    box-shadow: var(--ex-sh-pink);
+  }
+
+  .avatar {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--ex-secondary);
+    color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 9px;
+    box-shadow: var(--ex-sh-blue);
+  }
+
+  /* ============ MAIN BENTO ============ */
+  .main {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  .card {
+    border-radius: var(--ex-r-md);
+    padding: 10px 12px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* HERO card — pink, personality statement */
+  .card--hero {
+    grid-column: span 2;
+    background: linear-gradient(135deg, var(--ex-primary) 0%, #ec4899 100%);
+    color: #fff;
+    box-shadow: var(--ex-sh-pink);
+    justify-content: space-between;
+  }
+  .card--hero::after {
+    content: "";
+    position: absolute;
+    top: -20px; right: -20px;
+    width: 90px; height: 90px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+  }
+
+  .card__label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+    z-index: 1;
+  }
+  .card--hero .card__label { color: rgba(255,255,255,0.85); }
+  .card__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    background: rgba(255,255,255,0.25);
+    border-radius: var(--ex-r-pill);
+    font-size: 7.5px;
+    font-weight: 700;
+  }
+  .card__pill::before {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .hero__title {
+    font-family: var(--ex-font);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+    color: #fff;
+    margin: 4px 0 2px;
+    position: relative;
+    z-index: 1;
+  }
+  .hero__title em {
+    font-style: italic;
+    font-weight: 600;
+    color: var(--ex-yellow);
+  }
+  .hero__sub {
+    font-size: 10px;
+    color: rgba(255,255,255,0.85);
+    line-height: 1.4;
+    margin-bottom: 4px;
+    position: relative;
+    z-index: 1;
+    max-width: 26ch;
+  }
+  .hero__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    height: 22px;
+    padding: 0 12px;
+    background: #fff;
+    color: var(--ex-primary-deep);
+    border: none;
+    border-radius: var(--ex-r-pill);
+    font-family: var(--ex-font);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  }
+  .hero__cta svg { width: 9px; height: 9px; }
+
+  /* Stat cards — each with personality */
+  .card--blue {
+    background: var(--ex-secondary);
+    color: #fff;
+    box-shadow: var(--ex-sh-blue);
+  }
+  .card--white {
+    background: var(--ex-surface);
+    border: 1px solid var(--ex-line);
+    color: var(--ex-ink);
+  }
+  .card--pink-soft {
+    background: var(--ex-primary-bg);
+    color: var(--ex-primary-deep);
+    border: 1px solid #fbcfe8;
+  }
+  .card--yellow {
+    background: var(--ex-yellow);
+    color: var(--ex-ink);
+  }
+
+  .stat__value {
+    font-family: var(--ex-font);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-top: 4px;
+    position: relative;
+    z-index: 1;
+  }
+  .stat__value span {
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.7;
+  }
+  .stat__sub {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding-top: 4px;
+    font-size: 9px;
+    position: relative;
+    z-index: 1;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    border-radius: var(--ex-r-pill);
+    font-size: 8.5px;
+    font-weight: 700;
+  }
+  .delta svg { width: 7px; height: 7px; }
+  .delta--up { background: rgba(255,255,255,0.25); color: #fff; }
+  .delta--pink { background: rgba(219,39,119,0.15); color: var(--ex-primary-deep); }
+  .delta-text { opacity: 0.7; font-weight: 500; }
+
+  /* Mini bars in yellow card */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 16px;
+    margin-top: 4px;
+    position: relative;
+    z-index: 1;
+  }
+  .bar {
+    flex: 1;
+    background: var(--ex-ink);
+    opacity: 0.3;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .bar--peak {
+    opacity: 1;
+    background: var(--ex-primary);
+  }
+
+  /* Pink soft card — quote */
+  .quote-mark {
+    font-family: var(--ex-font);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--ex-primary);
+    line-height: 0.8;
+    margin-top: 4px;
+    position: relative;
+    z-index: 1;
+  }
+  .quote-text {
+    font-family: var(--ex-font);
+    font-style: italic;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--ex-primary-deep);
+    line-height: 1.35;
+    margin-top: 2px;
+    position: relative;
+    z-index: 1;
+  }
+  .quote-author {
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--ex-ink-3);
+    margin-top: auto;
+    padding-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+
+<main class="frame" aria-label="Expressive design language preview">
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="brand__name">spk<em>.</em>io</span>
+      <span class="brand__sep">—</span>
+      <span class="brand__sub">v2 · live</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Home</a>
+      <a href="#">Stats</a>
+      <a href="#">Feed</a>
+    </nav>
+    <div class="avatar" aria-label="User">NL</div>
+  </header>
+
+  <!-- ===== MAIN BENTO ===== -->
+  <section class="main">
+
+    <!-- HERO: pink personality statement -->
+    <article class="card card--hero">
+      <span class="card__label">
+        Welcome back
+        <span class="card__pill">pro</span>
+      </span>
+      <div>
+        <h1 class="hero__title">say it<br><em>loud.</em></h1>
+        <p class="hero__sub">Bold colors, big ideas, zero apologies. Ship work that has actual personality.</p>
+      </div>
+      <button class="hero__cta" type="button">
+        Make noise
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </article>
+
+    <!-- STAT 1: blue -->
+    <article class="card card--blue">
+      <span class="card__label">Reach</span>
+      <div class="stat__value">84<span>k</span></div>
+      <div class="stat__sub">
+        <span class="delta delta--up">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          22%
+        </span>
+      </div>
+    </article>
+
+    <!-- STAT 2: white with sparkline -->
+    <article class="card card--white">
+      <span class="card__label">Posts</span>
+      <div class="stat__value" style="color:var(--ex-ink);">1,284</div>
+      <div class="bars" aria-hidden="true">
+        <div class="bar" style="height:32%"></div>
+        <div class="bar" style="height:48%"></div>
+        <div class="bar" style="height:62%"></div>
+        <div class="bar bar--peak" style="height:100%"></div>
+        <div class="bar" style="height:70%"></div>
+        <div class="bar" style="height:55%"></div>
+      </div>
+    </article>
+
+    <!-- STAT 3: pink-soft with quote -->
+    <article class="card card--pink-soft">
+      <span class="card__label">Voice</span>
+      <div class="quote-mark" aria-hidden="true">"</div>
+      <p class="quote-text">be loud, be weird, be impossible to ignore.</p>
+      <span class="quote-author">— house mantra</span>
+    </article>
+
+    <!-- STAT 4: yellow streak -->
+    <article class="card card--yellow">
+      <span class="card__label">Streak</span>
+      <div class="stat__value">28<span> days</span></div>
+      <div class="stat__sub">
+        <span class="delta delta--pink">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 22h20L12 2z"/><path d="M12 9v4M12 17h.01"/></svg>
+          fire
+        </span>
+      </div>
+    </article>
+
+  </section>
+
+</main>
+
+</body>
+</html>

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dithered — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Open+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     DITHERED DESIGN SYSTEM — 400×300 THUMBNAIL
+     Dot-pattern · retro · limited palette · half-tone simulation
+     ============================================================ */
+  :root {
+    --dt-primary: #3B82F6;
+    --dt-primary-deep: #1D4ED8;
+    --dt-secondary: #8B5CF6;
+    --dt-secondary-deep: #6D28D9;
+    --dt-success: #16A34A;
+    --dt-warning: #D97706;
+    --dt-danger: #DC2626;
+
+    --dt-paper: #FFFCF5;            /* warm aged paper */
+    --dt-paper-2: #F5EFE0;
+    --dt-surface: #FFFFFF;
+    --dt-ink: #111827;
+    --dt-ink-2: #2A2A2A;
+    --dt-ink-3: #555555;
+    --dt-ink-4: #888888;
+
+    --dt-font-ui: 'Open Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --dt-font-display: 'Space Grotesk', 'Open Sans', sans-serif;
+    --dt-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+    /* ============ DITHER PATTERNS — the signature ============ */
+    /* Light dither (~15% fill) — sparse dots */
+    --dt-dither-light: radial-gradient(circle, var(--dt-ink) 0.5px, transparent 0.6px);
+    --dt-dither-light-bg: var(--dt-dither-light) 0 0 / 4px 4px;
+
+    /* Medium dither (~35% fill) */
+    --dt-dither-med: radial-gradient(circle, var(--dt-ink) 0.7px, transparent 0.9px);
+    --dt-dither-med-bg: var(--dt-dither-med) 0 0 / 3px 3px;
+
+    /* Heavy dither (~55% fill) */
+    --dt-dither-heavy: radial-gradient(circle, var(--dt-ink) 1px, transparent 1.3px);
+    --dt-dither-heavy-bg: var(--dt-dither-heavy) 0 0 / 2.5px 2.5px;
+
+    /* Blue dither */
+    --dt-dither-blue: radial-gradient(circle, var(--dt-primary) 0.8px, transparent 1px);
+    --dt-dither-blue-bg: var(--dt-dither-blue) 0 0 / 3px 3px;
+
+    /* Violet dither */
+    --dt-dither-violet: radial-gradient(circle, var(--dt-secondary) 0.8px, transparent 1px);
+    --dt-dither-violet-bg: var(--dt-dither-violet) 0 0 / 3px 3px;
+
+    /* Half-tone (larger, irregular pattern) */
+    --dt-halftone: radial-gradient(circle, var(--dt-ink) 1.2px, transparent 1.6px);
+    --dt-halftone-bg: var(--dt-halftone) 0 0 / 5px 5px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--dt-font-ui);
+    font-size: 12px;
+    color: var(--dt-ink);
+    background: var(--dt-paper);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    background: var(--dt-paper);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    border: 1.5px solid var(--dt-ink);
+  }
+
+  /* Paper grain overlay */
+  .poster::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 20% 30%, rgba(0,0,0,0.025) 1px, transparent 1.5px) 0 0 / 3px 3px,
+      radial-gradient(circle at 70% 80%, rgba(0,0,0,0.020) 1px, transparent 1.5px) 0 0 / 4px 4px;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ============ TOP NAV ============ */
+  .topnav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 14px;
+    border-bottom: 1.5px solid var(--dt-ink);
+    background: var(--dt-surface);
+    position: relative;
+    z-index: 2;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .brand__mark {
+    width: 18px; height: 18px;
+    background: var(--dt-primary);
+    /* dither pattern on brand mark */
+    background-image: var(--dt-dither-light-bg);
+    background-blend-mode: multiply;
+    border: 1.5px solid var(--dt-ink);
+    display: grid; place-items: center;
+    color: var(--dt-ink);
+  }
+  .brand__mark svg { width: 11px; height: 11px; }
+  .brand__name {
+    font-family: var(--dt-font-display);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--dt-ink);
+  }
+  .brand__sub {
+    font-family: var(--dt-font-mono);
+    font-size: 8.5px;
+    color: var(--dt-ink-3);
+    letter-spacing: 0.04em;
+  }
+
+  .nav {
+    display: flex;
+    gap: 1px;
+    font-family: var(--dt-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+  }
+  .nav a {
+    padding: 3px 8px;
+    text-decoration: none;
+    color: var(--dt-ink-3);
+    border: 1.5px solid transparent;
+    transition: all .15s ease;
+  }
+  .nav a:hover { color: var(--dt-ink); border-color: var(--dt-ink); }
+  .nav a.is-active {
+    color: var(--dt-surface);
+    background: var(--dt-ink);
+    border-color: var(--dt-ink);
+  }
+
+  /* ============ STAGE ============ */
+  .stage {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  /* LEFT — editorial headline with dithered bg */
+  .hero {
+    padding: 14px 14px 12px;
+    border-right: 1.5px solid var(--dt-ink);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    background: var(--dt-paper);
+  }
+  /* Dithered gradient zone behind headline */
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      /* fade from light (top-left) to heavy (bottom-right) */
+      linear-gradient(135deg,
+        transparent 0%, transparent 30%,
+        var(--dt-dither-light-bg) 30%, var(--dt-dither-light-bg) 50%,
+        var(--dt-dither-med-bg) 50%, var(--dt-dither-med-bg) 75%,
+        var(--dt-dither-heavy-bg) 75%, var(--dt-dither-heavy-bg) 100%);
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.65;
+  }
+  .hero > * { position: relative; z-index: 1; }
+
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-start;
+    padding: 2px 8px;
+    background: var(--dt-ink);
+    color: var(--dt-paper);
+    font-family: var(--dt-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .hero__title {
+    font-family: var(--dt-font-display);
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 0.92;
+    letter-spacing: -0.04em;
+    color: var(--dt-ink);
+    margin: 8px 0 4px;
+  }
+  .hero__title--outline {
+    color: transparent;
+    -webkit-text-stroke: 1.5px var(--dt-ink);
+  }
+  .hero__title--blue {
+    color: var(--dt-primary);
+  }
+
+  .hero__sub {
+    font-family: var(--dt-font-mono);
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--dt-ink-2);
+    max-width: 30ch;
+    margin: 4px 0 6px;
+    font-weight: 500;
+  }
+
+  .hero__cta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    border: 1.5px solid var(--dt-ink);
+    font-family: var(--dt-font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--dt-ink);
+    background: var(--dt-surface);
+    transition: all .15s ease;
+  }
+  .btn--primary {
+    color: var(--dt-paper);
+    background: var(--dt-ink);
+    /* dithered inner pattern */
+    background-image: var(--dt-dither-light-bg);
+    background-blend-mode: overlay;
+  }
+  .btn--primary:hover { background-color: var(--dt-primary-deep); color: #fff; background-image: none; }
+  .btn--ghost {
+    background: transparent;
+    color: var(--dt-ink);
+  }
+  .btn--ghost:hover {
+    background: var(--dt-paper-2);
+  }
+  .btn svg { width: 11px; height: 11px; }
+
+  /* RIGHT — dithered data cards */
+  .data {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    overflow: hidden;
+  }
+
+  .card {
+    padding: 10px 12px;
+    border-bottom: 1.5px solid var(--dt-ink);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .card:last-child { border-bottom: none; }
+
+  /* Blue dither card */
+  .card--blue {
+    background-color: rgba(59,130,246,0.08);
+    background-image: var(--dt-dither-blue-bg);
+  }
+
+  /* Violet dither card */
+  .card--violet {
+    background-color: rgba(139,92,246,0.08);
+    background-image: var(--dt-dither-violet-bg);
+  }
+
+  /* Ink dither card (bar list) */
+  .card--ink {
+    background-color: var(--dt-paper);
+    background-image: var(--dt-dither-light-bg);
+  }
+
+  .card__label {
+    font-family: var(--dt-font-mono);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dt-ink-3);
+  }
+  .card__value {
+    font-family: var(--dt-font-display);
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--dt-ink);
+    line-height: 1;
+  }
+  .card__value span {
+    font-family: var(--dt-font-mono);
+    font-size: 11px;
+    color: var(--dt-ink-3);
+    font-weight: 500;
+  }
+  .card__meta {
+    font-family: var(--dt-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--dt-primary-deep);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .card--violet .card__meta { color: var(--dt-secondary-deep); }
+  .card__meta::before { content: "▲"; }
+
+  /* Bar list in ink card */
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 2px;
+  }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--dt-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--dt-ink-2);
+  }
+  .bar-label { width: 28px; }
+  .bar-track {
+    flex: 1;
+    height: 7px;
+    border: 1px solid var(--dt-ink);
+    background: var(--dt-paper);
+    position: relative;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--dt-ink);
+    /* dithered fill */
+    background-image: var(--dt-dither-med-bg);
+    background-blend-mode: multiply;
+  }
+  .bar-fill--blue {
+    background: var(--dt-primary);
+    background-image: var(--dt-dither-blue-bg);
+    background-blend-mode: multiply;
+  }
+  .bar-pct { width: 22px; text-align: right; color: var(--dt-ink); font-weight: 700; }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 14px;
+    background: var(--dt-ink);
+    /* dithered ink */
+    background-image: var(--dt-dither-light-bg);
+    background-blend-mode: overlay;
+    color: var(--dt-paper);
+    font-family: var(--dt-font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    border-top: 1.5px solid var(--dt-ink);
+  }
+  .footer__accent { color: var(--dt-primary); }
+
+  /* Halftone decoration in hero corner */
+  .halftone-blob {
+    position: absolute;
+    top: -20px; right: -20px;
+    width: 80px; height: 80px;
+    background-image: var(--dt-halftone-bg);
+    z-index: 0;
+    border-radius: 50%;
+    mask: radial-gradient(circle, black 40%, transparent 70%);
+    -webkit-mask: radial-gradient(circle, black 40%, transparent 70%);
+    opacity: 0.5;
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Dithered design language preview">
+
+  <!-- ===== TOP NAV ===== -->
+  <header class="topnav">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>
+      </span>
+      <span>
+        <span class="brand__name">halftone</span>
+        <span class="brand__sub"> / journal</span>
+      </span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Read</a>
+      <a href="#">Archive</a>
+      <a href="#">Print</a>
+    </nav>
+  </header>
+
+  <!-- ===== STAGE ===== -->
+  <section class="stage">
+
+    <!-- LEFT: editorial hero with dithered gradient bg -->
+    <article class="hero">
+      <div class="halftone-blob" aria-hidden="true"></div>
+
+      <div>
+        <span class="hero__eyebrow">Issue 07 · Print</span>
+        <h1 class="hero__title">
+          <span class="hero__title--outline">DOTS</span><br>
+          <span class="hero__title--blue">PER</span><br>
+          INCH
+        </h1>
+        <p class="hero__sub">A limited palette, a single grid of dots — every shade built from absence and presence.</p>
+      </div>
+
+      <div class="hero__cta">
+        <button class="btn btn--primary" type="button">
+          Read issue
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn--ghost" type="button">Index</button>
+      </div>
+    </article>
+
+    <!-- RIGHT: dithered data cards -->
+    <aside class="data">
+
+      <div class="card card--blue">
+        <div class="card__label">Subscribers</div>
+        <div class="card__value">12,847</div>
+        <div class="card__meta">+18% vs Q3</div>
+      </div>
+
+      <div class="card card--ink">
+        <div class="card__label">Top sections</div>
+        <div class="bars">
+          <div class="bar-row">
+            <span class="bar-label">Tech</span>
+            <div class="bar-track"><div class="bar-fill bar-fill--blue" style="width:82%"></div></div>
+            <span class="bar-pct">82</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Arts</span>
+            <div class="bar-track"><div class="bar-fill" style="width:62%"></div></div>
+            <span class="bar-pct">62</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Essays</span>
+            <div class="bar-track"><div class="bar-fill" style="width:48%"></div></div>
+            <span class="bar-pct">48</span>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__accent">●</span> dithered · retro · limited palette</span>
+    <span>WCAG AA · v1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

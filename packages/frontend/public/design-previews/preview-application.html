@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Application — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     APPLICATION DESIGN SYSTEM — 400×300 THUMBNAIL PREVIEW
+     Top-bar only · purple · glass panels · developer-first
+     ============================================================ */
+  :root {
+    --app-primary: #9333EA;
+    --app-primary-hover: #A855F7;
+    --app-primary-active: #7E22CE;
+    --app-secondary: #A855F7;
+    --app-success: #10B981;
+    --app-warning: #F59E0B;
+    --app-danger: #EF4444;
+
+    --app-surface: #FFFFFF;
+    --app-surface-2: #FAFAFB;
+    --app-surface-3: #F4F4F6;
+    --app-surface-glass: rgba(255,255,255,0.72);
+    --app-ink: #09090B;
+    --app-ink-2: #3F3F46;
+    --app-ink-3: #71717A;
+    --app-ink-4: #A1A1AA;
+    --app-line: #E4E4E7;
+    --app-line-2: #F0F0F2;
+    --app-on-primary: #FFFFFF;
+
+    --app-primary-bg: #FAF5FF;
+    --app-primary-border: #E9D5FF;
+    --app-success-bg: #ECFDF5;
+    --app-success-border: #A7F3D0;
+    --app-warning-bg: #FFFBEB;
+    --app-warning-border: #FDE68A;
+    --app-danger-bg: #FEF2F2;
+    --app-danger-border: #FECACA;
+
+    --app-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --app-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --r-sm: 4px;
+    --r-md: 6px;
+    --r-lg: 9px;
+    --r-xl: 12px;
+    --r-pill: 999px;
+
+    --sh-1: 0 1px 2px rgba(9,9,11,0.04), 0 1px 3px rgba(9,9,11,0.04);
+    --sh-2: 0 4px 12px -3px rgba(9,9,11,0.08), 0 2px 4px -1px rgba(9,9,11,0.04);
+    --sh-purple: 0 6px 16px -4px rgba(147,51,234,0.35);
+
+    --blur: saturate(180%) blur(8px);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--app-font);
+    font-size: 12px;
+    color: var(--app-ink);
+    background:
+      radial-gradient(280px 180px at 95% 0%, rgba(147,51,234,0.10), transparent 60%),
+      radial-gradient(220px 150px at 5% 100%, rgba(168,85,247,0.06), transparent 60%),
+      var(--app-surface-2);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    background: transparent;
+    display: grid;
+    grid-template-rows: 32px auto 1fr 22px;
+    overflow: hidden;
+    border-right: 1px solid var(--app-line);
+  }
+
+  /* ===== TOPBAR (signature: top-bar only, no sidebar) ===== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: var(--app-surface-glass);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border-bottom: 1px solid var(--app-line-2);
+    position: relative;
+    z-index: 2;
+  }
+  .topbar__left { display: flex; align-items: center; gap: 16px; }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 800;
+    font-size: 12px;
+    color: var(--app-ink);
+    letter-spacing: -0.02em;
+  }
+  .logo__mark {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    background: linear-gradient(135deg, var(--app-primary) 0%, var(--app-secondary) 100%);
+    display: grid; place-items: center;
+    color: #fff;
+    box-shadow: var(--sh-purple);
+  }
+  .logo__mark svg { width: 11px; height: 11px; }
+  .logo__sep { color: var(--app-ink-4); font-weight: 400; }
+  .logo__project { font-family: var(--app-font-mono); font-weight: 500; font-size: 10.5px; color: var(--app-ink-2); }
+
+  .nav { display: flex; gap: 1px; font-size: 10.5px; }
+  .nav a {
+    padding: 4px 8px;
+    border-radius: var(--r-sm);
+    text-decoration: none;
+    color: var(--app-ink-3);
+    font-weight: 500;
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--app-ink); }
+  .nav a.is-active {
+    color: var(--app-primary);
+    background: var(--app-primary-bg);
+    font-weight: 600;
+  }
+
+  .topbar__right { display: flex; align-items: center; gap: 6px; }
+  .icon-btn {
+    width: 18px; height: 18px;
+    border: 1px solid var(--app-line);
+    border-radius: var(--r-sm);
+    background: var(--app-surface);
+    display: grid; place-items: center;
+    color: var(--app-ink-3);
+    position: relative;
+  }
+  .icon-btn svg { width: 10px; height: 10px; }
+  .icon-btn__dot {
+    position: absolute; top: -1px; right: -1px;
+    width: 5px; height: 5px;
+    background: var(--app-danger);
+    border: 1.5px solid var(--app-surface);
+    border-radius: 50%;
+  }
+  .avatar {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--app-primary), var(--app-secondary));
+    color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 8px;
+  }
+
+  /* ===== PROJECT HEADER ===== */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px 8px;
+    background: var(--app-surface);
+    border-bottom: 1px solid var(--app-line-2);
+  }
+  .header__left { display: flex; align-items: center; gap: 8px; }
+  .header__title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--app-ink);
+    letter-spacing: -0.01em;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 16px;
+    padding: 0 7px 0 6px;
+    border-radius: var(--r-pill);
+    background: var(--app-success-bg);
+    border: 1px solid var(--app-success-border);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--app-success);
+  }
+  .status-pill::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--app-success);
+    box-shadow: 0 0 0 2px rgba(16,185,129,0.25);
+  }
+  .header__meta {
+    font-family: var(--app-font-mono);
+    font-size: 9px;
+    color: var(--app-ink-4);
+  }
+  .header__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 10px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: linear-gradient(135deg, var(--app-primary), var(--app-secondary));
+    color: var(--app-on-primary);
+    font-family: var(--app-font);
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--sh-purple);
+  }
+  .header__btn svg { width: 10px; height: 10px; }
+
+  /* ===== CARD GRID ===== */
+  .grid {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 6px;
+    padding: 8px 14px;
+    min-height: 0;
+  }
+
+  .card {
+    background: var(--app-surface);
+    border: 1px solid var(--app-line-2);
+    border-radius: var(--r-lg);
+    padding: 8px 9px;
+    box-shadow: var(--sh-1);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .card--span {
+    grid-row: span 2;
+  }
+  .card__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  .card__label {
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--app-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .card__icon {
+    width: 14px; height: 14px;
+    border-radius: var(--r-sm);
+    display: grid; place-items: center;
+    background: var(--app-primary-bg);
+    color: var(--app-primary);
+  }
+  .card__icon svg { width: 8px; height: 8px; }
+  .card__icon--success { background: var(--app-success-bg); color: var(--app-success); }
+  .card__icon--warning { background: var(--app-warning-bg); color: var(--app-warning); }
+  .card__icon--danger { background: var(--app-danger-bg); color: var(--app-danger); }
+
+  .card__value {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: var(--app-ink);
+    line-height: 1.1;
+    font-family: var(--app-font);
+  }
+  .card__value-mono {
+    font-family: var(--app-font-mono);
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .card__sub {
+    font-size: 9px;
+    color: var(--app-ink-3);
+    margin-top: 1px;
+    line-height: 1.3;
+  }
+  .delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--app-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .delta svg { width: 7px; height: 7px; }
+  .delta--up { color: var(--app-success); }
+  .delta--down { color: var(--app-danger); }
+  .delta-text { color: var(--app-ink-4); font-weight: 400; }
+
+  /* Featured card: deploy timeline */
+  .deploy-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 4px;
+    flex: 1;
+    min-height: 0;
+  }
+  .deploy {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 5px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--app-line-2);
+    background: var(--app-surface-2);
+  }
+  .deploy__dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .deploy__dot--ok { background: var(--app-success); }
+  .deploy__dot--build { background: var(--app-warning); box-shadow: 0 0 0 2px rgba(245,158,11,0.2); }
+  .deploy__dot--fail { background: var(--app-danger); }
+  .deploy__body { flex: 1; min-width: 0; }
+  .deploy__msg {
+    font-family: var(--app-font-mono);
+    font-size: 8.5px;
+    color: var(--app-ink-2);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .deploy__meta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 8px;
+    color: var(--app-ink-4);
+  }
+  .deploy__hash {
+    font-family: var(--app-font-mono);
+    color: var(--app-primary);
+    font-weight: 600;
+  }
+  .deploy__time { font-family: var(--app-font-mono); }
+
+  /* Sparkline (CSS-only) */
+  .sparkline {
+    height: 18px;
+    margin-top: 3px;
+    display: flex;
+    align-items: flex-end;
+    gap: 1.5px;
+  }
+  .sparkline__bar {
+    flex: 1;
+    background: var(--app-primary);
+    opacity: 0.7;
+    border-radius: 1px 1px 0 0;
+    min-height: 2px;
+  }
+  .sparkline__bar--peak { opacity: 1; background: linear-gradient(180deg, var(--app-secondary), var(--app-primary)); }
+
+  /* Donut representation via conic-gradient */
+  .donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .donut {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: conic-gradient(
+      var(--app-success) 0% 72%,
+      var(--app-warning) 72% 88%,
+      var(--app-danger) 88% 100%
+    );
+    position: relative;
+    flex-shrink: 0;
+  }
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    background: var(--app-surface);
+    border-radius: 50%;
+  }
+  .donut__legend {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 8px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 3px; color: var(--app-ink-3); }
+  .legend-dot {
+    width: 5px; height: 5px;
+    border-radius: 1px;
+  }
+  .legend-dot--ok { background: var(--app-success); }
+  .legend-dot--warn { background: var(--app-warning); }
+  .legend-dot--fail { background: var(--app-danger); }
+  .legend-pct { font-family: var(--app-font-mono); font-weight: 700; color: var(--app-ink); }
+
+  /* ===== FOOTER ===== */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: var(--app-surface);
+    border-top: 1px solid var(--app-line-2);
+    font-size: 8.5px;
+    color: var(--app-ink-4);
+  }
+  .footer__mono {
+    font-family: var(--app-font-mono);
+    letter-spacing: 0.04em;
+  }
+  .footer__dot { color: var(--app-primary); }
+  .footer__region {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .footer__region::before {
+    content: "";
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--app-success);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Application design language preview">
+
+  <!-- ===== TOPBAR ===== -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="logo">
+        <span class="logo__mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </span>
+        <span>vortex</span>
+        <span class="logo__sep">/</span>
+        <span class="logo__project">acme-platform</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a href="#" class="is-active">Overview</a>
+        <a href="#">Deployments</a>
+        <a href="#">Analytics</a>
+        <a href="#">Settings</a>
+      </nav>
+    </div>
+    <div class="topbar__right">
+      <button class="icon-btn" type="button" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="icon-btn__dot"></span>
+      </button>
+      <div class="avatar" aria-label="User">DK</div>
+    </div>
+  </header>
+
+  <!-- ===== PROJECT HEADER ===== -->
+  <section class="header">
+    <div class="header__left">
+      <h1 class="header__title">Production</h1>
+      <span class="status-pill">Ready</span>
+      <span class="header__meta">main · 2m ago</span>
+    </div>
+    <button class="header__btn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      Deploy
+    </button>
+  </section>
+
+  <!-- ===== CARD GRID ===== -->
+  <section class="grid">
+
+    <!-- Featured: recent deployments (spans 2 rows) -->
+    <article class="card card--span">
+      <div class="card__top">
+        <span class="card__label">Recent deployments</span>
+        <span class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8M5.2 9.2a8 8 0 1 0 13.6 0"/></svg>
+        </span>
+      </div>
+      <div class="deploy-list">
+        <div class="deploy">
+          <span class="deploy__dot deploy__dot--ok"></span>
+          <div class="deploy__body">
+            <div class="deploy__msg">feat: stripe webhook retries</div>
+            <div class="deploy__meta">
+              <span class="deploy__hash">a3f9c2b</span>
+              <span>·</span>
+              <span class="deploy__time">2m</span>
+            </div>
+          </div>
+          <span class="delta delta--up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          </span>
+        </div>
+        <div class="deploy">
+          <span class="deploy__dot deploy__dot--build"></span>
+          <div class="deploy__body">
+            <div class="deploy__msg">chore: bump Next to 15.0</div>
+            <div class="deploy__meta">
+              <span class="deploy__hash">7d1e8aa</span>
+              <span>·</span>
+              <span class="deploy__time">8m</span>
+            </div>
+          </div>
+          <span class="delta" style="color:var(--app-warning);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5"/></svg>
+          </span>
+        </div>
+        <div class="deploy">
+          <span class="deploy__dot deploy__dot--ok"></span>
+          <div class="deploy__body">
+            <div class="deploy__msg">fix: auth callback redirect</div>
+            <div class="deploy__meta">
+              <span class="deploy__hash">b82f04e</span>
+              <span>·</span>
+              <span class="deploy__time">1h</span>
+            </div>
+          </div>
+          <span class="delta delta--up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+          </span>
+        </div>
+        <div class="deploy">
+          <span class="deploy__dot deploy__dot--fail"></span>
+          <div class="deploy__body">
+            <div class="deploy__msg">exp: edge cache layer</div>
+            <div class="deploy__meta">
+              <span class="deploy__hash">f1d5c90</span>
+              <span>·</span>
+              <span class="deploy__time">3h</span>
+            </div>
+          </div>
+          <span class="delta delta--down">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          </span>
+        </div>
+      </div>
+    </article>
+
+    <!-- Build time -->
+    <article class="card">
+      <div class="card__top">
+        <span class="card__label">Build</span>
+        <span class="card__icon card__icon--success">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </span>
+      </div>
+      <div class="card__value card__value-mono">42<span style="font-size:11px;color:var(--app-ink-3);font-weight:500;">s</span></div>
+      <div class="card__sub">
+        <span class="delta delta--down">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 7 11 11"/><path d="M11 18h6v-6"/></svg>
+          18%
+        </span>
+      </div>
+    </article>
+
+    <!-- Uptime -->
+    <article class="card">
+      <div class="card__top">
+        <span class="card__label">Uptime</span>
+        <span class="card__icon card__icon--success">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </span>
+      </div>
+      <div class="card__value card__value-mono">99.98<span style="font-size:11px;color:var(--app-ink-3);font-weight:500;">%</span></div>
+      <div class="card__sub">30d rolling</div>
+    </article>
+
+    <!-- Traffic sparkline -->
+    <article class="card">
+      <div class="card__top">
+        <span class="card__label">Traffic</span>
+        <span class="card__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-5"/></svg>
+        </span>
+      </div>
+      <div class="card__value card__value-mono">1.2<span style="font-size:10px;color:var(--app-ink-3);font-weight:500;">M /day</span></div>
+      <div class="sparkline" aria-hidden="true">
+        <div class="sparkline__bar" style="height:30%"></div>
+        <div class="sparkline__bar" style="height:45%"></div>
+        <div class="sparkline__bar" style="height:38%"></div>
+        <div class="sparkline__bar" style="height:55%"></div>
+        <div class="sparkline__bar" style="height:50%"></div>
+        <div class="sparkline__bar" style="height:72%"></div>
+        <div class="sparkline__bar" style="height:65%"></div>
+        <div class="sparkline__bar sparkline__bar--peak" style="height:100%"></div>
+        <div class="sparkline__bar" style="height:88%"></div>
+        <div class="sparkline__bar" style="height:92%"></div>
+      </div>
+    </article>
+
+    <!-- Error rate donut -->
+    <article class="card">
+      <div class="card__top">
+        <span class="card__label">Status mix</span>
+        <span class="card__icon card__icon--warning">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </span>
+      </div>
+      <div class="donut-wrap">
+        <div class="donut" aria-hidden="true"></div>
+        <div class="donut__legend">
+          <div class="legend-item"><span class="legend-dot legend-dot--ok"></span><span class="legend-pct">72%</span></div>
+          <div class="legend-item"><span class="legend-dot legend-dot--warn"></span><span class="legend-pct">16%</span></div>
+          <div class="legend-item"><span class="legend-dot legend-dot--fail"></span><span class="legend-pct">12%</span></div>
+        </div>
+      </div>
+    </article>
+
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span class="footer__mono"><span class="footer__dot">●</span> application · top-bar · purple</span>
+    <span class="footer__region footer__mono">fra1 · iad1 · sin1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

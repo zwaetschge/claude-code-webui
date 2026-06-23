@@ -1,5 +1,5 @@
-appId: ch.zwaetschge.claude-code-webui
-productName: Claude Code WebUI
+appId: ch.zwaetschge.plum-code-webui
+productName: Plum Code WebUI
 directories:
   buildResources: resources
   output: release

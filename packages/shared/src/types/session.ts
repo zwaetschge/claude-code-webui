@@ -1,6 +1,77 @@
 export type SessionStatus = 'running' | 'stopped' | 'error';
+export type SessionSurface = 'code' | 'task';
 
 export type CLIProvider = 'claude' | 'codex' | 'opencode' | 'vibe';
+export type CodexServiceTier = 'fast';
+export type SessionIconSource = 'upload' | 'project' | 'generated';
+
+export type SubagentRunStatus = 'started' | 'completed' | 'error';
+
+export interface UsageSnapshot {
+  sessionId: string;
+  // Token usage
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  // Context window
+  contextWindow: number;
+  contextUsedPercent: number;
+  contextUsedPercentRaw?: number;
+  contextExceeded?: boolean;
+  // Cost
+  totalCostUsd: number;
+  // Model info
+  model: string;
+  // Snapshot timestamp. Used to avoid stale socket usage overriding newer API telemetry.
+  recordedAt?: string;
+}
+
+export interface SubagentRun {
+  id: string;
+  agentType: string;
+  description?: string;
+  status: SubagentRunStatus;
+  startedAt: number;
+  completedAt?: number;
+  result?: string;
+  error?: string;
+  toolId?: string;
+  externalAgentId?: string;
+  provider?: CLIProvider;
+}
+
+export interface SessionTelemetry {
+  usage: UsageSnapshot | null;
+  contextSnapshots: number;
+  compactEvents: number;
+}
+
+export interface SessionRuntime {
+  running: boolean;
+  provider: CLIProvider | null;
+  mode: string | null;
+  model: string | null;
+  workingDirectory: string | null;
+  claudeSessionId: string | null;
+  busy: boolean;
+  streaming: boolean;
+  currentToolName: string | null;
+  currentAgentType: string | null;
+  currentAgentDescription: string | null;
+  subagents: SubagentRun[];
+  activitySummary: string | null;
+  queueDepth: number;
+  queueItems: Array<{
+    id: string;
+    preview: string;
+    createdAt: string;
+    attachments?: number;
+  }>;
+  lastActivityAt: string | null;
+  disconnectedAt: string | null;
+}
 
 export interface Session {
   id: string;
@@ -10,10 +81,23 @@ export interface Session {
   claudeSessionId: string | null;
   status: SessionStatus;
   lastMessage: string | null;
+  projectDescription?: string | null;
+  lastActivity?: string | null;
+  iconUrl: string | null;
+  iconSource: SessionIconSource | null;
   starred: boolean;
   cliProvider: CLIProvider;
+  cliModel: string | null;
+  cliReasoning: string | null;
+  cliServiceTier: CodexServiceTier | null;
   category: string | null;
   mode: string | null;
+  surface: SessionSurface;
+  designStyleSkill: string | null;
+  writingStyleSkill: string | null;
+  androidDeviceSerial: string | null;
+  runtime?: SessionRuntime;
+  telemetry?: SessionTelemetry;
   createdAt: string;
   updatedAt: string;
 }
@@ -22,6 +106,12 @@ export interface CreateSessionInput {
   name: string;
   workingDirectory?: string;
   cliProvider?: CLIProvider;
+  cliModel?: string | null;
+  cliReasoning?: string | null;
+  cliServiceTier?: CodexServiceTier | null;
+  mode?: string;
+  surface?: SessionSurface;
+  initialMessage?: string;
 }
 
 export interface UpdateSessionInput {

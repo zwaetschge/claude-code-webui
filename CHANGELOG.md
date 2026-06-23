@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Claude Code WebUI will be documented in this file.
+All notable changes to Plum Code WebUI will be documented in this file.
 
 ## [0.2.0] - 2025-01-04
 

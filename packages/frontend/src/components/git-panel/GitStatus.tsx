@@ -15,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type { ApiResponse, GitStatus as GitStatusType } from '@claude-code-webui/shared';
+import type { ApiResponse, GitStatus as GitStatusType } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface GitStatusProps {

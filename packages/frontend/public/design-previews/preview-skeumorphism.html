@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skeumorphism Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&family=Germania+One&family=JetBrains+Mono:wght@400;500;700&family=VT323&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Skeumorphism tokens */
+      --primary: #FA3C00;
+      --primary-dark: #c22a00;
+      --secondary: #F08321;
+      --success: #16A34A;
+      --warning: #D97706;
+      --danger: #DC2626;
+      --surface: #FFFFFF;
+      --text: #111827;
+
+      /* Material tokens for the skeuomorphic surfaces */
+      --metal-light: #e6e8ec;
+      --metal: #c7cad1;
+      --metal-dark: #989ba3;
+      --metal-darker: #6c6f78;
+      --brushed: linear-gradient(180deg, #e6e8ec 0%, #c2c6cf 45%, #aeb2bb 55%, #d8dbe2 100%);
+      --brushed-h: linear-gradient(90deg, #e6e8ec 0%, #c2c6cf 45%, #aeb2bb 55%, #d8dbe2 100%);
+      --plastic-black: #1a1d24;
+      --plastic-black-hi: #2a2e37;
+      --led-bg: #1a0d00;
+      --led-amber: #ffae3d;
+      --led-amber-dim: #5a3a10;
+      --led-red: #ff3a1a;
+
+      --serif: 'Germania One', serif;
+      --sans: 'Roboto', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+      --led: 'VT323', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 400px;
+      height: 300px;
+      overflow: hidden;
+      background: #2b2e35;
+      font-family: var(--sans);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .desk {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      padding: 14px;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 50% 30%, #3a3e47 0%, #232630 60%, #1a1d24 100%);
+    }
+
+    /* Soft shadow under the unit */
+    .desk::after {
+      content: '';
+      position: absolute;
+      bottom: 14px;
+      left: 40px;
+      right: 40px;
+      height: 16px;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.55) 0%, transparent 70%);
+      filter: blur(4px);
+      z-index: 0;
+    }
+
+    /* ---- The boombox body ---- */
+    .boombox {
+      position: relative;
+      width: 372px;
+      height: 272px;
+      background: var(--brushed);
+      border-radius: 14px;
+      padding: 12px 14px 12px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+      z-index: 1;
+      /* Bevelled metal edge */
+      box-shadow:
+        inset 0 2px 0 rgba(255,255,255,0.65),
+        inset 0 -3px 0 rgba(0,0,0,0.35),
+        inset 2px 0 0 rgba(255,255,255,0.25),
+        inset -2px 0 0 rgba(0,0,0,0.20),
+        0 8px 18px rgba(0,0,0,0.55),
+        0 2px 0 rgba(0,0,0,0.4);
+    }
+
+    /* ---- Top bar: brand + handle hint ---- */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #ff7a3a 0%, var(--primary) 45%, var(--primary-dark) 100%);
+      box-shadow:
+        inset 0 1px 1px rgba(255,255,255,0.5),
+        inset 0 -2px 2px rgba(0,0,0,0.35),
+        0 1px 2px rgba(0,0,0,0.4);
+      color: #fff;
+      font-family: var(--serif);
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .brand-name {
+      font-family: var(--serif);
+      font-size: 18px;
+      line-height: 1;
+      color: var(--plastic-black);
+      letter-spacing: 0.01em;
+      text-shadow: 0 1px 0 rgba(255,255,255,0.45);
+    }
+
+    .brand-name em { font-style: normal; color: var(--primary); }
+
+    .handle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--metal-darker);
+    }
+    .handle .grip {
+      width: 30px;
+      height: 6px;
+      border-radius: 3px;
+      background: repeating-linear-gradient(90deg,
+        var(--metal-darker) 0 2px,
+        var(--metal-light) 2px 4px);
+      box-shadow: inset 0 1px 1px rgba(0,0,0,0.4);
+    }
+
+    /* ---- Main row: speaker | center | speaker ---- */
+    .main {
+      display: grid;
+      grid-template-columns: 78px 1fr 78px;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    /* Speaker grille */
+    .speaker {
+      position: relative;
+      background: var(--plastic-black);
+      border-radius: 10px;
+      box-shadow:
+        inset 0 2px 4px rgba(0,0,0,0.7),
+        inset 0 -1px 0 rgba(255,255,255,0.05),
+        0 1px 0 rgba(255,255,255,0.35);
+      overflow: hidden;
+    }
+
+    .speaker::before {
+      /* grille mesh */
+      content: '';
+      position: absolute;
+      inset: 4px;
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 50% 50%, #2a2e37 0%, #111319 60%, #0a0c11 100%);
+      background-color: #111319;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,0.08) 0.6px, transparent 1px);
+      background-size: 4px 4px;
+    }
+
+    .speaker::after {
+      /* cone */
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 45%, #3a3e47 0%, #1a1d24 50%, #0a0c11 100%);
+      box-shadow:
+        inset 0 2px 3px rgba(0,0,0,0.8),
+        inset 0 -1px 1px rgba(255,255,255,0.08),
+        0 0 0 2px #0a0c11,
+        0 0 0 4px #2a2e37,
+        0 0 0 5px #0a0c11;
+    }
+
+    /* ---- Center console ---- */
+    .console {
+      position: relative;
+      background: linear-gradient(180deg, #20232b 0%, #15171d 100%);
+      border-radius: 10px;
+      padding: 8px 9px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 6px;
+      box-shadow:
+        inset 0 2px 4px rgba(0,0,0,0.7),
+        inset 0 -1px 0 rgba(255,255,255,0.05),
+        0 1px 0 rgba(255,255,255,0.35);
+    }
+
+    /* LED display */
+    .led {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+      background: linear-gradient(180deg, #0a0500 0%, #1a0d00 100%);
+      border-radius: 4px;
+      box-shadow:
+        inset 0 2px 4px rgba(0,0,0,0.9),
+        inset 0 0 0 1px #000;
+    }
+
+    .led-time {
+      font-family: var(--led);
+      font-size: 22px;
+      line-height: 1;
+      color: var(--led-amber);
+      text-shadow:
+        0 0 4px rgba(255, 174, 61, 0.7),
+        0 0 1px var(--led-amber);
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: baseline;
+      gap: 3px;
+    }
+    .led-time .dim {
+      color: var(--led-amber-dim);
+      text-shadow: none;
+    }
+    .led-time .blink { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0.25; } }
+
+    .led-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1px;
+    }
+    .led-band {
+      font-family: var(--led);
+      font-size: 14px;
+      line-height: 0.9;
+      color: var(--led-red);
+      text-shadow: 0 0 4px rgba(255,58,26,0.6);
+      letter-spacing: 0.04em;
+    }
+    .led-label {
+      font-family: var(--mono);
+      font-size: 6.5px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      color: #5a5a5a;
+      text-transform: uppercase;
+    }
+
+    /* Tape window */
+    .tape {
+      position: relative;
+      background:
+        repeating-linear-gradient(90deg,
+          rgba(255,255,255,0.02) 0 2px,
+          transparent 2px 6px),
+        linear-gradient(180deg, #0a0c11 0%, #15171d 100%);
+      border-radius: 4px;
+      padding: 6px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      box-shadow:
+        inset 0 2px 4px rgba(0,0,0,0.85),
+        inset 0 0 0 1px #000,
+        inset 0 -1px 0 rgba(255,255,255,0.04);
+      min-height: 0;
+    }
+
+    .reel {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1;
+      max-height: 50px;
+      margin: 0 auto;
+      border-radius: 50%;
+      background:
+        repeating-conic-gradient(from 0deg,
+          #2a2e37 0deg 30deg,
+          #15171d 30deg 60deg);
+      box-shadow:
+        inset 0 2px 3px rgba(0,0,0,0.7),
+        inset 0 0 0 2px #0a0c11,
+        0 0 0 1px rgba(255,255,255,0.05);
+      display: grid;
+      place-items: center;
+    }
+    .reel::before {
+      content: '';
+      width: 40%;
+      height: 40%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 40%, #4a4e57 0%, #1a1d24 70%);
+      box-shadow: inset 0 1px 1px rgba(0,0,0,0.6);
+    }
+    .reel::after {
+      /* spindle holes */
+      content: '';
+      position: absolute;
+      width: 60%;
+      height: 60%;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 18%, #0a0c11 1.5px, transparent 2px),
+        radial-gradient(circle at 82% 50%, #0a0c11 1.5px, transparent 2px),
+        radial-gradient(circle at 50% 82%, #0a0c11 1.5px, transparent 2px),
+        radial-gradient(circle at 18% 50%, #0a0c11 1.5px, transparent 2px);
+    }
+    .reel.spin { animation: spin 4s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .tape-strip {
+      position: absolute;
+      top: 50%;
+      left: 18%;
+      right: 18%;
+      height: 3px;
+      transform: translateY(-50%);
+      background: linear-gradient(90deg, #3a2a14 0%, #5a3a1a 50%, #3a2a14 100%);
+      box-shadow: 0 1px 1px rgba(0,0,0,0.6);
+    }
+
+    /* Control row */
+    .controls {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Knob */
+    .knob {
+      position: relative;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 30%, #f0f2f6 0%, #c7cad1 40%, #8a8d96 100%);
+      box-shadow:
+        inset 0 2px 2px rgba(255,255,255,0.7),
+        inset 0 -3px 4px rgba(0,0,0,0.45),
+        0 2px 3px rgba(0,0,0,0.55),
+        0 0 0 2px #6c6f78;
+      transform: rotate(-50deg);
+      cursor: pointer;
+    }
+    .knob::before {
+      /* pointer */
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 3px;
+      height: 10px;
+      border-radius: 1px;
+      background: var(--plastic-black);
+      box-shadow: 0 1px 1px rgba(255,255,255,0.4);
+    }
+    .knob::after {
+      /* knurling */
+      content: '';
+      position: absolute;
+      inset: 3px;
+      border-radius: 50%;
+      background:
+        repeating-conic-gradient(from 0deg,
+          rgba(0,0,0,0.18) 0deg 6deg,
+          transparent 6deg 12deg);
+    }
+    .knob-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .knob-label {
+      font-family: var(--mono);
+      font-size: 6.5px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      color: #b5b9c2;
+      text-transform: uppercase;
+    }
+
+    /* Transport buttons */
+    .transport {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 3px;
+      padding: 3px;
+      background: #0a0c11;
+      border-radius: 6px;
+      box-shadow:
+        inset 0 1px 2px rgba(0,0,0,0.85),
+        inset 0 -1px 0 rgba(255,255,255,0.06);
+    }
+
+    .tbtn {
+      position: relative;
+      height: 22px;
+      border: none;
+      border-radius: 3px;
+      background: linear-gradient(180deg, #3a3e47 0%, #1a1d24 100%);
+      color: #c7cad1;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.18),
+        inset 0 -1px 1px rgba(0,0,0,0.55),
+        0 1px 1px rgba(0,0,0,0.5);
+    }
+    .tbtn svg { width: 10px; height: 10px; fill: currentColor; }
+    .tbtn:active {
+      background: linear-gradient(180deg, #15171d 0%, #2a2e37 100%);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.8);
+    }
+    .tbtn:focus-visible { outline: 2px solid var(--secondary); outline-offset: 1px; }
+    .tbtn.play { color: var(--primary); }
+    .tbtn.rec  { color: var(--danger); }
+
+    /* Power toggle */
+    .power {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #15171d 0%, #2a2e37 100%);
+      box-shadow:
+        inset 0 2px 3px rgba(0,0,0,0.85),
+        inset 0 -1px 0 rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      padding: 2px;
+    }
+    .power::before {
+      content: 'ON';
+      position: absolute;
+      top: 50%;
+      left: 5px;
+      transform: translateY(-50%);
+      font-family: var(--mono);
+      font-size: 6.5px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      color: #5a5a5a;
+    }
+    .power::after {
+      content: 'OFF';
+      position: absolute;
+      top: 50%;
+      right: 5px;
+      transform: translateY(-50%);
+      font-family: var(--mono);
+      font-size: 6.5px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      color: #b5b9c2;
+    }
+    .power .toggle {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, var(--secondary) 0%, var(--primary) 80%);
+      box-shadow:
+        inset 0 1px 1px rgba(255,255,255,0.6),
+        inset 0 -1px 1px rgba(0,0,0,0.35),
+        0 1px 1px rgba(0,0,0,0.4);
+      margin-left: 2px;
+    }
+
+    /* ---- Footer strip: level meters ---- */
+    .meters {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 0 4px;
+    }
+
+    .meter {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .meter-label {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 6.5px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      color: var(--metal-darker);
+      text-transform: uppercase;
+    }
+    .meter-label .v { color: var(--success); }
+    .bar {
+      height: 6px;
+      background: #0a0c11;
+      border-radius: 3px;
+      padding: 1px;
+      display: flex;
+      gap: 1px;
+      box-shadow:
+        inset 0 1px 1px rgba(0,0,0,0.7),
+        inset 0 -1px 0 rgba(255,255,255,0.06);
+    }
+    .bar span {
+      flex: 1;
+      border-radius: 1px;
+      background: #1a1d24;
+    }
+    /* Light up first N segments per channel */
+    .bar.l span:nth-child(-n+7)  { background: var(--success); box-shadow: 0 0 3px rgba(22,163,74,0.6); }
+    .bar.l span:nth-child(n+8):nth-child(-n+10) { background: var(--secondary); box-shadow: 0 0 3px rgba(240,131,33,0.6); }
+    .bar.l span:nth-child(11) { background: var(--danger); box-shadow: 0 0 3px rgba(220,38,38,0.6); }
+
+    .bar.r span:nth-child(-n+5)  { background: var(--success); box-shadow: 0 0 3px rgba(22,163,74,0.6); }
+    .bar.r span:nth-child(n+6):nth-child(-n+9) { background: var(--secondary); box-shadow: 0 0 3px rgba(240,131,33,0.6); }
+    .bar.r span:nth-child(n+10):nth-child(-n+11) { background: var(--danger); box-shadow: 0 0 3px rgba(220,38,38,0.6); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reel.spin, .led-time .blink { animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="desk">
+    <div class="boombox">
+
+      <!-- Top bar -->
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">R</div>
+          <div class="brand-name">ROVOX <em>FM-808</em></div>
+        </div>
+        <div class="handle" aria-hidden="true">
+          <span class="grip"></span>
+          <span>CARRY</span>
+          <span class="grip"></span>
+        </div>
+      </header>
+
+      <!-- Main -->
+      <section class="main">
+        <div class="speaker" aria-hidden="true"></div>
+
+        <div class="console">
+
+          <!-- LED display -->
+          <div class="led">
+            <div class="led-time">
+              <span>00</span><span class="dim">:</span><span class="blink">42</span>
+              <span class="led-band">88.6</span>
+            </div>
+            <div class="led-meta">
+              <span class="led-label">FM MHz</span>
+              <span class="led-label">Stereo</span>
+            </div>
+          </div>
+
+          <!-- Tape window -->
+          <div class="tape">
+            <div class="reel spin" aria-hidden="true"></div>
+            <div class="reel spin" aria-hidden="true" style="animation-delay:-2s"></div>
+            <div class="tape-strip" aria-hidden="true"></div>
+          </div>
+
+          <!-- Controls -->
+          <div class="controls">
+            <div class="knob-wrap">
+              <div class="knob" aria-label="Tuning" role="slider"></div>
+              <span class="knob-label">Tune</span>
+            </div>
+
+            <div class="transport" role="group" aria-label="Transport">
+              <button class="tbtn" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 6v12L3 12zM22 6v12l-8-6z"/></svg></button>
+              <button class="tbtn" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg></button>
+              <button class="tbtn play" aria-label="Play"><svg viewBox="0 0 24 24"><path d="M6 4l16 8-16 8z"/></svg></button>
+              <button class="tbtn" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="M2 6v12l8-6zm11 0v12l8-6z"/></svg></button>
+              <button class="tbtn rec" aria-label="Record"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg></button>
+            </div>
+
+            <div class="power" aria-label="Power on">
+              <div class="toggle" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="speaker" aria-hidden="true"></div>
+      </section>
+
+      <!-- VU meters -->
+      <footer class="meters">
+        <div class="meter">
+          <div class="meter-label"><span>L · Input</span><span class="v">−6 dB</span></div>
+          <div class="bar l" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="meter">
+          <div class="meter-label"><span>R · Input</span><span class="v">−9 dB</span></div>
+          <div class="bar r" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+</body>
+</html>

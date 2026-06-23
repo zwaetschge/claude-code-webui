@@ -31,6 +31,9 @@ const SettingsPage = lazy(() =>
 const AnalyticsPage = lazy(() =>
   import('@/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
 );
+const OperationsPage = lazy(() =>
+  import('@/pages/OperationsPage').then((m) => ({ default: m.OperationsPage }))
+);
 
 // Loading fallback component
 function PageLoader() {
@@ -47,9 +50,10 @@ function PageLoader() {
 // Route that requires basic auth (if enabled)
 function BasicAuthRoute({ children }: { children: React.ReactNode }) {
   const { isBasicAuthenticated, isBasicAuthEnabled, isLoading } = useBasicAuthStore();
+  const { isAuthenticated, isLoading: isUserLoading } = useAuthStore();
   const location = useLocation();
 
-  if (isLoading) {
+  if (isLoading || isUserLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -63,7 +67,7 @@ function BasicAuthRoute({ children }: { children: React.ReactNode }) {
   }
 
   // If basic auth is enabled but not authenticated, redirect to basic login
-  if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
+  if (isBasicAuthEnabled === true && !isBasicAuthenticated && !isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
@@ -91,7 +95,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   // First check basic auth if enabled
-  if (isBasicAuthEnabled === true && !isBasicAuthenticated) {
+  if (isBasicAuthEnabled === true && !isBasicAuthenticated && !isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
@@ -142,6 +146,14 @@ export default function App() {
               <Route index element={<DashboardPage />} />
               <Route path="session/:id" element={<SessionPage />} />
               <Route path="analytics" element={<AnalyticsPage />} />
+              <Route
+                path="operations"
+                element={
+                  <AdminRoute>
+                    <OperationsPage />
+                  </AdminRoute>
+                }
+              />
               <Route path="settings" element={<SettingsPage />} />
               <Route
                 path="admin"

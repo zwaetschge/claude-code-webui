@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Artistic — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Limelight&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     ARTISTIC DESIGN SYSTEM — 400×300 THUMBNAIL PREVIEW
+     High-contrast · expressive · Art-Deco typography · bold color
+     ============================================================ */
+  :root {
+    /* Core palette */
+    --art-primary: #3B82F6;        /* electric blue */
+    --art-secondary: #8B5CF6;      /* violet */
+    --art-success: #16A34A;
+    --art-warning: #D97706;
+    --art-danger: #DC2626;
+
+    /* Stage */
+    --art-ink: #111827;            /* near-black */
+    --art-ink-deep: #050507;       /* full-stage black */
+    --art-paper: #FFFFFF;          /* pure white */
+    --art-cream: #F5F1E8;          /* aged poster paper */
+    --art-line: rgba(255,255,255,0.16);
+
+    /* Display + system fonts */
+    --art-font-display: 'Limelight', 'Playfair Display', Georgia, serif;
+    --art-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --art-font-ui: 'Inter', -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--art-font-ui);
+    color: var(--art-paper);
+    background: var(--art-ink-deep);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    background: var(--art-ink-deep);
+    /* Subtle film-grain / paper texture via layered gradients */
+    background-image:
+      radial-gradient(circle at 30% 20%, rgba(139,92,246,0.18), transparent 50%),
+      radial-gradient(circle at 75% 75%, rgba(59,130,246,0.18), transparent 55%),
+      linear-gradient(180deg, #0A0A0F 0%, #050507 100%);
+  }
+
+  /* Decorative diagonal color block (signature brutalist+art-deco fusion) */
+  .block--violet {
+    position: absolute;
+    top: 0; right: 0;
+    width: 160px; height: 300px;
+    background:
+      linear-gradient(135deg, var(--art-secondary) 0%, var(--art-primary) 100%);
+    clip-path: polygon(35% 0, 100% 0, 100% 100%, 0 100%);
+    z-index: 1;
+  }
+  .block--blue {
+    position: absolute;
+    bottom: 0; left: 0;
+    width: 110px; height: 70px;
+    background: var(--art-primary);
+    clip-path: polygon(0 0, 100% 40%, 100% 100%, 0 100%);
+    z-index: 1;
+  }
+
+  /* Decorative concentric circles (Art Deco motif) */
+  .deco-circle {
+    position: absolute;
+    border: 1.5px solid rgba(255,255,255,0.14);
+    border-radius: 50%;
+    z-index: 1;
+  }
+  .deco-circle--1 {
+    width: 220px; height: 220px;
+    top: -110px; left: -60px;
+    border-color: rgba(139,92,246,0.30);
+  }
+  .deco-circle--2 {
+    width: 180px; height: 180px;
+    top: -80px; left: -40px;
+    border-color: rgba(59,130,246,0.20);
+  }
+  .deco-circle--3 {
+    width: 140px; height: 140px;
+    top: 130px; right: 50px;
+    border-color: rgba(255,255,255,0.18);
+  }
+
+  /* Decorative vertical line accents */
+  .deco-line {
+    position: absolute;
+    background: rgba(255,255,255,0.10);
+    z-index: 1;
+  }
+  .deco-line--v1 { width: 1px; height: 100%; left: 33%; top: 0; }
+  .deco-line--v2 { width: 1px; height: 100%; left: 66%; top: 0; background: rgba(255,255,255,0.06); }
+
+  /* Content wrapper */
+  .content {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-rows: 28px 1fr 22px;
+  }
+
+  /* ===== TOP BAR ===== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--art-line);
+    backdrop-filter: blur(2px);
+  }
+  .brand {
+    font-family: var(--art-font-display);
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    color: var(--art-paper);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .brand__mark {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: var(--art-primary);
+    transform: rotate(45deg);
+  }
+  .topbar__tag {
+    font-family: var(--art-font-mono);
+    font-size: 8.5px;
+    color: rgba(255,255,255,0.55);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* ===== STAGE (main composition) ===== */
+  .stage {
+    position: relative;
+    padding: 14px 18px 10px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  /* LEFT: dramatic display headline */
+  .stage__left { min-width: 0; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--art-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--art-primary);
+    margin-bottom: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 18px; height: 1px;
+    background: var(--art-primary);
+  }
+  .eyebrow::after {
+    content: "";
+    width: 18px; height: 1px;
+    background: var(--art-primary);
+  }
+
+  .headline {
+    font-family: var(--art-font-display);
+    font-size: 46px;
+    line-height: 0.95;
+    letter-spacing: 0.01em;
+    color: var(--art-paper);
+    margin-bottom: 8px;
+    text-shadow: 0 2px 16px rgba(139,92,246,0.4);
+  }
+  .headline__accent {
+    color: var(--art-secondary);
+    font-style: normal;
+  }
+  .headline__sub {
+    font-family: var(--art-font-display);
+    font-size: 22px;
+    line-height: 1;
+    color: var(--art-primary);
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  .lede {
+    font-family: var(--art-font-ui);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.7);
+    max-width: 30ch;
+    margin-bottom: 10px;
+    font-weight: 400;
+  }
+
+  /* Action buttons — brutalist sharp */
+  .actions { display: flex; gap: 6px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 11px;
+    border: none;
+    border-radius: 0;
+    font-family: var(--art-font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--art-paper);
+    transition: all .18s ease;
+  }
+  .btn--primary {
+    background: var(--art-primary);
+    color: var(--art-paper);
+    box-shadow: 3px 3px 0 var(--art-secondary);
+  }
+  .btn--primary:hover {
+    background: var(--art-secondary);
+    box-shadow: 3px 3px 0 var(--art-primary);
+    transform: translate(-1px,-1px);
+  }
+  .btn--ghost {
+    background: transparent;
+    color: var(--art-paper);
+    border: 1px solid rgba(255,255,255,0.35);
+  }
+  .btn--ghost:hover { border-color: var(--art-paper); background: rgba(255,255,255,0.06); }
+  .btn svg { width: 9px; height: 9px; }
+
+  /* RIGHT: artistic token card */
+  .stage__right {
+    width: 110px;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .token-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--art-line);
+    border-radius: 0;
+    padding: 7px 8px;
+    backdrop-filter: blur(4px);
+    position: relative;
+  }
+  .token-card::before {
+    content: "";
+    position: absolute;
+    top: -1px; left: -1px;
+    width: 8px; height: 8px;
+    border-top: 2px solid var(--art-primary);
+    border-left: 2px solid var(--art-primary);
+  }
+  .token-card::after {
+    content: "";
+    position: absolute;
+    bottom: -1px; right: -1px;
+    width: 8px; height: 8px;
+    border-bottom: 2px solid var(--art-secondary);
+    border-right: 2px solid var(--art-secondary);
+  }
+  .token-card__label {
+    font-family: var(--art-font-mono);
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 4px;
+  }
+  .token-card__value {
+    font-family: var(--art-font-display);
+    font-size: 13px;
+    color: var(--art-paper);
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+  .token-card__meta {
+    font-family: var(--art-font-mono);
+    font-size: 8px;
+    color: rgba(255,255,255,0.5);
+  }
+
+  .swatch-row { display: flex; gap: 3px; margin-top: 3px; }
+  .swatch {
+    flex: 1; height: 14px;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  .swatch--blue { background: var(--art-primary); }
+  .swatch--violet { background: var(--art-secondary); }
+  .swatch--success { background: var(--art-success); }
+  .swatch--danger { background: var(--art-danger); }
+  .swatch--paper { background: var(--art-paper); }
+
+  /* ===== FOOTER ===== */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-top: 1px solid var(--art-line);
+    background: rgba(0,0,0,0.4);
+  }
+  .footer__mono {
+    font-family: var(--art-font-mono);
+    font-size: 8px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.45);
+  }
+  .footer__star {
+    color: var(--art-primary);
+    font-size: 10px;
+    display: inline-block;
+    margin-right: 4px;
+    transform: translateY(-0.5px);
+  }
+
+  /* Sun-burst decorative element behind headline */
+  .sunburst {
+    position: absolute;
+    top: 40px; left: -20px;
+    width: 130px; height: 130px;
+    z-index: -1;
+    opacity: 0.18;
+    background:
+      conic-gradient(
+        from 0deg,
+        var(--art-secondary) 0deg, transparent 8deg,
+        var(--art-primary) 16deg, transparent 24deg,
+        var(--art-secondary) 32deg, transparent 40deg,
+        var(--art-primary) 48deg, transparent 56deg,
+        var(--art-secondary) 64deg, transparent 72deg,
+        var(--art-primary) 80deg, transparent 88deg,
+        var(--art-secondary) 96deg, transparent 104deg,
+        var(--art-primary) 112deg, transparent 120deg,
+        var(--art-secondary) 128deg, transparent 136deg,
+        var(--art-primary) 144deg, transparent 152deg,
+        var(--art-secondary) 160deg, transparent 168deg,
+        var(--art-primary) 176deg, transparent 184deg
+      );
+    border-radius: 50%;
+    filter: blur(1px);
+  }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Artistic design language preview">
+
+  <!-- Decorative layers -->
+  <div class="block--violet" aria-hidden="true"></div>
+  <div class="block--blue" aria-hidden="true"></div>
+  <div class="deco-circle deco-circle--1" aria-hidden="true"></div>
+  <div class="deco-circle deco-circle--2" aria-hidden="true"></div>
+  <div class="deco-circle deco-circle--3" aria-hidden="true"></div>
+  <div class="deco-line deco-line--v1" aria-hidden="true"></div>
+  <div class="deco-line deco-line--v2" aria-hidden="true"></div>
+
+  <div class="content">
+
+    <!-- ===== TOP BAR ===== -->
+    <header class="topbar">
+      <div class="brand"><span class="brand__mark"></span>LUMIÈRE</div>
+      <span class="topbar__tag">design · artistic · v1</span>
+    </header>
+
+    <!-- ===== STAGE ===== -->
+    <section class="stage">
+
+      <div class="sunburst" aria-hidden="true"></div>
+
+      <div class="stage__left">
+        <div class="eyebrow">Bold · Expressive</div>
+        <h1 class="headline">MAKE<br><span class="headline__accent">IT</span> LOUD</h1>
+        <span class="headline__sub">— design that dares</span>
+        <p class="lede">High-contrast composition. Typography that owns the room. Interfaces that refuse to whisper.</p>
+        <div class="actions">
+          <button class="btn btn--primary" type="button">
+            Explore
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <button class="btn btn--ghost" type="button">Tokens</button>
+        </div>
+      </div>
+
+      <aside class="stage__right" aria-label="Design tokens">
+
+        <div class="token-card">
+          <div class="token-card__label">Display</div>
+          <div class="token-card__value">Limelight</div>
+          <div class="token-card__meta">art-deco · 1wt</div>
+        </div>
+
+        <div class="token-card">
+          <div class="token-card__label">System</div>
+          <div class="token-card__value" style="font-family:var(--art-font-mono);font-size:11px;">jetbrains</div>
+          <div class="token-card__meta">mono · 500</div>
+        </div>
+
+        <div class="token-card">
+          <div class="token-card__label">Palette</div>
+          <div class="swatch-row" aria-hidden="true">
+            <div class="swatch swatch--blue" title="#3B82F6"></div>
+            <div class="swatch swatch--violet" title="#8B5CF6"></div>
+            <div class="swatch swatch--success" title="#16A34A"></div>
+            <div class="swatch swatch--danger" title="#DC2626"></div>
+            <div class="swatch swatch--paper" title="#FFFFFF"></div>
+          </div>
+        </div>
+
+      </aside>
+
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer">
+      <span class="footer__mono"><span class="footer__star">✦</span>artistic · high-contrast · 36/30/24/18/16/14/12</span>
+      <span class="footer__mono">WCAG AA</span>
+    </footer>
+
+  </div>
+
+</main>
+
+</body>
+</html>

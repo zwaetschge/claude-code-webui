@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
-import { estimateModelCost, LLM_PRICING_RATE_CARD_VERSION } from '@claude-code-webui/shared';
+import { estimateModelCost, LLM_PRICING_RATE_CARD_VERSION } from '@plum-code-webui/shared';
 import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -188,6 +188,34 @@ function runMigrations(db: Database.Database): void {
     -- use a single index seek instead of a full scan of the user's rows.
     CREATE INDEX IF NOT EXISTS idx_usage_history_user_created ON usage_history(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_usage_history_session_created ON usage_history(session_id, created_at DESC);
+
+    -- Session events table (non-billing telemetry such as live context window
+    -- snapshots and context compaction boundaries). Keep this separate from
+    -- usage_history so analytics cost/request math only counts real LLM turns.
+    CREATE TABLE IF NOT EXISTS session_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      context_window INTEGER NOT NULL DEFAULT 0,
+      context_used_percent REAL NOT NULL DEFAULT 0,
+      context_exceeded INTEGER NOT NULL DEFAULT 0,
+      reason TEXT,
+      message TEXT,
+      summary TEXT,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_events_user_created ON session_events(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_events_session_created ON session_events(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_events_type_created ON session_events(event_type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_id ON session_checkpoints(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_agents_user_id ON custom_agents(user_id);
     CREATE INDEX IF NOT EXISTS idx_custom_agents_updated_at ON custom_agents(updated_at);
@@ -230,6 +258,87 @@ function runMigrations(db: Database.Database): void {
   // Persists per-session so it survives browser/device switches instead of living in localStorage.
   try {
     db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT 'auto-accept'`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Add session surface. "code" is the existing technical workbench;
+  // "task" is a quieter messenger-style surface over the same provider runtime.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN surface TEXT DEFAULT 'code'`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Add per-session CLI model selection so multiple WebUI sessions can
+  // run different provider/model pairs for the same user.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN cli_model TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Add per-session reasoning / effort selection. Like cli_model, this
+  // must not be user-global because high/xhigh style settings affect usage limits.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN cli_reasoning TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Add per-session Codex service/profile tier. This is intentionally
+  // separate from cli_reasoning so `/fast` can be combined with xhigh effort.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN cli_service_tier TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  try {
+    db.exec(`
+      UPDATE sessions
+      SET cli_service_tier = 'fast',
+          cli_reasoning = NULL
+      WHERE cli_provider = 'codex'
+        AND cli_reasoning = 'fast'
+        AND (cli_service_tier IS NULL OR cli_service_tier = '')
+    `);
+  } catch {
+    // Best-effort cleanup; older schemas may not have both columns during startup.
+  }
+
+  // Migration: Add per-session style library selections.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN design_style_skill TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN writing_style_skill TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Bind one Android ADB test device to a WebUI session. The Android
+  // builder keeps the persistent wifi pairing registry; the session only stores
+  // the selected serial so MCP tools and prompts know which live device to use.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN android_device_serial TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Migration: Per-session custom icon. The file itself is copied into backend
+  // appdata and served through an authenticated session route.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN icon_path TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN icon_source TEXT DEFAULT NULL`);
   } catch {
     // Column already exists, ignore error
   }
@@ -474,6 +583,115 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_goals_session_id ON session_goals(session_id);
     CREATE INDEX IF NOT EXISTS idx_session_goals_status ON session_goals(status);
     CREATE INDEX IF NOT EXISTS idx_session_goals_created ON session_goals(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_peer_profiles (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      alias TEXT NOT NULL,
+      description TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      visibility TEXT NOT NULL DEFAULT 'private',
+      inbox_policy TEXT NOT NULL DEFAULT 'queue',
+      capabilities_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_peer_profiles_enabled ON session_peer_profiles(enabled);
+
+    CREATE TABLE IF NOT EXISTS session_peer_links (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      target_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      role TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, source_session_id, target_session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_peer_links_source ON session_peer_links(source_session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_peer_links_target ON session_peer_links(target_session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_peer_links_user ON session_peer_links(user_id);
+
+    CREATE TABLE IF NOT EXISTS session_delegations (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      correlation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      from_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      to_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      from_actor TEXT NOT NULL DEFAULT 'session',
+      kind TEXT NOT NULL DEFAULT 'consult',
+      status TEXT NOT NULL DEFAULT 'queued',
+      content TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      hop_count INTEGER NOT NULL DEFAULT 0,
+      expires_at DATETIME,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_user_created ON session_delegations(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_from ON session_delegations(from_session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_to ON session_delegations(to_session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_correlation ON session_delegations(correlation_id);
+
+    CREATE TABLE IF NOT EXISTS container_watchdogs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      container_id TEXT NOT NULL,
+      container_name TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      autonomy_level TEXT NOT NULL DEFAULT 'observe',
+      last_snapshot_at DATETIME,
+      last_incident_at DATETIME,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_container_watchdogs_user_container ON container_watchdogs(user_id, container_id);
+    CREATE INDEX IF NOT EXISTS idx_container_watchdogs_session ON container_watchdogs(session_id);
+    CREATE INDEX IF NOT EXISTS idx_container_watchdogs_enabled ON container_watchdogs(enabled);
+
+    CREATE TABLE IF NOT EXISTS container_health_snapshots (
+      id TEXT PRIMARY KEY,
+      watchdog_id TEXT REFERENCES container_watchdogs(id) ON DELETE CASCADE,
+      container_id TEXT NOT NULL,
+      state TEXT,
+      health TEXT,
+      restart_count INTEGER,
+      cpu_percent REAL,
+      memory_bytes INTEGER,
+      memory_limit_bytes INTEGER,
+      summary TEXT,
+      evidence_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_container_health_watchdog_created ON container_health_snapshots(watchdog_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_container_health_container_created ON container_health_snapshots(container_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS discord_outbox (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at DATETIME,
+      sent_at DATETIME,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_status_next ON discord_outbox(status, next_attempt_at);
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_created ON discord_outbox(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_user_created ON discord_outbox(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_session_created ON discord_outbox(session_id, created_at DESC);
   `);
 
   // Bootstrap: promote SEED_ADMIN_EMAIL to admin role, or promote the first existing user
@@ -542,6 +760,7 @@ function runMigrations(db: Database.Database): void {
   }
 
   repriceUsageHistoryCosts(db);
+  backfillGpt55ContextSnapshotWindows(db);
 }
 
 function repriceUsageHistoryCosts(database: Database.Database): void {
@@ -630,6 +849,52 @@ function repriceUsageHistoryCosts(database: Database.Database): void {
     }
   } catch (err) {
     console.error('[DB] Failed to reprice usage_history costs:', err);
+  }
+}
+
+function backfillGpt55ContextSnapshotWindows(database: Database.Database): void {
+  const markerKey = 'session_events_context_window_fix_v1';
+  const marker = database.prepare('SELECT value FROM app_config WHERE key = ?').get(markerKey) as
+    | { value: string }
+    | undefined;
+  if (marker?.value === 'gpt-5.5:256000') return;
+
+  const updateRows = database.prepare(
+    `
+    UPDATE session_events
+    SET
+      context_window = 256000,
+      context_used_percent = ROUND((total_tokens * 100.0) / 256000, 0),
+      context_exceeded = CASE
+        WHEN ROUND((total_tokens * 100.0) / 256000, 0) > 100 THEN 1
+        ELSE 0
+      END
+    WHERE event_type = 'context_snapshot'
+      AND model LIKE 'gpt-5.5%'
+      AND context_window = 258400
+  `
+  );
+  const upsertMarker = database.prepare(
+    `
+    INSERT INTO app_config (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+  `
+  );
+
+  let updated = 0;
+  const tx = database.transaction(() => {
+    updated = updateRows.run().changes;
+    upsertMarker.run(markerKey, 'gpt-5.5:256000');
+  });
+
+  try {
+    tx();
+    if (updated > 0) {
+      console.log(`[DB] Backfilled ${updated} gpt-5.5 context snapshot rows to 256000.`);
+    }
+  } catch (err) {
+    console.error('[DB] Failed to backfill gpt-5.5 context snapshot windows:', err);
   }
 }
 

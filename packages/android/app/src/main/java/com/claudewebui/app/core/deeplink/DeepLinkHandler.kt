@@ -4,7 +4,7 @@ import android.content.Intent
 import android.net.Uri
 
 /**
- * Parses and normalises deep link [Intent]s for Claude Code WebUI.
+ * Parses and normalises deep link [Intent]s for Plum Code WebUI.
  *
  * Supported schemes and paths:
  *

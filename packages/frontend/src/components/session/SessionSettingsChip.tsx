@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { CLI_PROVIDER_LABEL, toUiProvider } from '@/lib/providers';
-import type { CLIProvider, SessionMode, CliTool } from '@claude-code-webui/shared';
+import type { CLIProvider, SessionMode, CliTool } from '@plum-code-webui/shared';
 
 interface ProviderInfo {
   id: CLIProvider;
@@ -21,6 +21,11 @@ interface ProviderInfo {
 }
 
 interface ReasoningOption {
+  value: string;
+  label: string;
+}
+
+interface ServiceTierOption {
   value: string;
   label: string;
 }
@@ -37,13 +42,18 @@ interface SessionSettingsChipProps {
   modelOptions: string[];
   modelLabels: Record<string, string>;
   resolvedDefaultModel?: string;
+  showDefaultModelOption?: boolean;
   onModelChange: (value: string) => void;
 
   reasoningValue?: string;
   reasoningOptions?: ReasoningOption[];
   onReasoningChange?: (value: string) => void;
   reasoningLabel?: string;
-  codexFastMode?: boolean;
+
+  serviceTierValue?: string;
+  serviceTierOptions?: ServiceTierOption[];
+  onServiceTierChange?: (value: string) => void;
+  serviceTierLabel?: string;
 
   cliTools?: CliTool[];
   selectedCliTool?: string | null;
@@ -118,12 +128,16 @@ export function SessionSettingsChip({
   modelOptions,
   modelLabels,
   resolvedDefaultModel,
+  showDefaultModelOption = true,
   onModelChange,
   reasoningValue,
   reasoningOptions,
   onReasoningChange,
   reasoningLabel,
-  codexFastMode,
+  serviceTierValue,
+  serviceTierOptions,
+  onServiceTierChange,
+  serviceTierLabel,
   cliTools,
   selectedCliTool,
   onCliToolChange,
@@ -133,8 +147,13 @@ export function SessionSettingsChip({
   const ModeIcon = current.icon;
   const modelShort = shortModelLabel(modelValue, modelLabels, resolvedDefaultModel);
   const hasReasoning = !!reasoningOptions && reasoningOptions.length > 0 && !!onReasoningChange;
+  const hasServiceTier =
+    !!serviceTierOptions && serviceTierOptions.length > 0 && !!onServiceTierChange;
+  const activeServiceTier =
+    hasServiceTier && serviceTierValue && serviceTierValue !== '__default__'
+      ? serviceTierOptions!.find((option) => option.value === serviceTierValue)
+      : null;
   const hasCliTools = !!cliTools && cliTools.length > 0 && !!onCliToolChange;
-  const fastModeActive = provider === 'codex' && codexFastMode;
   const activeCliTool =
     hasCliTools && selectedCliTool ? cliTools!.find((t) => t.id === selectedCliTool) : null;
 
@@ -150,7 +169,7 @@ export function SessionSettingsChip({
             current.color,
             open && `ring-2 ${current.ring}`
           )}
-          title={`${current.label} mode · ${CLI_PROVIDER_LABEL[provider]} · ${modelShort}${fastModeActive ? ' · Fast' : ''}`}
+          title={`${current.label} mode · ${CLI_PROVIDER_LABEL[provider]} · ${modelShort}`}
         >
           <ModeIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="font-medium hidden sm:inline">{current.label}</span>
@@ -163,15 +182,16 @@ export function SessionSettingsChip({
           <span className="text-[11px] font-mono opacity-90 hidden md:inline max-w-[100px] truncate">
             {modelShort}
           </span>
-          {fastModeActive && (
-            <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-300">
-              FAST
-            </span>
-          )}
           {activeCliTool && (
             <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
               <Wrench className="h-2.5 w-2.5" />
               <span className="hidden sm:inline">{activeCliTool.name}</span>
+            </span>
+          )}
+          {activeServiceTier && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
+              <Zap className="h-2.5 w-2.5" />
+              <span className="hidden sm:inline">{activeServiceTier.label}</span>
             </span>
           )}
           <ChevronDown
@@ -248,22 +268,26 @@ export function SessionSettingsChip({
         <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
           Model
         </DropdownMenuLabel>
-        <DropdownMenuItem
-          onClick={() => onModelChange('__default__')}
-          className={cn(
-            'flex items-center gap-2 py-1.5 cursor-pointer',
-            modelValue === '__default__' && 'bg-muted/60'
-          )}
-        >
-          <Sparkles className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="flex-1 text-xs">Default</span>
-          {resolvedDefaultModel && (
-            <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[120px]">
-              {modelLabels[resolvedDefaultModel] || resolvedDefaultModel}
-            </span>
-          )}
-          {modelValue === '__default__' && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-        </DropdownMenuItem>
+        {showDefaultModelOption && (
+          <DropdownMenuItem
+            onClick={() => onModelChange('__default__')}
+            className={cn(
+              'flex items-center gap-2 py-1.5 cursor-pointer',
+              modelValue === '__default__' && 'bg-muted/60'
+            )}
+          >
+            <Sparkles className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="flex-1 text-xs">Default</span>
+            {resolvedDefaultModel && (
+              <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[120px]">
+                {modelLabels[resolvedDefaultModel] || resolvedDefaultModel}
+              </span>
+            )}
+            {modelValue === '__default__' && (
+              <Check className="h-3.5 w-3.5 text-primary shrink-0" />
+            )}
+          </DropdownMenuItem>
+        )}
         {modelOptions.map((model) => {
           const active = modelValue === model;
           return (
@@ -286,6 +310,46 @@ export function SessionSettingsChip({
             </DropdownMenuItem>
           );
         })}
+
+        {/* Service tier / profile */}
+        {hasServiceTier && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {serviceTierLabel || 'Profile'}
+            </DropdownMenuLabel>
+            <DropdownMenuItem
+              onClick={() => onServiceTierChange!('__default__')}
+              className={cn(
+                'flex items-center gap-2 py-1.5 cursor-pointer',
+                serviceTierValue === '__default__' && 'bg-muted/60'
+              )}
+            >
+              <span className="w-3.5 shrink-0" />
+              <span className="flex-1 text-xs">Default</span>
+              {serviceTierValue === '__default__' && (
+                <Check className="h-3.5 w-3.5 text-primary shrink-0" />
+              )}
+            </DropdownMenuItem>
+            {serviceTierOptions!.map((option) => {
+              const active = serviceTierValue === option.value;
+              return (
+                <DropdownMenuItem
+                  key={option.value}
+                  onClick={() => onServiceTierChange!(option.value)}
+                  className={cn(
+                    'flex items-center gap-2 py-1.5 cursor-pointer',
+                    active && 'bg-muted/60'
+                  )}
+                >
+                  <Zap className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="flex-1 text-xs">{option.label}</span>
+                  {active && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+                </DropdownMenuItem>
+              );
+            })}
+          </>
+        )}
 
         {/* Reasoning/Effort */}
         {hasReasoning && (

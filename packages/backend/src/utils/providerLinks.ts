@@ -1,6 +1,20 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import {
+  getOpenCodeBuildAgentPrompt,
+  getOpenCodePrimaryAgent,
+  isOpenCodeManagedBuildAgentPrompt,
+} from '../services/opencode/sessionContext.js';
+import {
+  getOpenCodeCredentialEnvVars,
+  readOpenCodeProvidersForUser,
+  type OpenCodeProvider,
+} from './opencodeProviderKeys.js';
+import {
+  getOpenCodeProviderCatalog,
+  type OpenCodeProviderCatalog,
+} from './opencodeCatalog.js';
 
 const CLAUDE_SKILLS_DIR = '/home/node/.claude/skills';
 const CLAUDE_AGENTS_DIR = '/home/node/.claude/agents';
@@ -65,6 +79,15 @@ export interface ProviderLinksSyncResult {
   vibeAgents: { converted: number; skipped: number };
   opencodeConfig: { updated: boolean; mcpCount: number };
   vibeConfig: { updated: boolean; mcpCount: number };
+}
+
+interface OpenCodeConfigProviderBlock {
+  api?: string;
+  name?: string;
+  env?: string[];
+  npm?: string;
+  options?: Record<string, unknown>;
+  models?: Record<string, unknown>;
 }
 
 function parseFrontmatter(source: string): Parsed | null {
@@ -186,6 +209,142 @@ function readJsonObject(filePath: string): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatOpenCodeProviderModelName(modelId: string): string {
+  return modelId
+    .replace(/[-_]/g, ' ')
+    .split(' ')
+    .map((segment) => {
+      if (/^\d/.test(segment)) return segment;
+      if (segment.toLowerCase() === 'glm') return 'GLM';
+      if (segment.toLowerCase() === 'qwen') return 'Qwen';
+      return segment.charAt(0).toUpperCase() + segment.slice(1);
+    })
+    .join(' ');
+}
+
+function mergeStringArrays(...lists: Array<string[] | undefined>): string[] {
+  const values = new Set<string>();
+  for (const list of lists) {
+    for (const item of list || []) {
+      const normalized = typeof item === 'string' ? item.trim() : '';
+      if (normalized) values.add(normalized);
+    }
+  }
+  return [...values];
+}
+
+export function buildWebuiOpenCodeProviderConfig(
+  provider: OpenCodeProvider,
+  catalog: OpenCodeProviderCatalog = getOpenCodeProviderCatalog(),
+  existing?: Record<string, unknown>
+): OpenCodeConfigProviderBlock | null {
+  const catalogProvider = catalog[provider.id];
+  const baseUrl = provider.baseUrl || catalogProvider?.api;
+  if (!provider.enabled || !baseUrl) return null;
+
+  const existingBlock = isRecord(existing) ? existing : {};
+  const existingOptions = isRecord(existingBlock.options) ? existingBlock.options : {};
+  const existingModels = isRecord(existingBlock.models)
+    ? (existingBlock.models as Record<string, unknown>)
+    : {};
+  const modelIds = catalogProvider?.models || [];
+  const models: Record<string, unknown> = { ...existingModels };
+
+  for (const modelId of modelIds) {
+    if (models[modelId]) continue;
+    models[modelId] = {
+      id: modelId,
+      name: formatOpenCodeProviderModelName(modelId),
+      tool_call: true,
+      temperature: true,
+    };
+  }
+
+  const envVars = getOpenCodeCredentialEnvVars(provider.id, catalog);
+  const existingEnv = Array.isArray(existingBlock.env)
+    ? existingBlock.env.filter((value): value is string => typeof value === 'string')
+    : undefined;
+  const existingApiKey =
+    typeof existingOptions.apiKey === 'string' && existingOptions.apiKey.trim()
+      ? existingOptions.apiKey
+      : undefined;
+
+  return {
+    ...existingBlock,
+    name: provider.name || catalogProvider?.name || String(existingBlock.name || provider.id),
+    env: mergeStringArrays(existingEnv, envVars),
+    api: baseUrl,
+    npm:
+      typeof existingBlock.npm === 'string' && existingBlock.npm.trim()
+        ? existingBlock.npm
+        : '@ai-sdk/openai-compatible',
+    options: {
+      ...existingOptions,
+      baseURL: baseUrl,
+      apiKey: existingApiKey || `{env:${envVars[0]}}`,
+    },
+    models,
+  };
+}
+
+function applyWebuiOpenCodeProviderConfig(
+  config: Record<string, unknown>,
+  userId?: string
+): void {
+  if (!userId) return;
+
+  const catalog = getOpenCodeProviderCatalog();
+  const storedProviders = readOpenCodeProvidersForUser(userId).filter(
+    (provider) => provider.enabled && (provider.baseUrl || catalog[provider.id]?.api)
+  );
+  if (storedProviders.length === 0) return;
+
+  const providers = isRecord(config.provider) ? config.provider : {};
+
+  for (const stored of storedProviders) {
+    const block = buildWebuiOpenCodeProviderConfig(
+      stored,
+      catalog,
+      isRecord(providers[stored.id]) ? (providers[stored.id] as Record<string, unknown>) : undefined
+    );
+    if (!block) continue;
+    providers[stored.id] = block;
+  }
+
+  config.provider = providers;
+}
+
+export function applyOpenCodePrimaryAgentConfig(config: Record<string, unknown>): void {
+  const primaryAgentName = getOpenCodePrimaryAgent();
+  if (!primaryAgentName) return;
+
+  const agent = isRecord(config.agent) ? config.agent : {};
+  const primaryAgent = isRecord(agent[primaryAgentName])
+    ? (agent[primaryAgentName] as Record<string, unknown>)
+    : {};
+
+  if (typeof primaryAgent.description !== 'string' || primaryAgent.description.trim() === '') {
+    primaryAgent.description = 'Primary Plum Code WebUI coding agent.';
+  }
+  if (typeof primaryAgent.mode !== 'string' || primaryAgent.mode.trim() === '') {
+    primaryAgent.mode = 'primary';
+  }
+
+  const managedPrompt = getOpenCodeBuildAgentPrompt();
+  const existingPrompt = typeof primaryAgent.prompt === 'string' ? primaryAgent.prompt : '';
+  const hasManagedPrompt = isOpenCodeManagedBuildAgentPrompt(existingPrompt);
+  if (managedPrompt) {
+    if (!existingPrompt || hasManagedPrompt) {
+      primaryAgent.prompt = managedPrompt;
+    }
+  } else if (hasManagedPrompt) {
+    delete primaryAgent.prompt;
+  }
+
+  agent[primaryAgentName] = primaryAgent;
+  config.agent = agent;
 }
 
 // Claude agents declare `tools: Read, Write, Edit` (CSV string). OpenCode
@@ -418,6 +577,7 @@ export function syncOpenCodeConfig(
   opts: {
     quiet?: boolean;
     claudeSettingsPath?: string;
+    userId?: string;
   } = {}
 ): { updated: boolean; mcpCount: number } {
   const config = readJsonObject(OPENCODE_CONFIG_PATH);
@@ -442,6 +602,8 @@ export function syncOpenCodeConfig(
     mcpCount += 1;
   }
   config.mcp = mcp;
+  applyOpenCodePrimaryAgentConfig(config);
+  applyWebuiOpenCodeProviderConfig(config, opts.userId);
 
   const next = `${JSON.stringify(config, null, 2)}\n`;
   const updated = writeIfChanged(OPENCODE_CONFIG_PATH, next);
@@ -569,7 +731,7 @@ export function applyVibeProviderLinks(
   const renderedServers = renderVibeMcpServers(servers);
   const sections = [
     VIBE_MANAGED_BLOCK_START,
-    '# Managed by claude-code-webui. Custom Vibe config outside this block is preserved.',
+    '# Managed by plum-code-webui. Custom Vibe config outside this block is preserved.',
     renderedServers,
     VIBE_MANAGED_BLOCK_END,
   ].filter((section) => section.trim().length > 0);

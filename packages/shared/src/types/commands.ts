@@ -24,6 +24,7 @@ export interface CommandExecutionResult {
     | 'model_change'
     | 'send_message'
     | 'forward_to_cli'
+    | 'open_login'
     | 'rename_session'
     | 'copy_response'
     | 'export_conversation'
@@ -33,8 +34,7 @@ export interface CommandExecutionResult {
     | 'open_permissions'
     | 'open_diff'
     | 'open_feedback'
-    | 'show_doctor'
-    | 'toggle_fast';
+    | 'show_doctor';
   data?: Record<string, unknown>;
 }
 
@@ -66,12 +66,13 @@ export const BUILTIN_COMMANDS = [
   'feedback',
   'bug',
   'doctor',
-  'fast',
   'features',
   'imagegen',
   'goal',
   'subagents',
   'web-search',
+  'auth',
+  'hermes',
 ] as const;
 
 export type BuiltinCommandName = (typeof BUILTIN_COMMANDS)[number];

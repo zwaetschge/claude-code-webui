@@ -7,8 +7,11 @@ import type {
   ToolExecution,
   PermissionDenial,
   PendingPermission,
+  PendingQuestion,
   SessionQueueData,
-} from '@claude-code-webui/shared';
+  SubagentRun,
+  SubagentRunStatus,
+} from '@plum-code-webui/shared';
 
 // --- Streaming content buffer ---
 // Accumulates CLI deltas and flushes to Zustand at a bounded cadence. Rendering
@@ -72,6 +75,50 @@ function dropPendingStreamingChunks(sessionId: string) {
   delete streamingBuffer[sessionId];
 }
 
+function sortAgentRuns(runs: SubagentRun[]): SubagentRun[] {
+  return [...runs].sort((a, b) => {
+    if (a.status === 'started' && b.status !== 'started') return -1;
+    if (a.status !== 'started' && b.status === 'started') return 1;
+    return (b.completedAt ?? b.startedAt) - (a.completedAt ?? a.startedAt);
+  });
+}
+
+function mergeAgentRuns(existing: SubagentRun[], incoming: SubagentRun[]): SubagentRun[] {
+  const byId = new Map<string, SubagentRun>();
+  for (const run of existing) {
+    byId.set(run.id, run);
+  }
+  for (const run of incoming) {
+    const prior = byId.get(run.id);
+    byId.set(run.id, {
+      ...prior,
+      ...run,
+      startedAt: prior?.startedAt ?? run.startedAt,
+      description: run.description || prior?.description,
+      result: run.result || prior?.result,
+      error: run.error || prior?.error,
+      toolId: run.toolId || prior?.toolId,
+      externalAgentId: run.externalAgentId || prior?.externalAgentId,
+    });
+  }
+  const sorted = sortAgentRuns(Array.from(byId.values()));
+  const active = sorted.filter((run) => run.status === 'started');
+  const recent = sorted.filter((run) => run.status !== 'started').slice(0, 30);
+  return [...active, ...recent];
+}
+
+function getActiveAgentFromRuns(runs: SubagentRun[]): AgentState | null {
+  const active = sortAgentRuns(runs).find((run) => run.status === 'started');
+  return active
+    ? {
+        agentType: active.agentType,
+        description: active.description,
+        status: active.status,
+        startedAt: active.startedAt,
+      }
+    : null;
+}
+
 // Activity state for showing what Claude is doing
 export interface ActivityState {
   type: 'idle' | 'thinking' | 'tool';
@@ -86,8 +133,24 @@ export interface ActivityState {
 export interface AgentState {
   agentType: string;
   description?: string;
-  status: 'started' | 'completed' | 'error';
+  status: SubagentRunStatus;
   startedAt?: number;
+}
+
+export type { SubagentRun };
+
+export interface AgentEvent {
+  agentId?: string;
+  agentType: string;
+  description?: string;
+  status: SubagentRunStatus;
+  startedAt?: number;
+  completedAt?: number;
+  result?: string;
+  error?: string;
+  toolId?: string;
+  externalAgentId?: string;
+  timestamp?: number;
 }
 
 // Todo item from Claude's TodoWrite tool
@@ -128,6 +191,7 @@ interface SessionState {
   thinking: Record<string, boolean>;
   activity: Record<string, ActivityState>;
   activeAgent: Record<string, AgentState | null>;
+  agentRuns: Record<string, SubagentRun[]>;
   todos: Record<string, TodoItem[]>;
   usage: Record<string, UsageData>;
   generatedImages: Record<string, GeneratedImage[]>;
@@ -139,6 +203,9 @@ interface SessionState {
 
   // Pending permissions state (hooks-based)
   pendingPermissions: Record<string, PendingPermission | null>;
+
+  // Pending OpenCode questions
+  pendingQuestions: Record<string, PendingQuestion | null>;
 
   // File Tree state
   fileTreeOpen: Record<string, boolean>;
@@ -168,6 +235,8 @@ interface SessionState {
   setThinking: (sessionId: string, isThinking: boolean) => void;
   setActivity: (sessionId: string, activity: ActivityState) => void;
   setActiveAgent: (sessionId: string, agent: AgentState | null) => void;
+  recordAgentEvent: (sessionId: string, event: AgentEvent) => void;
+  setAgentRuns: (sessionId: string, runs: SubagentRun[]) => void;
   setTodos: (sessionId: string, todos: TodoItem[]) => void;
   setUsage: (sessionId: string, usage: UsageData) => void;
   addGeneratedImage: (sessionId: string, image: Omit<GeneratedImage, 'timestamp'>) => void;
@@ -182,6 +251,8 @@ interface SessionState {
 
   // Pending permission actions (hooks-based)
   setPendingPermission: (sessionId: string, permission: PendingPermission | null) => void;
+
+  setPendingQuestion: (sessionId: string, question: PendingQuestion | null) => void;
 
   // File Tree actions
   setFileTreeOpen: (sessionId: string, open: boolean) => void;
@@ -207,6 +278,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   thinking: {},
   activity: {},
   activeAgent: {},
+  agentRuns: {},
   todos: {},
   usage: {},
   generatedImages: {},
@@ -214,13 +286,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   queueState: {},
   permissionRequests: {},
   pendingPermissions: {},
+  pendingQuestions: {},
   fileTreeOpen: {},
   selectedFile: {},
   openFiles: {},
   activeFileTab: {},
   lastMessageTimestamp: {},
 
-  setSessions: (sessions) => set({ sessions }),
+  setSessions: (sessions) =>
+    set((state) => {
+      const agentRuns = { ...state.agentRuns };
+      const activeAgent = { ...state.activeAgent };
+      for (const session of sessions) {
+        if (!session.runtime?.subagents?.length) continue;
+        const merged = mergeAgentRuns(agentRuns[session.id] || [], session.runtime.subagents);
+        agentRuns[session.id] = merged;
+        activeAgent[session.id] = getActiveAgentFromRuns(merged);
+      }
+      return { sessions, agentRuns, activeAgent };
+    }),
 
   addSession: (session) =>
     set((state) => ({
@@ -228,9 +312,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })),
 
   updateSession: (id, updates) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-    })),
+    set((state) => {
+      const nextState: Partial<SessionState> = {
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+      };
+      if (updates.runtime?.subagents?.length) {
+        const merged = mergeAgentRuns(state.agentRuns[id] || [], updates.runtime.subagents);
+        nextState.agentRuns = { ...state.agentRuns, [id]: merged };
+        nextState.activeAgent = {
+          ...state.activeAgent,
+          [id]: getActiveAgentFromRuns(merged),
+        };
+      }
+      return nextState;
+    }),
 
   removeSession: (id) =>
     set((state) => ({
@@ -316,6 +411,75 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeAgent: { ...state.activeAgent, [sessionId]: agent },
     })),
 
+  recordAgentEvent: (sessionId, event) =>
+    set((state) => {
+      const now = event.timestamp ?? Date.now();
+      const existing = state.agentRuns[sessionId] || [];
+      const matching =
+        event.agentId || event.toolId || event.externalAgentId
+          ? existing.find(
+              (run) =>
+                run.id === event.agentId ||
+                (!!event.toolId && run.toolId === event.toolId) ||
+                (!!event.externalAgentId && run.externalAgentId === event.externalAgentId)
+            )
+          : event.status === 'started'
+            ? undefined
+            : [...existing]
+                .reverse()
+                .find(
+                  (run) =>
+                    run.status === 'started' &&
+                    (!event.agentType || run.agentType === event.agentType)
+                );
+      const id =
+        matching?.id ||
+        event.agentId ||
+        event.toolId ||
+        event.externalAgentId ||
+        `${event.agentType}-${now}-${Math.random().toString(36).slice(2, 8)}`;
+      const run: SubagentRun = {
+        ...matching,
+        id,
+        agentType: event.agentType || matching?.agentType || 'subagent',
+        description: event.description || matching?.description,
+        status: event.status,
+        startedAt: matching?.startedAt ?? event.startedAt ?? now,
+        completedAt:
+          event.status === 'started'
+            ? matching?.completedAt
+            : event.completedAt ?? matching?.completedAt ?? now,
+        result: event.result || matching?.result,
+        error: event.error || matching?.error,
+        toolId: event.toolId || matching?.toolId,
+        externalAgentId: event.externalAgentId || matching?.externalAgentId,
+        provider: matching?.provider,
+      };
+      const merged = mergeAgentRuns(
+        existing.filter((item) => item.id !== run.id),
+        [run]
+      );
+      return {
+        agentRuns: { ...state.agentRuns, [sessionId]: merged },
+        activeAgent: {
+          ...state.activeAgent,
+          [sessionId]: getActiveAgentFromRuns(merged),
+        },
+      };
+    }),
+
+  setAgentRuns: (sessionId, runs) =>
+    set((state) => {
+      const merged = mergeAgentRuns(state.agentRuns[sessionId] || [], runs);
+      return {
+        agentRuns: { ...state.agentRuns, [sessionId]: merged },
+        activeAgent: {
+          ...state.activeAgent,
+          [sessionId]: getActiveAgentFromRuns(merged),
+        },
+      };
+    }),
+
   setTodos: (sessionId, todos) =>
     set((state) => ({
       todos: { ...state.todos, [sessionId]: todos },
@@ -400,6 +564,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       pendingPermissions: {
         ...state.pendingPermissions,
         [sessionId]: permission,
+      },
+    })),
+
+  setPendingQuestion: (sessionId, question) =>
+    set((state) => ({
+      pendingQuestions: {
+        ...state.pendingQuestions,
+        [sessionId]: question,
       },
     })),
 

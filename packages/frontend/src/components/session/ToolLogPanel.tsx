@@ -16,7 +16,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ToolExecution } from '@claude-code-webui/shared';
+import type { ToolExecution } from '@plum-code-webui/shared';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ToolLogPanelProps {

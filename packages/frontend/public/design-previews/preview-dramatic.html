@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dramatic — design preview · 400×300</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     DRAMATIC DESIGN SYSTEM — 400×300 THUMBNAIL
+     Theatrical · high-contrast · bold composition · Violet+Rose
+     ============================================================ */
+  :root {
+    --dr-primary: #8B5CF6;        /* electric violet */
+    --dr-primary-deep: #6D28D9;
+    --dr-primary-light: #A78BFA;
+    --dr-secondary: #F43F5E;      /* rose */
+    --dr-secondary-deep: #BE123C;
+    --dr-success: #16A34A;
+    --dr-warning: #D97706;
+    --dr-danger: #DC2626;
+
+    --dr-surface: #09090B;
+    --dr-surface-2: #131316;
+    --dr-surface-3: #1C1C20;
+    --dr-ink: #FAFAFA;
+    --dr-ink-2: #D4D4D8;
+    --dr-ink-3: #A1A1AA;
+    --dr-ink-4: #71717A;
+    --dr-line: rgba(255,255,255,0.08);
+
+    --dr-font: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    --dr-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    --dr-sh-violet: 0 0 40px rgba(139,92,246,0.35), 0 0 12px rgba(139,92,246,0.5);
+    --dr-sh-rose: 0 0 30px rgba(244,63,94,0.40), 0 0 10px rgba(244,63,94,0.5);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 400px;
+    height: 300px;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--dr-font);
+    font-size: 12px;
+    color: var(--dr-ink);
+    background: var(--dr-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .poster {
+    width: 400px;
+    height: 300px;
+    position: relative;
+    overflow: hidden;
+    background:
+      /* dramatic violet glow top-right */
+      radial-gradient(280px 220px at 100% 0%, rgba(139,92,246,0.28), transparent 60%),
+      /* rose glow bottom-left */
+      radial-gradient(220px 180px at 0% 100%, rgba(244,63,94,0.22), transparent 65%),
+      /* center subtle wash */
+      radial-gradient(300px 200px at 50% 50%, rgba(139,92,246,0.08), transparent 70%),
+      var(--dr-surface);
+    display: grid;
+    grid-template-columns: 1.35fr 1fr;
+    grid-template-rows: auto 1fr auto;
+    gap: 0;
+  }
+
+  /* Diagonal split line — theatrical divider */
+  .split {
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 60%;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, rgba(139,92,246,0.4) 30%, rgba(244,63,94,0.4) 70%, transparent);
+    transform: rotate(-8deg);
+    transform-origin: top;
+    z-index: 1;
+  }
+
+  /* ============ HEADER ============ */
+  .header {
+    grid-column: span 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px 8px;
+    border-bottom: 1px solid var(--dr-line);
+    position: relative;
+    z-index: 3;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 900;     /* spec: weight 400 OR 900 only */
+    font-size: 14px;
+    letter-spacing: -0.02em;
+    color: var(--dr-ink);
+  }
+  .brand__mark {
+    width: 18px; height: 18px;
+    background: var(--dr-primary);
+    border-radius: 4px;
+    display: grid; place-items: center;
+    color: var(--dr-surface);
+    box-shadow: var(--dr-sh-violet);
+  }
+  .brand__mark svg { width: 11px; height: 11px; }
+  .brand__sep { color: var(--dr-ink-4); font-weight: 400; }
+  .brand__sub {
+    font-family: var(--dr-font-mono);
+    font-size: 9.5px;
+    color: var(--dr-ink-3);
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
+    font-size: 10.5px;
+    font-weight: 400;
+  }
+  .nav a {
+    padding: 4px 9px;
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--dr-ink-3);
+    transition: color .15s ease;
+  }
+  .nav a:hover { color: var(--dr-ink); }
+  .nav a.is-active {
+    color: var(--dr-ink);
+    font-weight: 900;
+  }
+  .nav a.is-active::after {
+    content: "";
+    display: block;
+    height: 2px;
+    background: var(--dr-primary);
+    border-radius: 1px;
+    margin-top: 2px;
+    box-shadow: var(--dr-sh-violet);
+  }
+
+  /* ============ LEFT — HERO STAGE ============ */
+  .stage {
+    padding: 14px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    position: relative;
+    z-index: 2;
+  }
+
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--dr-font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--dr-secondary);
+    align-self: flex-start;
+  }
+  .hero__eyebrow::before {
+    content: "";
+    width: 24px; height: 1.5px;
+    background: var(--dr-secondary);
+    box-shadow: var(--dr-sh-rose);
+  }
+
+  /* MASSIVE headline — weight 900 only (signature) */
+  .hero__title {
+    font-family: var(--dr-font);
+    font-size: 56px;
+    font-weight: 900;
+    line-height: 0.88;
+    letter-spacing: -0.045em;
+    color: var(--dr-ink);
+    margin: 4px 0;
+    text-shadow: 0 4px 24px rgba(139,92,246,0.30);
+  }
+  .hero__title em {
+    font-style: normal;
+    color: var(--dr-primary);
+    /* text glow */
+  }
+  .hero__title-light {
+    /* counterweight with 400 */
+    font-weight: 400;
+    color: var(--dr-ink-3);
+  }
+  .hero__title-rose {
+    color: var(--dr-secondary);
+  }
+
+  .hero__sub {
+    font-family: var(--dr-font);
+    font-weight: 400;     /* light counterpart */
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dr-ink-3);
+    max-width: 30ch;
+  }
+
+  .hero__cta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 16px;
+    border: none;
+    border-radius: 4px;
+    font-family: var(--dr-font);
+    font-weight: 900;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform .15s ease;
+  }
+  .btn--primary {
+    background: var(--dr-primary);
+    color: var(--dr-ink);
+    box-shadow: var(--dr-sh-violet);
+  }
+  .btn--primary:hover { transform: translateY(-1px); background: var(--dr-primary-deep); }
+  .btn--rose {
+    background: var(--dr-secondary);
+    color: var(--dr-ink);
+    box-shadow: var(--dr-sh-rose);
+  }
+  .btn--rose:hover { transform: translateY(-1px); background: var(--dr-secondary-deep); }
+  .btn--ghost {
+    background: transparent;
+    color: var(--dr-ink-2);
+    padding: 7px 4px;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .btn--ghost:hover { color: var(--dr-ink); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* ============ RIGHT — FEATURE CARD (inverted accent) ============ */
+  .feature {
+    padding: 14px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    position: relative;
+    z-index: 2;
+    background: linear-gradient(135deg,
+      rgba(139,92,246,0.12) 0%,
+      rgba(244,63,94,0.10) 100%);
+    border-left: 1px solid var(--dr-line);
+  }
+  /* decorative large glow orb in corner */
+  .feature::before {
+    content: "";
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--dr-primary) 0%, transparent 65%);
+    opacity: 0.22;
+    filter: blur(8px);
+    z-index: -1;
+  }
+
+  .feature__label {
+    font-family: var(--dr-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--dr-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .feature__label::before {
+    content: "";
+    width: 14px; height: 1.5px;
+    background: var(--dr-secondary);
+  }
+
+  .feature__value {
+    font-family: var(--dr-font);
+    font-weight: 900;
+    font-size: 64px;
+    line-height: 0.9;
+    letter-spacing: -0.05em;
+    color: var(--dr-ink);
+  }
+  .feature__value-sub {
+    font-family: var(--dr-font);
+    font-weight: 400;
+    font-size: 14px;
+    color: var(--dr-ink-3);
+    letter-spacing: -0.01em;
+    margin-top: -6px;
+  }
+
+  .feature__delta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--dr-font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--dr-primary-light);
+  }
+  .feature__delta-icon {
+    display: inline-flex;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--dr-primary);
+    color: var(--dr-ink);
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--dr-sh-violet);
+  }
+  .feature__delta-icon svg { width: 10px; height: 10px; }
+  .feature__delta-text { color: var(--dr-ink-3); font-weight: 400; }
+
+  /* Mini bar chart */
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 32px;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--dr-line);
+  }
+  .bar {
+    flex: 1;
+    background: var(--dr-primary);
+    opacity: 0.4;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .bar--peak {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--dr-secondary), var(--dr-primary));
+    box-shadow: 0 0 12px rgba(244,63,94,0.5);
+  }
+
+  /* ============ FOOTER ============ */
+  .footer {
+    grid-column: span 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 18px;
+    border-top: 1px solid var(--dr-line);
+    font-family: var(--dr-font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dr-ink-4);
+    position: relative;
+    z-index: 3;
+  }
+  .footer__center {
+    color: var(--dr-ink);
+    font-weight: 700;
+  }
+  .footer__violet { color: var(--dr-primary); }
+  .footer__rose { color: var(--dr-secondary); }
+</style>
+</head>
+<body>
+
+<main class="poster" aria-label="Dramatic design language preview">
+
+  <div class="split" aria-hidden="true"></div>
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m13 2-3 7h4l-3 7"/></svg>
+      </span>
+      <span>NOIR</span>
+      <span class="brand__sep">·</span>
+      <span class="brand__sub">studio</span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <a href="#" class="is-active">Work</a>
+      <a href="#">Studio</a>
+      <a href="#">Journal</a>
+      <a href="#">Contact</a>
+    </nav>
+  </header>
+
+  <!-- ===== LEFT — HERO STAGE ===== -->
+  <section class="stage">
+
+    <span class="hero__eyebrow">Bold · Unconventional</span>
+    <h1 class="hero__title">
+      MAKE<br>
+      <em>NOISE.</em>
+    </h1>
+    <p class="hero__sub">Theatrical interfaces for brands that refuse to whisper. High contrast, higher impact.</p>
+    <div class="hero__cta">
+      <button class="btn btn--primary" type="button">
+        See work
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+      <button class="btn btn--rose" type="button">Hire us</button>
+    </div>
+
+  </section>
+
+  <!-- ===== RIGHT — FEATURE CARD ===== -->
+  <aside class="feature">
+
+    <span class="feature__label">Reach</span>
+    <div>
+      <div class="feature__value">42<span style="color:var(--dr-secondary);">M</span></div>
+      <div class="feature__value-sub">people reached, Q4 alone</div>
+    </div>
+    <div class="feature__delta">
+      <span class="feature__delta-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 11-11"/><path d="M11 6h6v6"/></svg>
+      </span>
+      <span>+128%</span>
+      <span class="feature__delta-text">vs Q3</span>
+    </div>
+
+    <div class="bars" aria-hidden="true">
+      <div class="bar" style="height:32%"></div>
+      <div class="bar" style="height:48%"></div>
+      <div class="bar" style="height:42%"></div>
+      <div class="bar" style="height:65%"></div>
+      <div class="bar" style="height:55%"></div>
+      <div class="bar bar--peak" style="height:100%"></div>
+      <div class="bar" style="height:78%"></div>
+    </div>
+
+  </aside>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <span><span class="footer__violet">●</span> dramatic · theatrical · high-contrast</span>
+    <span class="footer__center">— <span class="footer__violet">violet</span> × <span class="footer__rose">rose</span> —</span>
+    <span>WCAG AA · v1</span>
+  </footer>
+
+</main>
+
+</body>
+</html>

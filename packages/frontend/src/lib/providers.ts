@@ -1,8 +1,9 @@
-import type { CLIProvider as CLIProviderType } from '@claude-code-webui/shared';
-export type { CLIProvider } from '@claude-code-webui/shared';
+import type { CLIProvider as CLIProviderType } from '@plum-code-webui/shared';
+export type { CLIProvider } from '@plum-code-webui/shared';
 type CLIProvider = CLIProviderType;
 
 export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
+export type UsageLimitProvider = CLIProvider | 'z-ai' | 'opencode-go';
 
 export const DEFAULT_UI_PROVIDER: UiProvider = 'plum';
 export const UI_PROVIDER_STORAGE_KEY = 'ui-provider';
@@ -82,15 +83,30 @@ export const CLI_PROVIDER_DEFAULT_MODEL: Record<CLIProvider, string> = {
 };
 
 export const UI_PROVIDER_THEME_COLOR: Record<UiProvider, string> = {
-  plum: '#6d2a88',
+  plum: '#020403',
   claude: '#141413',
   codex: '#000000',
   opencode: '#160d2b',
   vibe: '#1e1e1e',
 };
 
+export const USAGE_PROVIDER_LABEL: Record<UsageLimitProvider, string> = {
+  ...CLI_PROVIDER_LABEL,
+  'z-ai': 'Z.ai Coding Plan',
+  'opencode-go': 'OpenCode Go',
+};
+
+export const USAGE_PROVIDER_SHORT_LABEL: Record<UsageLimitProvider, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  vibe: 'Vibe',
+  'z-ai': 'Z.ai',
+  'opencode-go': 'OpenCode Go',
+};
+
 export const CLI_PROVIDER_LIMIT_LABELS: Record<
-  CLIProvider,
+  UsageLimitProvider,
   {
     session: { title: string; subtitle?: string };
     weeklyAll?: { title: string; subtitle?: string };
@@ -118,6 +134,14 @@ export const CLI_PROVIDER_LIMIT_LABELS: Record<
   vibe: {
     session: { title: '24h', subtitle: 'Local' },
     weeklyAll: { title: 'Weekly', subtitle: 'Local' },
+  },
+  'z-ai': {
+    session: { title: '5h', subtitle: 'Tokens' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Tokens' },
+  },
+  'opencode-go': {
+    session: { title: 'Rolling', subtitle: 'Go quota' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Go quota' },
   },
 };
 
@@ -155,24 +179,46 @@ export function toCliProvider(uiProvider?: UiProvider | null): CLIProvider {
   return UI_TO_CLI[uiProvider] || UI_TO_CLI[DEFAULT_UI_PROVIDER];
 }
 
+export function getUsageLimitProviderForModel(
+  cliProvider: CLIProvider,
+  model?: string | null
+): UsageLimitProvider {
+  const value = (model || '').trim().toLowerCase();
+  if (cliProvider !== 'opencode') {
+    return cliProvider;
+  }
+  if (value.startsWith('z-ai/') || value.startsWith('zai/') || value.startsWith('glm-')) {
+    return 'z-ai';
+  }
+  if (value.startsWith('opencode-go/')) {
+    return 'opencode-go';
+  }
+  return 'opencode';
+}
+
 export function getStoredUiProvider(): UiProvider {
   if (typeof window === 'undefined') {
     return DEFAULT_UI_PROVIDER;
   }
-  return normalizeUiProvider(window.localStorage.getItem(UI_PROVIDER_STORAGE_KEY));
+  return DEFAULT_UI_PROVIDER;
 }
 
 export function setStoredUiProvider(provider: UiProvider): void {
   if (typeof window === 'undefined') {
     return;
   }
-  window.localStorage.setItem(UI_PROVIDER_STORAGE_KEY, provider);
+  if (provider === DEFAULT_UI_PROVIDER) {
+    window.localStorage.setItem(UI_PROVIDER_STORAGE_KEY, provider);
+  } else {
+    window.localStorage.removeItem(UI_PROVIDER_STORAGE_KEY);
+  }
 }
 
-export function applyProviderClass(provider: UiProvider): void {
+export function applyProviderClass(_provider: UiProvider): void {
   if (typeof document === 'undefined') {
     return;
   }
+  const visualProvider = DEFAULT_UI_PROVIDER;
   const root = document.documentElement;
   root.classList.remove(
     'provider-plum',
@@ -181,16 +227,16 @@ export function applyProviderClass(provider: UiProvider): void {
     'provider-opencode',
     'provider-vibe'
   );
-  root.classList.add(`provider-${provider}`);
-  root.setAttribute('data-provider', provider);
+  root.classList.add(`provider-${visualProvider}`);
+  root.setAttribute('data-provider', visualProvider);
 
   const themeMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (themeMeta) {
-    themeMeta.content = UI_PROVIDER_THEME_COLOR[provider];
+    themeMeta.content = UI_PROVIDER_THEME_COLOR[visualProvider];
   }
 
   const tileMeta = document.querySelector<HTMLMetaElement>('meta[name="msapplication-TileColor"]');
   if (tileMeta) {
-    tileMeta.content = UI_PROVIDER_THEME_COLOR[provider];
+    tileMeta.content = UI_PROVIDER_THEME_COLOR[visualProvider];
   }
 }
