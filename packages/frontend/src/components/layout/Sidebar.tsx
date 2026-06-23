@@ -22,6 +22,7 @@ import {
   RotateCcw,
   Sparkles,
   Loader2,
+  ServerCog,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,7 @@ import type { UsageData } from '@plum-code-webui/shared';
 const baseNavItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
   { icon: BarChart3, label: 'Analytics', path: '/analytics' },
+  { icon: ServerCog, label: 'Operations', path: '/operations' },
   { icon: Settings, label: 'General Settings', path: '/settings' },
 ];
 

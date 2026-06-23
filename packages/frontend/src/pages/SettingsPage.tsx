@@ -39,11 +39,15 @@ import {
   Shield,
   FileText,
   LayoutDashboard,
+  Bell,
+  Send,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -76,6 +80,13 @@ import type {
   ProviderCapabilities,
   CLIProvider,
   OracleBrowserSettings,
+  DiscordAlertSeverity,
+  DiscordGatewayMode,
+  DiscordAlertTransport,
+  DiscordIntegrationSettings,
+  DiscordIntegrationSettingsUpdate,
+  DiscordMaintenancePolicy,
+  DiscordTestResult,
 } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { CLI_PROVIDER_LABEL } from '@/lib/providers';
@@ -228,6 +239,7 @@ type SettingsTab =
   | 'extensions'
   | 'admin';
 
+type GeneralSettingsTab = 'workspace' | 'codex' | 'oracle' | 'interface' | 'opencode';
 type AdminSettingsTab = 'overview' | 'users' | 'audit-log';
 type SettingsNavTone = 'brand' | 'success' | 'warning' | 'neutral';
 
@@ -245,11 +257,33 @@ interface SettingsTabDescriptor {
   sections: SettingsSectionShortcut[];
 }
 
+interface GeneralSettingsTabDescriptor {
+  value: GeneralSettingsTab;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  sections: SettingsSectionShortcut[];
+}
+
 interface SettingsNavItem extends SettingsTabDescriptor {
   value: SettingsTab;
   badge: string;
   note: string;
   tone: SettingsNavTone;
+}
+
+interface SettingsNavGroup {
+  label: string;
+  items: SettingsNavItem[];
+}
+
+interface SettingsSearchResult {
+  key: string;
+  tab: SettingsTab;
+  label: string;
+  context: string;
+  sectionId?: string;
+  icon: LucideIcon;
 }
 
 interface SettingsPanelProps {
@@ -279,18 +313,15 @@ const SETTINGS_TAB_DESCRIPTORS: Record<SettingsTab, SettingsTabDescriptor> = {
   general: {
     label: 'General',
     eyebrow: 'Workspace',
-    description:
-      'Default workspace, provider runtime, model menus, and interface behavior live here.',
+    description: 'Default workspace, provider runtime, model menus, and interface behavior live here.',
     icon: Settings2,
-    highlights: ['Workspace defaults', 'Provider runtime', 'Appearance and tool policy'],
+    highlights: ['Workspace defaults', 'Provider runtime', 'Appearance'],
     sections: [
       { id: 'default-directory', label: 'Default directory' },
       { id: 'cli-updates', label: 'CLI updates' },
       { id: 'codex-cli', label: 'Codex CLI' },
       { id: 'oracle-browser', label: 'Oracle browser' },
       { id: 'appearance', label: 'Appearance' },
-      { id: 'allowed-tools', label: 'Allowed tools' },
-      { id: 'local-usage-budgets', label: 'Budgets' },
       { id: 'opencode-models', label: 'OpenCode models' },
     ],
   },
@@ -321,10 +352,13 @@ const SETTINGS_TAB_DESCRIPTORS: Record<SettingsTab, SettingsTabDescriptor> = {
     label: 'Integrations',
     eyebrow: 'External services',
     description:
-      'Wire Plum into ComfyUI and the remaining compatibility endpoints used by the stack.',
+      'Wire Plum into ComfyUI, Discord alerts, and the remaining endpoints used by the stack.',
     icon: Wand2,
-    highlights: ['ComfyUI endpoint', 'Connectivity tests', 'Legacy compatibility'],
-    sections: [{ id: 'comfyui-integration', label: 'ComfyUI integration' }],
+    highlights: ['ComfyUI endpoint', 'Discord alerts', 'Connectivity tests'],
+    sections: [
+      { id: 'comfyui-integration', label: 'ComfyUI integration' },
+      { id: 'discord-integration', label: 'Discord alerts' },
+    ],
   },
   diagnostics: {
     label: 'Diagnostics',
@@ -364,6 +398,58 @@ const SETTINGS_TAB_DESCRIPTORS: Record<SettingsTab, SettingsTabDescriptor> = {
   },
 };
 
+const GENERAL_SETTINGS_TABS: GeneralSettingsTabDescriptor[] = [
+  {
+    value: 'workspace',
+    label: 'Workspace',
+    description: 'Default folder and CLI updates.',
+    icon: FolderOpen,
+    sections: [
+      { id: 'default-directory', label: 'Default directory' },
+      { id: 'cli-updates', label: 'CLI updates' },
+    ],
+  },
+  {
+    value: 'codex',
+    label: 'Codex',
+    description: 'Codex runtime, feature flags, and plugins.',
+    icon: Bot,
+    sections: [{ id: 'codex-cli', label: 'Codex CLI' }],
+  },
+  {
+    value: 'oracle',
+    label: 'Oracle',
+    description: 'Browser auth for Oracle second opinions.',
+    icon: Wand2,
+    sections: [{ id: 'oracle-browser', label: 'Oracle browser' }],
+  },
+  {
+    value: 'interface',
+    label: 'Interface',
+    description: 'Theme and background behavior.',
+    icon: Settings2,
+    sections: [{ id: 'appearance', label: 'Appearance' }],
+  },
+  {
+    value: 'opencode',
+    label: 'OpenCode',
+    description: 'Curated OpenCode model menu.',
+    icon: Server,
+    sections: [{ id: 'opencode-models', label: 'OpenCode models' }],
+  },
+];
+
+const GENERAL_SETTINGS_TAB_VALUES = new Set<GeneralSettingsTab>(
+  GENERAL_SETTINGS_TABS.map((tab) => tab.value)
+);
+
+const GENERAL_SECTION_TO_TAB = GENERAL_SETTINGS_TABS.reduce((map, tab) => {
+  tab.sections.forEach((section) => {
+    map.set(section.id, tab.value);
+  });
+  return map;
+}, new Map<string, GeneralSettingsTab>());
+
 function SettingsPanel({
   id,
   eyebrow,
@@ -377,11 +463,11 @@ function SettingsPanel({
   return (
     <Card
       id={id}
-      className={cn('settings-panel-card overflow-hidden border border-border/70', className)}
+      className={cn('settings-panel-card border border-border/70', className)}
     >
-      <CardHeader className="flex flex-col gap-3 pb-4 sm:flex-row sm:items-start sm:justify-between">
+      <CardHeader className="settings-panel-header flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1.5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+          <p className="settings-panel-eyebrow text-[11px] font-semibold uppercase text-muted-foreground">
             {eyebrow}
           </p>
           <div className="space-y-1">
@@ -395,7 +481,9 @@ function SettingsPanel({
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </CardHeader>
-      <CardContent className={cn('space-y-4', contentClassName)}>{children}</CardContent>
+      <CardContent className={cn('settings-panel-content space-y-4', contentClassName)}>
+        {children}
+      </CardContent>
     </Card>
   );
 }
@@ -427,6 +515,18 @@ function getAdminSettingsTab(tab: string | null, adminTab: string | null): Admin
   return 'overview';
 }
 
+function getGeneralSettingsTab(tab: string | null, sectionId?: string | null): GeneralSettingsTab {
+  if (sectionId) {
+    return GENERAL_SECTION_TO_TAB.get(sectionId) || 'workspace';
+  }
+
+  if (tab && GENERAL_SETTINGS_TAB_VALUES.has(tab as GeneralSettingsTab)) {
+    return tab as GeneralSettingsTab;
+  }
+
+  return 'workspace';
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -447,25 +547,49 @@ export function SettingsPage() {
     () => getAdminSettingsTab(searchParams.get('tab'), searchParams.get('adminTab')),
     [searchParams]
   );
+  const activeGeneralTab = useMemo(
+    () => getGeneralSettingsTab(searchParams.get('generalTab'), searchParams.get('section')),
+    [searchParams]
+  );
   const handleSettingsTabChange = (value: string) => {
     const tab = value as SettingsTab;
     const next = new URLSearchParams(searchParams);
     next.set('tab', tab);
+    next.delete('section');
 
     if (tab === 'admin') {
       next.set('adminTab', activeAdminTab);
+      next.delete('generalTab');
+    } else if (tab === 'general') {
+      next.set('generalTab', activeGeneralTab);
+      next.delete('adminTab');
     } else {
       next.delete('adminTab');
+      next.delete('generalTab');
     }
 
     setSearchParams(next);
+    setSettingsSearchQuery('');
+  };
+  const handleGeneralTabChange = (value: string) => {
+    const generalTab = value as GeneralSettingsTab;
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'general');
+    next.set('generalTab', generalTab);
+    next.delete('adminTab');
+    next.delete('section');
+    setSearchParams(next);
+    setSettingsSearchQuery('');
   };
   const handleAdminTabChange = (value: string) => {
     const adminTab = value as AdminSettingsTab;
     const next = new URLSearchParams(searchParams);
     next.set('tab', 'admin');
     next.set('adminTab', adminTab);
+    next.delete('generalTab');
+    next.delete('section');
     setSearchParams(next);
+    setSettingsSearchQuery('');
   };
   const [showMcpForm, setShowMcpForm] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
@@ -474,6 +598,7 @@ export function SettingsPage() {
   const [currentBackgroundAnimation, setCurrentBackgroundAnimation] = useState<BackgroundAnimation>(
     () => getStoredBackgroundAnimation()
   );
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
   const [newMcpServer, setNewMcpServer] = useState<{
     name: string;
     type: 'subprocess' | 'sse';
@@ -521,9 +646,20 @@ export function SettingsPage() {
   const [mistralKeyInput, setMistralKeyInput] = useState('');
   const [showMistralKey, setShowMistralKey] = useState(false);
 
-  // Integration URLs state (ComfyUI, LoRA Tester)
+  // Integration URL state (ComfyUI)
   const [comfyuiUrlInput, setComfyuiUrlInput] = useState('');
-  const [loraTesterUrlInput, setLoraTesterUrlInput] = useState('');
+  const [discordEnabled, setDiscordEnabled] = useState(false);
+  const [discordTransport, setDiscordTransport] = useState<DiscordAlertTransport>('bot');
+  const [discordWebhookInput, setDiscordWebhookInput] = useState('');
+  const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
+  const [discordChannelIdInput, setDiscordChannelIdInput] = useState('');
+  const [discordChannelLabelInput, setDiscordChannelLabelInput] = useState('');
+  const [discordCriticalRoleIdInput, setDiscordCriticalRoleIdInput] = useState('');
+  const [discordMinSeverity, setDiscordMinSeverity] = useState<DiscordAlertSeverity>('warning');
+  const [discordGatewayMode, setDiscordGatewayMode] = useState<DiscordGatewayMode>('supervisor');
+  const [discordMaintenancePolicy, setDiscordMaintenancePolicy] =
+    useState<DiscordMaintenancePolicy>('session_mode');
+  const [discordInboundJobsEnabled, setDiscordInboundJobsEnabled] = useState(false);
   // Result of the "Test connection" button next to ComfyUI URL.
   const [comfyuiTestResult, setComfyuiTestResult] = useState<{
     state: 'idle' | 'testing' | 'ok' | 'error';
@@ -737,16 +873,36 @@ export function SettingsPage() {
     },
   });
 
-  // Fetch integration URLs (ComfyUI, LoRA Tester)
+  // Fetch integration URL (ComfyUI)
   const { data: integrations, refetch: refetchIntegrations } = useQuery({
     queryKey: ['integrations'],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<{ comfyuiUrl: string; loraTesterUrl: string }>>(
+      const response = await api.get<ApiResponse<{ comfyuiUrl: string }>>(
         '/api/settings/integrations'
       );
-      const data = response.data.data ?? { comfyuiUrl: '', loraTesterUrl: '' };
+      const data = response.data.data ?? { comfyuiUrl: '' };
       setComfyuiUrlInput(data.comfyuiUrl || '');
-      setLoraTesterUrlInput(data.loraTesterUrl || '');
+      return data;
+    },
+  });
+
+  const { data: discordSettings, refetch: refetchDiscordSettings } = useQuery({
+    queryKey: ['discord-settings'],
+    queryFn: async () => {
+      const response =
+        await api.get<ApiResponse<DiscordIntegrationSettings>>('/api/discord/settings');
+      const data = response.data.data;
+      if (data) {
+        setDiscordEnabled(data.enabled);
+        setDiscordTransport(data.transport);
+        setDiscordChannelIdInput(data.channelId || '');
+        setDiscordChannelLabelInput(data.channelLabel || '');
+        setDiscordCriticalRoleIdInput(data.criticalRoleId || '');
+        setDiscordMinSeverity(data.minSeverity);
+        setDiscordGatewayMode(data.gatewayMode);
+        setDiscordMaintenancePolicy(data.maintenancePolicy);
+        setDiscordInboundJobsEnabled(data.inboundJobsEnabled);
+      }
       return data;
     },
   });
@@ -1153,10 +1309,10 @@ export function SettingsPage() {
     },
   });
 
-  // Save integration URLs mutation
+  // Save integration URL mutation
   const saveIntegrationsMutation = useMutation({
-    mutationFn: async (payload: { comfyuiUrl?: string; loraTesterUrl?: string }) => {
-      const response = await api.put<ApiResponse<{ comfyuiUrl: string; loraTesterUrl: string }>>(
+    mutationFn: async (payload: { comfyuiUrl?: string }) => {
+      const response = await api.put<ApiResponse<{ comfyuiUrl: string }>>(
         '/api/settings/integrations',
         payload
       );
@@ -1171,6 +1327,47 @@ export function SettingsPage() {
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const saveDiscordSettingsMutation = useMutation({
+    mutationFn: async (payload: DiscordIntegrationSettingsUpdate) => {
+      const response = await api.put<ApiResponse<DiscordIntegrationSettings>>(
+        '/api/discord/settings',
+        payload
+      );
+      return response.data.data;
+    },
+    onSuccess: () => {
+      setDiscordWebhookInput('');
+      setDiscordBotTokenInput('');
+      refetchDiscordSettings();
+      queryClient.invalidateQueries({ queryKey: ['discord-outbox'] });
+      toast({ title: 'Discord settings saved' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const testDiscordMutation = useMutation({
+    mutationFn: async () => {
+      const response = await api.post<ApiResponse<DiscordTestResult>>('/api/discord/test');
+      return response.data.data;
+    },
+    onSuccess: (result) => {
+      refetchDiscordSettings();
+      queryClient.invalidateQueries({ queryKey: ['discord-outbox'] });
+      toast({
+        title: result?.sent ? 'Discord test sent' : 'Discord test queued for retry',
+        description:
+          result?.error ||
+          (result?.sent ? undefined : 'The message is in the Discord outbox and will be retried.'),
+        variant: result?.sent ? 'default' : 'destructive',
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Discord test failed', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -1367,35 +1564,6 @@ export function SettingsPage() {
     updateSettingsMutation.mutate({ backgroundAnimation });
   };
 
-  const updateLocalUsageBudget = (
-    provider: 'opencode' | 'vibe',
-    key: 'dailyUsd' | 'weeklyUsd',
-    rawValue: string
-  ) => {
-    const normalized = rawValue.trim();
-    const parsed = normalized ? Number(normalized) : 0;
-    const next = {
-      ...(settings?.localUsageBudgets || {}),
-      [provider]: {
-        ...(settings?.localUsageBudgets?.[provider] || {}),
-      },
-    };
-
-    if (Number.isFinite(parsed) && parsed > 0) {
-      next[provider] = { ...next[provider], [key]: Math.round(parsed * 100) / 100 };
-    } else {
-      const providerBudget = { ...(next[provider] || {}) };
-      delete providerBudget[key];
-      if (providerBudget.dailyUsd || providerBudget.weeklyUsd) {
-        next[provider] = providerBudget;
-      } else {
-        delete next[provider];
-      }
-    }
-
-    updateSettingsMutation.mutate({ localUsageBudgets: next });
-  };
-
   const saveOracleBrowserSettings = () => {
     updateSettingsMutation.mutate({ oracleBrowser: oracleBrowserDraft });
   };
@@ -1509,8 +1677,6 @@ export function SettingsPage() {
     providerDiagnostics?.filter((provider) => provider.installed && provider.authenticated)
       .length || 0;
   const totalProviderCount = providerDiagnostics?.length || 0;
-  const activeTabDescriptor = SETTINGS_TAB_DESCRIPTORS[activeTab];
-  const ActiveTabIcon = activeTabDescriptor.icon;
 
   const settingsNavItems = useMemo<SettingsNavItem[]>(() => {
     const items: SettingsNavItem[] = [
@@ -1545,11 +1711,13 @@ export function SettingsPage() {
       {
         value: 'integrations',
         ...SETTINGS_TAB_DESCRIPTORS.integrations,
-        badge: integrations?.comfyuiUrl ? 'Configured' : 'Pending',
-        note: integrations?.comfyuiUrl
-          ? integrations.comfyuiUrl
-          : 'Add a ComfyUI base URL to unlock image generation workflows.',
-        tone: integrations?.comfyuiUrl ? 'success' : 'warning',
+        badge: integrations?.comfyuiUrl || discordSettings?.configured ? 'Configured' : 'Pending',
+        note: discordSettings?.configured
+          ? `Discord alerts ${discordSettings.enabled ? 'enabled' : 'configured'} via ${discordSettings.transport === 'bot' ? 'bot token' : 'webhook'}.`
+          : integrations?.comfyuiUrl
+            ? integrations.comfyuiUrl
+            : 'Add ComfyUI and Discord endpoints to unlock external workflows.',
+        tone: integrations?.comfyuiUrl || discordSettings?.configured ? 'success' : 'warning',
       },
       {
         value: 'diagnostics',
@@ -1605,6 +1773,10 @@ export function SettingsPage() {
     claudeSkills?.length,
     configuredApiKeyCount,
     configuredOpenCodeProviders.length,
+    discordSettings?.configured,
+    discordSettings?.enabled,
+    discordSettings?.transport,
+    discordSettings?.webhookUrlPreview,
     healthyProviderCount,
     installedPlugins?.length,
     integrations?.comfyuiUrl,
@@ -1614,19 +1786,96 @@ export function SettingsPage() {
     totalProviderCount,
   ]);
 
-  const activeNavItem =
-    settingsNavItems.find((item) => item.value === activeTab) ?? settingsNavItems[0]!;
+  const settingsNavGroups = useMemo<SettingsNavGroup[]>(() => {
+    const byValue = new Map(settingsNavItems.map((item) => [item.value, item]));
+    const groups: Array<{ label: string; values: SettingsTab[] }> = [
+      { label: 'Essentials', values: ['general', 'security'] },
+      { label: 'Connections', values: ['api-keys', 'integrations'] },
+      { label: 'System', values: ['diagnostics', 'extensions', 'admin'] },
+    ];
 
-  const handleSectionJump = (section: SettingsSectionShortcut) => {
-    if (activeTab === 'admin') {
-      handleAdminTabChange(section.id);
-      return;
+    return groups
+      .map((group) => ({
+        label: group.label,
+        items: group.values
+          .map((value) => byValue.get(value))
+          .filter((item): item is SettingsNavItem => Boolean(item)),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [settingsNavItems]);
+
+  const normalizedSettingsSearch = settingsSearchQuery.trim().toLowerCase();
+  const settingsSearchResults = useMemo<SettingsSearchResult[]>(() => {
+    if (!normalizedSettingsSearch) return [];
+
+    const results: SettingsSearchResult[] = [];
+    settingsNavItems.forEach((item) => {
+      const tabHaystack = [
+        item.label,
+        item.eyebrow,
+        item.description,
+        item.badge,
+        item.note,
+        ...item.highlights,
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      if (tabHaystack.includes(normalizedSettingsSearch)) {
+        results.push({
+          key: item.value,
+          tab: item.value,
+          label: item.label,
+          context: item.description,
+          icon: item.icon,
+        });
+      }
+
+      item.sections.forEach((section) => {
+        const sectionHaystack = `${item.label} ${section.label}`.toLowerCase();
+        if (sectionHaystack.includes(normalizedSettingsSearch)) {
+          results.push({
+            key: `${item.value}-${section.id}`,
+            tab: item.value,
+            sectionId: section.id,
+            label: section.label,
+            context: item.label,
+            icon: item.icon,
+          });
+        }
+      });
+    });
+
+    return results.slice(0, 8);
+  }, [normalizedSettingsSearch, settingsNavItems]);
+
+  const handleSettingsDestination = (tab: SettingsTab, sectionId?: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab);
+
+    if (tab === 'admin') {
+      next.set('adminTab', (sectionId as AdminSettingsTab | undefined) || activeAdminTab);
+      next.delete('section');
+      next.delete('generalTab');
+    } else {
+      next.delete('adminTab');
+      if (tab === 'general') {
+        next.set(
+          'generalTab',
+          sectionId ? getGeneralSettingsTab(null, sectionId) : activeGeneralTab
+        );
+      } else {
+        next.delete('generalTab');
+      }
+      if (sectionId) {
+        next.set('section', sectionId);
+      } else {
+        next.delete('section');
+      }
     }
 
-    const element = document.getElementById(section.id);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
-    }
+    setSearchParams(next);
+    setSettingsSearchQuery('');
   };
 
   useEffect(() => {
@@ -1652,204 +1901,153 @@ export function SettingsPage() {
 
   return (
     <div className="settings-shell glass-page settings-dashboard min-h-screen">
-      <div className="settings-dashboard-inner w-full space-y-6 px-3 pb-12 sm:px-4 md:space-y-8 xl:px-6 2xl:px-8">
-        <div className="settings-hero relative overflow-hidden rounded-xl border p-5 sm:p-6">
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,hsl(var(--primary)/0.16),transparent_62%)]" />
-          <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <div className="ui-pill ui-pill-subtle w-fit bg-background/70">
-                <span className="ui-pill-value">Control center</span>
+      <div className="settings-dashboard-inner w-full px-3 pb-12 sm:px-4 xl:px-6 2xl:px-8">
+        <Tabs
+          value={activeTab}
+          onValueChange={handleSettingsTabChange}
+          className="settings-app-grid"
+        >
+          <aside className="settings-sidebar-panel">
+            <div className="settings-sidebar-header">
+              <div className="settings-app-icon">
+                <Settings2 className="h-5 w-5" />
               </div>
-              <div className="mt-4 flex items-start gap-4">
-                <div className="rounded-xl bg-primary/12 p-3 text-primary ring-1 ring-primary/15">
-                  <Settings2 className="h-5 w-5 sm:h-6 sm:w-6" />
-                </div>
-                <div className="min-w-0">
-                  <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
-                    Less scrolling, clearer grouping, and faster jumps into the parts of Plum you
-                    actually need to change.
-                  </p>
-                </div>
+              <div className="min-w-0 flex-1">
+                <p className="settings-overline">Settings</p>
+                <h1 className="truncate text-xl font-semibold tracking-tight">Plum</h1>
               </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => refetchCodexStatus()}
+                disabled={isRefetchingCodex}
+                className="h-9 w-9 shrink-0 rounded-full"
+                title="Refresh Codex status"
+              >
+                <RefreshCw className={cn('h-4 w-4', isRefetchingCodex && 'animate-spin')} />
+              </Button>
             </div>
 
-            <div className="settings-status-grid grid gap-3 sm:grid-cols-3">
-              <div className="settings-status-card rounded-xl border bg-background/55 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Codex
-                </p>
-                <p className="mt-2 text-sm font-semibold">
-                  {codexStatus?.authenticated ? 'Ready' : 'Needs login'}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {codexStatus?.version || codexStatus?.configHome || 'Checking Codex runtime'}
-                </p>
+            <div className="settings-search-field">
+              <Search className="settings-search-icon h-4 w-4" />
+              <Input
+                value={settingsSearchQuery}
+                onChange={(event) => setSettingsSearchQuery(event.target.value)}
+                placeholder="Search settings"
+                className="settings-search-input"
+              />
+              {settingsSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSettingsSearchQuery('')}
+                  className="settings-search-clear"
+                  aria-label="Clear settings search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {settingsSearchQuery && (
+              <div className="settings-search-results">
+                {settingsSearchResults.length > 0 ? (
+                  settingsSearchResults.map((result) => {
+                    const ResultIcon = result.icon;
+                    return (
+                      <button
+                        type="button"
+                        key={result.key}
+                        onClick={() => handleSettingsDestination(result.tab, result.sectionId)}
+                        className="settings-search-result"
+                      >
+                        <span className="settings-search-result-icon">
+                          <ResultIcon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{result.label}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {result.context}
+                          </span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="settings-search-empty">No settings match that search.</div>
+                )}
               </div>
-              <div className="settings-status-card rounded-xl border bg-background/55 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Extensions
-                </p>
-                <p className="mt-2 text-sm font-semibold">
+            )}
+
+            <TabsList className="settings-tabs-list" aria-label="Settings categories">
+              {settingsNavGroups.map((group) => (
+                <div key={group.label} className="settings-nav-group">
+                  <p className="settings-nav-group-label">{group.label}</p>
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+
+                    return (
+                      <TabsTrigger
+                        key={item.value}
+                        value={item.value}
+                        className={cn('settings-tab-trigger', `is-${item.tone}`)}
+                      >
+                        <span className="settings-tab-trigger-icon">
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="settings-tab-trigger-copy">
+                          <span className="settings-tab-trigger-top">
+                            <span className="settings-tab-trigger-label">{item.label}</span>
+                            <span className="settings-tab-trigger-badge">{item.badge}</span>
+                          </span>
+                          <span className="settings-tab-trigger-note">{item.note}</span>
+                        </span>
+                        <ChevronRight className="settings-tab-trigger-chevron h-4 w-4" />
+                      </TabsTrigger>
+                    );
+                  })}
+                </div>
+              ))}
+            </TabsList>
+
+            <div className="settings-sidebar-footer">
+              <div className="settings-sidebar-stat">
+                <span>Codex</span>
+                <strong>{codexStatus?.authenticated ? 'Ready' : 'Login needed'}</strong>
+              </div>
+              <div className="settings-sidebar-stat">
+                <span>Extensions</span>
+                <strong>
                   {(claudeAgents?.length || 0) +
                     (claudeSkills?.length || 0) +
                     (installedPlugins?.length || 0)}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {claudeAgents?.length || 0} agents, {claudeSkills?.length || 0} skills,{' '}
-                  {installedPlugins?.length || 0} plugins
-                </p>
+                </strong>
               </div>
-              <div className="settings-status-card rounded-xl border bg-background/55 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Diagnostics
-                </p>
-                <p className="mt-2 text-sm font-semibold">
+              <div className="settings-sidebar-stat">
+                <span>Providers</span>
+                <strong>
                   {totalProviderCount > 0
-                    ? `${healthyProviderCount}/${totalProviderCount} ready`
-                    : 'Not run yet'}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Installed providers with auth and runtime confirmed.
-                </p>
+                    ? `${healthyProviderCount}/${totalProviderCount}`
+                    : 'Idle'}
+                </strong>
               </div>
             </div>
-          </div>
-        </div>
 
-        <Tabs value={activeTab} onValueChange={handleSettingsTabChange} className="w-full">
-          <div className="space-y-5">
-            <div className="settings-control-panel sticky top-0 z-20 -mx-3 border-y bg-background/92 px-3 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/78 sm:-mx-4 sm:px-4 xl:top-4 xl:rounded-xl xl:border">
-              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Areas
-                  </p>
-                  <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-                    Workspace, access, provider, diagnostics, and extension controls stay grouped
-                    while the active panel keeps the full workspace width.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="rounded-full border bg-background/60 px-3 py-1.5 text-xs text-muted-foreground">
-                    {configuredApiKeyCount} credential
-                    {configuredApiKeyCount === 1 ? '' : 's'} · {mcpServers?.length || 0} MCP ·{' '}
-                    {installedPlugins?.length || 0} plugins
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => refetchCodexStatus()}
-                    disabled={isRefetchingCodex}
-                    className="h-8 w-8 shrink-0"
-                  >
-                    <RefreshCw className={cn('h-3.5 w-3.5', isRefetchingCodex && 'animate-spin')} />
-                  </Button>
-                  {!codexStatus?.authenticated && codexStatus?.installed && (
-                    <Button
-                      onClick={() => {
-                        window.location.href = '/auth/codex';
-                      }}
-                      size="sm"
-                    >
-                      Check Codex login
-                    </Button>
-                  )}
-                </div>
-              </div>
+            {!codexStatus?.authenticated && codexStatus?.installed && (
+              <Button
+                onClick={() => {
+                  window.location.href = '/auth/codex';
+                }}
+                size="sm"
+                className="w-full"
+              >
+                Check Codex login
+              </Button>
+            )}
+          </aside>
 
-              <TabsList className="settings-tabs-list">
-                {settingsNavItems.map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <TabsTrigger
-                      key={item.value}
-                      value={item.value}
-                      className={cn('settings-tab-trigger', `is-${item.tone}`)}
-                    >
-                      <span className="settings-tab-trigger-icon">
-                        <Icon className="h-4 w-4" />
-                      </span>
-                      <span className="settings-tab-trigger-copy">
-                        <span className="settings-tab-trigger-top">
-                          <span className="settings-tab-trigger-label">{item.label}</span>
-                          <span className="settings-tab-trigger-badge">{item.badge}</span>
-                        </span>
-                        <span className="settings-tab-trigger-note">{item.note}</span>
-                      </span>
-                    </TabsTrigger>
-                  );
-                })}
-              </TabsList>
-            </div>
-
-            <div className="min-w-0 space-y-6">
-              <div className="settings-active-panel relative overflow-hidden rounded-xl border p-5 sm:p-6">
-                <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,hsl(var(--primary)/0.12),transparent_68%)]" />
-                <div className="relative flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="max-w-3xl">
-                    <div className="ui-pill ui-pill-subtle w-fit bg-background/70">
-                      <span className="ui-pill-value">{activeTabDescriptor.eyebrow}</span>
-                    </div>
-                    <div className="mt-4 flex items-start gap-4">
-                      <div className="rounded-xl bg-primary/12 p-3 text-primary ring-1 ring-primary/15">
-                        <ActiveTabIcon className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h2 className="text-2xl font-semibold tracking-tight">
-                          {activeTabDescriptor.label}
-                        </h2>
-                        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                          {activeTabDescriptor.description}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-5 flex flex-wrap gap-2">
-                      {activeTabDescriptor.highlights.map((highlight) => (
-                        <span
-                          key={highlight}
-                          className="rounded-full border border-border/70 bg-background/65 px-3 py-1.5 text-xs text-muted-foreground"
-                        >
-                          {highlight}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="settings-focus-grid grid gap-3 sm:grid-cols-2 xl:w-[340px] xl:grid-cols-1">
-                    <div className="settings-status-card rounded-xl border bg-background/55 p-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Current focus
-                      </p>
-                      <p className="mt-2 text-sm font-semibold">{activeNavItem.badge}</p>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {activeNavItem.note}
-                      </p>
-                    </div>
-
-                    <div className="settings-status-card rounded-xl border bg-background/55 p-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Jump to
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {activeTabDescriptor.sections.map((section) => (
-                          <button
-                            type="button"
-                            key={section.id}
-                            onClick={() => handleSectionJump(section)}
-                            className="rounded-full border border-border/70 bg-background/70 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
-                          >
-                            {section.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
+          <main className="settings-detail-column">
+            <div className="settings-content-surface">
               {/* Security Tab */}
               <TabsContent value="security" className="settings-pane-rail mt-0">
                 <>
@@ -2057,1053 +2255,1014 @@ export function SettingsPage() {
               {/* General Tab */}
               <TabsContent value="general" className="settings-pane-rail mt-0">
                 <>
-                  <div className="settings-pane-column">
-                    <SettingsPanel
-                      id="default-directory"
-                      eyebrow="Workspace"
-                      title="Default Directory"
-                      description="The base folder Plum starts in for new sessions across every CLI provider."
+                  <Tabs
+                    value={activeGeneralTab}
+                    onValueChange={handleGeneralTabChange}
+                    className="settings-general-subtabs"
+                  >
+                    <TabsList
+                      className="settings-general-tabs-list"
+                      aria-label="General settings sections"
                     >
-                      <div className="flex gap-2">
-                        <div className="shrink-0 rounded-lg bg-muted p-2.5">
-                          <FolderOpen className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                        <Input
-                          value={settings?.defaultWorkingDir || ''}
-                          onChange={(e) =>
-                            updateSettingsMutation.mutate({
-                              defaultWorkingDir: e.target.value || null,
-                            })
-                          }
-                          placeholder="/home/user/projects"
-                          className="h-10 flex-1 font-mono text-sm"
-                        />
-                        <Button
-                          variant="secondary"
-                          size="icon"
-                          onClick={() => setShowFolderBrowser(true)}
-                          className="h-10 w-10 shrink-0"
-                        >
-                          <FolderSearch className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Shared across all providers and reused whenever you create a new session.
-                      </p>
-                    </SettingsPanel>
-
-                    {/* CLI Updates */}
-                    <section id="cli-updates">
-                      <Card className="border border-border/70">
-                        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                          <div className="space-y-1">
-                            <CardTitle className="text-base">CLI Updates</CardTitle>
-                            <CardDescription>
-                              Update Claude, Codex, and OpenCode CLI tools.
-                            </CardDescription>
-                          </div>
-                          <Button
-                            size="sm"
-                            onClick={() => updateCliProvidersMutation.mutate()}
-                            disabled={updateCliProvidersMutation.isPending}
+                      {GENERAL_SETTINGS_TABS.map((tab) => {
+                        const Icon = tab.icon;
+                        return (
+                          <TabsTrigger
+                            key={tab.value}
+                            value={tab.value}
+                            className="settings-general-tab-trigger"
                           >
-                            {updateCliProvidersMutation.isPending
-                              ? 'Updating...'
-                              : 'Update CLI tools'}
-                          </Button>
-                        </CardHeader>
-                        {cliUpdateResults && (
-                          <CardContent className="space-y-3">
-                            <div className="grid gap-2 text-sm">
-                              {cliUpdateResults.map((result) => (
-                                <div
-                                  key={result.provider}
-                                  className="flex items-center justify-between"
-                                >
-                                  <span className="font-medium">
-                                    {CLI_PROVIDER_LABEL[result.provider]}
-                                  </span>
-                                  <span
-                                    className={cn(
-                                      'text-xs font-semibold uppercase tracking-wide',
-                                      result.status === 'updated'
-                                        ? 'text-green-600 dark:text-green-400'
-                                        : 'text-red-600 dark:text-red-400'
-                                    )}
-                                  >
-                                    {result.status}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                            <pre className="max-h-64 overflow-auto rounded-lg border border-border/70 bg-muted/40 p-3 text-xs font-mono whitespace-pre-wrap">
-                              {cliUpdateResults
-                                .map((result) => {
-                                  const label = CLI_PROVIDER_LABEL[result.provider];
-                                  const output = result.output || 'No output.';
-                                  return `# ${label} (${result.status})\n${output}`;
-                                })
-                                .join('\n\n')}
-                            </pre>
-                          </CardContent>
-                        )}
-                      </Card>
-                    </section>
+                            <Icon className="h-4 w-4 shrink-0" />
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-semibold">
+                                {tab.label}
+                              </span>
+                              <span className="block truncate text-[11px] font-medium text-muted-foreground">
+                                {tab.description}
+                              </span>
+                            </span>
+                          </TabsTrigger>
+                        );
+                      })}
+                    </TabsList>
 
-                    {/* Local Usage Budgets */}
-                    <section id="local-usage-budgets">
-                      <Card className="border border-border/70">
-                        <CardHeader>
-                          <CardTitle className="text-base">Local Usage Budgets</CardTitle>
-                          <CardDescription>
-                            Optional spend guardrails for providers without upstream quota APIs.
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent className="grid gap-4 md:grid-cols-2">
-                          {(['opencode', 'vibe'] as const).map((provider) => (
-                            <div key={provider} className="rounded-lg border border-border/70 p-3">
-                              <div className="mb-3 flex items-center justify-between">
-                                <span className="text-sm font-medium">
-                                  {CLI_PROVIDER_LABEL[provider]}
-                                </span>
-                                <span className="text-[11px] text-muted-foreground">USD</span>
-                              </div>
-                              <div className="grid grid-cols-2 gap-3">
-                                <label className="space-y-1 text-xs">
-                                  <span className="text-muted-foreground">24h budget</span>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    defaultValue={
-                                      settings?.localUsageBudgets?.[provider]?.dailyUsd ?? ''
-                                    }
-                                    onBlur={(event) =>
-                                      updateLocalUsageBudget(
-                                        provider,
-                                        'dailyUsd',
-                                        event.target.value
-                                      )
-                                    }
-                                    placeholder="0.00"
-                                  />
-                                </label>
-                                <label className="space-y-1 text-xs">
-                                  <span className="text-muted-foreground">Weekly budget</span>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    defaultValue={
-                                      settings?.localUsageBudgets?.[provider]?.weeklyUsd ?? ''
-                                    }
-                                    onBlur={(event) =>
-                                      updateLocalUsageBudget(
-                                        provider,
-                                        'weeklyUsd',
-                                        event.target.value
-                                      )
-                                    }
-                                    placeholder="0.00"
-                                  />
-                                </label>
-                              </div>
-                            </div>
-                          ))}
-                        </CardContent>
-                      </Card>
-                    </section>
-
-                    {/* Codex CLI */}
-                    <section id="codex-cli">
-                      <Card className="border border-border/70">
-                        <CardHeader>
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <CardTitle className="text-base">Codex CLI</CardTitle>
-                              <CardDescription>
-                                Control Codex-specific workflows used by chat sessions.
-                              </CardDescription>
-                            </div>
-                            <div
-                              className={cn(
-                                'rounded-full px-2.5 py-1 text-xs font-medium',
-                                codexStatus?.authenticated
-                                  ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                              )}
-                            >
-                              {codexStatus?.authenticated
-                                ? codexStatus.authMode === 'chatgpt'
-                                  ? 'ChatGPT auth'
-                                  : 'API key auth'
-                                : 'Not authenticated'}
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-5">
-                          <div className="grid gap-4 md:grid-cols-[1fr_220px]">
-                            <div className="space-y-1">
-                              <p className="text-sm font-medium">Runtime</p>
-                              <p className="text-xs text-muted-foreground">
-                                {codexStatus?.installed
-                                  ? `${codexStatus.version || 'Codex installed'} · ${codexStatus.configHome}`
-                                  : 'Codex CLI is not available in the WebUI container.'}
-                              </p>
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => refetchCodexStatus()}
-                              disabled={isRefetchingCodex}
-                              className="gap-2"
-                            >
-                              <RefreshCw
-                                className={cn('h-3.5 w-3.5', isRefetchingCodex && 'animate-spin')}
-                              />
-                              Refresh
-                            </Button>
-                          </div>
-
-                          <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
-                            <div>
-                              <p className="text-sm font-medium">Web search</p>
-                              <p className="text-xs text-muted-foreground">
-                                Applied to the next Codex turn via <code>web_search</code> config
-                                override.
-                              </p>
-                            </div>
-                            <Select
-                              value={settings?.codexWebSearch || 'auto'}
-                              onValueChange={(value) =>
-                                updateSettingsMutation.mutate({
-                                  codexWebSearch: value as UserSettings['codexWebSearch'],
-                                })
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="auto">Auto</SelectItem>
-                                <SelectItem value="cached">Cached</SelectItem>
-                                <SelectItem value="live">Live</SelectItem>
-                                <SelectItem value="disabled">Disabled</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="space-y-3 border-t pt-4">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="text-sm font-medium">Feature flags</p>
-                                <p className="text-xs text-muted-foreground">
-                                  Mirrors <code>codex features list</code>; toggles persist to{' '}
-                                  <code>~/.codex/config.toml</code>.
-                                </p>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  queryClient.invalidateQueries({ queryKey: ['codex-features'] })
-                                }
-                                disabled={codexFeaturesLoading}
-                              >
-                                <RefreshCw
-                                  className={cn(
-                                    'h-3.5 w-3.5',
-                                    codexFeaturesLoading && 'animate-spin'
-                                  )}
-                                />
-                              </Button>
-                            </div>
-
-                            {codexFeaturesLoading ? (
-                              <div className="text-sm text-muted-foreground">
-                                Loading feature flags...
-                              </div>
-                            ) : (
-                              <div className="grid gap-2 md:grid-cols-2">
-                                {[...codexFeatureGroups.stable, ...codexFeatureGroups.experimental]
-                                  .filter((feature) => feature.stage !== 'removed')
-                                  .slice(0, 24)
-                                  .map((feature) => (
-                                    <button
-                                      type="button"
-                                      key={feature.name}
-                                      onClick={() =>
-                                        codexFeatureMutation.mutate({
-                                          name: feature.name,
-                                          enabled: !feature.enabled,
-                                        })
-                                      }
-                                      disabled={
-                                        codexFeatureMutation.isPending ||
-                                        feature.stage === 'deprecated' ||
-                                        feature.stage === 'removed'
-                                      }
-                                      className={cn(
-                                        'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors',
-                                        feature.enabled
-                                          ? 'border-green-500/25 bg-green-500/5'
-                                          : 'border-border bg-card hover:border-primary/30'
-                                      )}
-                                    >
-                                      {feature.enabled ? (
-                                        <ToggleRight className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-                                      ) : (
-                                        <ToggleLeft className="h-5 w-5 shrink-0 text-muted-foreground" />
-                                      )}
-                                      <span className="min-w-0 flex-1">
-                                        <span className="block truncate text-xs font-medium">
-                                          {feature.name}
-                                        </span>
-                                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                          {feature.stage}
-                                        </span>
-                                      </span>
-                                    </button>
-                                  ))}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="space-y-3 border-t pt-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-medium">Codex plugins</p>
-                                <p className="text-xs text-muted-foreground">
-                                  Writes official Codex plugin flags to{' '}
-                                  <code>~/.codex/config.toml</code>. Start a new chat after changes.
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setCodexMarketplaceBrowserOpen(true)}
-                                  className="h-8 gap-1.5 text-xs"
-                                >
-                                  <Store className="h-3.5 w-3.5" />
-                                  Marketplace
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    queryClient.invalidateQueries({ queryKey: ['codex-plugins'] })
-                                  }
-                                  disabled={codexPluginsLoading}
-                                >
-                                  <RefreshCw
-                                    className={cn(
-                                      'h-3.5 w-3.5',
-                                      codexPluginsLoading && 'animate-spin'
-                                    )}
-                                  />
-                                </Button>
-                              </div>
-                            </div>
-
-                            {(codexPlugins?.length || 0) > 6 && (
-                              <div className="relative">
-                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                                <Input
-                                  value={codexPluginSearchQuery}
-                                  onChange={(event) =>
-                                    setCodexPluginSearchQuery(event.target.value)
-                                  }
-                                  placeholder="Search Codex plugins..."
-                                  className="h-9 pl-9 pr-9 text-sm"
-                                />
-                                {codexPluginSearchQuery && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setCodexPluginSearchQuery('')}
-                                    className="absolute right-3 top-1/2 rounded p-0.5 -translate-y-1/2 hover:bg-muted"
-                                  >
-                                    <X className="h-4 w-4 text-muted-foreground" />
-                                  </button>
-                                )}
-                              </div>
-                            )}
-
-                            {codexPluginsLoading ? (
-                              <div className="text-sm text-muted-foreground">
-                                Loading Codex plugins...
-                              </div>
-                            ) : filteredCodexPlugins.length > 0 ? (
-                              <div className="grid max-h-[420px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
-                                {filteredCodexPlugins.map((plugin) => {
-                                  const nextEnabled = !plugin.enabled;
-                                  const actionLabel = plugin.enabled
-                                    ? 'Disable'
-                                    : plugin.installed
-                                      ? 'Enable'
-                                      : 'Install';
-                                  return (
-                                    <div
-                                      key={plugin.id}
-                                      className={cn(
-                                        'flex min-h-[104px] gap-3 rounded-lg border p-3 transition-colors',
-                                        plugin.enabled
-                                          ? 'border-green-500/25 bg-green-500/5'
-                                          : 'border-border bg-card'
-                                      )}
-                                    >
-                                      <div
-                                        className={cn(
-                                          'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                                          plugin.enabled
-                                            ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                                            : 'bg-muted text-muted-foreground'
-                                        )}
-                                      >
-                                        <Puzzle className="h-4 w-4" />
-                                      </div>
-                                      <div className="min-w-0 flex-1 space-y-2">
-                                        <div className="flex items-start justify-between gap-2">
-                                          <div className="min-w-0">
-                                            <p className="truncate text-sm font-semibold">
-                                              {plugin.displayName}
-                                            </p>
-                                            <p className="truncate text-[11px] text-muted-foreground">
-                                              {plugin.name}@{plugin.marketplace}
-                                            </p>
-                                          </div>
-                                          <Button
-                                            variant={plugin.enabled ? 'outline' : 'default'}
-                                            size="sm"
-                                            onClick={() =>
-                                              codexPluginMutation.mutate({
-                                                id: plugin.id,
-                                                enabled: nextEnabled,
-                                              })
-                                            }
-                                            disabled={codexPluginMutation.isPending}
-                                            className="h-7 shrink-0 px-2 text-xs"
-                                          >
-                                            {actionLabel}
-                                          </Button>
-                                        </div>
-                                        <p className="line-clamp-2 text-xs text-muted-foreground">
-                                          {plugin.description || 'No description'}
-                                        </p>
-                                        <div className="flex flex-wrap gap-1">
-                                          <span
-                                            className={cn(
-                                              'rounded px-1.5 py-0.5 text-[10px]',
-                                              plugin.enabled
-                                                ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                                                : plugin.installed
-                                                  ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
-                                                  : 'bg-muted text-muted-foreground'
-                                            )}
-                                          >
-                                            {plugin.enabled
-                                              ? 'Enabled'
-                                              : plugin.installed
-                                                ? 'Installed'
-                                                : 'Available'}
-                                          </span>
-                                          {plugin.category && (
-                                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                              {plugin.category}
-                                            </span>
-                                          )}
-                                          {plugin.connectors && plugin.connectors.length > 0 && (
-                                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                                              {plugin.connectors.length} connector
-                                              {plugin.connectors.length === 1 ? '' : 's'}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                                No Codex plugins found.
-                              </div>
-                            )}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </section>
-
-                    {/* Oracle Browser Auth */}
-                    <section id="oracle-browser">
-                      <Card className="border border-border/70">
-                        <CardHeader>
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <CardTitle className="text-base">Oracle Browser Auth</CardTitle>
-                              <CardDescription>
-                                Configure how Oracle reaches ChatGPT for browser-mode second
-                                opinions.
-                              </CardDescription>
-                            </div>
-                            <div className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                              {(oracleBrowserDraft.mode || 'manual') === 'remote'
-                                ? 'Remote browser'
-                                : (oracleBrowserDraft.mode || 'manual') === 'manual'
-                                  ? 'Embedded browser'
-                                  : 'Cookie profile'}
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-5">
-                          <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
-                            <div>
-                              <p className="text-sm font-medium">Mode</p>
-                              <p className="text-xs text-muted-foreground">
-                                Embedded Browser keeps the ChatGPT login flow inside Plum's session
-                                browser tab. Remote Browser is only for attaching Oracle to a
-                                browser you opened somewhere else.
-                              </p>
-                            </div>
-                            <Select
-                              value={oracleBrowserDraft.mode || 'manual'}
-                              onValueChange={(value) =>
-                                setOracleBrowserDraft((prev) => ({
-                                  ...prev,
-                                  mode: value as OracleBrowserSettings['mode'],
-                                }))
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="manual">
-                                  Embedded Browser (Recommended)
-                                </SelectItem>
-                                <SelectItem value="remote">Remote Browser</SelectItem>
-                                <SelectItem value="profile">Cookie Profile (Legacy)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
-                            <div>
-                              <p className="text-sm font-medium">ChatGPT URL</p>
-                              <p className="text-xs text-muted-foreground">
-                                Oracle opens or targets this ChatGPT location for browser runs.
-                              </p>
+                    <TabsContent value="workspace" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <SettingsPanel
+                          id="default-directory"
+                          eyebrow="Workspace"
+                          title="Default Directory"
+                          description="The base folder Plum starts in for new sessions across every CLI provider."
+                        >
+                          <div className="settings-directory-row flex gap-2">
+                            <div className="settings-field-icon-bubble">
+                              <FolderOpen className="h-4 w-4 text-muted-foreground" />
                             </div>
                             <Input
-                              value={oracleBrowserDraft.chatgptUrl || ''}
-                              onChange={(event) =>
-                                setOracleBrowserDraft((prev) => ({
-                                  ...prev,
-                                  chatgptUrl: event.target.value,
-                                }))
+                              value={settings?.defaultWorkingDir || ''}
+                              onChange={(e) =>
+                                updateSettingsMutation.mutate({
+                                  defaultWorkingDir: e.target.value || null,
+                                })
                               }
-                              placeholder="https://chatgpt.com/"
+                              placeholder="/home/user/projects"
+                              className="settings-path-input h-10 flex-1 font-mono text-sm"
                             />
-                          </div>
-
-                          {(oracleBrowserDraft.mode || 'manual') === 'remote' && (
-                            <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-4">
-                              <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
-                                <div>
-                                  <p className="text-sm font-medium">Remote Chrome Target</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Chrome DevTools endpoint on the host browser you open yourself.
-                                  </p>
-                                </div>
-                                <Input
-                                  value={oracleBrowserDraft.remoteChrome || ''}
-                                  onChange={(event) =>
-                                    setOracleBrowserDraft((prev) => ({
-                                      ...prev,
-                                      remoteChrome: event.target.value,
-                                    }))
-                                  }
-                                  placeholder="host.docker.internal:9222"
-                                />
-                              </div>
-                              <div className="rounded-md border border-primary/15 bg-primary/5 p-3 text-xs text-muted-foreground">
-                                Start your browser with DevTools enabled, then sign into ChatGPT
-                                there. Example:{' '}
-                                <code>google-chrome --remote-debugging-port=9222</code>
-                              </div>
-                            </div>
-                          )}
-
-                          {(oracleBrowserDraft.mode || 'manual') === 'manual' && (
-                            <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-4">
-                              <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
-                                <div>
-                                  <p className="text-sm font-medium">
-                                    Embedded Browser Profile Dir
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Persistent Chromium profile used by Plum's embedded Oracle
-                                    browser.
-                                  </p>
-                                </div>
-                                <Input
-                                  value={oracleBrowserDraft.manualLoginProfileDir || ''}
-                                  onChange={(event) =>
-                                    setOracleBrowserDraft((prev) => ({
-                                      ...prev,
-                                      manualLoginProfileDir: event.target.value,
-                                    }))
-                                  }
-                                  placeholder="/home/node/.codex/oracle/browser-profile"
-                                />
-                              </div>
-                              <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
-                                Start and control this browser from a session's right-side `Browser`
-                                tab. Once it is logged into ChatGPT, Oracle can attach to that
-                                running browser directly without leaving Plum.
-                              </div>
-                            </div>
-                          )}
-
-                          {(oracleBrowserDraft.mode || 'manual') === 'profile' && (
-                            <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-4">
-                              <div className="grid gap-3 md:grid-cols-2">
-                                <label className="space-y-2 text-sm">
-                                  <span className="font-medium">Chrome profile</span>
-                                  <Input
-                                    value={oracleBrowserDraft.chromeProfile || ''}
-                                    onChange={(event) =>
-                                      setOracleBrowserDraft((prev) => ({
-                                        ...prev,
-                                        chromeProfile: event.target.value,
-                                      }))
-                                    }
-                                    placeholder="Default"
-                                  />
-                                </label>
-                                <label className="space-y-2 text-sm">
-                                  <span className="font-medium">Cookie DB path</span>
-                                  <Input
-                                    value={oracleBrowserDraft.chromeCookiePath || ''}
-                                    onChange={(event) =>
-                                      setOracleBrowserDraft((prev) => ({
-                                        ...prev,
-                                        chromeCookiePath: event.target.value,
-                                      }))
-                                    }
-                                    placeholder="/path/to/Cookies"
-                                  />
-                                </label>
-                              </div>
-                              <div className="rounded-md border border-border/70 bg-background/70 p-3 text-xs text-muted-foreground">
-                                Legacy mode: Oracle copies cookies from a browser profile it can
-                                reach from inside the container.
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="flex flex-wrap items-center gap-2 border-t pt-4">
                             <Button
-                              variant="outline"
-                              onClick={() =>
-                                window.open(
-                                  oracleBrowserDraft.chatgptUrl || 'https://chatgpt.com/',
-                                  '_blank',
-                                  'noopener,noreferrer'
-                                )
-                              }
-                              className="gap-2"
+                              variant="secondary"
+                              size="icon"
+                              onClick={() => setShowFolderBrowser(true)}
+                              className="h-10 w-10 shrink-0"
                             >
-                              <ExternalLink className="h-4 w-4" />
-                              Open ChatGPT Externally
-                            </Button>
-                            <Button
-                              variant="outline"
-                              onClick={testOracleBrowserSettings}
-                              disabled={oracleTestResult.state === 'testing'}
-                              className="gap-2"
-                            >
-                              {oracleTestResult.state === 'testing' ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Terminal className="h-4 w-4" />
-                              )}
-                              Test Oracle Path
-                            </Button>
-                            <Button
-                              onClick={saveOracleBrowserSettings}
-                              disabled={updateSettingsMutation.isPending}
-                            >
-                              {updateSettingsMutation.isPending
-                                ? 'Saving...'
-                                : 'Save Oracle Settings'}
+                              <FolderSearch className="h-4 w-4" />
                             </Button>
                           </div>
+                          <p className="text-xs text-muted-foreground">
+                            Shared across all providers and reused whenever you create a new
+                            session.
+                          </p>
+                        </SettingsPanel>
 
-                          {oracleTestResult.state !== 'idle' && (
-                            <div
-                              className={cn(
-                                'rounded-lg border p-3 text-sm',
-                                oracleTestResult.state === 'ok'
-                                  ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300'
-                                  : oracleTestResult.state === 'testing'
-                                    ? 'border-border bg-muted/40 text-muted-foreground'
-                                    : 'border-destructive/30 bg-destructive/10 text-destructive'
-                              )}
-                            >
-                              <p>
-                                {oracleTestResult.message || 'Testing Oracle browser settings...'}
-                              </p>
-                              {oracleTestResult.details?.remoteChrome && (
-                                <p className="mt-2 text-xs">
-                                  Remote target:{' '}
-                                  <code>{oracleTestResult.details.remoteChrome}</code>
-                                </p>
-                              )}
-                              {oracleTestResult.details?.browserPath && (
-                                <p className="mt-2 text-xs">
-                                  Browser path: <code>{oracleTestResult.details.browserPath}</code>
-                                </p>
-                              )}
-                              {oracleTestResult.details?.browser && (
-                                <p className="mt-2 text-xs">
-                                  Browser: <code>{oracleTestResult.details.browser}</code>
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </section>
-                  </div>
-
-                  <div className="settings-pane-column">
-                    <SettingsPanel
-                      id="appearance"
-                      eyebrow="Appearance"
-                      title="Light, dark, and motion"
-                      description="Keep the Plum glass interface consistent while tuning contrast and background movement."
-                    >
-                      <div className="space-y-4">
-                        <div className="flex flex-wrap gap-2">
-                          {themeOptions.map((option) => {
-                            const Icon = option.icon;
-                            const isActive = currentTheme === option.value;
-
-                            return (
-                              <button
-                                type="button"
-                                key={option.value}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleThemeChange(option.value);
-                                }}
-                                className={cn(
-                                  'flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2.5 transition-all',
-                                  'hover:scale-[1.02] active:scale-[0.98]',
-                                  isActive
-                                    ? 'border-primary bg-primary/10 text-primary'
-                                    : 'border-border bg-card hover:border-primary/40'
-                                )}
+                        {/* CLI Updates */}
+                        <section id="cli-updates">
+                          <Card className="settings-utility-card border border-border/70">
+                            <CardHeader className="settings-utility-card-header flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                              <div className="space-y-1">
+                                <CardTitle className="text-base">CLI Updates</CardTitle>
+                                <CardDescription>
+                                  Update Claude, Codex, and OpenCode CLI tools.
+                                </CardDescription>
+                              </div>
+                              <Button
+                                size="sm"
+                                onClick={() => updateCliProvidersMutation.mutate()}
+                                disabled={updateCliProvidersMutation.isPending}
                               >
-                                <Icon className="h-4 w-4" />
-                                <span className="text-sm font-medium">{option.label}</span>
-                                {isActive ? <CheckCircle2 className="ml-1 h-4 w-4" /> : null}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {BACKGROUND_ANIMATION_OPTIONS.map((option) => {
-                            const isActive = currentBackgroundAnimation === option.value;
-
-                            return (
-                              <button
-                                type="button"
-                                key={option.value}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleBackgroundAnimationChange(option.value);
-                                }}
-                                className={cn(
-                                  'flex min-h-[58px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all',
-                                  'hover:scale-[1.01] active:scale-[0.99]',
-                                  isActive
-                                    ? 'border-primary bg-primary/10 text-primary'
-                                    : 'border-border bg-card hover:border-primary/40'
-                                )}
-                              >
-                                <Wand2 className="h-4 w-4 shrink-0" />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-sm font-medium">
-                                    {option.label}
-                                  </span>
-                                  <span className="block truncate text-xs text-muted-foreground">
-                                    {option.description}
-                                  </span>
-                                </span>
-                                {isActive ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : null}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </SettingsPanel>
-
-                    <SettingsPanel
-                      id="allowed-tools"
-                      eyebrow="Policy"
-                      title="Allowed Tools"
-                      description="Limit the built-in tool surface for new sessions when you want a narrower default sandbox."
-                    >
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          'Bash',
-                          'Read',
-                          'Write',
-                          'Edit',
-                          'Glob',
-                          'Grep',
-                          'WebSearch',
-                          'WebFetch',
-                          'Task',
-                          'TodoWrite',
-                        ].map((tool) => {
-                          const isEnabled = settings?.allowedTools?.includes(tool);
-                          return (
-                            <button
-                              type="button"
-                              key={tool}
-                              onClick={() => {
-                                const current = settings?.allowedTools || [];
-                                const updated = isEnabled
-                                  ? current.filter((t) => t !== tool)
-                                  : [...current, tool];
-                                updateSettingsMutation.mutate({ allowedTools: updated });
-                              }}
-                              className={cn(
-                                'rounded-lg px-3 py-1.5 text-sm font-medium transition-all',
-                                'hover:scale-105 active:scale-95',
-                                isEnabled
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                              )}
-                            >
-                              {tool}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </SettingsPanel>
-
-                    {/* OpenCode Models */}
-                    <section id="opencode-models">
-                      <Card className="border border-border/70">
-                        <CardHeader className="pb-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <CardTitle className="text-base">OpenCode Models</CardTitle>
-                              <CardDescription>
-                                Curate the model menu for OpenCode sessions from the providers you
-                                have available.
-                              </CardDescription>
-                            </div>
-                            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                              75+ routed providers
-                            </span>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          {/* Provider Selection */}
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium">1. Choose provider</label>
-                            <Select
-                              value={modelProviderId}
-                              onValueChange={(value) => {
-                                setModelProviderId(value);
-                                setModelModelId('');
-                              }}
-                            >
-                              <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Choose a provider..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {Object.entries(availableProviders || {}).map(([id, provider]) => (
-                                  <SelectItem key={id} value={id}>
-                                    <div className="flex flex-col">
-                                      <span className="font-medium">{provider.name}</span>
-                                      <span className="text-xs text-muted-foreground">
-                                        {id}
-                                        {provider.models?.length
-                                          ? ` - ${provider.models.length} models`
-                                          : ''}
-                                        {provider.configured ? ' - configured' : ''}
+                                {updateCliProvidersMutation.isPending
+                                  ? 'Updating...'
+                                  : 'Update CLI tools'}
+                              </Button>
+                            </CardHeader>
+                            {cliUpdateResults && (
+                              <CardContent className="space-y-3">
+                                <div className="grid gap-2 text-sm">
+                                  {cliUpdateResults.map((result) => (
+                                    <div
+                                      key={result.provider}
+                                      className="flex items-center justify-between"
+                                    >
+                                      <span className="font-medium">
+                                        {CLI_PROVIDER_LABEL[result.provider]}
+                                      </span>
+                                      <span
+                                        className={cn(
+                                          'text-xs font-semibold uppercase tracking-wide',
+                                          result.status === 'updated'
+                                            ? 'text-green-600 dark:text-green-400'
+                                            : 'text-red-600 dark:text-red-400'
+                                        )}
+                                      >
+                                        {result.status}
                                       </span>
                                     </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                                  ))}
+                                </div>
+                                <pre className="max-h-64 overflow-auto rounded-lg border border-border/70 bg-muted/40 p-3 text-xs font-mono whitespace-pre-wrap">
+                                  {cliUpdateResults
+                                    .map((result) => {
+                                      const label = CLI_PROVIDER_LABEL[result.provider];
+                                      const output = result.output || 'No output.';
+                                      return `# ${label} (${result.status})\n${output}`;
+                                    })
+                                    .join('\n\n')}
+                                </pre>
+                              </CardContent>
+                            )}
+                          </Card>
+                        </section>
 
-                          {modelProviderId && (
-                            <div
-                              className={cn(
-                                'flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between',
-                                selectedModelProvider?.hasKey || selectedStoredModelProvider?.hasKey
-                                  ? 'border-green-500/25 bg-green-500/5'
-                                  : 'border-amber-500/25 bg-amber-500/5'
-                              )}
-                            >
-                              <div className="flex min-w-0 items-start gap-3">
+                      </div>
+                    </TabsContent>
+
+                    {/* Codex CLI */}
+                    <TabsContent value="codex" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <section id="codex-cli">
+                          <Card className="border border-border/70">
+                            <CardHeader>
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <CardTitle className="text-base">Codex CLI</CardTitle>
+                                  <CardDescription>
+                                    Control Codex-specific workflows used by chat sessions.
+                                  </CardDescription>
+                                </div>
                                 <div
                                   className={cn(
-                                    'mt-0.5 rounded-lg p-2',
-                                    selectedModelProvider?.hasKey ||
-                                      selectedStoredModelProvider?.hasKey
+                                    'rounded-full px-2.5 py-1 text-xs font-medium',
+                                    codexStatus?.authenticated
                                       ? 'bg-green-500/10 text-green-600 dark:text-green-400'
                                       : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
                                   )}
                                 >
-                                  <Key className="h-4 w-4" />
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium">
-                                    {selectedModelProvider?.hasKey ||
-                                    selectedStoredModelProvider?.hasKey
-                                      ? 'API key saved for this provider'
-                                      : 'No API key saved for this provider'}
-                                  </p>
-                                  <p className="truncate text-xs text-muted-foreground">
-                                    {(
-                                      selectedStoredModelProvider?.envVars ||
-                                      selectedModelProvider?.env ||
-                                      []
-                                    )
-                                      .slice(0, 4)
-                                      .join(', ') || 'OpenCode default credential lookup'}
-                                  </p>
+                                  {codexStatus?.authenticated
+                                    ? codexStatus.authMode === 'chatgpt'
+                                      ? 'ChatGPT auth'
+                                      : 'API key auth'
+                                    : 'Not authenticated'}
                                 </div>
                               </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openOpenCodeProviderDialog(modelProviderId)}
-                                className="h-8 shrink-0 gap-1.5 text-xs"
-                              >
-                                <KeyRound className="h-3.5 w-3.5" />
-                                {selectedModelProvider?.hasKey ||
-                                selectedStoredModelProvider?.hasKey
-                                  ? 'Update key'
-                                  : 'Add key'}
-                              </Button>
-                            </div>
-                          )}
-
-                          {/* Model Selection */}
-                          {modelProviderId && availableProviders?.[modelProviderId]?.models && (
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium">2. Choose model</label>
-                              <Select value={modelModelId} onValueChange={setModelModelId}>
-                                <SelectTrigger className="w-full">
-                                  <SelectValue placeholder="Choose a model..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {availableProviders[modelProviderId].models?.map((model) => (
-                                    <SelectItem key={model} value={model}>
-                                      <code className="text-xs">{model}</code>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-
-                          {/* Add Button */}
-                          <div className="flex gap-2">
-                            <Button
-                              onClick={() => {
-                                if (modelProviderId && modelModelId) {
-                                  const fullModel = `${modelProviderId}/${modelModelId}`;
-                                  const current = openCodeModels || [];
-                                  if (!current.includes(fullModel)) {
-                                    updateSettingsMutation.mutate({
-                                      cliProviderModelLists: {
-                                        ...settings?.cliProviderModelLists,
-                                        opencode: [...current, fullModel],
-                                      },
-                                    });
-                                  }
-                                  setModelModelId('');
-                                }
-                              }}
-                              disabled={!modelProviderId || !modelModelId}
-                              className="bg-purple-600 hover:bg-purple-700"
-                            >
-                              <Plus className="h-4 w-4 mr-1" />
-                              Add model
-                            </Button>
-                            <Button
-                              variant="outline"
-                              onClick={() => {
-                                setModelProviderId('');
-                                setModelModelId('');
-                              }}
-                            >
-                              Reset
-                            </Button>
-                          </div>
-
-                          {/* Configured Models */}
-                          {openCodeModels && openCodeModels.length > 0 && (
-                            <div className="space-y-2 pt-4 border-t">
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium">
-                                  Curated models ({openCodeModels.length})
-                                </span>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                              <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+                                <div className="space-y-1">
+                                  <p className="text-sm font-medium">Runtime</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {codexStatus?.installed
+                                      ? `${codexStatus.version || 'Codex installed'} · ${codexStatus.configHome}`
+                                      : 'Codex CLI is not available in the WebUI container.'}
+                                  </p>
+                                </div>
                                 <Button
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
-                                  className="h-7 text-xs text-destructive"
-                                  onClick={() => {
-                                    updateSettingsMutation.mutate({
-                                      cliProviderModelLists: {
-                                        ...settings?.cliProviderModelLists,
-                                        opencode: undefined,
-                                      },
-                                    });
-                                  }}
+                                  onClick={() => refetchCodexStatus()}
+                                  disabled={isRefetchingCodex}
+                                  className="gap-2"
                                 >
-                                  Clear all
+                                  <RefreshCw
+                                    className={cn(
+                                      'h-3.5 w-3.5',
+                                      isRefetchingCodex && 'animate-spin'
+                                    )}
+                                  />
+                                  Refresh
                                 </Button>
                               </div>
-                              <div className="flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden">
-                                {openCodeModels.map((model) => (
-                                  <div
-                                    key={model}
-                                    title={model}
-                                    className="group flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-purple-500/30 bg-purple-500/10 px-2.5 py-1 font-mono text-sm sm:max-w-[calc(50%_-_0.25rem)] 2xl:max-w-[calc(33.333%_-_0.35rem)]"
-                                  >
-                                    <span className="block min-w-0 truncate">{model}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeOpenCodeModel(model)}
-                                      className="shrink-0 opacity-0 transition-opacity text-muted-foreground hover:text-destructive group-hover:opacity-100"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  </div>
-                                ))}
+
+                              <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
+                                <div>
+                                  <p className="text-sm font-medium">Web search</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Applied to the next Codex turn via <code>web_search</code>{' '}
+                                    config override.
+                                  </p>
+                                </div>
+                                <Select
+                                  value={settings?.codexWebSearch || 'auto'}
+                                  onValueChange={(value) =>
+                                    updateSettingsMutation.mutate({
+                                      codexWebSearch: value as UserSettings['codexWebSearch'],
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="auto">Auto</SelectItem>
+                                    <SelectItem value="cached">Cached</SelectItem>
+                                    <SelectItem value="live">Live</SelectItem>
+                                    <SelectItem value="disabled">Disabled</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
+
+                              <div className="space-y-3 border-t pt-4">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="text-sm font-medium">Feature flags</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Mirrors <code>codex features list</code>; toggles persist to{' '}
+                                      <code>~/.codex/config.toml</code>.
+                                    </p>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      queryClient.invalidateQueries({
+                                        queryKey: ['codex-features'],
+                                      })
+                                    }
+                                    disabled={codexFeaturesLoading}
+                                  >
+                                    <RefreshCw
+                                      className={cn(
+                                        'h-3.5 w-3.5',
+                                        codexFeaturesLoading && 'animate-spin'
+                                      )}
+                                    />
+                                  </Button>
+                                </div>
+
+                                {codexFeaturesLoading ? (
+                                  <div className="text-sm text-muted-foreground">
+                                    Loading feature flags...
+                                  </div>
+                                ) : (
+                                  <div className="grid gap-2 md:grid-cols-2">
+                                    {[
+                                      ...codexFeatureGroups.stable,
+                                      ...codexFeatureGroups.experimental,
+                                    ]
+                                      .filter((feature) => feature.stage !== 'removed')
+                                      .slice(0, 24)
+                                      .map((feature) => (
+                                        <button
+                                          type="button"
+                                          key={feature.name}
+                                          onClick={() =>
+                                            codexFeatureMutation.mutate({
+                                              name: feature.name,
+                                              enabled: !feature.enabled,
+                                            })
+                                          }
+                                          disabled={
+                                            codexFeatureMutation.isPending ||
+                                            feature.stage === 'deprecated' ||
+                                            feature.stage === 'removed'
+                                          }
+                                          className={cn(
+                                            'flex items-center gap-3 rounded-lg border p-3 text-left transition-colors',
+                                            feature.enabled
+                                              ? 'border-green-500/25 bg-green-500/5'
+                                              : 'border-border bg-card hover:border-primary/30'
+                                          )}
+                                        >
+                                          {feature.enabled ? (
+                                            <ToggleRight className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
+                                          ) : (
+                                            <ToggleLeft className="h-5 w-5 shrink-0 text-muted-foreground" />
+                                          )}
+                                          <span className="min-w-0 flex-1">
+                                            <span className="block truncate text-xs font-medium">
+                                              {feature.name}
+                                            </span>
+                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                              {feature.stage}
+                                            </span>
+                                          </span>
+                                        </button>
+                                      ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="space-y-3 border-t pt-4">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-medium">Codex plugins</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Writes official Codex plugin flags to{' '}
+                                      <code>~/.codex/config.toml</code>. Start a new chat after
+                                      changes.
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => setCodexMarketplaceBrowserOpen(true)}
+                                      className="h-8 gap-1.5 text-xs"
+                                    >
+                                      <Store className="h-3.5 w-3.5" />
+                                      Marketplace
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        queryClient.invalidateQueries({
+                                          queryKey: ['codex-plugins'],
+                                        })
+                                      }
+                                      disabled={codexPluginsLoading}
+                                    >
+                                      <RefreshCw
+                                        className={cn(
+                                          'h-3.5 w-3.5',
+                                          codexPluginsLoading && 'animate-spin'
+                                        )}
+                                      />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {(codexPlugins?.length || 0) > 6 && (
+                                  <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                    <Input
+                                      value={codexPluginSearchQuery}
+                                      onChange={(event) =>
+                                        setCodexPluginSearchQuery(event.target.value)
+                                      }
+                                      placeholder="Search Codex plugins..."
+                                      className="h-9 pl-9 pr-9 text-sm"
+                                    />
+                                    {codexPluginSearchQuery && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setCodexPluginSearchQuery('')}
+                                        className="absolute right-3 top-1/2 rounded p-0.5 -translate-y-1/2 hover:bg-muted"
+                                      >
+                                        <X className="h-4 w-4 text-muted-foreground" />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+
+                                {codexPluginsLoading ? (
+                                  <div className="text-sm text-muted-foreground">
+                                    Loading Codex plugins...
+                                  </div>
+                                ) : filteredCodexPlugins.length > 0 ? (
+                                  <div className="grid max-h-[420px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+                                    {filteredCodexPlugins.map((plugin) => {
+                                      const nextEnabled = !plugin.enabled;
+                                      const actionLabel = plugin.enabled
+                                        ? 'Disable'
+                                        : plugin.installed
+                                          ? 'Enable'
+                                          : 'Install';
+                                      return (
+                                        <div
+                                          key={plugin.id}
+                                          className={cn(
+                                            'flex min-h-[104px] gap-3 rounded-lg border p-3 transition-colors',
+                                            plugin.enabled
+                                              ? 'border-green-500/25 bg-green-500/5'
+                                              : 'border-border bg-card'
+                                          )}
+                                        >
+                                          <div
+                                            className={cn(
+                                              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                                              plugin.enabled
+                                                ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                                : 'bg-muted text-muted-foreground'
+                                            )}
+                                          >
+                                            <Puzzle className="h-4 w-4" />
+                                          </div>
+                                          <div className="min-w-0 flex-1 space-y-2">
+                                            <div className="flex items-start justify-between gap-2">
+                                              <div className="min-w-0">
+                                                <p className="truncate text-sm font-semibold">
+                                                  {plugin.displayName}
+                                                </p>
+                                                <p className="truncate text-[11px] text-muted-foreground">
+                                                  {plugin.name}@{plugin.marketplace}
+                                                </p>
+                                              </div>
+                                              <Button
+                                                variant={plugin.enabled ? 'outline' : 'default'}
+                                                size="sm"
+                                                onClick={() =>
+                                                  codexPluginMutation.mutate({
+                                                    id: plugin.id,
+                                                    enabled: nextEnabled,
+                                                  })
+                                                }
+                                                disabled={codexPluginMutation.isPending}
+                                                className="h-7 shrink-0 px-2 text-xs"
+                                              >
+                                                {actionLabel}
+                                              </Button>
+                                            </div>
+                                            <p className="line-clamp-2 text-xs text-muted-foreground">
+                                              {plugin.description || 'No description'}
+                                            </p>
+                                            <div className="flex flex-wrap gap-1">
+                                              <span
+                                                className={cn(
+                                                  'rounded px-1.5 py-0.5 text-[10px]',
+                                                  plugin.enabled
+                                                    ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                                    : plugin.installed
+                                                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                                                      : 'bg-muted text-muted-foreground'
+                                                )}
+                                              >
+                                                {plugin.enabled
+                                                  ? 'Enabled'
+                                                  : plugin.installed
+                                                    ? 'Installed'
+                                                    : 'Available'}
+                                              </span>
+                                              {plugin.category && (
+                                                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                                  {plugin.category}
+                                                </span>
+                                              )}
+                                              {plugin.connectors &&
+                                                plugin.connectors.length > 0 && (
+                                                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                                    {plugin.connectors.length} connector
+                                                    {plugin.connectors.length === 1 ? '' : 's'}
+                                                  </span>
+                                                )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                                    No Codex plugins found.
+                                  </div>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </section>
+                      </div>
+                    </TabsContent>
+
+                    {/* Oracle Browser Auth */}
+                    <TabsContent value="oracle" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <section id="oracle-browser">
+                          <Card className="border border-border/70">
+                            <CardHeader>
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <CardTitle className="text-base">Oracle Browser Auth</CardTitle>
+                                  <CardDescription>
+                                    Configure how Oracle reaches ChatGPT for browser-mode second
+                                    opinions.
+                                  </CardDescription>
+                                </div>
+                                <div className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                                  {(oracleBrowserDraft.mode || 'manual') === 'remote'
+                                    ? 'Remote browser'
+                                    : (oracleBrowserDraft.mode || 'manual') === 'manual'
+                                      ? 'Embedded browser'
+                                      : 'Cookie profile'}
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                              <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
+                                <div>
+                                  <p className="text-sm font-medium">Mode</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Embedded Browser keeps the ChatGPT login flow inside Plum's
+                                    session browser tab. Remote Browser is only for attaching Oracle
+                                    to a browser you opened somewhere else.
+                                  </p>
+                                </div>
+                                <Select
+                                  value={oracleBrowserDraft.mode || 'manual'}
+                                  onValueChange={(value) =>
+                                    setOracleBrowserDraft((prev) => ({
+                                      ...prev,
+                                      mode: value as OracleBrowserSettings['mode'],
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="manual">
+                                      Embedded Browser (Recommended)
+                                    </SelectItem>
+                                    <SelectItem value="remote">Remote Browser</SelectItem>
+                                    <SelectItem value="profile">Cookie Profile (Legacy)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
+                                <div>
+                                  <p className="text-sm font-medium">ChatGPT URL</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Oracle opens or targets this ChatGPT location for browser runs.
+                                  </p>
+                                </div>
+                                <Input
+                                  value={oracleBrowserDraft.chatgptUrl || ''}
+                                  onChange={(event) =>
+                                    setOracleBrowserDraft((prev) => ({
+                                      ...prev,
+                                      chatgptUrl: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="https://chatgpt.com/"
+                                />
+                              </div>
+
+                              {(oracleBrowserDraft.mode || 'manual') === 'remote' && (
+                                <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-4">
+                                  <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
+                                    <div>
+                                      <p className="text-sm font-medium">Remote Chrome Target</p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Chrome DevTools endpoint on the host browser you open
+                                        yourself.
+                                      </p>
+                                    </div>
+                                    <Input
+                                      value={oracleBrowserDraft.remoteChrome || ''}
+                                      onChange={(event) =>
+                                        setOracleBrowserDraft((prev) => ({
+                                          ...prev,
+                                          remoteChrome: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="host.docker.internal:9222"
+                                    />
+                                  </div>
+                                  <div className="rounded-md border border-primary/15 bg-primary/5 p-3 text-xs text-muted-foreground">
+                                    Start your browser with DevTools enabled, then sign into ChatGPT
+                                    there. Example:{' '}
+                                    <code>google-chrome --remote-debugging-port=9222</code>
+                                  </div>
+                                </div>
+                              )}
+
+                              {(oracleBrowserDraft.mode || 'manual') === 'manual' && (
+                                <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-4">
+                                  <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
+                                    <div>
+                                      <p className="text-sm font-medium">
+                                        Embedded Browser Profile Dir
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Persistent Chromium profile used by Plum's embedded Oracle
+                                        browser.
+                                      </p>
+                                    </div>
+                                    <Input
+                                      value={oracleBrowserDraft.manualLoginProfileDir || ''}
+                                      onChange={(event) =>
+                                        setOracleBrowserDraft((prev) => ({
+                                          ...prev,
+                                          manualLoginProfileDir: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="/home/node/.codex/oracle/browser-profile"
+                                    />
+                                  </div>
+                                  <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
+                                    Start and control this browser from a session's right-side
+                                    `Browser` tab. Once it is logged into ChatGPT, Oracle can attach
+                                    to that running browser directly without leaving Plum.
+                                  </div>
+                                </div>
+                              )}
+
+                              {(oracleBrowserDraft.mode || 'manual') === 'profile' && (
+                                <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-4">
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <label className="space-y-2 text-sm">
+                                      <span className="font-medium">Chrome profile</span>
+                                      <Input
+                                        value={oracleBrowserDraft.chromeProfile || ''}
+                                        onChange={(event) =>
+                                          setOracleBrowserDraft((prev) => ({
+                                            ...prev,
+                                            chromeProfile: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="Default"
+                                      />
+                                    </label>
+                                    <label className="space-y-2 text-sm">
+                                      <span className="font-medium">Cookie DB path</span>
+                                      <Input
+                                        value={oracleBrowserDraft.chromeCookiePath || ''}
+                                        onChange={(event) =>
+                                          setOracleBrowserDraft((prev) => ({
+                                            ...prev,
+                                            chromeCookiePath: event.target.value,
+                                          }))
+                                        }
+                                        placeholder="/path/to/Cookies"
+                                      />
+                                    </label>
+                                  </div>
+                                  <div className="rounded-md border border-border/70 bg-background/70 p-3 text-xs text-muted-foreground">
+                                    Legacy mode: Oracle copies cookies from a browser profile it can
+                                    reach from inside the container.
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+                                <Button
+                                  variant="outline"
+                                  onClick={() =>
+                                    window.open(
+                                      oracleBrowserDraft.chatgptUrl || 'https://chatgpt.com/',
+                                      '_blank',
+                                      'noopener,noreferrer'
+                                    )
+                                  }
+                                  className="gap-2"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                  Open ChatGPT Externally
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={testOracleBrowserSettings}
+                                  disabled={oracleTestResult.state === 'testing'}
+                                  className="gap-2"
+                                >
+                                  {oracleTestResult.state === 'testing' ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Terminal className="h-4 w-4" />
+                                  )}
+                                  Test Oracle Path
+                                </Button>
+                                <Button
+                                  onClick={saveOracleBrowserSettings}
+                                  disabled={updateSettingsMutation.isPending}
+                                >
+                                  {updateSettingsMutation.isPending
+                                    ? 'Saving...'
+                                    : 'Save Oracle Settings'}
+                                </Button>
+                              </div>
+
+                              {oracleTestResult.state !== 'idle' && (
+                                <div
+                                  className={cn(
+                                    'rounded-lg border p-3 text-sm',
+                                    oracleTestResult.state === 'ok'
+                                      ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300'
+                                      : oracleTestResult.state === 'testing'
+                                        ? 'border-border bg-muted/40 text-muted-foreground'
+                                        : 'border-destructive/30 bg-destructive/10 text-destructive'
+                                  )}
+                                >
+                                  <p>
+                                    {oracleTestResult.message ||
+                                      'Testing Oracle browser settings...'}
+                                  </p>
+                                  {oracleTestResult.details?.remoteChrome && (
+                                    <p className="mt-2 text-xs">
+                                      Remote target:{' '}
+                                      <code>{oracleTestResult.details.remoteChrome}</code>
+                                    </p>
+                                  )}
+                                  {oracleTestResult.details?.browserPath && (
+                                    <p className="mt-2 text-xs">
+                                      Browser path:{' '}
+                                      <code>{oracleTestResult.details.browserPath}</code>
+                                    </p>
+                                  )}
+                                  {oracleTestResult.details?.browser && (
+                                    <p className="mt-2 text-xs">
+                                      Browser: <code>{oracleTestResult.details.browser}</code>
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </CardContent>
+                          </Card>
+                        </section>
+                      </div>
+                    </TabsContent>
+
+                    <TabsContent value="interface" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <SettingsPanel
+                          id="appearance"
+                          eyebrow="Appearance"
+                          title="Light, dark, and motion"
+                          description="Keep the Plum glass interface consistent while tuning contrast and background movement."
+                        >
+                          <div className="space-y-4">
+                            <div className="flex flex-wrap gap-2">
+                              {themeOptions.map((option) => {
+                                const Icon = option.icon;
+                                const isActive = currentTheme === option.value;
+
+                                return (
+                                  <button
+                                    type="button"
+                                    key={option.value}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleThemeChange(option.value);
+                                    }}
+                                    className={cn(
+                                      'flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2.5 transition-all',
+                                      'hover:scale-[1.02] active:scale-[0.98]',
+                                      isActive
+                                        ? 'border-primary bg-primary/10 text-primary'
+                                        : 'border-border bg-card hover:border-primary/40'
+                                    )}
+                                  >
+                                    <Icon className="h-4 w-4" />
+                                    <span className="text-sm font-medium">{option.label}</span>
+                                    {isActive ? <CheckCircle2 className="ml-1 h-4 w-4" /> : null}
+                                  </button>
+                                );
+                              })}
                             </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </section>
-                  </div>
+
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              {BACKGROUND_ANIMATION_OPTIONS.map((option) => {
+                                const isActive = currentBackgroundAnimation === option.value;
+
+                                return (
+                                  <button
+                                    type="button"
+                                    key={option.value}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleBackgroundAnimationChange(option.value);
+                                    }}
+                                    className={cn(
+                                      'flex min-h-[58px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all',
+                                      'hover:scale-[1.01] active:scale-[0.99]',
+                                      isActive
+                                        ? 'border-primary bg-primary/10 text-primary'
+                                        : 'border-border bg-card hover:border-primary/40'
+                                    )}
+                                  >
+                                    <Wand2 className="h-4 w-4 shrink-0" />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm font-medium">
+                                        {option.label}
+                                      </span>
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        {option.description}
+                                      </span>
+                                    </span>
+                                    {isActive ? (
+                                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                                    ) : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </SettingsPanel>
+
+                      </div>
+                    </TabsContent>
+
+                    {/* OpenCode Models */}
+                    <TabsContent value="opencode" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <section id="opencode-models">
+                          <Card className="border border-border/70">
+                            <CardHeader className="pb-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <CardTitle className="text-base">OpenCode Models</CardTitle>
+                                  <CardDescription>
+                                    Curate the model menu for OpenCode sessions from the providers
+                                    you have available.
+                                  </CardDescription>
+                                </div>
+                                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                                  75+ routed providers
+                                </span>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              {/* Provider Selection */}
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium">1. Choose provider</label>
+                                <Select
+                                  value={modelProviderId}
+                                  onValueChange={(value) => {
+                                    setModelProviderId(value);
+                                    setModelModelId('');
+                                  }}
+                                >
+                                  <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Choose a provider..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Object.entries(availableProviders || {}).map(
+                                      ([id, provider]) => (
+                                        <SelectItem key={id} value={id}>
+                                          <div className="flex flex-col">
+                                            <span className="font-medium">{provider.name}</span>
+                                            <span className="text-xs text-muted-foreground">
+                                              {id}
+                                              {provider.models?.length
+                                                ? ` - ${provider.models.length} models`
+                                                : ''}
+                                              {provider.configured ? ' - configured' : ''}
+                                            </span>
+                                          </div>
+                                        </SelectItem>
+                                      )
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {modelProviderId && (
+                                <div
+                                  className={cn(
+                                    'flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between',
+                                    selectedModelProvider?.hasKey ||
+                                      selectedStoredModelProvider?.hasKey
+                                      ? 'border-green-500/25 bg-green-500/5'
+                                      : 'border-amber-500/25 bg-amber-500/5'
+                                  )}
+                                >
+                                  <div className="flex min-w-0 items-start gap-3">
+                                    <div
+                                      className={cn(
+                                        'mt-0.5 rounded-lg p-2',
+                                        selectedModelProvider?.hasKey ||
+                                          selectedStoredModelProvider?.hasKey
+                                          ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                          : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                      )}
+                                    >
+                                      <Key className="h-4 w-4" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium">
+                                        {selectedModelProvider?.hasKey ||
+                                        selectedStoredModelProvider?.hasKey
+                                          ? 'API key saved for this provider'
+                                          : 'No API key saved for this provider'}
+                                      </p>
+                                      <p className="truncate text-xs text-muted-foreground">
+                                        {(
+                                          selectedStoredModelProvider?.envVars ||
+                                          selectedModelProvider?.env ||
+                                          []
+                                        )
+                                          .slice(0, 4)
+                                          .join(', ') || 'OpenCode default credential lookup'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openOpenCodeProviderDialog(modelProviderId)}
+                                    className="h-8 shrink-0 gap-1.5 text-xs"
+                                  >
+                                    <KeyRound className="h-3.5 w-3.5" />
+                                    {selectedModelProvider?.hasKey ||
+                                    selectedStoredModelProvider?.hasKey
+                                      ? 'Update key'
+                                      : 'Add key'}
+                                  </Button>
+                                </div>
+                              )}
+
+                              {/* Model Selection */}
+                              {modelProviderId && availableProviders?.[modelProviderId]?.models && (
+                                <div className="space-y-2">
+                                  <label className="text-sm font-medium">2. Choose model</label>
+                                  <Select value={modelModelId} onValueChange={setModelModelId}>
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Choose a model..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {availableProviders[modelProviderId].models?.map((model) => (
+                                        <SelectItem key={model} value={model}>
+                                          <code className="text-xs">{model}</code>
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
+
+                              {/* Add Button */}
+                              <div className="flex gap-2">
+                                <Button
+                                  onClick={() => {
+                                    if (modelProviderId && modelModelId) {
+                                      const fullModel = `${modelProviderId}/${modelModelId}`;
+                                      const current = openCodeModels || [];
+                                      if (!current.includes(fullModel)) {
+                                        updateSettingsMutation.mutate({
+                                          cliProviderModelLists: {
+                                            ...settings?.cliProviderModelLists,
+                                            opencode: [...current, fullModel],
+                                          },
+                                        });
+                                      }
+                                      setModelModelId('');
+                                    }
+                                  }}
+                                  disabled={!modelProviderId || !modelModelId}
+                                  className="bg-purple-600 hover:bg-purple-700"
+                                >
+                                  <Plus className="h-4 w-4 mr-1" />
+                                  Add model
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => {
+                                    setModelProviderId('');
+                                    setModelModelId('');
+                                  }}
+                                >
+                                  Reset
+                                </Button>
+                              </div>
+
+                              {/* Configured Models */}
+                              {openCodeModels && openCodeModels.length > 0 && (
+                                <div className="space-y-2 pt-4 border-t">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm font-medium">
+                                      Curated models ({openCodeModels.length})
+                                    </span>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs text-destructive"
+                                      onClick={() => {
+                                        updateSettingsMutation.mutate({
+                                          cliProviderModelLists: {
+                                            ...settings?.cliProviderModelLists,
+                                            opencode: undefined,
+                                          },
+                                        });
+                                      }}
+                                    >
+                                      Clear all
+                                    </Button>
+                                  </div>
+                                  <div className="flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden">
+                                    {openCodeModels.map((model) => (
+                                      <div
+                                        key={model}
+                                        title={model}
+                                        className="group flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-purple-500/30 bg-purple-500/10 px-2.5 py-1 font-mono text-sm sm:max-w-[calc(50%_-_0.25rem)] 2xl:max-w-[calc(33.333%_-_0.35rem)]"
+                                      >
+                                        <span className="block min-w-0 truncate">{model}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => removeOpenCodeModel(model)}
+                                          className="shrink-0 opacity-0 transition-opacity text-muted-foreground hover:text-destructive group-hover:opacity-100"
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </CardContent>
+                          </Card>
+                        </section>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
                 </>
               </TabsContent>
 
@@ -3111,7 +3270,7 @@ export function SettingsPage() {
               <TabsContent value="api-keys" className="settings-pane-rail mt-0">
                 {/* GitHub Token */}
                 <section id="github-token">
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="settings-section-headband">
                     <h2 className="text-lg font-semibold">GitHub Token</h2>
                     <Github className="h-4 w-4 text-gray-500" />
                   </div>
@@ -3211,7 +3370,7 @@ export function SettingsPage() {
 
                 {/* Mistral API Key */}
                 <section id="mistral-api-key">
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="settings-section-headband">
                     <h2 className="text-lg font-semibold">Mistral API Key</h2>
                     <Key className="h-4 w-4 text-gray-500" />
                   </div>
@@ -3438,7 +3597,7 @@ export function SettingsPage() {
               {/* Integrations Tab */}
               <TabsContent value="integrations" className="settings-pane-rail mt-0">
                 <section id="comfyui-integration">
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="settings-section-headband">
                     <h2 className="text-lg font-semibold">ComfyUI Integration</h2>
                     <Wand2 className="h-4 w-4 text-muted-foreground" />
                   </div>
@@ -3531,35 +3690,11 @@ export function SettingsPage() {
                         </p>
                       </div>
 
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">
-                          LoRA Tester Backend URL{' '}
-                          <span className="text-muted-foreground">(deprecated)</span>
-                        </label>
-                        <Input
-                          type="url"
-                          value={loraTesterUrlInput}
-                          onChange={(e) => setLoraTesterUrlInput(e.target.value)}
-                          placeholder="(unused since WebUI talks to ComfyUI directly)"
-                          className="font-mono text-sm"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Older versions proxied generation through a LoRA Tester sidecar. The WebUI
-                          now ships the workflows directly — this field is kept for skills that
-                          still reference{' '}
-                          <code className="px-1 py-0.5 rounded bg-muted text-xs">
-                            $LORA_TESTER_URL
-                          </code>{' '}
-                          via env.
-                        </p>
-                      </div>
-
                       <div className="flex gap-2 pt-2">
                         <Button
                           onClick={() =>
                             saveIntegrationsMutation.mutate({
                               comfyuiUrl: comfyuiUrlInput.trim(),
-                              loraTesterUrl: loraTesterUrlInput.trim(),
                             })
                           }
                           disabled={saveIntegrationsMutation.isPending}
@@ -3570,12 +3705,307 @@ export function SettingsPage() {
                           variant="outline"
                           onClick={() => {
                             setComfyuiUrlInput(integrations?.comfyuiUrl || '');
-                            setLoraTesterUrlInput(integrations?.loraTesterUrl || '');
                             setComfyuiTestResult({ state: 'idle' });
                           }}
                           disabled={saveIntegrationsMutation.isPending}
                         >
                           Reset
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </section>
+
+                <section id="discord-integration">
+                  <div className="settings-section-headband">
+                    <h2 className="text-lg font-semibold">Discord Alerts</h2>
+                    <Bell className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Plum ops channel</CardTitle>
+                      <CardDescription>
+                        Send redacted session errors, permission requests, watchdog incidents, and
+                        delegation failures into your Discord server.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                      <div className="flex flex-col gap-3 rounded-md border border-border/70 bg-muted/20 p-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <div className="text-sm font-medium">Alerts enabled</div>
+                          <div className="text-xs text-muted-foreground">
+                            {discordSettings?.configured
+                              ? discordSettings.transport === 'bot'
+                                ? `Bot transport to channel ${discordSettings.channelId || 'configured channel'}`
+                                : discordSettings.webhookUrlPreview
+                              : 'Save a bot token + channel ID or a webhook URL first.'}
+                          </div>
+                        </div>
+                        <Switch checked={discordEnabled} onCheckedChange={setDiscordEnabled} />
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Transport</label>
+                          <Select
+                            value={discordTransport}
+                            onValueChange={(value) =>
+                              setDiscordTransport(value as DiscordAlertTransport)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="bot">Bot token</SelectItem>
+                              <SelectItem value="webhook">Webhook</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Minimum severity</label>
+                          <Select
+                            value={discordMinSeverity}
+                            onValueChange={(value) =>
+                              setDiscordMinSeverity(value as DiscordAlertSeverity)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="info">Info</SelectItem>
+                              <SelectItem value="warning">Warning</SelectItem>
+                              <SelectItem value="error">Error</SelectItem>
+                              <SelectItem value="critical">Critical</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Channel label</label>
+                          <Input
+                            value={discordChannelLabelInput}
+                            onChange={(event) => setDiscordChannelLabelInput(event.target.value)}
+                            placeholder="#plum-ops"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Gateway mode</label>
+                          <Select
+                            value={discordGatewayMode}
+                            onValueChange={(value) =>
+                              setDiscordGatewayMode(value as DiscordGatewayMode)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="alerts_only">Alerts only</SelectItem>
+                              <SelectItem value="supervisor">Supervisor</SelectItem>
+                              <SelectItem value="autonomous">Autonomous</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Maintenance policy</label>
+                          <Select
+                            value={discordMaintenancePolicy}
+                            onValueChange={(value) =>
+                              setDiscordMaintenancePolicy(value as DiscordMaintenancePolicy)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="approval_required">Approval required</SelectItem>
+                              <SelectItem value="session_mode">Follow session mode</SelectItem>
+                              <SelectItem value="autonomous_allowed">Autonomous allowed</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-md border border-border/70 bg-muted/20 p-3">
+                          <div>
+                            <div className="text-sm font-medium">Inbound jobs</div>
+                            <div className="text-xs text-muted-foreground">
+                              Authorize Discord-created Plum tasks.
+                            </div>
+                          </div>
+                          <Switch
+                            checked={discordInboundJobsEnabled}
+                            onCheckedChange={setDiscordInboundJobsEnabled}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Discord bot token</label>
+                          <Input
+                            type="password"
+                            value={discordBotTokenInput}
+                            onChange={(event) => setDiscordBotTokenInput(event.target.value)}
+                            placeholder={
+                              discordSettings?.botTokenFromEnv
+                                ? 'Configured through DISCORD_BOT_TOKEN'
+                                : discordSettings?.botTokenConfigured
+                                  ? 'Bot token is stored; paste a new one to replace it'
+                                  : 'Bot token'
+                            }
+                            disabled={discordSettings?.botTokenFromEnv}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Discord channel ID</label>
+                          <Input
+                            value={discordChannelIdInput}
+                            onChange={(event) => setDiscordChannelIdInput(event.target.value)}
+                            placeholder={
+                              discordSettings?.channelIdFromEnv
+                                ? 'Configured through DISCORD_CHANNEL_ID'
+                                : 'Channel ID'
+                            }
+                            disabled={discordSettings?.channelIdFromEnv}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">
+                          Discord webhook URL{' '}
+                          <span className="text-muted-foreground">(optional fallback)</span>
+                        </label>
+                        <Input
+                          type="password"
+                          value={discordWebhookInput}
+                          onChange={(event) => setDiscordWebhookInput(event.target.value)}
+                          placeholder={
+                            discordSettings?.webhookUrlFromEnv
+                              ? 'Configured through DISCORD_WEBHOOK_URL'
+                              : discordSettings?.webhookConfigured
+                                ? 'Webhook is stored; paste a new one to replace it'
+                                : 'https://discord.com/api/webhooks/...'
+                          }
+                          disabled={discordSettings?.webhookUrlFromEnv}
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Bot token and webhook secrets are stored encrypted when ENCRYPTION_KEY is
+                          available. Full secrets are never returned to the browser after saving.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">
+                          Critical role ID <span className="text-muted-foreground">(optional)</span>
+                        </label>
+                        <Input
+                          value={discordCriticalRoleIdInput}
+                          onChange={(event) => setDiscordCriticalRoleIdInput(event.target.value)}
+                          placeholder="Discord role ID for critical mentions"
+                          className="font-mono text-sm"
+                        />
+                      </div>
+
+                      <div className="grid gap-3 text-sm md:grid-cols-3">
+                        <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                          <div className="text-xs uppercase text-muted-foreground">Pending</div>
+                          <div className="mt-1 text-lg font-semibold">
+                            {discordSettings?.outboxPending ?? 0}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                          <div className="text-xs uppercase text-muted-foreground">Failed</div>
+                          <div className="mt-1 text-lg font-semibold">
+                            {discordSettings?.outboxFailed ?? 0}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                          <div className="text-xs uppercase text-muted-foreground">Last sent</div>
+                          <div className="mt-1 truncate font-mono text-xs">
+                            {discordSettings?.lastSentAt || '-'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {discordSettings?.lastError && (
+                        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                          {discordSettings.lastError}
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Button
+                          onClick={() => {
+                            const payload: DiscordIntegrationSettingsUpdate = {
+                              enabled: discordEnabled,
+                              transport: discordTransport,
+                              minSeverity: discordMinSeverity,
+                              gatewayMode: discordGatewayMode,
+                              maintenancePolicy: discordMaintenancePolicy,
+                              inboundJobsEnabled: discordInboundJobsEnabled,
+                              channelLabel: discordChannelLabelInput.trim() || null,
+                              criticalRoleId: discordCriticalRoleIdInput.trim() || null,
+                            };
+                            if (discordBotTokenInput.trim()) {
+                              payload.botToken = discordBotTokenInput.trim();
+                            }
+                            if (discordChannelIdInput.trim()) {
+                              payload.channelId = discordChannelIdInput.trim();
+                            }
+                            if (discordWebhookInput.trim()) {
+                              payload.webhookUrl = discordWebhookInput.trim();
+                            }
+                            saveDiscordSettingsMutation.mutate(payload);
+                          }}
+                          disabled={saveDiscordSettingsMutation.isPending}
+                        >
+                          {saveDiscordSettingsMutation.isPending ? 'Saving...' : 'Save Discord'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => testDiscordMutation.mutate()}
+                          disabled={!discordSettings?.configured || testDiscordMutation.isPending}
+                        >
+                          <Send className="mr-2 h-4 w-4" />
+                          {testDiscordMutation.isPending ? 'Sending...' : 'Send Test'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            saveDiscordSettingsMutation.mutate({ clearWebhookUrl: true })
+                          }
+                          disabled={
+                            saveDiscordSettingsMutation.isPending ||
+                            discordSettings?.webhookUrlFromEnv ||
+                            !discordSettings?.configured
+                          }
+                        >
+                          Remove stored webhook
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            saveDiscordSettingsMutation.mutate({ clearBotToken: true })
+                          }
+                          disabled={
+                            saveDiscordSettingsMutation.isPending ||
+                            discordSettings?.botTokenFromEnv ||
+                            !discordSettings?.botTokenConfigured
+                          }
+                        >
+                          Remove stored bot token
                         </Button>
                       </div>
                     </CardContent>
@@ -3715,7 +4145,7 @@ export function SettingsPage() {
               <TabsContent value="extensions" className="settings-pane-rail mt-0">
                 {/* MCP Servers */}
                 <section id="mcp-servers">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="settings-section-headband">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold">MCP Servers</h2>
                       {mcpServers && mcpServers.length > 0 && (
@@ -3934,7 +4364,7 @@ export function SettingsPage() {
 
                 {/* Claude Agents */}
                 <section id="agents">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="settings-section-headband">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold">Agents</h2>
                       {claudeAgents && claudeAgents.length > 0 && (
@@ -4082,7 +4512,7 @@ export function SettingsPage() {
 
                 {/* Claude Skills */}
                 <section id="skills">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="settings-section-headband">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold">Skills</h2>
                       {claudeSkills && claudeSkills.length > 0 && (
@@ -4246,7 +4676,7 @@ export function SettingsPage() {
 
                 {/* Codex Marketplace */}
                 <section id="codex-marketplace">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="settings-section-headband">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold">Codex Marketplace</h2>
                       {codexPlugins && codexPlugins.length > 0 && (
@@ -4310,7 +4740,7 @@ export function SettingsPage() {
 
                 {/* Plugins */}
                 <section id="plugins">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="settings-section-headband">
                     <div className="flex items-center gap-2">
                       <h2 className="text-lg font-semibold">Plugins</h2>
                       {installedPlugins && installedPlugins.length > 0 && (
@@ -4622,7 +5052,7 @@ export function SettingsPage() {
                 </TabsContent>
               )}
             </div>
-          </div>
+          </main>
         </Tabs>
 
         {/* Dialogs */}

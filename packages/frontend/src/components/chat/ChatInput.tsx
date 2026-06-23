@@ -1,13 +1,16 @@
 import { useState, useRef, useCallback, useMemo, memo, useEffect } from 'react';
 import {
+  MessageCircle,
   Send,
   Paperclip,
   Loader2,
+  Sparkles,
   X,
   FileText,
   FileCode,
   File as FileIcon,
   StopCircle,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CommandMenu } from '@/components/chat/CommandMenu';
@@ -15,6 +18,7 @@ import { cn } from '@/lib/utils';
 import type { Command, SessionSurface } from '@plum-code-webui/shared';
 
 type AttachmentType = 'image' | 'text' | 'pdf' | 'document';
+type ActiveFollowupMode = 'queue' | 'steer';
 
 interface FileAttachment {
   id: string;
@@ -62,6 +66,11 @@ interface ChatInputProps {
   surface?: SessionSurface;
   activeStatusLabel?: string;
   activeStatusDetail?: string;
+  activeFollowupMode?: ActiveFollowupMode;
+  onActiveFollowupModeChange?: (checked: boolean) => void;
+  fastModeActive?: boolean;
+  fastModePending?: boolean;
+  onFastModeToggle?: () => void;
   queueDepth?: number;
   onOpenRun?: () => void;
 }
@@ -83,6 +92,11 @@ export const ChatInput = memo(function ChatInput({
   surface = 'code',
   activeStatusLabel,
   activeStatusDetail,
+  activeFollowupMode,
+  onActiveFollowupModeChange,
+  fastModeActive = false,
+  fastModePending = false,
+  onFastModeToggle,
   queueDepth = 0,
   onOpenRun,
 }: ChatInputProps) {
@@ -164,10 +178,25 @@ export const ChatInput = memo(function ChatInput({
   const allowsActiveFollowup = !!queuesWhileActive || !!steersWhileActive;
   const blocksSubmitForActiveRun = !!isActive && !allowsActiveFollowup;
   const activeSubmitLabel = steersWhileActive
-    ? 'Steer message'
-    : queuesWhileActive
+    ? isActive
+      ? 'Steer message'
+      : 'Send'
+    : queuesWhileActive && isActive
       ? 'Queue message'
       : 'Send';
+  const showActiveFollowupButton = !!activeFollowupMode;
+  const canToggleActiveFollowupMode = !!onActiveFollowupModeChange;
+  const showFastModeButton = !!onFastModeToggle;
+  const idleModeSummary = [
+    activeFollowupMode === 'steer'
+      ? 'Steering'
+      : activeFollowupMode === 'queue'
+        ? 'Follow-up'
+        : null,
+    fastModeActive ? 'Fast' : null,
+  ]
+    .filter(Boolean)
+    .join(' / ');
   const composerStatusLabel =
     activeStatusLabel ||
     (isActive
@@ -176,9 +205,11 @@ export const ChatInput = memo(function ChatInput({
         : queuesWhileActive
           ? 'Follow-up queue'
           : 'Turn running'
-      : selectedToolName
-        ? `${selectedToolName} selected`
-        : '');
+      : queueDepth > 0
+        ? `${queueDepth} queued`
+        : selectedToolName
+          ? `${selectedToolName} selected`
+          : '');
   const composerStatusDetail =
     activeStatusDetail ||
     (isActive
@@ -188,8 +219,17 @@ export const ChatInput = memo(function ChatInput({
           ? 'Waiting behind current run.'
           : 'Run lock active.'
       : '');
+  const composerBriefLabel =
+    composerStatusLabel || (showActiveFollowupButton || showFastModeButton ? 'Ready' : '');
+  const composerBriefDetail =
+    composerStatusDetail || (!composerStatusLabel && composerBriefLabel ? idleModeSummary : '');
   const showStatusStrip =
-    !!composerStatusLabel || !!composerStatusDetail || (surface === 'task' && !!selectedToolName);
+    !!composerBriefLabel ||
+    !!composerBriefDetail ||
+    showActiveFollowupButton ||
+    showFastModeButton ||
+    (surface === 'task' && !!selectedToolName);
+  const showStatusBubble = !!composerBriefLabel || !!composerBriefDetail;
   const composerTone = steersWhileActive
     ? 'steer'
     : queuesWhileActive
@@ -377,22 +417,85 @@ export const ChatInput = memo(function ChatInput({
         />
 
         {showStatusStrip && (
-          <div className={cn('composer-status-strip', `is-${composerTone}`)}>
-            <span className="composer-status-indicator">
-              {isActive ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-            </span>
-            <span className="composer-status-copy">
-              <span className="composer-status-label">{composerStatusLabel}</span>
-              {composerStatusDetail && (
-                <span className="composer-status-detail">{composerStatusDetail}</span>
-              )}
-            </span>
-            {queueDepth > 0 && <span className="composer-status-count">{queueDepth}</span>}
-            {onOpenRun && isActive && (
-              <button type="button" className="composer-status-action" onClick={onOpenRun}>
-                Run
-              </button>
+          <div className={cn('composer-brief-row', `is-${composerTone}`)}>
+            {showStatusBubble && (
+              <div className="composer-now-brief">
+                <span className="composer-brief-indicator">
+                  {isActive ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" />
+                  )}
+                </span>
+                <span className="composer-brief-copy">
+                  <span className="composer-brief-label">{composerBriefLabel}</span>
+                  {composerBriefDetail && (
+                    <span className="composer-brief-detail">{composerBriefDetail}</span>
+                  )}
+                </span>
+                {queueDepth > 0 && <span className="composer-brief-count">{queueDepth}</span>}
+                {onOpenRun && isActive && (
+                  <button type="button" className="composer-brief-run" onClick={onOpenRun}>
+                    Run
+                  </button>
+                )}
+              </div>
             )}
+
+            <div className="composer-brief-actions">
+              {showActiveFollowupButton && (
+                <button
+                  type="button"
+                  className={cn(
+                    'composer-bubble-button is-followup',
+                    activeFollowupMode === 'steer' && 'is-active',
+                    activeFollowupMode === 'queue' && !canToggleActiveFollowupMode && 'is-active'
+                  )}
+                  onClick={
+                    canToggleActiveFollowupMode
+                      ? () => onActiveFollowupModeChange?.(activeFollowupMode !== 'steer')
+                      : undefined
+                  }
+                  tabIndex={canToggleActiveFollowupMode ? undefined : -1}
+                  aria-pressed={
+                    activeFollowupMode === 'steer' ||
+                    (activeFollowupMode === 'queue' && !canToggleActiveFollowupMode)
+                  }
+                  aria-disabled={!canToggleActiveFollowupMode}
+                  aria-label={
+                    canToggleActiveFollowupMode
+                      ? 'Toggle active-send steering mode'
+                      : 'Follow-up queue is active'
+                  }
+                  title={
+                    activeFollowupMode === 'steer'
+                      ? 'Steering is active. New messages preempt the active Codex turn.'
+                      : 'Follow-up mode is active. New messages wait until the current turn finishes.'
+                  }
+                >
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  <span>{activeFollowupMode === 'steer' ? 'Steering' : 'Follow-up'}</span>
+                </button>
+              )}
+              {showFastModeButton && (
+                <button
+                  type="button"
+                  className={cn('composer-bubble-button is-fast', fastModeActive && 'is-active')}
+                  onClick={onFastModeToggle}
+                  disabled={fastModePending}
+                  aria-pressed={fastModeActive}
+                  aria-label={fastModeActive ? 'Disable fast mode' : 'Enable fast mode'}
+                  title={fastModeActive ? 'Disable Fast mode' : 'Enable Fast mode'}
+                >
+                  {fastModePending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Zap className="h-3.5 w-3.5" />
+                  )}
+                  <span>Fast</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
 

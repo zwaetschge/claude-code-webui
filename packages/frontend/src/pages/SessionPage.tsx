@@ -43,11 +43,13 @@ import {
   Hand,
   Zap,
   Sparkles,
+  Network,
+  Link2,
+  SendHorizontal,
 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Card } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
 import { StreamingContent } from '@/components/chat/StreamingContent';
 import { AllowedDirectoriesDialog } from '@/components/session/AllowedDirectoriesDialog';
 import { PermissionRequestCard } from '@/components/session/PermissionRequestCard';
@@ -92,6 +94,8 @@ import type {
   ToolExecution,
   UsageSnapshot,
   ActiveFollowupMode,
+  SessionDelegation,
+  SessionPeerLink,
 } from '@plum-code-webui/shared';
 import { normalizeUsageSnapshot } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
@@ -106,6 +110,7 @@ import {
   toCliProvider,
   type UiProvider,
 } from '@/lib/providers';
+import { TASK_WORKFLOWS } from '@/lib/taskWorkflows';
 import { toast } from '@/hooks/use-toast';
 
 function generateId() {
@@ -125,6 +130,7 @@ type MobileSheetPanel = WorkspaceSheetPanel | 'settings';
 type RightMenuGroupId = 'view' | 'runtime' | 'styles' | 'workspace';
 const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = [
   'tasks',
+  'mesh',
   'designStyle',
   'writingStyle',
   'android',
@@ -172,42 +178,6 @@ const SESSION_MODE_OPTIONS: Array<{
     label: 'YOLO mode',
     description: 'Skip all confirmations',
     icon: Zap,
-  },
-];
-
-const TASK_SURFACE_TEMPLATES: Array<{
-  title: string;
-  description: string;
-  prompt: string;
-  icon: typeof PenLine;
-}> = [
-  {
-    title: 'Lektorat',
-    description: 'Text prüfen und sauber verbessern',
-    prompt:
-      'Bitte lektoriere den folgenden Text. Erhalte Inhalt und Stimme, markiere unklare Stellen und gib mir danach eine saubere überarbeitete Version.',
-    icon: PenLine,
-  },
-  {
-    title: 'Rewrite',
-    description: 'Klarer, runder, passender formulieren',
-    prompt:
-      'Bitte überarbeite den folgenden Text sprachlich. Mache ihn klarer und natürlicher, ohne unnötig Inhalt oder Struktur zu verändern.',
-    icon: Edit3,
-  },
-  {
-    title: 'Zusammenfassung',
-    description: 'Kernaussagen verständlich extrahieren',
-    prompt:
-      'Bitte fasse den folgenden Text oder die genannte Datei verständlich zusammen. Hebe Entscheidungen, offene Fragen und nächste Schritte hervor.',
-    icon: FileText,
-  },
-  {
-    title: 'Datei bearbeiten',
-    description: 'Eine Datei finden, prüfen und ändern',
-    prompt:
-      'Bitte öffne die genannte Datei, prüfe sie auf das beschriebene Ziel und ändere sie direkt. Erkläre danach kurz, was geändert wurde.',
-    icon: FolderOpen,
   },
 ];
 
@@ -420,6 +390,12 @@ export function SessionPage() {
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [mobileSheetPanel, setMobileSheetPanel] = useState<MobileSheetPanel | null>(null);
   const [goalDraft, setGoalDraft] = useState('');
+  const [meshTargetSessionId, setMeshTargetSessionId] = useState('');
+  const [meshRoleDraft, setMeshRoleDraft] = useState('peer consultant');
+  const [meshDelegationTargetId, setMeshDelegationTargetId] = useState('');
+  const [meshDelegationDraft, setMeshDelegationDraft] = useState(
+    'Bitte pruefe diese Frage aus deinem Session-Kontext und antworte knapp mit Begruendung.'
+  );
 
   useEffect(() => {
     const handler = () => setShowAllowedDirsDialog(true);
@@ -528,6 +504,36 @@ export function SessionPage() {
     queryFn: async () => {
       const response = await api.get<ApiResponse<UserSettings>>('/api/settings');
       return response.data.data;
+    },
+  });
+
+  const { data: meshSessions } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
+      return response.data.data || [];
+    },
+  });
+
+  const meshPeersQuery = useQuery({
+    queryKey: ['session-peers', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<SessionPeerLink[]>>(
+        `/api/sessions/${id}/peers`
+      );
+      return response.data.data || [];
+    },
+  });
+
+  const meshDelegationsQuery = useQuery({
+    queryKey: ['session-delegations', id],
+    enabled: !!id,
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<SessionDelegation[]>>(
+        `/api/sessions/${id}/delegations`
+      );
+      return response.data.data || [];
     },
   });
 
@@ -1082,6 +1088,7 @@ export function SessionPage() {
   const isTaskSurface = sessionSurface === 'task';
   const sessionUiProvider = toUiProvider(sessionProvider);
   const providerLabel = CLI_PROVIDER_LABEL[sessionProvider];
+  const sessionRuntime = session?.runtime;
   const sessionTelemetryUsage = session?.telemetry?.usage ?? null;
   const visibleUsage = normalizeUsageSnapshot(
     sessionProvider === 'codex' && sessionTelemetryUsage
@@ -1104,13 +1111,29 @@ export function SessionPage() {
     (contextEventStats?.compactEvents ?? compactMessageNumbers.compactCount) -
       compactMessageNumbers.compactCount
   );
-  const hasLiveRunActivity = hasLiveAssistantFooter || currentActivity.type === 'tool';
-  const hasQueuedRunWork = !!currentQueue?.busy;
+  const hasRuntimeRunActivity =
+    !!sessionRuntime?.busy ||
+    !!sessionRuntime?.streaming ||
+    !!sessionRuntime?.subagents?.some((agent) => agent.status === 'started');
+  const hasLiveRunActivity =
+    hasLiveAssistantFooter || currentActivity.type === 'tool' || hasRuntimeRunActivity;
+  const hasQueuedRunWork =
+    !!currentQueue?.busy ||
+    (sessionRuntime?.queueDepth ?? 0) > 0 ||
+    (sessionRuntime?.queueItems?.length ?? 0) > 0;
   const isActive = hasLiveRunActivity || hasQueuedRunWork;
+  const supportsActiveFollowups = sessionProvider === 'codex' || sessionProvider === 'opencode';
+  const supportsSteeredFollowups = sessionProvider === 'codex';
+  const composerActiveFollowupMode: ActiveFollowupMode | undefined = supportsActiveFollowups
+    ? supportsSteeredFollowups
+      ? activeFollowupMode
+      : 'queue'
+    : undefined;
+  const activeSendFollowupMode: ActiveFollowupMode | undefined =
+    supportsActiveFollowups && isActive ? composerActiveFollowupMode : undefined;
   const composerQueuesWhileActive =
-    sessionProvider === 'opencode' ||
-    (sessionProvider === 'codex' && activeFollowupMode === 'queue');
-  const composerSteersWhileActive = sessionProvider === 'codex' && activeFollowupMode === 'steer';
+    sessionProvider === 'opencode' || (supportsSteeredFollowups && activeFollowupMode === 'queue');
+  const composerSteersWhileActive = supportsSteeredFollowups && activeFollowupMode === 'steer';
   const canInterruptActiveRun =
     hasLiveRunActivity ||
     (!composerQueuesWhileActive && !composerSteersWhileActive && hasQueuedRunWork);
@@ -1274,12 +1297,7 @@ export function SessionPage() {
   const reasoningSelectValue = selectedReasoning || '__default__';
   const selectedServiceTier = session?.cliServiceTier || '';
   const serviceTierSelectValue = selectedServiceTier || '__default__';
-  const serviceTierOptions = useMemo(() => {
-    if (sessionProvider !== 'codex') {
-      return [];
-    }
-    return [{ value: 'fast', label: '/fast' }];
-  }, [sessionProvider]);
+  const fastModeActive = sessionProvider === 'codex' && serviceTierSelectValue === 'fast';
   const reasoningOptions = useMemo(() => {
     if (sessionProvider === 'claude') {
       return [
@@ -1430,11 +1448,11 @@ export function SessionPage() {
         useSessionStore.getState().updateSession(id, data.data);
         queryClient.invalidateQueries({ queryKey: ['sessions'] });
         toast({
-          title: 'Profile updated',
+          title: data.data.cliServiceTier === 'fast' ? 'Fast enabled' : 'Fast disabled',
           description:
             session?.status === 'running'
-              ? 'Restarting session to apply the new profile.'
-              : 'Restart the session to apply the new profile.',
+              ? 'Restarting session to apply Fast mode.'
+              : 'Restart the session to apply Fast mode.',
         });
         if (session?.status === 'running') {
           socketService.restartSession(id);
@@ -1463,6 +1481,66 @@ export function SessionPage() {
         description: error.message,
         variant: 'destructive',
       });
+    },
+  });
+
+  const linkPeerMutation = useMutation({
+    mutationFn: async ({ targetSessionId, role }: { targetSessionId: string; role: string }) => {
+      const response = await api.post<ApiResponse<SessionPeerLink>>(`/api/sessions/${id}/peers`, {
+        targetSessionId,
+        role: role.trim() || null,
+      });
+      return response.data.data;
+    },
+    onSuccess: (peer) => {
+      queryClient.invalidateQueries({ queryKey: ['session-peers', id] });
+      if (peer?.targetSessionId) setMeshDelegationTargetId(peer.targetSessionId);
+      toast({
+        title: 'Peer linked',
+        description: peer?.target?.name ? `${peer.target.name} can now be consulted.` : undefined,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Peer link failed', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const unlinkPeerMutation = useMutation({
+    mutationFn: async (targetSessionId: string) => {
+      await api.delete(`/api/sessions/${id}/peers/${encodeURIComponent(targetSessionId)}`);
+      return targetSessionId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session-peers', id] });
+      toast({ title: 'Peer unlinked' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Unlink failed', description: error.message, variant: 'destructive' });
+    },
+  });
+
+  const createDelegationMutation = useMutation({
+    mutationFn: async ({ toSessionId, content }: { toSessionId: string; content: string }) => {
+      const response = await api.post<ApiResponse<SessionDelegation>>(
+        `/api/sessions/${id}/delegations`,
+        {
+          toSessionId,
+          content,
+          kind: 'consult',
+        }
+      );
+      return response.data.data;
+    },
+    onSuccess: (delegation) => {
+      queryClient.invalidateQueries({ queryKey: ['session-delegations', id] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      toast({
+        title: 'Delegation sent',
+        description: delegation?.correlationId,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Delegation failed', description: error.message, variant: 'destructive' });
     },
   });
 
@@ -1602,15 +1680,10 @@ export function SessionPage() {
     (message: string) => {
       if (!id) return;
       maybeAutoSetGoal(message);
-      socketService.sendMessage(
-        id,
-        message,
-        undefined,
-        sessionProvider === 'codex' && isActive ? activeFollowupMode : undefined
-      );
+      socketService.sendMessage(id, message, undefined, activeSendFollowupMode);
       clearStreamingContent(id);
     },
-    [id, maybeAutoSetGoal, sessionProvider, isActive, activeFollowupMode, clearStreamingContent]
+    [id, maybeAutoSetGoal, activeSendFollowupMode, clearStreamingContent]
   );
 
   const handleSendMessageWithFiles = useCallback(
@@ -1619,18 +1692,13 @@ export function SessionPage() {
       setIsSending(true);
       try {
         maybeAutoSetGoal(message);
-        await socketService.sendMessageWithFiles(
-          id,
-          message,
-          files,
-          sessionProvider === 'codex' && isActive ? activeFollowupMode : undefined
-        );
+        await socketService.sendMessageWithFiles(id, message, files, activeSendFollowupMode);
         clearStreamingContent(id);
       } finally {
         setIsSending(false);
       }
     },
-    [id, maybeAutoSetGoal, sessionProvider, isActive, activeFollowupMode, clearStreamingContent]
+    [id, maybeAutoSetGoal, activeSendFollowupMode, clearStreamingContent]
   );
 
   const handleCommandExecute = useCallback(
@@ -1905,6 +1973,10 @@ export function SessionPage() {
     sessionServiceTierMutation.mutate(nextValue || null);
   };
 
+  const handleFastModeToggle = () => {
+    applyServiceTierSelection(fastModeActive ? '__default__' : 'fast');
+  };
+
   const applySurfaceSelection = (surface: SessionSurface) => {
     if (!id || surface === sessionSurface) return;
     sessionSurfaceMutation.mutate(surface);
@@ -2008,6 +2080,60 @@ export function SessionPage() {
     [goalDraft, handleCommandExecute, id]
   );
 
+  const meshPeers = meshPeersQuery.data || [];
+  const meshPeerTargetIds = useMemo(
+    () => new Set(meshPeers.filter((peer) => peer.enabled).map((peer) => peer.targetSessionId)),
+    [meshPeers]
+  );
+  const meshAvailableSessions = useMemo(
+    () =>
+      (meshSessions || [])
+        .filter((candidate) => candidate.id !== id && !meshPeerTargetIds.has(candidate.id))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [id, meshPeerTargetIds, meshSessions]
+  );
+  const meshDelegationTargets = useMemo(() => {
+    const linked = meshPeers
+      .filter((peer) => peer.enabled)
+      .map((peer) => ({
+        id: peer.target.id,
+        name: peer.target.name,
+        provider: peer.target.cliProvider,
+        status: peer.target.status,
+      }));
+    const linkedIds = new Set(linked.map((peer) => peer.id));
+    const fallback = (meshSessions || [])
+      .filter((candidate) => candidate.id !== id && !linkedIds.has(candidate.id))
+      .map((candidate) => ({
+        id: candidate.id,
+        name: candidate.name,
+        provider: candidate.cliProvider,
+        status: candidate.status,
+      }));
+    return [...linked, ...fallback].sort((a, b) => a.name.localeCompare(b.name));
+  }, [id, meshPeers, meshSessions]);
+  const meshRecentDelegations = (meshDelegationsQuery.data || []).slice(0, 8);
+
+  useEffect(() => {
+    if (
+      meshTargetSessionId &&
+      meshAvailableSessions.some((item) => item.id === meshTargetSessionId)
+    ) {
+      return;
+    }
+    setMeshTargetSessionId(meshAvailableSessions[0]?.id || '');
+  }, [meshAvailableSessions, meshTargetSessionId]);
+
+  useEffect(() => {
+    if (
+      meshDelegationTargetId &&
+      meshDelegationTargets.some((item) => item.id === meshDelegationTargetId)
+    ) {
+      return;
+    }
+    setMeshDelegationTargetId(meshDelegationTargets[0]?.id || '');
+  }, [meshDelegationTargetId, meshDelegationTargets]);
+
   const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
   const completedTasksCount = currentTodos.filter((t) => t.status === 'completed').length;
   const totalTasksCount = currentTodos.length;
@@ -2031,7 +2157,7 @@ export function SessionPage() {
   const canUseCodexGoal = sessionProvider === 'codex';
   const goalObjectiveTooLong = goalObjective.length > 4000;
   const visibleDockedPanels: WorkspaceSheetPanel[] = isTaskSurface
-    ? ['tasks', 'designStyle', 'writingStyle', 'browser']
+    ? ['tasks', 'mesh', 'designStyle', 'writingStyle', 'browser']
     : DOCKED_PANEL_KEYS;
   const hasVisiblePinnedPanel = visibleDockedPanels.some((panel) => pinnedPanels[panel]);
   const activeStyleCount = (session.designStyleSkill ? 1 : 0) + (session.writingStyleSkill ? 1 : 0);
@@ -2135,6 +2261,205 @@ export function SessionPage() {
     </div>
   );
 
+  const meshBody = (
+    <div className="flex h-full flex-col gap-3 overflow-auto p-3 text-sm">
+      <form
+        className="rounded-lg border border-border/70 bg-background/60 p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!meshTargetSessionId) return;
+          linkPeerMutation.mutate({
+            targetSessionId: meshTargetSessionId,
+            role: meshRoleDraft,
+          });
+        }}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground">
+            <Link2 className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Link Peer</div>
+            <div className="text-[11px] text-muted-foreground">Session-to-session route</div>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
+            value={meshTargetSessionId}
+            onChange={(event) => setMeshTargetSessionId(event.target.value)}
+          >
+            {meshAvailableSessions.length === 0 ? (
+              <option value="">No unlinked sessions</option>
+            ) : (
+              meshAvailableSessions.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name} · {CLI_PROVIDER_LABEL[candidate.cliProvider]}
+                </option>
+              ))
+            )}
+          </select>
+          <input
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
+            value={meshRoleDraft}
+            onChange={(event) => setMeshRoleDraft(event.target.value)}
+            placeholder="Peer role"
+          />
+          <button
+            type="submit"
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!meshTargetSessionId || linkPeerMutation.isPending}
+          >
+            {linkPeerMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="h-3.5 w-3.5" />
+            )}
+            Link session
+          </button>
+        </div>
+      </form>
+
+      <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground">
+            <Network className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Peers</div>
+            <div className="text-[11px] text-muted-foreground">{meshPeers.length} linked</div>
+          </div>
+        </div>
+        {meshPeersQuery.isLoading ? (
+          <div className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Loading peers
+          </div>
+        ) : meshPeers.length === 0 ? (
+          <div className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            No peers linked.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {meshPeers.map((peer) => (
+              <div
+                key={peer.id}
+                className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {peer.target.name}
+                  </div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {CLI_PROVIDER_LABEL[peer.target.cliProvider]} · {peer.role || 'peer'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Unlink peer"
+                  onClick={() => unlinkPeerMutation.mutate(peer.targetSessionId)}
+                  disabled={unlinkPeerMutation.isPending}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <form
+        className="rounded-lg border border-border/70 bg-background/60 p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const content = meshDelegationDraft.trim();
+          if (!meshDelegationTargetId || !content) return;
+          createDelegationMutation.mutate({
+            toSessionId: meshDelegationTargetId,
+            content,
+          });
+        }}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-md border border-border bg-muted/40 p-1.5 text-muted-foreground">
+            <SendHorizontal className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Consult</div>
+            <div className="text-[11px] text-muted-foreground">Queue work in another session</div>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs"
+            value={meshDelegationTargetId}
+            onChange={(event) => setMeshDelegationTargetId(event.target.value)}
+          >
+            {meshDelegationTargets.length === 0 ? (
+              <option value="">No target sessions</option>
+            ) : (
+              meshDelegationTargets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.name} · {CLI_PROVIDER_LABEL[target.provider]}
+                </option>
+              ))
+            )}
+          </select>
+          <textarea
+            className="min-h-[108px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-xs leading-relaxed"
+            value={meshDelegationDraft}
+            onChange={(event) => setMeshDelegationDraft(event.target.value)}
+            maxLength={50_000}
+          />
+          <button
+            type="submit"
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={
+              !meshDelegationTargetId ||
+              !meshDelegationDraft.trim() ||
+              createDelegationMutation.isPending
+            }
+          >
+            {createDelegationMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <SendHorizontal className="h-3.5 w-3.5" />
+            )}
+            Send consult
+          </button>
+        </div>
+      </form>
+
+      <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+        <div className="mb-2 text-xs font-semibold text-foreground">Recent Delegations</div>
+        {meshRecentDelegations.length === 0 ? (
+          <div className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            No delegations yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {meshRecentDelegations.map((delegation) => (
+              <div key={delegation.id} className="rounded-md bg-muted/30 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="truncate font-medium text-foreground">
+                    {delegation.toSessionName || delegation.toSessionId}
+                  </span>
+                  <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-muted-foreground">
+                    {delegation.status}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                  {delegation.content}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   const renderConfigBody = (heightClass: string) => (
     <div className={cn('flex flex-col', heightClass)}>
       <div className="flex gap-1 p-1.5 bg-muted/30 border-b border-border/60 shrink-0">
@@ -2190,6 +2515,11 @@ export function SessionPage() {
       badge:
         pendingTasksCount > 0 ? <span className="panel-badge">{pendingTasksCount}</span> : null,
     },
+    mesh: {
+      title: 'Session Mesh',
+      icon: <Network className="h-3.5 w-3.5" />,
+      badge: meshPeers.length > 0 ? <span className="panel-badge">{meshPeers.length}</span> : null,
+    },
     config: {
       title: 'Config',
       icon: <Brain className="h-3.5 w-3.5" />,
@@ -2221,6 +2551,7 @@ export function SessionPage() {
     const meta = panelMeta[panel];
     let body: ReactElement | null = null;
     if (panel === 'tasks') body = <div className="h-full overflow-auto">{tasksBody}</div>;
+    else if (panel === 'mesh') body = meshBody;
     else if (panel === 'config') body = renderConfigBody('h-full');
     else if (panel === 'designStyle') {
       body = (
@@ -2357,11 +2688,6 @@ export function SessionPage() {
         ? 'Default'
         : reasoningOptions.find((option) => option.value === reasoningSelectValue)?.label ||
           reasoningSelectValue;
-    const serviceTierValueLabel =
-      serviceTierSelectValue === '__default__'
-        ? 'Default'
-        : serviceTierOptions.find((option) => option.value === serviceTierSelectValue)?.label ||
-          serviceTierSelectValue;
     const activeTool = selectedCliTool
       ? cliTools?.find((tool) => tool.id === selectedCliTool)
       : null;
@@ -2465,56 +2791,6 @@ export function SessionPage() {
           ),
         })}
 
-        {sessionProvider === 'codex' && (
-          <div
-            className="session-runtime-toggle"
-            title={
-              activeFollowupMode === 'steer'
-                ? 'New messages steer the active Codex turn by preempting it.'
-                : 'New messages wait until the active Codex turn finishes.'
-            }
-          >
-            <span className="session-runtime-icon">
-              <MessageSquare className="h-3.5 w-3.5" />
-            </span>
-            <span className="session-runtime-copy">
-              <span className="session-runtime-label">Active send</span>
-              <span className="session-runtime-value">
-                {activeFollowupMode === 'steer' ? 'Steering' : 'Follow-up'}
-              </span>
-            </span>
-            <Switch
-              checked={activeFollowupMode === 'steer'}
-              onCheckedChange={handleActiveFollowupModeChange}
-              aria-label="Toggle active-send steering mode"
-            />
-          </div>
-        )}
-
-        {sessionProvider === 'codex' &&
-          renderRuntimeField({
-            id: fieldId('profile'),
-            label: 'Profile',
-            value: serviceTierValueLabel,
-            icon: <Zap className="h-3.5 w-3.5" />,
-            children: (
-              <select
-                id={fieldId('profile')}
-                className="session-runtime-select"
-                value={serviceTierSelectValue}
-                onChange={(event) => applyServiceTierSelection(event.target.value)}
-                aria-label="Session profile"
-              >
-                <option value="__default__">Default</option>
-                {serviceTierOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            ),
-          })}
-
         {showReasoningControls &&
           renderRuntimeField({
             id: fieldId('reasoning'),
@@ -2600,11 +2876,25 @@ export function SessionPage() {
       : activeTodo?.content;
   const activeAgentLabel = currentActiveAgent
     ? getAgentDisplay(currentActiveAgent.agentType)
-    : currentAgentRuns.find((agent) => agent.status === 'started')?.agentType;
+    : currentAgentRuns.find((agent) => agent.status === 'started')?.agentType ||
+      (session.runtime?.currentAgentType
+        ? getAgentDisplay(session.runtime.currentAgentType)
+        : undefined);
+
   const activeToolLabel =
     currentActivity.type === 'tool'
       ? getToolDisplay(currentActivity.toolName || '').label
-      : currentToolExecutions.find((tool) => tool.status === 'started')?.actionSummary?.title;
+      : currentToolExecutions.find((tool) => tool.status === 'started')?.actionSummary?.title ||
+        (session.runtime?.currentToolName
+          ? getToolDisplay(session.runtime.currentToolName).label
+          : undefined);
+  const runtimeActivityDetail =
+    session.runtime?.activitySummary ||
+    session.runtime?.currentAgentDescription ||
+    activeToolLabel ||
+    (session.runtime?.currentAgentType
+      ? `${getAgentDisplay(session.runtime.currentAgentType)} running`
+      : undefined);
   const queuedDepth = currentQueue?.depth ?? session.runtime?.queueDepth ?? 0;
   const taskHeaderTone =
     session.status === 'error'
@@ -2627,6 +2917,7 @@ export function SessionPage() {
   const taskHeaderDetail =
     currentActivity.message ||
     activeToolLabel ||
+    runtimeActivityDetail ||
     (activeAgentLabel ? `${activeAgentLabel} running` : undefined) ||
     activeTodoText ||
     session.lastMessage ||
@@ -2651,9 +2942,10 @@ export function SessionPage() {
   const taskComposerStatusDetail =
     activeTodoText ||
     currentActivity.message ||
+    runtimeActivityDetail ||
     (activeAgentLabel ? `${activeAgentLabel} running` : undefined) ||
-    (composerQueuesWhileActive ? 'Waiting behind current run.' : undefined) ||
-    (composerSteersWhileActive ? 'Updating current run.' : undefined) ||
+    (isActive && composerQueuesWhileActive ? 'Waiting behind current run.' : undefined) ||
+    (isActive && composerSteersWhileActive ? 'Updating current run.' : undefined) ||
     '';
 
   const renderTaskWorkbenchHeader = () => {
@@ -2842,6 +3134,7 @@ export function SessionPage() {
     const isActive = pinnedPanels[panel];
     let badgeCount = 0;
     if (panel === 'tasks') badgeCount = pendingTasksCount;
+    else if (panel === 'mesh') badgeCount = meshPeers.length;
     else if (panel === 'designStyle' && session.designStyleSkill) badgeCount = 1;
     else if (panel === 'writingStyle' && session.writingStyleSkill) badgeCount = 1;
     else if (panel === 'android' && session.androidDeviceSerial) badgeCount = 1;
@@ -3033,6 +3326,9 @@ export function SessionPage() {
           {mobileSheetPanel === 'tasks' && (
             <div className="h-[56dvh] overflow-auto">{tasksBody}</div>
           )}
+          {mobileSheetPanel === 'mesh' && (
+            <div className="h-[76dvh] overflow-auto">{meshBody}</div>
+          )}
           {mobileSheetPanel === 'browser' && (
             <OracleBrowserPanel sessionId={session.id} className="h-[76dvh]" />
           )}
@@ -3122,21 +3418,35 @@ export function SessionPage() {
                       <MessageSquare className="h-7 w-7" />
                     </div>
                     <h2>{session.name}</h2>
-                    <p>Pick a template or write a normal message below.</p>
-                    <div className="task-preset-grid">
-                      {TASK_SURFACE_TEMPLATES.map((preset) => {
-                        const PresetIcon = preset.icon;
+                    <p>Pick a starting point or write a specific task below.</p>
+                    <div className="task-workflow-grid">
+                      {TASK_WORKFLOWS.map((workflow) => {
+                        const WorkflowIcon =
+                          workflow.id === 'quick-brief'
+                            ? FileText
+                            : workflow.id === 'research-brief'
+                              ? Globe
+                              : workflow.id === 'draft-message'
+                                ? MessageSquare
+                                : workflow.id === 'plan-project'
+                                  ? ListTodo
+                                  : workflow.id === 'creative-direction'
+                                    ? Sparkles
+                                    : workflow.id === 'decision-support'
+                                      ? Brain
+                                      : ListTodo;
                         return (
                           <button
-                            key={preset.title}
+                            key={workflow.id}
                             type="button"
-                            onClick={() => handleSendMessage(preset.prompt)}
+                            onClick={() => handleSendMessage(workflow.prompt)}
                           >
                             <span>
-                              <PresetIcon className="h-3.5 w-3.5" />
-                              {preset.title}
+                              <WorkflowIcon className="h-3.5 w-3.5" />
+                              {workflow.shortTitle}
                             </span>
-                            <small>{preset.description}</small>
+                            <small>{workflow.description}</small>
+                            <em>{workflow.meta}</em>
                           </button>
                         );
                       })}
@@ -3360,6 +3670,13 @@ export function SessionPage() {
                 surface={sessionSurface}
                 activeStatusLabel={taskComposerStatusLabel}
                 activeStatusDetail={taskComposerStatusDetail}
+                activeFollowupMode={composerActiveFollowupMode}
+                onActiveFollowupModeChange={
+                  supportsSteeredFollowups ? handleActiveFollowupModeChange : undefined
+                }
+                fastModeActive={fastModeActive}
+                fastModePending={sessionServiceTierMutation.isPending}
+                onFastModeToggle={sessionProvider === 'codex' ? handleFastModeToggle : undefined}
                 queueDepth={queuedDepth}
                 onOpenRun={() => openRunCockpitSection('overview')}
               />
@@ -3460,7 +3777,7 @@ export function SessionPage() {
               label: 'Workspace',
               icon: <FolderOpen className="h-3.5 w-3.5" />,
               open: rightMenuGroupsOpen.workspace || hasPinnedWorkspacePanel,
-              badge: pendingTasksCount + (session.androidDeviceSerial ? 1 : 0),
+              badge: pendingTasksCount + meshPeers.length + (session.androidDeviceSerial ? 1 : 0),
               children: <>{workspaceMenuPanels.map((panel) => renderPanelMenuItem(panel, true))}</>,
             })}
           </div>

@@ -31,6 +31,9 @@ const SettingsPage = lazy(() =>
 const AnalyticsPage = lazy(() =>
   import('@/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
 );
+const OperationsPage = lazy(() =>
+  import('@/pages/OperationsPage').then((m) => ({ default: m.OperationsPage }))
+);
 
 // Loading fallback component
 function PageLoader() {
@@ -143,6 +146,14 @@ export default function App() {
               <Route index element={<DashboardPage />} />
               <Route path="session/:id" element={<SessionPage />} />
               <Route path="analytics" element={<AnalyticsPage />} />
+              <Route
+                path="operations"
+                element={
+                  <AdminRoute>
+                    <OperationsPage />
+                  </AdminRoute>
+                }
+              />
               <Route path="settings" element={<SettingsPage />} />
               <Route
                 path="admin"

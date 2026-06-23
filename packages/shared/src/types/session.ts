@@ -81,6 +81,8 @@ export interface Session {
   claudeSessionId: string | null;
   status: SessionStatus;
   lastMessage: string | null;
+  projectDescription?: string | null;
+  lastActivity?: string | null;
   iconUrl: string | null;
   iconSource: SessionIconSource | null;
   starred: boolean;

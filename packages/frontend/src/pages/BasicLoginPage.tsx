@@ -89,18 +89,12 @@ export function BasicLoginPage() {
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center gap-10 px-6 py-12 lg:grid lg:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-6 text-center lg:text-left">
-          <div className="flex items-center justify-center gap-3 lg:justify-start">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-card/80 shadow-lg ring-1 ring-border/60 backdrop-blur-sm">
-              <img src="/logos/plum.png" alt="Plum Code WebUI" className="h-7 w-7 object-contain" />
-            </div>
-            <div className="text-left">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-muted-foreground">
-                Plum Code WebUI
-              </p>
-              <p className="text-sm text-muted-foreground">
-                A violet command center for CLI coding
-              </p>
-            </div>
+          <div className="flex justify-center lg:justify-start">
+            <img
+              src="/logos/plum-banner.png"
+              alt="Plum Code WebUI"
+              className="h-auto w-64 max-w-full object-contain"
+            />
           </div>
 
           <div className="space-y-3">

@@ -25,6 +25,15 @@ import { scanProject } from '../utils/projectScanner';
 
 const router = Router();
 
+const PROJECT_DESCRIPTION_CACHE_TTL_MS = 5 * 60 * 1000;
+const projectDescriptionCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    description: string | null;
+  }
+>();
+
 // Validation schemas
 const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
@@ -75,6 +84,53 @@ const updateSessionStylesSchema = z.object({
 const generateSessionIconSchema = z.object({
   prompt: z.string().trim().min(3).max(800).optional(),
 });
+
+function compactProjectDescription(value: string | null | undefined): string | null {
+  const compact = value?.replace(/\s+/g, ' ').trim();
+  if (!compact) return null;
+
+  const firstSentence = compact.match(/^(.+?[.!?])(?:\s|$)/)?.[1] ?? compact;
+  if (firstSentence.length <= 180) return firstSentence;
+  return `${firstSentence.slice(0, 177).trim()}...`;
+}
+
+async function getCachedProjectDescription(workingDirectory: unknown): Promise<string | null> {
+  if (typeof workingDirectory !== 'string' || !workingDirectory.trim()) return null;
+
+  const projectPath = path.resolve(workingDirectory);
+  const cached = projectDescriptionCache.get(projectPath);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.description;
+
+  const scanned = await scanProject(projectPath).catch(() => null);
+  const detectedProjectShape = scanned
+    ? [
+        scanned.framework ? `${scanned.framework} project` : null,
+        scanned.techStack.length > 0 ? `using ${scanned.techStack.slice(0, 3).join(', ')}` : null,
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : '';
+  const description =
+    compactProjectDescription(scanned?.description) ||
+    compactProjectDescription(
+      detectedProjectShape
+        ? `${scanned?.name || path.basename(projectPath)} is a ${detectedProjectShape}.`
+        : null
+    );
+  projectDescriptionCache.set(projectPath, {
+    expiresAt: now + PROJECT_DESCRIPTION_CACHE_TTL_MS,
+    description,
+  });
+  return description;
+}
+
+async function attachProjectDescription<T extends Record<string, unknown>>(session: T): Promise<T> {
+  return {
+    ...session,
+    projectDescription: await getCachedProjectDescription(session.workingDirectory),
+  };
+}
 
 const SESSION_ICON_DIR =
   process.env.SESSION_ICON_DIR ||
@@ -671,15 +727,18 @@ function attachRuntimeAndTelemetry<T extends Record<string, unknown>>(
 }
 
 // List all sessions
-router.get('/', requireAuth, (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const db = getDatabase();
+router.get(
+  '/',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const db = getDatabase();
 
-  // Sort by message activity (latest message wins) with updated_at as fallback for
-  // sessions that have no messages yet. Starred sessions always float to the top.
-  const sessions = db
-    .prepare(
-      `SELECT s.id, s.user_id as userId, s.name, s.working_directory as workingDirectory,
+    // Sort by message activity (latest message wins) with updated_at as fallback for
+    // sessions that have no messages yet. Starred sessions always float to the top.
+    const sessions = db
+      .prepare(
+        `SELECT s.id, s.user_id as userId, s.name, s.working_directory as workingDirectory,
 	              s.claude_session_id as claudeSessionId, s.status, s.last_message as lastMessage,
 	              ${sessionIconSelect('s')},
 	              s.starred, s.category, s.cli_provider as cliProvider, s.mode, s.surface,
@@ -697,15 +756,17 @@ router.get('/', requireAuth, (req, res) => {
        FROM sessions s
        WHERE s.user_id = ?
        ORDER BY s.starred DESC, lastActivity DESC`
-    )
-    .all(userId) as Array<Record<string, unknown>>;
+      )
+      .all(userId) as Array<Record<string, unknown>>;
 
-  const sessionsWithStarred = sessions.map((s) =>
-    attachRuntime({ ...s, starred: Boolean(s.starred) })
-  );
+    const sessionsWithDescriptions = await Promise.all(sessions.map(attachProjectDescription));
+    const sessionsWithStarred = sessionsWithDescriptions.map((s) =>
+      attachRuntime({ ...s, starred: Boolean(s.starred) })
+    );
 
-  res.json({ success: true, data: sessionsWithStarred });
-});
+    res.json({ success: true, data: sessionsWithStarred });
+  })
+);
 
 // Get session by ID
 router.get('/:id', requireAuth, (req, res) => {

@@ -1,5 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect width="100" height="100" rx="20" fill="#1a1a2e"/>
-  <text x="50" y="68" font-family="monospace" font-size="48" font-weight="bold" fill="#d97706" text-anchor="middle">C</text>
-  <circle cx="75" cy="25" r="8" fill="#22c55e"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <image href="/logos/plum.png" width="1024" height="1024" preserveAspectRatio="xMidYMid meet"/>
 </svg>

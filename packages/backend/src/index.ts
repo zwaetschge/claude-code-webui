@@ -65,7 +65,12 @@ import adminRoutes from './routes/admin';
 import comfyuiRoutes from './routes/comfyui';
 import automationRoutes from './routes/automation';
 import oracleRoutes from './routes/oracle';
+import dockerRoutes from './routes/docker';
+import watchdogRoutes from './routes/watchdogs';
+import sessionMeshRoutes from './routes/session-mesh';
 import { initTaskManager } from './services/tasks';
+import discordRoutes from './routes/discord';
+import { initDiscordOutboxWorker } from './services/discord';
 
 function parseBooleanEnv(value?: string): boolean {
   if (!value) return false;
@@ -186,6 +191,7 @@ async function main() {
 
   // Initialize task delegation system
   initTaskManager();
+  initDiscordOutboxWorker();
 
   // Preview vhost — must run BEFORE any other middleware so helmet/CORS/body-parsers
   // don't rewrite or consume proxied traffic. Authelia (Traefik ForwardAuth) guards the
@@ -323,6 +329,10 @@ async function main() {
   app.use('/api/admin', adminRoutes);
   app.use('/api/comfyui', comfyuiRoutes);
   app.use('/api/automation', automationRoutes);
+  app.use('/api/docker', dockerRoutes);
+  app.use('/api/watchdogs', watchdogRoutes);
+  app.use('/api/discord', discordRoutes);
+  app.use('/api', sessionMeshRoutes);
 
   const logosDir = process.env.LOGOS_DIR || path.join(process.cwd(), 'logos');
   if (fs.existsSync(logosDir)) {

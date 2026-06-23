@@ -583,6 +583,115 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_goals_session_id ON session_goals(session_id);
     CREATE INDEX IF NOT EXISTS idx_session_goals_status ON session_goals(status);
     CREATE INDEX IF NOT EXISTS idx_session_goals_created ON session_goals(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_peer_profiles (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      alias TEXT NOT NULL,
+      description TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      visibility TEXT NOT NULL DEFAULT 'private',
+      inbox_policy TEXT NOT NULL DEFAULT 'queue',
+      capabilities_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_peer_profiles_enabled ON session_peer_profiles(enabled);
+
+    CREATE TABLE IF NOT EXISTS session_peer_links (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      target_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      role TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, source_session_id, target_session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_peer_links_source ON session_peer_links(source_session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_peer_links_target ON session_peer_links(target_session_id);
+    CREATE INDEX IF NOT EXISTS idx_session_peer_links_user ON session_peer_links(user_id);
+
+    CREATE TABLE IF NOT EXISTS session_delegations (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      correlation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      from_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      to_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      from_actor TEXT NOT NULL DEFAULT 'session',
+      kind TEXT NOT NULL DEFAULT 'consult',
+      status TEXT NOT NULL DEFAULT 'queued',
+      content TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      hop_count INTEGER NOT NULL DEFAULT 0,
+      expires_at DATETIME,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_user_created ON session_delegations(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_from ON session_delegations(from_session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_to ON session_delegations(to_session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_delegations_correlation ON session_delegations(correlation_id);
+
+    CREATE TABLE IF NOT EXISTS container_watchdogs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      container_id TEXT NOT NULL,
+      container_name TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      autonomy_level TEXT NOT NULL DEFAULT 'observe',
+      last_snapshot_at DATETIME,
+      last_incident_at DATETIME,
+      metadata_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_container_watchdogs_user_container ON container_watchdogs(user_id, container_id);
+    CREATE INDEX IF NOT EXISTS idx_container_watchdogs_session ON container_watchdogs(session_id);
+    CREATE INDEX IF NOT EXISTS idx_container_watchdogs_enabled ON container_watchdogs(enabled);
+
+    CREATE TABLE IF NOT EXISTS container_health_snapshots (
+      id TEXT PRIMARY KEY,
+      watchdog_id TEXT REFERENCES container_watchdogs(id) ON DELETE CASCADE,
+      container_id TEXT NOT NULL,
+      state TEXT,
+      health TEXT,
+      restart_count INTEGER,
+      cpu_percent REAL,
+      memory_bytes INTEGER,
+      memory_limit_bytes INTEGER,
+      summary TEXT,
+      evidence_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_container_health_watchdog_created ON container_health_snapshots(watchdog_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_container_health_container_created ON container_health_snapshots(container_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS discord_outbox (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at DATETIME,
+      sent_at DATETIME,
+      error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_status_next ON discord_outbox(status, next_attempt_at);
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_created ON discord_outbox(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_user_created ON discord_outbox(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_discord_outbox_session_created ON discord_outbox(session_id, created_at DESC);
   `);
 
   // Bootstrap: promote SEED_ADMIN_EMAIL to admin role, or promote the first existing user

@@ -5,6 +5,7 @@ export type DockablePanel =
   | 'files'
   | 'tasks'
   | 'config'
+  | 'mesh'
   | 'designStyle'
   | 'writingStyle'
   | 'android'
@@ -25,6 +26,7 @@ export const usePanelDockStore = create<PanelDockState>()(
         files: false,
         tasks: false,
         config: false,
+        mesh: false,
         designStyle: false,
         writingStyle: false,
         android: false,
@@ -45,6 +47,7 @@ export const usePanelDockStore = create<PanelDockState>()(
             files: false,
             tasks: false,
             config: false,
+            mesh: false,
             designStyle: false,
             writingStyle: false,
             android: false,

@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+} from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,12 +17,9 @@ import {
   Settings,
   FolderPlus,
   Folder,
-  Tags,
   Palette,
-  ArrowUpRight,
   MoreHorizontal,
   Pencil,
-  Activity,
   Star,
   Sparkles,
   ImageIcon,
@@ -33,10 +38,9 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
-import { SessionCategories, CategorySelector } from '@/components/session-categories';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
 import { SessionIcon } from '@/components/session/SessionIcon';
@@ -52,11 +56,13 @@ import type {
   BackgroundAnimation,
   SessionMode,
   SessionSurface,
+  Category,
 } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { getSessionRunState } from '@/lib/sessionRunState';
 import { useAppearanceStore, BACKGROUND_ANIMATION_OPTIONS } from '@/stores/appearanceStore';
 import { CLI_PROVIDER_DEFAULT_MODEL, toUiProvider } from '@/lib/providers';
+import { TASK_WORKFLOWS, type TaskWorkflow } from '@/lib/taskWorkflows';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -80,16 +86,47 @@ const DASHBOARD_SESSION_MODE_OPTIONS: Array<{
   { value: 'danger', label: 'YOLO', description: 'skip confirmations', icon: Zap },
 ];
 
-const TASK_STARTERS = [
-  'Lektoriere diesen Text und gib mir zuerst die wichtigsten Verbesserungen.',
-  'Überarbeite diese Datei sprachlich, ohne Inhalt oder Struktur unnötig zu verändern.',
-  'Fasse mir die wichtigsten Punkte verständlich zusammen.',
-  'Formuliere daraus eine klare Nachricht oder E-Mail.',
-];
-
 const DASHBOARD_FAVORITES_GROUP_ID = '__favorites';
 const DASHBOARD_RECENT_GROUP_ID = '__recent';
 const DASHBOARD_UNCATEGORIZED_GROUP_ID = '__uncategorized';
+const DASHBOARD_SESSION_DRAG_TYPE = 'application/x-plum-session-id';
+
+const DASHBOARD_CATEGORY_COLOR_VALUES: Record<string, string> = {
+  blue: '#3b82f6',
+  green: '#22c55e',
+  purple: '#a855f7',
+  orange: '#f97316',
+  pink: '#ec4899',
+  yellow: '#eab308',
+  red: '#ef4444',
+  teal: '#14b8a6',
+};
+
+const DASHBOARD_CATEGORY_COLOR_OPTIONS = Object.entries(DASHBOARD_CATEGORY_COLOR_VALUES).map(
+  ([name, value]) => ({ name, value })
+);
+
+function getDashboardCategoryColorValue(color: string | null | undefined): string {
+  return color
+    ? (DASHBOARD_CATEGORY_COLOR_VALUES[color] ?? color)
+    : (DASHBOARD_CATEGORY_COLOR_VALUES.blue ?? '#3b82f6');
+}
+
+function getNextDashboardCategoryColor(categories: Category[]): string {
+  const option =
+    DASHBOARD_CATEGORY_COLOR_OPTIONS[categories.length % DASHBOARD_CATEGORY_COLOR_OPTIONS.length];
+  return option?.name ?? 'blue';
+}
+
+interface DashboardSessionGroup {
+  id: string;
+  label: string;
+  sessions: Session[];
+  hasWorking: boolean;
+  categoryId: string | null;
+  isDropTarget: boolean;
+  color?: string;
+}
 
 function getDashboardReasoningOptions(provider: CLIProvider) {
   if (provider === 'claude') {
@@ -160,6 +197,45 @@ function getDashboardDefaultProvider(savedDefaultProvider: CLIProvider | undefin
   return 'codex';
 }
 
+function toDashboardSentence(value: string | null | undefined): string | null {
+  const compact = value
+    ?.replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[#>*_`~-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!compact) return null;
+
+  const firstSentence = compact.match(/^(.+?[.!?])(?:\s|$)/)?.[1] ?? compact;
+  const clipped =
+    firstSentence.length > 180
+      ? `${firstSentence
+          .slice(0, 176)
+          .trim()
+          .replace(/[,\s;:.-]+$/g, '')}.`
+      : firstSentence;
+  return /[.!?]$/.test(clipped) ? clipped : `${clipped}.`;
+}
+
+function getDashboardProjectDescription(session: Session): string {
+  return (
+    toDashboardSentence(session.projectDescription) ||
+    `${session.surface === 'task' ? 'Task workspace' : 'Project workspace'} for ${session.name}.`
+  );
+}
+
+function formatDashboardLastActivity(session: Session): string {
+  const value = session.runtime?.lastActivityAt || session.lastActivity || session.updatedAt;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Last activity unknown';
+  return `Last activity ${date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })}`;
+}
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -176,7 +252,7 @@ export function DashboardPage() {
     queueState,
   } = useSessionStore();
   const { backgroundAnimation, setBackgroundAnimation } = useAppearanceStore();
-  const { categories, fetchCategories } = useCategoryStore();
+  const { categories, fetchCategories, createCategory } = useCategoryStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
   const [newSessionPrompt, setNewSessionPrompt] = useState('');
@@ -190,11 +266,15 @@ export function DashboardPage() {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [newSessionFiles, setNewSessionFiles] = useState<File[]>([]);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [showCategories, setShowCategories] = useState(false);
   const [collapsedDashboardGroupIds, setCollapsedDashboardGroupIds] = useState<
     Record<string, boolean>
   >({});
+  const [creatingDashboardCategory, setCreatingDashboardCategory] = useState(false);
+  const [dashboardCategoryName, setDashboardCategoryName] = useState('');
+  const [dashboardCategoryColor, setDashboardCategoryColor] = useState('blue');
+  const [dashboardCategorySubmitting, setDashboardCategorySubmitting] = useState(false);
+  const [draggingDashboardSessionId, setDraggingDashboardSessionId] = useState<string | null>(null);
+  const [dragOverDashboardGroupId, setDragOverDashboardGroupId] = useState<string | null>(null);
   const [renamingSession, setRenamingSession] = useState<Session | null>(null);
   const [iconUploadSessionId, setIconUploadSessionId] = useState<string | null>(null);
   const [iconBusySessionId, setIconBusySessionId] = useState<string | null>(null);
@@ -206,6 +286,7 @@ export function DashboardPage() {
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
   const newSessionFileInputRef = useRef<HTMLInputElement>(null);
   const iconUploadInputRef = useRef<HTMLInputElement>(null);
+  const suppressDashboardCardClickRef = useRef(false);
 
   // Fetch user settings
   const { data: settings } = useQuery({
@@ -371,10 +452,7 @@ export function DashboardPage() {
   });
 
   const hasDefaultDir = !!settings?.defaultWorkingDir;
-  const filteredSessions = useMemo(
-    () => (selectedCategory ? sessions.filter((s) => s.category === selectedCategory) : sessions),
-    [selectedCategory, sessions]
-  );
+  const filteredSessions = sessions;
   const sessionRunStates = useMemo(
     () =>
       new Map(
@@ -398,12 +476,7 @@ export function DashboardPage() {
     const grouped = new Map<string, Session[]>();
     const getHasWorking = (groupSessions: Session[]) =>
       groupSessions.some((session) => sessionRunStates.get(session.id)?.isWorking);
-    const priorityGroups: Array<{
-      id: string;
-      label: string;
-      sessions: Session[];
-      hasWorking: boolean;
-    }> = [];
+    const priorityGroups: DashboardSessionGroup[] = [];
 
     const favoriteSessions = filteredSessions.filter((session) => session.starred);
     if (favoriteSessions.length > 0) {
@@ -412,6 +485,8 @@ export function DashboardPage() {
         label: 'Favorites',
         sessions: favoriteSessions,
         hasWorking: getHasWorking(favoriteSessions),
+        categoryId: null,
+        isDropTarget: false,
       });
       favoriteSessions.forEach((session) => usedSessionIds.add(session.id));
     }
@@ -429,12 +504,13 @@ export function DashboardPage() {
         label: 'Recent Sessions',
         sessions: recentSessions,
         hasWorking: getHasWorking(recentSessions),
+        categoryId: null,
+        isDropTarget: false,
       });
       recentSessions.forEach((session) => usedSessionIds.add(session.id));
     }
 
     for (const session of filteredSessions) {
-      if (usedSessionIds.has(session.id)) continue;
       const groupId =
         session.category && knownCategoryIds.has(session.category)
           ? session.category
@@ -444,61 +520,43 @@ export function DashboardPage() {
       grouped.set(groupId, groupSessions);
     }
 
-    const categoryGroups = categories
-      .map((category) => {
-        const groupSessions = grouped.get(category.id) ?? [];
-        return {
-          id: category.id,
-          label: category.name,
-          sessions: groupSessions,
-          hasWorking: getHasWorking(groupSessions),
-        };
-      })
-      .filter((group) => group.sessions.length > 0);
+    const categoryGroups: DashboardSessionGroup[] = categories.map((category) => {
+      const groupSessions = grouped.get(category.id) ?? [];
+      return {
+        id: category.id,
+        label: category.name,
+        sessions: groupSessions,
+        hasWorking: getHasWorking(groupSessions),
+        categoryId: category.id,
+        isDropTarget: true,
+        color: category.color,
+      };
+    });
 
     const uncategorized = grouped.get(DASHBOARD_UNCATEGORIZED_GROUP_ID) ?? [];
-    if (uncategorized.length > 0) {
+    if (
+      uncategorized.length > 0 &&
+      (categories.length > 0 || uncategorized.length > recentSessions.length)
+    ) {
       categoryGroups.push({
         id: DASHBOARD_UNCATEGORIZED_GROUP_ID,
-        label: 'Uncategorized',
+        label: 'No category',
         sessions: uncategorized,
         hasWorking: getHasWorking(uncategorized),
+        categoryId: null,
+        isDropTarget: true,
       });
     }
 
     categoryGroups.sort((a, b) => {
+      if (a.id === DASHBOARD_UNCATEGORIZED_GROUP_ID) return 1;
+      if (b.id === DASHBOARD_UNCATEGORIZED_GROUP_ID) return -1;
       if (a.hasWorking !== b.hasWorking) return a.hasWorking ? -1 : 1;
       return 0;
     });
 
     return [...priorityGroups, ...categoryGroups];
   }, [categories, filteredSessions, sessionRunStates]);
-  const workingSessions = useMemo(
-    () => sessions.filter((session) => sessionRunStates.get(session.id)?.isWorking).length,
-    [sessionRunStates, sessions]
-  );
-  const liveIdleSessions = useMemo(
-    () =>
-      sessions.filter((session) => {
-        const runState = sessionRunStates.get(session.id);
-        return runState?.isLive && !runState.isWorking;
-      }).length,
-    [sessionRunStates, sessions]
-  );
-  const starredSessions = useMemo(
-    () => sessions.filter((session) => session.starred).length,
-    [sessions]
-  );
-  const providerCounts = useMemo(() => {
-    return sessions.reduce(
-      (acc, session) => {
-        const provider = session.cliProvider || 'codex';
-        acc[provider] = (acc[provider] || 0) + 1;
-        return acc;
-      },
-      {} as Partial<Record<CLIProvider, number>>
-    );
-  }, [sessions]);
   const activeBackgroundOption =
     BACKGROUND_ANIMATION_OPTIONS.find((option) => option.value === backgroundAnimation) ??
     BACKGROUND_ANIMATION_OPTIONS[0]!;
@@ -560,6 +618,161 @@ export function DashboardPage() {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     },
   });
+
+  const handleToggleStar = async (id: string, currentlyStarred: boolean) => {
+    try {
+      await api.patch(`/api/sessions/${id}/star`, { starred: !currentlyStarred });
+      updateSession(id, { starred: !currentlyStarred });
+      queryClient.setQueryData<Session[]>(
+        ['sessions'],
+        (current) =>
+          current?.map((session) =>
+            session.id === id ? { ...session, starred: !currentlyStarred } : session
+          ) ?? current
+      );
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Failed';
+      toast({ title: 'Failed to update star', description: message, variant: 'destructive' });
+    }
+  };
+
+  const handleAssignCategory = async (sessionId: string, categoryId: string | null) => {
+    const session = sessions.find((item) => item.id === sessionId);
+    const previousCategory = session?.category ?? null;
+    if (previousCategory === categoryId) return;
+
+    updateSession(sessionId, { category: categoryId });
+    queryClient.setQueryData<Session[]>(
+      ['sessions'],
+      (current) =>
+        current?.map((item) =>
+          item.id === sessionId ? { ...item, category: categoryId } : item
+        ) ?? current
+    );
+
+    try {
+      await api.patch(`/api/sessions/${sessionId}/category`, { categoryId });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    } catch (error) {
+      updateSession(sessionId, { category: previousCategory });
+      queryClient.setQueryData<Session[]>(
+        ['sessions'],
+        (current) =>
+          current?.map((item) =>
+            item.id === sessionId ? { ...item, category: previousCategory } : item
+          ) ?? current
+      );
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Failed';
+      toast({ title: 'Failed to update category', description: message, variant: 'destructive' });
+    }
+  };
+
+  const getDraggedDashboardSessionId = (event: DragEvent<HTMLElement>) =>
+    event.dataTransfer.getData(DASHBOARD_SESSION_DRAG_TYPE) ||
+    event.dataTransfer.getData('text/plain') ||
+    draggingDashboardSessionId;
+
+  const handleDashboardSessionDragStart = (event: DragEvent<HTMLElement>, session: Session) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-dashboard-no-drag="true"]')) {
+      event.preventDefault();
+      return;
+    }
+
+    suppressDashboardCardClickRef.current = true;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(DASHBOARD_SESSION_DRAG_TYPE, session.id);
+    event.dataTransfer.setData('text/plain', session.id);
+    setDraggingDashboardSessionId(session.id);
+  };
+
+  const clearDashboardDragState = () => {
+    setDraggingDashboardSessionId(null);
+    setDragOverDashboardGroupId(null);
+    window.setTimeout(() => {
+      suppressDashboardCardClickRef.current = false;
+    }, 0);
+  };
+
+  const handleDashboardGroupDragOver = (
+    event: DragEvent<HTMLElement>,
+    group: DashboardSessionGroup
+  ) => {
+    if (!group.isDropTarget || !draggingDashboardSessionId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (dragOverDashboardGroupId !== group.id) {
+      setDragOverDashboardGroupId(group.id);
+    }
+  };
+
+  const handleDashboardGroupDragLeave = (
+    event: DragEvent<HTMLElement>,
+    group: DashboardSessionGroup
+  ) => {
+    const relatedTarget = event.relatedTarget;
+    if (
+      relatedTarget instanceof Node &&
+      event.currentTarget.contains(relatedTarget) &&
+      dragOverDashboardGroupId === group.id
+    ) {
+      return;
+    }
+    if (dragOverDashboardGroupId === group.id) setDragOverDashboardGroupId(null);
+  };
+
+  const handleDashboardGroupDrop = async (
+    event: DragEvent<HTMLElement>,
+    group: DashboardSessionGroup
+  ) => {
+    if (!group.isDropTarget) return;
+    event.preventDefault();
+    const sessionId = getDraggedDashboardSessionId(event);
+    clearDashboardDragState();
+    if (!sessionId) return;
+    await handleAssignCategory(sessionId, group.categoryId);
+  };
+
+  const handleCreateDashboardCategory = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = dashboardCategoryName.trim();
+    if (!name || dashboardCategorySubmitting) return;
+
+    setDashboardCategorySubmitting(true);
+    try {
+      const category = await createCategory({
+        name,
+        color: dashboardCategoryColor,
+        icon: 'folder',
+      });
+      if (!category) {
+        toast({
+          title: 'Failed to create category',
+          description: 'The category could not be created.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      setDashboardCategoryName('');
+      setDashboardCategoryColor(getNextDashboardCategoryColor([...categories, category]));
+      setCreatingDashboardCategory(false);
+      setCollapsedDashboardGroupIds((current) => ({ ...current, [category.id]: false }));
+      toast({ title: 'Category created' });
+    } finally {
+      setDashboardCategorySubmitting(false);
+    }
+  };
 
   const getIconErrorMessage = (error: unknown, fallback: string) =>
     error instanceof ApiError ? error.message : error instanceof Error ? error.message : fallback;
@@ -683,6 +896,15 @@ export function DashboardPage() {
     if (!sessionNameEditedRef.current) {
       setNewSessionName(deriveSessionName(value, newSessionSurface));
     }
+  };
+
+  const handleTaskWorkflowSelect = (workflow: TaskWorkflow) => {
+    setNewSessionSurface('task');
+    handlePromptChange(workflow.prompt);
+    if (!sessionNameEditedRef.current || !newSessionName.trim()) {
+      setNewSessionName(workflow.shortTitle);
+    }
+    window.setTimeout(() => promptInputRef.current?.focus(), 0);
   };
 
   const handleSurfaceChange = (surface: SessionSurface) => {
@@ -834,24 +1056,6 @@ export function DashboardPage() {
           </div>
 
           <div className="dashboard-hero-actions">
-            <Button onClick={() => openNewSession()} size="sm" className="gap-1.5">
-              <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">Focus prompt</span>
-            </Button>
-            <Button
-              variant={showCategories ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setShowCategories(!showCategories)}
-              className="gap-1.5"
-              title="Categories"
-            >
-              <Tags className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="sm" asChild className="gap-1.5" title="Connections">
-              <Link to="/connect">
-                <ArrowUpRight className="h-4 w-4" />
-              </Link>
-            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-1.5">
@@ -975,15 +1179,36 @@ export function DashboardPage() {
           </div>
 
           {newSessionSurface === 'task' && (
-            <div className="dashboard-template-row dashboard-chatbar-suggestions">
-              {TASK_STARTERS.map((starter) => (
+            <div className="dashboard-task-workflows" aria-label="Task workflows">
+              {TASK_WORKFLOWS.map((workflow) => (
                 <button
-                  key={starter}
+                  key={workflow.id}
                   type="button"
-                  onClick={() => handlePromptChange(starter)}
-                  className="dashboard-template-chip"
+                  onClick={() => handleTaskWorkflowSelect(workflow)}
+                  className="dashboard-task-workflow"
                 >
-                  {starter}
+                  <span className="dashboard-task-workflow-icon">
+                    {workflow.id === 'quick-brief' ? (
+                      <ClipboardList className="h-4 w-4" />
+                    ) : workflow.id === 'research-brief' ? (
+                      <Brain className="h-4 w-4" />
+                    ) : workflow.id === 'draft-message' ? (
+                      <MessageSquare className="h-4 w-4" />
+                    ) : workflow.id === 'plan-project' ? (
+                      <CheckCircle className="h-4 w-4" />
+                    ) : workflow.id === 'creative-direction' ? (
+                      <Sparkles className="h-4 w-4" />
+                    ) : workflow.id === 'decision-support' ? (
+                      <SlidersHorizontal className="h-4 w-4" />
+                    ) : (
+                      <ClipboardList className="h-4 w-4" />
+                    )}
+                  </span>
+                  <span className="dashboard-task-workflow-copy">
+                    <strong>{workflow.shortTitle}</strong>
+                    <small>{workflow.description}</small>
+                    <em>{workflow.meta}</em>
+                  </span>
                 </button>
               ))}
             </div>
@@ -1214,52 +1439,6 @@ export function DashboardPage() {
             </div>
           )}
         </form>
-
-        <div className="dashboard-stat-grid">
-          <div className="dashboard-stat">
-            <MessageSquare className="h-4 w-4" />
-            <span>Total</span>
-            <strong>{sessions.length}</strong>
-          </div>
-          <div className="dashboard-stat">
-            <Activity className="h-4 w-4" />
-            <span>Working</span>
-            <strong>{workingSessions}</strong>
-          </div>
-          <div className="dashboard-stat">
-            <Star className="h-4 w-4" />
-            <span>Starred</span>
-            <strong>{starredSessions}</strong>
-          </div>
-          <div className="dashboard-stat">
-            <Tags className="h-4 w-4" />
-            <span>Live idle</span>
-            <strong>{liveIdleSessions}</strong>
-          </div>
-        </div>
-
-        {cliProviders && cliProviders.length > 0 && (
-          <div className="dashboard-provider-strip">
-            {cliProviders.map((provider) => (
-              <button
-                key={provider.id}
-                type="button"
-                disabled={!provider.available}
-                className={cn(
-                  'dashboard-provider-chip',
-                  selectedCliProvider === provider.id && 'is-selected'
-                )}
-                onClick={() => openNewSession(provider.id)}
-                title={`Start with ${provider.name}`}
-              >
-                <ProviderLogo provider={toUiProvider(provider.id)} className="h-5 w-5" alt="" />
-                <span>{provider.name}</span>
-                {provider.id === 'claude' && <em>Legacy</em>}
-                <strong>{providerCounts[provider.id] || 0}</strong>
-              </button>
-            ))}
-          </div>
-        )}
       </section>
 
       <FolderBrowserDialog
@@ -1273,29 +1452,28 @@ export function DashboardPage() {
         }}
       />
 
-      {/* Sessions with Optional Categories */}
+      {/* Sessions */}
       <div className="dashboard-content-row">
-        {showCategories && (
-          <Card className="dashboard-categories-panel">
-            <SessionCategories
-              selectedCategory={selectedCategory}
-              onCategorySelect={setSelectedCategory}
-              className="h-[350px]"
-            />
-          </Card>
-        )}
-
         <div className="dashboard-session-sections">
           {dashboardSessionGroups.map((group) => {
             const groupCollapsed = collapsedDashboardGroupIds[group.id] ?? false;
+            const groupColor = group.color
+              ? getDashboardCategoryColorValue(group.color)
+              : undefined;
+            const groupDragOver = dragOverDashboardGroupId === group.id;
             return (
               <section
                 key={group.id}
                 className={cn(
                   'dashboard-session-section',
+                  group.isDropTarget && 'is-drop-target',
                   group.hasWorking && 'is-working',
+                  groupDragOver && 'is-drag-over',
                   groupCollapsed && 'is-collapsed'
                 )}
+                onDragOver={(event) => handleDashboardGroupDragOver(event, group)}
+                onDragLeave={(event) => handleDashboardGroupDragLeave(event, group)}
+                onDrop={(event) => handleDashboardGroupDrop(event, group)}
               >
                 <button
                   type="button"
@@ -1308,7 +1486,14 @@ export function DashboardPage() {
                       className="dashboard-session-section-chevron"
                       aria-hidden="true"
                     />
-                    <span className="dashboard-session-section-dot" />
+                    <span
+                      className="dashboard-session-section-dot"
+                      style={
+                        groupColor && !group.hasWorking
+                          ? { backgroundColor: groupColor }
+                          : undefined
+                      }
+                    />
                     <h2>{group.label}</h2>
                   </div>
                   <span className="dashboard-session-section-count">{group.sessions.length}</span>
@@ -1316,6 +1501,9 @@ export function DashboardPage() {
 
                 {!groupCollapsed && (
                   <div className="dashboard-session-grid">
+                    {group.sessions.length === 0 && group.isDropTarget && (
+                      <div className="dashboard-session-empty-drop" aria-hidden="true" />
+                    )}
                     {group.sessions.map((session) => {
                       const runState =
                         sessionRunStates.get(session.id) ?? getSessionRunState(session);
@@ -1324,9 +1512,17 @@ export function DashboardPage() {
                           key={session.id}
                           className={cn(
                             'dashboard-session-card cursor-pointer',
+                            'is-draggable',
+                            draggingDashboardSessionId === session.id && 'is-dragging',
                             `is-${runState.tone}`
                           )}
-                          onClick={() => navigate(`/session/${session.id}`)}
+                          draggable
+                          onDragStart={(event) => handleDashboardSessionDragStart(event, session)}
+                          onDragEnd={clearDashboardDragState}
+                          onClick={() => {
+                            if (suppressDashboardCardClickRef.current) return;
+                            navigate(`/session/${session.id}`);
+                          }}
                         >
                           <CardHeader className="dashboard-session-header">
                             <div className="dashboard-session-heading">
@@ -1344,158 +1540,149 @@ export function DashboardPage() {
                                     </span>
                                   )}
                                 </span>
-                                <CardTitle className="dashboard-session-title">
-                                  {session.name}
-                                </CardTitle>
-                              </div>
-                              <CardDescription className="dashboard-session-path ui-text">
-                                <FolderOpen className="h-2.5 w-2.5 shrink-0" />
-                                <span className="truncate">{session.workingDirectory}</span>
-                              </CardDescription>
-                              <div className="dashboard-session-meta-row">
-                                <div className="dashboard-run-state" title={runState.detail}>
-                                  <span
-                                    className={cn('dashboard-status-dot', `is-${runState.tone}`)}
-                                  />
-                                  <span>{runState.label}</span>
-                                </div>
-                                <span className="dashboard-session-date ui-text">
-                                  {new Date(session.updatedAt).toLocaleDateString()}
-                                </span>
-                              </div>
-                            </div>
-                            <div
-                              className="dashboard-session-card-actions"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {session.starred && (
-                                <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" />
-                              )}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="dashboard-session-menu-button"
+                                <div className="dashboard-session-title-main">
+                                  <CardTitle className="dashboard-session-title">
+                                    {session.name}
+                                  </CardTitle>
+                                  <div
+                                    className="dashboard-session-action-stack"
+                                    data-dashboard-no-drag="true"
+                                    onClick={(e) => e.stopPropagation()}
                                   >
-                                    <MoreHorizontal className="h-3.5 w-3.5" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44">
-                                  <DropdownMenuItem
-                                    onClick={() => setRenamingSession(session)}
-                                    className="cursor-pointer"
-                                  >
-                                    <Pencil className="mr-2 h-3.5 w-3.5" />
-                                    Rename
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSub>
-                                    <DropdownMenuSubTrigger className="cursor-pointer">
-                                      <ImageIcon className="mr-2 h-3.5 w-3.5" />
-                                      Icon
-                                    </DropdownMenuSubTrigger>
-                                    <DropdownMenuSubContent className="w-52">
-                                      <DropdownMenuItem
-                                        onSelect={(event) => {
-                                          event.preventDefault();
-                                          void handleGenerateIcon(session);
-                                        }}
-                                        disabled={!!iconBusySessionId}
-                                        className="cursor-pointer"
-                                      >
-                                        {iconBusySessionId === session.id ? (
-                                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                          <Sparkles className="mr-2 h-3.5 w-3.5" />
+                                    <div className="dashboard-session-card-actions">
+                                      <div className="dashboard-run-state" title={runState.detail}>
+                                        <span
+                                          className={cn(
+                                            'dashboard-status-dot',
+                                            `is-${runState.tone}`
+                                          )}
+                                        />
+                                        <span>{runState.label}</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className={cn(
+                                          'dashboard-session-star-button',
+                                          session.starred && 'is-starred'
                                         )}
-                                        {iconBusySessionId === session.id
-                                          ? 'Generating...'
-                                          : 'Generate'}
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        onSelect={(event) => {
-                                          event.preventDefault();
-                                          startIconUpload(session.id);
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void handleToggleStar(session.id, session.starred);
                                         }}
-                                        disabled={!!iconBusySessionId}
-                                        className="cursor-pointer"
+                                        aria-label={
+                                          session.starred
+                                            ? `Unstar ${session.name}`
+                                            : `Star ${session.name}`
+                                        }
+                                        title={session.starred ? 'Unstar session' : 'Star session'}
                                       >
-                                        <Upload className="mr-2 h-3.5 w-3.5" />
-                                        Upload image
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        onSelect={(event) => {
-                                          event.preventDefault();
-                                          void handleUseProjectIcon(session);
-                                        }}
-                                        disabled={!!iconBusySessionId}
-                                        className="cursor-pointer"
-                                      >
-                                        <FolderInput className="mr-2 h-3.5 w-3.5" />
-                                        Use project icon
-                                      </DropdownMenuItem>
-                                      {session.iconUrl && (
-                                        <>
-                                          <DropdownMenuSeparator />
+                                        <Star className="h-3.5 w-3.5" />
+                                      </button>
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="dashboard-session-menu-button"
+                                            aria-label={`More options for ${session.name}`}
+                                          >
+                                            <MoreHorizontal className="h-3.5 w-3.5" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-44">
                                           <DropdownMenuItem
-                                            onSelect={(event) => {
-                                              event.preventDefault();
-                                              void handleResetIcon(session);
-                                            }}
-                                            disabled={!!iconBusySessionId}
+                                            onClick={() => setRenamingSession(session)}
                                             className="cursor-pointer"
                                           >
-                                            <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                                            Reset icon
+                                            <Pencil className="mr-2 h-3.5 w-3.5" />
+                                            Rename
                                           </DropdownMenuItem>
-                                        </>
-                                      )}
-                                    </DropdownMenuSubContent>
-                                  </DropdownMenuSub>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={() => deleteMutation.mutate(session.id)}
-                                    className="cursor-pointer text-destructive focus:text-destructive"
-                                  >
-                                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                    Delete
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                                          <DropdownMenuSub>
+                                            <DropdownMenuSubTrigger className="cursor-pointer">
+                                              <ImageIcon className="mr-2 h-3.5 w-3.5" />
+                                              Icon
+                                            </DropdownMenuSubTrigger>
+                                            <DropdownMenuSubContent className="w-52">
+                                              <DropdownMenuItem
+                                                onSelect={(event) => {
+                                                  event.preventDefault();
+                                                  void handleGenerateIcon(session);
+                                                }}
+                                                disabled={!!iconBusySessionId}
+                                                className="cursor-pointer"
+                                              >
+                                                {iconBusySessionId === session.id ? (
+                                                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                  <Sparkles className="mr-2 h-3.5 w-3.5" />
+                                                )}
+                                                {iconBusySessionId === session.id
+                                                  ? 'Generating...'
+                                                  : 'Generate'}
+                                              </DropdownMenuItem>
+                                              <DropdownMenuItem
+                                                onSelect={(event) => {
+                                                  event.preventDefault();
+                                                  startIconUpload(session.id);
+                                                }}
+                                                disabled={!!iconBusySessionId}
+                                                className="cursor-pointer"
+                                              >
+                                                <Upload className="mr-2 h-3.5 w-3.5" />
+                                                Upload image
+                                              </DropdownMenuItem>
+                                              <DropdownMenuItem
+                                                onSelect={(event) => {
+                                                  event.preventDefault();
+                                                  void handleUseProjectIcon(session);
+                                                }}
+                                                disabled={!!iconBusySessionId}
+                                                className="cursor-pointer"
+                                              >
+                                                <FolderInput className="mr-2 h-3.5 w-3.5" />
+                                                Use project icon
+                                              </DropdownMenuItem>
+                                              {session.iconUrl && (
+                                                <>
+                                                  <DropdownMenuSeparator />
+                                                  <DropdownMenuItem
+                                                    onSelect={(event) => {
+                                                      event.preventDefault();
+                                                      void handleResetIcon(session);
+                                                    }}
+                                                    disabled={!!iconBusySessionId}
+                                                    className="cursor-pointer"
+                                                  >
+                                                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                                                    Reset icon
+                                                  </DropdownMenuItem>
+                                                </>
+                                              )}
+                                            </DropdownMenuSubContent>
+                                          </DropdownMenuSub>
+                                          <DropdownMenuSeparator />
+                                          <DropdownMenuItem
+                                            onClick={() => deleteMutation.mutate(session.id)}
+                                            className="cursor-pointer text-destructive focus:text-destructive"
+                                          >
+                                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                            Delete
+                                          </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    </div>
+                                    <span className="dashboard-session-date ui-text">
+                                      {formatDashboardLastActivity(session)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           </CardHeader>
                           <CardContent className="dashboard-session-body">
-                            {session.lastMessage && (
-                              <p className="dashboard-last-message ui-text">
-                                {session.lastMessage}
-                              </p>
-                            )}
-                            {runState.isWorking && (
-                              <p className="dashboard-run-detail ui-text" title={runState.detail}>
-                                {runState.detail}
-                              </p>
-                            )}
-                            <div className="dashboard-session-footer">
-                              <div
-                                className="dashboard-session-category"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <CategorySelector
-                                  sessionId={session.id}
-                                  currentCategory={session.category || null}
-                                  onCategoryChange={(categoryId) => {
-                                    updateSession(session.id, { category: categoryId });
-                                    queryClient.invalidateQueries({ queryKey: ['sessions'] });
-                                  }}
-                                />
-                              </div>
-                              <span
-                                className="dashboard-session-open-affordance"
-                                aria-hidden="true"
-                              >
-                                <ArrowUpRight className="h-3.5 w-3.5" />
-                              </span>
-                            </div>
+                            <p className="dashboard-session-description ui-text">
+                              {getDashboardProjectDescription(session)}
+                            </p>
                           </CardContent>
                         </Card>
                       );
@@ -1505,6 +1692,75 @@ export function DashboardPage() {
               </section>
             );
           })}
+
+          <div className="dashboard-category-create-slot">
+            {creatingDashboardCategory ? (
+              <form
+                className="dashboard-category-create-form"
+                onSubmit={handleCreateDashboardCategory}
+              >
+                <Input
+                  value={dashboardCategoryName}
+                  onChange={(event) => setDashboardCategoryName(event.target.value)}
+                  placeholder="Category name"
+                  className="dashboard-category-create-input"
+                  autoFocus
+                />
+                <div className="dashboard-category-color-row" aria-label="Category color">
+                  {DASHBOARD_CATEGORY_COLOR_OPTIONS.map((color) => (
+                    <button
+                      key={color.name}
+                      type="button"
+                      className={cn(
+                        'dashboard-category-color-swatch',
+                        dashboardCategoryColor === color.name && 'is-selected'
+                      )}
+                      style={{ backgroundColor: color.value }}
+                      onClick={() => setDashboardCategoryColor(color.name)}
+                      aria-label={`${color.name} category color`}
+                    />
+                  ))}
+                </div>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!dashboardCategoryName.trim() || dashboardCategorySubmitting}
+                >
+                  {dashboardCategorySubmitting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5" />
+                  )}
+                  Create
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setCreatingDashboardCategory(false);
+                    setDashboardCategoryName('');
+                    setDashboardCategoryColor(getNextDashboardCategoryColor(categories));
+                  }}
+                >
+                  Cancel
+                </Button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="dashboard-category-add-bubble"
+                onClick={() => {
+                  setDashboardCategoryColor(getNextDashboardCategoryColor(categories));
+                  setCreatingDashboardCategory(true);
+                }}
+                aria-label="Create category"
+              >
+                <Plus className="h-4 w-4" />
+                <span>New category</span>
+              </button>
+            )}
+          </div>
 
           {filteredSessions.length === 0 && !showNewSession && (
             <Card className="dashboard-empty-card">

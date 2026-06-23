@@ -11,6 +11,8 @@ import type {
   SubagentRunStatus,
   TodoItem,
   ToolActionSummary,
+  DiscordAlertEventType,
+  DiscordAlertSeverity,
 } from '@plum-code-webui/shared';
 import { estimateModelCost } from '@plum-code-webui/shared';
 import { getDatabase } from '../../db';
@@ -48,6 +50,7 @@ import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerL
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { getFallbackToolActionSummary } from '../tool-action-summarizer.js';
+import { discordIntegrationService, discordNotifier } from '../discord/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2073,6 +2076,7 @@ interface ClaudeProcess {
   sharedContextInjected: boolean;
   modePromptInjected: SessionMode | null;
   androidDeviceSerialInjected?: string | null;
+  discordGatewayContextInjected?: string | null;
   lastContextLimitAt?: number;
   codexIdle?: boolean; // True when codex process exited after turn.completed, awaiting respawn
   // Codex CLI 0.130+ persists sessions at ~/.codex/sessions/<uuid>.jsonl. Once captured
@@ -2634,6 +2638,78 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   ): void {
     this.bufferMessage(sessionId, 'status', data);
     this.io.to(`session:${sessionId}`).emit('session:status', data);
+  }
+
+  private notifyDiscordSessionEvent(
+    sessionId: string,
+    input: {
+      eventType: DiscordAlertEventType;
+      severity: DiscordAlertSeverity;
+      title: string;
+      summary: string;
+      fields?: Array<{ name: string; value: unknown; inline?: boolean }>;
+    }
+  ): void {
+    const proc = this.processes.get(sessionId);
+    if (!proc?.userId) return;
+    try {
+      const session = getDatabase()
+        .prepare('SELECT name FROM sessions WHERE id = ? AND user_id = ?')
+        .get(sessionId, proc.userId) as { name: string } | undefined;
+      discordNotifier.queueAlert({
+        eventType: input.eventType,
+        severity: input.severity,
+        title: input.title,
+        summary: input.summary,
+        userId: proc.userId,
+        sessionId,
+        fields: [
+          { name: 'Session', value: session?.name || sessionId, inline: true },
+          { name: 'Provider', value: proc.cliProvider, inline: true },
+          ...(input.fields || []),
+        ],
+      });
+    } catch (err) {
+      console.warn('[DISCORD] Failed to queue session notification:', err);
+    }
+  }
+
+  private buildDiscordGatewayContext(
+    sessionId: string,
+    proc: ClaudeProcess
+  ): string | null {
+    const settings = discordIntegrationService.getSettings();
+    if (!settings.enabled || !settings.configured) return null;
+
+    const modeLabel =
+      settings.gatewayMode === 'autonomous'
+        ? 'autonomous supervisor gateway'
+        : settings.gatewayMode === 'supervisor'
+          ? 'supervisor gateway'
+          : 'alerts-only gateway';
+    const maintenanceLabel =
+      settings.maintenancePolicy === 'autonomous_allowed'
+        ? 'autonomous maintenance is allowed when the task and active session/container policy permit it'
+        : settings.maintenancePolicy === 'approval_required'
+          ? 'maintenance actions require explicit user approval before destructive or state-changing work'
+          : `maintenance follows the active Plum session permission mode (${proc.mode}) and any container/watchdog policy`;
+    const inboundLabel = settings.inboundJobsEnabled
+      ? 'Discord-originated jobs may be accepted through the automation gateway when authorized.'
+      : 'Discord-originated jobs are not accepted automatically yet; treat Discord as supervision/coordination only.';
+    const channelLabel = settings.channelLabel || settings.channelId || 'configured Discord channel';
+
+    return `<system-reminder>
+Discord Main Gateway:
+- Plum Discord is enabled as the ${modeLabel} for this session.
+- Channel: ${channelLabel}
+- Provider: ${proc.cliProvider}
+- Session: ${sessionId}
+- Use Discord as the main escalation/completion path for important blockers, permission needs, watchdog incidents, and goal/milestone completion. Plum mirrors supported events there automatically.
+- When a goal, /goal, or user-requested milestone is complete, make the final answer explicit: start with "Goal complete:" and include the concrete result, verification, and any remaining risk. Other Discord bots use that summary to coordinate follow-up testing.
+- ${maintenanceLabel}.
+- ${inboundLabel}
+- Never send secrets, raw tokens, cookies, private keys, or full credentials to Discord. Summarize sensitive values as redacted.
+</system-reminder>`;
   }
 
   // Wrapper to emit and buffer tool_use events
@@ -3481,6 +3557,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
 
     proc.on('error', (err) => {
       console.error(`Claude process error [${sessionId}]:`, err);
+      this.notifyDiscordSessionEvent(sessionId, {
+        eventType: 'session.error',
+        severity: 'error',
+        title: 'Session process error',
+        summary: err.message,
+      });
 
       this.cleanupProcess(sessionId);
     });
@@ -4807,6 +4889,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           description: `OpenCode requests ${permission}${patterns[0] ? `: ${patterns[0]}` : ''}`,
           suggestedPattern: patterns[0] || `${permission}:*`,
         });
+        this.notifyDiscordSessionEvent(sessionId, {
+          eventType: 'session.permission_requested',
+          severity: 'warning',
+          title: 'Session needs permission',
+          summary: `OpenCode requests ${permission}${patterns[0] ? `: ${patterns[0]}` : ''}`,
+          fields: [{ name: 'Request', value: requestId, inline: true }],
+        });
         this.io
           .to(`session:${sessionId}`)
           .emit('session:thinking', { sessionId, isThinking: false });
@@ -4843,6 +4932,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           toolInput: { action, resources, metadata, source: props.source ?? null },
           description: `OpenCode requests ${action}${resources[0] ? `: ${resources[0]}` : ''}`,
           suggestedPattern: resources[0] || `${action}:*`,
+        });
+        this.notifyDiscordSessionEvent(sessionId, {
+          eventType: 'session.permission_requested',
+          severity: 'warning',
+          title: 'Session needs permission',
+          summary: `OpenCode requests ${action}${resources[0] ? `: ${resources[0]}` : ''}`,
+          fields: [{ name: 'Request', value: requestId, inline: true }],
         });
         this.io
           .to(`session:${sessionId}`)
@@ -4891,6 +4987,13 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         };
         this.bufferMessage(sessionId, 'question', questionEvent);
         this.io.to(`session:${sessionId}`).emit('session:question_request', questionEvent);
+        this.notifyDiscordSessionEvent(sessionId, {
+          eventType: 'session.needs_input',
+          severity: 'warning',
+          title: 'Session needs input',
+          summary: questions.map((question) => question.question).join('\n'),
+          fields: [{ name: 'Request', value: requestId, inline: true }],
+        });
         this.io
           .to(`session:${sessionId}`)
           .emit('session:thinking', { sessionId, isThinking: false });
@@ -4983,6 +5086,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
           sessionId,
           content: `${message}\n`,
           isComplete: true,
+        });
+        this.notifyDiscordSessionEvent(sessionId, {
+          eventType: 'session.error',
+          severity: 'error',
+          title: 'OpenCode session error',
+          summary: message,
         });
         this.io
           .to(`session:${sessionId}`)
@@ -5319,6 +5428,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     });
     newChildProc.on('error', (err) => {
       console.error(`Claude process error [${sessionId}]:`, err);
+      this.notifyDiscordSessionEvent(sessionId, {
+        eventType: 'session.error',
+        severity: 'error',
+        title: 'Codex process error',
+        summary: err.message,
+      });
 
       this.cleanupProcess(sessionId);
     });
@@ -5552,6 +5667,12 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     });
     newChildProc.on('error', (err) => {
       console.error(`Vibe process error [${sessionId}]:`, err);
+      this.notifyDiscordSessionEvent(sessionId, {
+        eventType: 'session.error',
+        severity: 'error',
+        title: 'Vibe process error',
+        summary: err.message,
+      });
       this.cleanupProcess(sessionId);
     });
 
@@ -6183,6 +6304,21 @@ The planning phase is complete. You are now in Auto-Accept mode.
           denials: msg.permission_denials,
           originalMessage: proc.lastUserMessage || '',
         });
+        this.notifyDiscordSessionEvent(sessionId, {
+          eventType: 'session.permission_requested',
+          severity: 'warning',
+          title: 'Session needs permission',
+          summary: `Permission required for tools: ${msg.permission_denials
+            .map((d) => d.tool_name)
+            .join(', ')}`,
+          fields: [
+            {
+              name: 'Tools',
+              value: msg.permission_denials.map((d) => d.tool_name).join(', '),
+              inline: false,
+            },
+          ],
+        });
 
         // Stop thinking indicator - user needs to approve
         this.io.to(`session:${sessionId}`).emit('session:thinking', {
@@ -6661,6 +6797,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
         sessionId,
         error: `Failed to start steered Codex message: ${message}`,
       });
+      this.notifyDiscordSessionEvent(sessionId, {
+        eventType: 'session.error',
+        severity: 'error',
+        title: 'Codex queued turn failed',
+        summary: `Failed to start steered Codex message: ${message}`,
+      });
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: false,
@@ -6813,6 +6955,12 @@ The planning phase is complete. You are now in Auto-Accept mode.
         sessionId,
         error: `Failed to start queued OpenCode message: ${message}`,
       });
+      this.notifyDiscordSessionEvent(sessionId, {
+        eventType: 'session.error',
+        severity: 'error',
+        title: 'OpenCode queued turn failed',
+        summary: `Failed to start queued OpenCode message: ${message}`,
+      });
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: false,
@@ -6914,6 +7062,17 @@ ${proc.contextReminder.summary}
       messageForClaude = contextReminder + messageForClaude;
       proc.contextReminder = null;
       console.log(`Added context reminder after ${label.toLowerCase()} [${sessionId}]`);
+    }
+
+    if (!codexReviewCommand && !providerNativeSlashCommand) {
+      const discordGatewayContext = this.buildDiscordGatewayContext(sessionId, proc);
+      if (
+        discordGatewayContext &&
+        proc.discordGatewayContextInjected !== discordGatewayContext
+      ) {
+        messageForClaude = `${discordGatewayContext}\n\n${messageForClaude}`;
+        proc.discordGatewayContextInjected = discordGatewayContext;
+      }
     }
 
     if (
@@ -7794,6 +7953,12 @@ ${proc.contextReminder.summary}
 
     newProc.on('error', (err) => {
       console.error(`Claude process error [${sessionId}]:`, err);
+      this.notifyDiscordSessionEvent(sessionId, {
+        eventType: 'session.error',
+        severity: 'error',
+        title: 'Session process error',
+        summary: err.message,
+      });
 
       this.cleanupProcess(sessionId);
     });

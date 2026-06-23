@@ -13,4 +13,6 @@ export type * from './types/websocket.js';
 export type * from './types/github.js';
 export * from './types/commands.js';
 export type * from './types/tasks.js';
+export type * from './types/operations.js';
+export type * from './types/discord.js';
 export * from './utils/contextWindow.js';
