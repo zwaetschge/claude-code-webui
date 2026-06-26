@@ -47,6 +47,7 @@ import {
 import { getMistralApiKeyForUser } from '../../routes/settings.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
 import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerLinks.js';
+import { buildSuperpowersBootstrapContext, syncSuperpowers } from '../../utils/superpowersSync.js';
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { getFallbackToolActionSummary } from '../tool-action-summarizer.js';
@@ -2074,6 +2075,7 @@ interface ClaudeProcess {
   lastAttachments: FileAttachmentData[] | null;
   pendingPermissionDenials: PermissionDenial[] | null;
   sharedContextInjected: boolean;
+  superpowersContextInjected: boolean;
   modePromptInjected: SessionMode | null;
   androidDeviceSerialInjected?: string | null;
   discordGatewayContextInjected?: string | null;
@@ -2674,10 +2676,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     }
   }
 
-  private buildDiscordGatewayContext(
-    sessionId: string,
-    proc: ClaudeProcess
-  ): string | null {
+  private buildDiscordGatewayContext(sessionId: string, proc: ClaudeProcess): string | null {
     const settings = discordIntegrationService.getSettings();
     if (!settings.enabled || !settings.configured) return null;
 
@@ -2696,7 +2695,8 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     const inboundLabel = settings.inboundJobsEnabled
       ? 'Discord-originated jobs may be accepted through the automation gateway when authorized.'
       : 'Discord-originated jobs are not accepted automatically yet; treat Discord as supervision/coordination only.';
-    const channelLabel = settings.channelLabel || settings.channelId || 'configured Discord channel';
+    const channelLabel =
+      settings.channelLabel || settings.channelId || 'configured Discord channel';
 
     return `<system-reminder>
 Discord Main Gateway:
@@ -3072,6 +3072,13 @@ Discord Main Gateway:
     const isResuming = !!session.claude_session_id;
     let args: string[] = [];
 
+    // Make managed Superpowers skills available before the shared provider registry is written.
+    try {
+      await syncSuperpowers(configHome, { quiet: true });
+    } catch (err) {
+      console.warn('[superpowers] session sync skipped:', err);
+    }
+
     // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project context
     await ensureGlobalInstructions(configHome);
     await ensureProjectInstructions(session.working_directory, configHome, cliProvider);
@@ -3152,6 +3159,7 @@ Discord Main Gateway:
         lastAttachments: null,
         pendingPermissionDenials: null,
         sharedContextInjected: false,
+        superpowersContextInjected: false,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         serverBacked: true,
@@ -3246,6 +3254,7 @@ Discord Main Gateway:
         lastAttachments: null,
         pendingPermissionDenials: null,
         sharedContextInjected: false,
+        superpowersContextInjected: false,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         vibeIdle: true,
@@ -3326,6 +3335,7 @@ Discord Main Gateway:
         lastAttachments: null,
         pendingPermissionDenials: null,
         sharedContextInjected: false,
+        superpowersContextInjected: false,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         codexIdle: true,
@@ -3508,6 +3518,7 @@ Discord Main Gateway:
       lastAttachments: null,
       pendingPermissionDenials: null,
       sharedContextInjected: false,
+      superpowersContextInjected: false,
       modePromptInjected: null,
       lastContextLimitAt: undefined,
     };
@@ -7066,13 +7077,21 @@ ${proc.contextReminder.summary}
 
     if (!codexReviewCommand && !providerNativeSlashCommand) {
       const discordGatewayContext = this.buildDiscordGatewayContext(sessionId, proc);
-      if (
-        discordGatewayContext &&
-        proc.discordGatewayContextInjected !== discordGatewayContext
-      ) {
+      if (discordGatewayContext && proc.discordGatewayContextInjected !== discordGatewayContext) {
         messageForClaude = `${discordGatewayContext}\n\n${messageForClaude}`;
         proc.discordGatewayContextInjected = discordGatewayContext;
       }
+    }
+
+    if (!codexReviewCommand && !providerNativeSlashCommand && !proc.superpowersContextInjected) {
+      const superpowersContext = await buildSuperpowersBootstrapContext(
+        proc.cliProvider,
+        resolveConfigHome(proc.cliProvider)
+      );
+      if (superpowersContext) {
+        messageForClaude = `${superpowersContext}\n\n${messageForClaude}`;
+      }
+      proc.superpowersContextInjected = true;
     }
 
     if (
@@ -7931,6 +7950,7 @@ ${proc.contextReminder.summary}
       lastAttachments: null,
       pendingPermissionDenials: null,
       sharedContextInjected: false,
+      superpowersContextInjected: false,
       modePromptInjected: null,
       lastContextLimitAt: proc.lastContextLimitAt,
     };

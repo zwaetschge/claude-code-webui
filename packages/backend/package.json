@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test:providers": "pnpm --filter @plum-code-webui/shared run build && tsx scripts/provider-regression-tests.ts",
+    "test:superpowers": "tsx scripts/superpowers-regression-tests.ts",
     "clean": "rm -rf dist",
     "db:migrate": "tsx src/db/migrate.ts"
   },

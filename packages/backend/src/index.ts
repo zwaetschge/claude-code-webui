@@ -25,6 +25,7 @@ import {
 import { ensureCliPath } from './utils/cliPaths';
 import { ensureDefaultClaudeMcpServers } from './utils/mcpDefaults';
 import { syncProviderLinks } from './utils/providerLinks';
+import { syncSuperpowers } from './utils/superpowersSync';
 import type { CLIProvider } from '@plum-code-webui/shared';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from './services/cli-updates.js';
 
@@ -174,6 +175,11 @@ async function main() {
     }
   } catch (err) {
     console.warn('[mcp-defaults] sync skipped:', err);
+  }
+  try {
+    await syncSuperpowers();
+  } catch (err) {
+    console.warn('[superpowers] sync skipped:', err);
   }
   syncProviderLinks();
 

@@ -196,6 +196,20 @@ badge, and forwards `additional_rate_limits` as an `additional` array.
 - `.skill.zip` files are unpacked into `~/.claude/skills`
 - The managed block in `AGENTS.md` and `CLAUDE.md` is appended/updated on each session — custom text outside the managed block is preserved
 
+### Superpowers (`obra/Superpowers`)
+
+- The backend syncs the upstream Superpowers package from `https://github.com/obra/Superpowers` at startup/session start, installs skills into `~/.claude/skills`, and writes native provider registration artifacts where supported.
+- Defaults: `SUPERPOWERS_ENABLED=true`, `SUPERPOWERS_REPO_URL=https://github.com/obra/Superpowers.git`, `SUPERPOWERS_REF=main`; set `SUPERPOWERS_ENABLED=0`/`false` to opt out or pin a fork/tag/ref with the other vars. Refresh/timeout defaults are `SUPERPOWERS_SYNC_INTERVAL_MS=21600000` and `SUPERPOWERS_GIT_TIMEOUT_MS=45000`.
+- Existing user skills are not overwritten unless they contain the WebUI Superpowers marker file `.plum-superpowers.json`.
+- Provider exposure:
+  - Codex: managed local plugin cache/config entry `[plugins."superpowers@plum-managed"]` plus Docker symlink fallback `~/.agents/skills -> ~/.claude/skills`
+  - Claude: native `~/.claude/skills`
+  - OpenCode: managed local `plugin` entry pointing at the synced Superpowers checkout plus `skills.paths` fallback in `opencode.json`
+  - Vibe: `skill_paths` in `config.toml`
+- `buildSuperpowersBootstrapContext()` injects the upstream `using-superpowers` skill once per WebUI session with provider-specific tool mapping. Do not duplicate this in project `CLAUDE.md`/`AGENTS.md`.
+- Regression: `pnpm --filter @plum-code-webui/backend run test:superpowers` checks sync, skip/disabled handling, Codex/OpenCode native registration, and provider bootstrap mappings.
+- CLI sessions export `SUPERPOWERS_DISABLE_TELEMETRY=1` by default, unless explicitly overridden.
+
 ### Design system skills (`design-*`)
 
 67 design system skill packs are pre-installed from [bergside/awesome-design-skills](https://github.com/bergside/awesome-design-skills) (the [designmd.sh](https://designmd.sh/) collection). Each provides typography, color tokens, spacing rules, and component conventions for one specific aesthetic — drop the skill name into a prompt and the agent generates UI in that style.
