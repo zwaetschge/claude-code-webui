@@ -98,6 +98,14 @@ function parseJsonLines<T>(stdout: string): T[] {
     .map((line) => JSON.parse(line) as T);
 }
 
+function parseTsvLines(stdout: string): string[][] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => line.split('\t'));
+}
+
 function parseSizeToBytes(value: string | undefined): number | null {
   if (!value) return null;
   const match = value.trim().match(/^([\d.]+)\s*([kmgt]?i?b|b)?$/i);
@@ -157,21 +165,25 @@ function findAppdataCandidates(mounts: DockerMountSummary[]): string[] {
 }
 
 function normalizeInspectContainer(raw: Record<string, unknown>): DockerContainerDetail {
-  const state = (raw.State && typeof raw.State === 'object'
-    ? (raw.State as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
-  const config = (raw.Config && typeof raw.Config === 'object'
-    ? (raw.Config as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
-  const hostConfig = (raw.HostConfig && typeof raw.HostConfig === 'object'
-    ? (raw.HostConfig as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
-  const restartPolicy = hostConfig.RestartPolicy && typeof hostConfig.RestartPolicy === 'object'
-    ? (hostConfig.RestartPolicy as Record<string, unknown>)
-    : {};
-  const networkSettings = raw.NetworkSettings && typeof raw.NetworkSettings === 'object'
-    ? (raw.NetworkSettings as Record<string, unknown>)
-    : {};
+  const state = (
+    raw.State && typeof raw.State === 'object' ? (raw.State as Record<string, unknown>) : {}
+  ) as Record<string, unknown>;
+  const config = (
+    raw.Config && typeof raw.Config === 'object' ? (raw.Config as Record<string, unknown>) : {}
+  ) as Record<string, unknown>;
+  const hostConfig = (
+    raw.HostConfig && typeof raw.HostConfig === 'object'
+      ? (raw.HostConfig as Record<string, unknown>)
+      : {}
+  ) as Record<string, unknown>;
+  const restartPolicy =
+    hostConfig.RestartPolicy && typeof hostConfig.RestartPolicy === 'object'
+      ? (hostConfig.RestartPolicy as Record<string, unknown>)
+      : {};
+  const networkSettings =
+    raw.NetworkSettings && typeof raw.NetworkSettings === 'object'
+      ? (raw.NetworkSettings as Record<string, unknown>)
+      : {};
   const networksObj =
     networkSettings.Networks && typeof networkSettings.Networks === 'object'
       ? (networkSettings.Networks as Record<string, unknown>)
@@ -188,9 +200,10 @@ function normalizeInspectContainer(raw: Record<string, unknown>): DockerContaine
   const id = String(raw.Id || '');
   const name = String(raw.Name || '').replace(/^\//, '') || id.slice(0, 12);
   const status = String(state.Status || 'unknown');
-  const healthObj = state.Health && typeof state.Health === 'object'
-    ? (state.Health as Record<string, unknown>)
-    : {};
+  const healthObj =
+    state.Health && typeof state.Health === 'object'
+      ? (state.Health as Record<string, unknown>)
+      : {};
 
   return {
     id,
@@ -280,28 +293,53 @@ export class DockerHostService {
       '--all',
       '--no-trunc',
       '--format',
-      '{{json .}}',
+      [
+        '{{.ID}}',
+        '{{.Names}}',
+        '{{.Image}}',
+        '{{.Command}}',
+        '{{.State}}',
+        '{{.Status}}',
+        '{{.CreatedAt}}',
+        '{{.RunningFor}}',
+        '{{.Ports}}',
+        '{{.Networks}}',
+        '{{.Mounts}}',
+        '{{.Labels}}',
+      ].join('\t'),
     ]);
-    return parseJsonLines<Record<string, unknown>>(stdout)
+    return parseTsvLines(stdout)
       .map((row) => {
-        const labels = parseLabels(row.Labels);
-        const id = String(row.ID || '');
-        const status = String(row.Status || '');
+        const [
+          id = '',
+          name = '',
+          image = '',
+          command = '',
+          state = '',
+          status = '',
+          createdAt = '',
+          runningFor = '',
+          ports = '',
+          networks = '',
+          mounts = '',
+          labelsRaw = '',
+        ] = row;
+        const labels = parseLabels(labelsRaw);
         return {
           id,
           shortId: id.slice(0, 12),
-          name: String(row.Names || id.slice(0, 12)),
-          image: String(row.Image || ''),
+          name: name || id.slice(0, 12),
+          image,
           imageId: null,
-          command: safeString(row.Command),
-          state: String(row.State || 'unknown'),
+          command: safeString(command),
+          state: state || 'unknown',
           status,
           health: normalizeHealth(status),
-          createdAt: safeString(row.CreatedAt),
-          runningFor: safeString(row.RunningFor),
-          ports: parsePorts(row.Ports),
-          networks: parseNetworks(row.Networks),
-          mounts: parseMountList(row.Mounts),
+          createdAt: safeString(createdAt),
+          runningFor: safeString(runningFor),
+          ports: parsePorts(ports),
+          networks: parseNetworks(networks),
+          mounts: parseMountList(mounts),
           composeProject: labels['com.docker.compose.project'] || null,
           composeService: labels['com.docker.compose.service'] || null,
         };
