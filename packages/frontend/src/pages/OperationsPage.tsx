@@ -19,9 +19,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { api } from '@/services/api';
+import { ApiError, api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import {
+  getContainerInventoryViewState,
+  type ContainerInventoryViewState,
+} from '@/lib/operationsViewState';
 import type {
   ApiResponse,
   ContainerHealthSnapshot,
@@ -64,6 +68,59 @@ function StatusPill({
   );
 }
 
+function getApiErrorStatus(error: unknown): number | undefined {
+  if (error instanceof ApiError) return error.status;
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === 'number' ? status : undefined;
+  }
+  return undefined;
+}
+
+function getErrorMessage(error: unknown): string | undefined {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return undefined;
+}
+
+function ContainerInventoryNotice({
+  state,
+  onRetry,
+}: {
+  state: Exclude<ContainerInventoryViewState, { kind: 'ready' | 'loading' }>;
+  onRetry: () => void;
+}) {
+  const isProblem =
+    state.kind === 'admin-required' ||
+    state.kind === 'docker-offline' ||
+    state.kind === 'inventory-error';
+
+  return (
+    <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
+      <div
+        className={cn(
+          'flex h-10 w-10 items-center justify-center rounded-md border',
+          isProblem
+            ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+            : 'border-border bg-muted/40 text-muted-foreground'
+        )}
+      >
+        {isProblem ? <AlertTriangle className="h-5 w-5" /> : <Search className="h-5 w-5" />}
+      </div>
+      <div>
+        <div className="font-medium text-foreground">{state.title}</div>
+        <div className="mt-1 max-w-md">{state.description}</div>
+      </div>
+      {isProblem && (
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Retry
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function OperationsPage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
@@ -88,6 +145,7 @@ export function OperationsPage() {
         await api.get<ApiResponse<DockerContainerSummary[]>>('/api/docker/containers');
       return response.data.data || [];
     },
+    enabled: dockerStatus.data?.available === true,
     refetchInterval: 10_000,
   });
 
@@ -223,6 +281,22 @@ export function OperationsPage() {
 
   const status = dockerStatus.data;
   const detail = containerDetail.data;
+  const inventoryState = getContainerInventoryViewState({
+    dockerStatusLoading: dockerStatus.isLoading,
+    dockerStatusErrorStatus: getApiErrorStatus(dockerStatus.error),
+    dockerStatusErrorMessage: status?.error || getErrorMessage(dockerStatus.error),
+    dockerAvailable: status?.available,
+    containersLoading: containers.isLoading,
+    containersErrorStatus: getApiErrorStatus(containers.error),
+    containersErrorMessage: getErrorMessage(containers.error),
+    totalCount: containers.data?.length || 0,
+    filteredCount: filteredContainers.length,
+    query,
+  });
+  const retryContainerInventory = () => {
+    dockerStatus.refetch();
+    containers.refetch();
+  };
 
   return (
     <div className="operations-shell glass-page operations-dashboard container mx-auto flex max-w-7xl flex-col gap-5 px-4 py-6 md:px-6">
@@ -411,9 +485,7 @@ export function OperationsPage() {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <CardTitle className="text-base">Containers</CardTitle>
-                <CardDescription>
-                  {filteredContainers.length} of {containers.data?.length || 0} containers shown.
-                </CardDescription>
+                <CardDescription>{inventoryState.description}</CardDescription>
               </div>
               <div className="relative w-full md:w-80">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -428,15 +500,16 @@ export function OperationsPage() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border/60">
-              {containers.isLoading ? (
+              {inventoryState.kind === 'loading' ? (
                 <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Loading containers
+                  {inventoryState.description}
                 </div>
-              ) : filteredContainers.length === 0 ? (
-                <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-                  No containers found.
-                </div>
+              ) : inventoryState.kind !== 'ready' ? (
+                <ContainerInventoryNotice
+                  state={inventoryState}
+                  onRetry={retryContainerInventory}
+                />
               ) : (
                 filteredContainers.map((item) => {
                   const tone = toneForHealth(item.health, item.state);

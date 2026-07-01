@@ -19,6 +19,44 @@ const DOCKER_TIMEOUT_MS = Number(process.env.DOCKER_INTEGRATION_TIMEOUT_MS || 12
 const DOCKER_MAX_BUFFER = 4 * 1024 * 1024;
 const LOG_MAX_BUFFER = 512 * 1024;
 const SECRET_KEY_RE = /(token|secret|password|passwd|api[_-]?key|authorization|cookie|session)/i;
+const DOCKER_PS_FORMAT = [
+  '{{.ID}}',
+  '{{.Names}}',
+  '{{.Image}}',
+  '{{.Status}}',
+  '{{.State}}',
+  '{{.RunningFor}}',
+  '{{.CreatedAt}}',
+  '{{.Ports}}',
+  '{{.Networks}}',
+  '{{.Mounts}}',
+  '{{.Labels}}',
+  '{{.Command}}',
+].join('\t');
+
+export type DockerCommandRunner = (
+  args: string[],
+  opts?: { maxBuffer?: number; timeout?: number }
+) => Promise<{ stdout: string; stderr: string }>;
+
+interface DockerHostServiceOptions {
+  runner?: DockerCommandRunner;
+}
+
+interface DockerPsTemplateRow {
+  ID: string;
+  Names: string;
+  Image: string;
+  Status: string;
+  State: string;
+  RunningFor: string;
+  CreatedAt: string;
+  Ports: string;
+  Networks: string;
+  Mounts: string;
+  Labels: string;
+  Command: string;
+}
 
 function integrationEnabled(): boolean {
   const raw = (process.env.DOCKER_INTEGRATION_ENABLED || 'auto').trim().toLowerCase();
@@ -98,6 +136,43 @@ function parseJsonLines<T>(stdout: string): T[] {
     .map((line) => JSON.parse(line) as T);
 }
 
+function parseDockerPsTemplateLines(stdout: string): DockerPsTemplateRow[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [
+        ID = '',
+        Names = '',
+        Image = '',
+        Status = '',
+        State = '',
+        RunningFor = '',
+        CreatedAt = '',
+        Ports = '',
+        Networks = '',
+        Mounts = '',
+        Labels = '',
+        ...commandParts
+      ] = line.split('\t');
+      return {
+        ID,
+        Names,
+        Image,
+        Status,
+        State,
+        RunningFor,
+        CreatedAt,
+        Ports,
+        Networks,
+        Mounts,
+        Labels,
+        Command: commandParts.join('\t'),
+      };
+    });
+}
+
 function parseSizeToBytes(value: string | undefined): number | null {
   if (!value) return null;
   const match = value.trim().match(/^([\d.]+)\s*([kmgt]?i?b|b)?$/i);
@@ -157,21 +232,25 @@ function findAppdataCandidates(mounts: DockerMountSummary[]): string[] {
 }
 
 function normalizeInspectContainer(raw: Record<string, unknown>): DockerContainerDetail {
-  const state = (raw.State && typeof raw.State === 'object'
-    ? (raw.State as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
-  const config = (raw.Config && typeof raw.Config === 'object'
-    ? (raw.Config as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
-  const hostConfig = (raw.HostConfig && typeof raw.HostConfig === 'object'
-    ? (raw.HostConfig as Record<string, unknown>)
-    : {}) as Record<string, unknown>;
-  const restartPolicy = hostConfig.RestartPolicy && typeof hostConfig.RestartPolicy === 'object'
-    ? (hostConfig.RestartPolicy as Record<string, unknown>)
-    : {};
-  const networkSettings = raw.NetworkSettings && typeof raw.NetworkSettings === 'object'
-    ? (raw.NetworkSettings as Record<string, unknown>)
-    : {};
+  const state = (
+    raw.State && typeof raw.State === 'object' ? (raw.State as Record<string, unknown>) : {}
+  ) as Record<string, unknown>;
+  const config = (
+    raw.Config && typeof raw.Config === 'object' ? (raw.Config as Record<string, unknown>) : {}
+  ) as Record<string, unknown>;
+  const hostConfig = (
+    raw.HostConfig && typeof raw.HostConfig === 'object'
+      ? (raw.HostConfig as Record<string, unknown>)
+      : {}
+  ) as Record<string, unknown>;
+  const restartPolicy =
+    hostConfig.RestartPolicy && typeof hostConfig.RestartPolicy === 'object'
+      ? (hostConfig.RestartPolicy as Record<string, unknown>)
+      : {};
+  const networkSettings =
+    raw.NetworkSettings && typeof raw.NetworkSettings === 'object'
+      ? (raw.NetworkSettings as Record<string, unknown>)
+      : {};
   const networksObj =
     networkSettings.Networks && typeof networkSettings.Networks === 'object'
       ? (networkSettings.Networks as Record<string, unknown>)
@@ -188,9 +267,10 @@ function normalizeInspectContainer(raw: Record<string, unknown>): DockerContaine
   const id = String(raw.Id || '');
   const name = String(raw.Name || '').replace(/^\//, '') || id.slice(0, 12);
   const status = String(state.Status || 'unknown');
-  const healthObj = state.Health && typeof state.Health === 'object'
-    ? (state.Health as Record<string, unknown>)
-    : {};
+  const healthObj =
+    state.Health && typeof state.Health === 'object'
+      ? (state.Health as Record<string, unknown>)
+      : {};
 
   return {
     id,
@@ -219,19 +299,29 @@ function normalizeInspectContainer(raw: Record<string, unknown>): DockerContaine
 }
 
 export class DockerHostService {
+  private readonly runner: DockerCommandRunner;
+
+  constructor(options: DockerHostServiceOptions = {}) {
+    this.runner =
+      options.runner ||
+      (async (args, opts = {}) => {
+        const result = await execFileAsync('docker', args, {
+          timeout: opts.timeout ?? DOCKER_TIMEOUT_MS,
+          maxBuffer: opts.maxBuffer ?? DOCKER_MAX_BUFFER,
+          env: process.env,
+        });
+        return {
+          stdout: String(result.stdout || ''),
+          stderr: String(result.stderr || ''),
+        };
+      });
+  }
+
   private async docker(args: string[], opts: { maxBuffer?: number; timeout?: number } = {}) {
     if (!integrationEnabled()) {
       throw new Error('Docker integration is disabled');
     }
-    const result = await execFileAsync('docker', args, {
-      timeout: opts.timeout ?? DOCKER_TIMEOUT_MS,
-      maxBuffer: opts.maxBuffer ?? DOCKER_MAX_BUFFER,
-      env: process.env,
-    });
-    return {
-      stdout: String(result.stdout || ''),
-      stderr: String(result.stderr || ''),
-    };
+    return this.runner(args, opts);
   }
 
   async status(): Promise<DockerIntegrationStatus> {
@@ -280,9 +370,9 @@ export class DockerHostService {
       '--all',
       '--no-trunc',
       '--format',
-      '{{json .}}',
+      DOCKER_PS_FORMAT,
     ]);
-    return parseJsonLines<Record<string, unknown>>(stdout)
+    return parseDockerPsTemplateLines(stdout)
       .map((row) => {
         const labels = parseLabels(row.Labels);
         const id = String(row.ID || '');
