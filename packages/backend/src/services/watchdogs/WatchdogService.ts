@@ -91,8 +91,10 @@ function deriveIncident(input: {
     return { severity: 'error', reason: 'Container health check reports unhealthy' };
   }
   if (detail.state === 'exited') return { severity: 'error', reason: 'Container exited' };
-  if (detail.state === 'restarting') return { severity: 'warning', reason: 'Container is restarting' };
-  if (detail.health === 'starting') return { severity: 'warning', reason: 'Container health is starting' };
+  if (detail.state === 'restarting')
+    return { severity: 'warning', reason: 'Container is restarting' };
+  if (detail.health === 'starting')
+    return { severity: 'warning', reason: 'Container health is starting' };
 
   const currentRestartCount =
     typeof detail.restartCount === 'number' && Number.isFinite(detail.restartCount)
@@ -195,13 +197,7 @@ export class WatchdogService {
          cli_model, mode, surface, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'stopped', ?, 'codex', NULL, 'planning', 'task',
                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-    ).run(
-      sessionId,
-      userId,
-      sessionName,
-      workspace,
-      `Assigned to Docker container ${detail.name}`
-    );
+    ).run(sessionId, userId, sessionName, workspace, `Assigned to Docker container ${detail.name}`);
 
     db.prepare(
       `INSERT INTO container_watchdogs
@@ -276,8 +272,8 @@ export class WatchdogService {
                container_name = ?,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`
-      )
-      .run(detail.name, watchdog.id);
+        )
+        .run(detail.name, watchdog.id);
 
       const incident = deriveIncident({
         detail,

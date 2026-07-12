@@ -20,8 +20,8 @@ import { parseOracleBrowserSettings } from '../utils/oracleSettings';
 
 const router = Router();
 
-const updateSettingsSchema = z.object({
-  theme: z.enum(['dark', 'light', 'system']).optional(),
+export const updateSettingsSchema = z.object({
+  theme: z.enum(['dark', 'light', 'system', 'eink']).optional(),
   defaultWorkingDir: z.string().nullable().optional(),
   allowedTools: z.array(z.string()).optional(),
   customSystemPrompt: z.string().nullable().optional(),
@@ -95,6 +95,15 @@ const updateSettingsSchema = z.object({
     .partial()
     .optional(),
 });
+
+export function stripDeviceAppearanceSettings<
+  T extends { theme?: unknown; backgroundAnimation?: unknown },
+>(settings: T): Omit<T, 'theme' | 'backgroundAnimation'> {
+  const accountSettings = { ...settings };
+  delete accountSettings.theme;
+  delete accountSettings.backgroundAnimation;
+  return accountSettings;
+}
 
 function parseUiProvider(value: unknown): UiProvider {
   return value === 'plum' ||
@@ -178,6 +187,7 @@ const VALID_REASONING_LEVELS = new Set([
   'extra_high',
   'xhigh',
   'max',
+  'ultra',
 ]);
 
 function normalizeReasoningLevel(value: unknown): string | undefined {
@@ -360,12 +370,10 @@ router.put('/', requireAuth, (req, res) => {
 
   const db = getDatabase();
   const {
-    theme,
     defaultWorkingDir,
     allowedTools,
     customSystemPrompt,
     uiProvider,
-    backgroundAnimation,
     defaultCliProvider,
     cliProviderModels,
     cliProviderModelLists,
@@ -374,15 +382,11 @@ router.put('/', requireAuth, (req, res) => {
     codexWebSearch,
     localUsageBudgets,
     oracleBrowser,
-  } = parsed.data;
+  } = stripDeviceAppearanceSettings(parsed.data);
 
   const updates: string[] = [];
   const values: unknown[] = [];
 
-  if (theme !== undefined) {
-    updates.push('theme = ?');
-    values.push(theme);
-  }
   if (defaultWorkingDir !== undefined) {
     updates.push('default_working_dir = ?');
     values.push(defaultWorkingDir);
@@ -397,7 +401,6 @@ router.put('/', requireAuth, (req, res) => {
   }
   if (
     uiProvider !== undefined ||
-    backgroundAnimation !== undefined ||
     defaultCliProvider !== undefined ||
     cliProviderModels !== undefined ||
     cliProviderModelLists !== undefined ||
@@ -414,9 +417,6 @@ router.put('/', requireAuth, (req, res) => {
     const settingsJson = safeJsonParse<Record<string, unknown>>(existing?.settings_json, {});
     if (uiProvider !== undefined) {
       settingsJson.uiProvider = uiProvider;
-    }
-    if (backgroundAnimation !== undefined) {
-      settingsJson.backgroundAnimation = backgroundAnimation;
     }
     if (defaultCliProvider !== undefined) {
       settingsJson.defaultCliProvider = defaultCliProvider;

@@ -66,8 +66,7 @@ router.put('/providers', requireAuth, (req, res) => {
 
     const { id, name, apiKey, baseUrl, enabled = true } = result.data;
     const catalogProvider = getOpenCodeProviderCatalog()[id];
-    const finalBaseUrl =
-      baseUrl && baseUrl.trim() !== '' ? baseUrl.trim() : catalogProvider?.api;
+    const finalBaseUrl = baseUrl && baseUrl.trim() !== '' ? baseUrl.trim() : catalogProvider?.api;
 
     const providers = readOpenCodeProvidersForUser(userId);
     const now = new Date().toISOString();

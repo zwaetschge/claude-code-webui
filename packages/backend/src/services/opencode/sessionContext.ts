@@ -1,4 +1,5 @@
 import type { SessionMode } from '@plum-code-webui/shared';
+import { buildSessionExecutionPrompt } from '../sessionExecutionContext.js';
 
 export const OPENCODE_WEBUI_SESSION_ARG = 'webui_session_id';
 export const OPENCODE_WEBUI_PRIMARY_AGENT = 'build';
@@ -70,6 +71,8 @@ export function buildOpenCodeRuntimePrompt(context: OpenCodePromptContext = {}):
   const lines: string[] = [];
 
   if (context.mode) {
+    lines.push(buildSessionExecutionPrompt(context.mode));
+    lines.push('');
     lines.push('OpenCode runtime mode:');
     switch (context.mode) {
       case 'planning':
@@ -97,6 +100,19 @@ export function buildOpenCodeRuntimePrompt(context: OpenCodePromptContext = {}):
         );
         break;
     }
+    lines.push('OpenCode tool/process safety:');
+    lines.push(
+      '- Bound shell and browser checks with explicit timeouts, especially curl, health probes, Playwright, dev servers, and commands that can wait on remote services.'
+    );
+    lines.push(
+      '- Do not leave dev servers, file watchers, or long-running processes attached to a foreground tool call. Start them in the background with a captured PID and log file, probe them with bounded commands, and clean up by PID.'
+    );
+    lines.push(
+      '- For cleanup, avoid broad `pkill -f` patterns that can match the current shell command. Prefer the captured PID, a lockfile, or a precise process match.'
+    );
+    lines.push(
+      '- If a shell tool times out or is interrupted, report the blocker or switch to a bounded fallback instead of chaining more unbounded cleanup commands.'
+    );
   }
 
   const reasoning = normalizeReasoningLevel(context.reasoningLevel);
@@ -113,14 +129,14 @@ export function buildOpenCodeRuntimePrompt(context: OpenCodePromptContext = {}):
         break;
       case 'high':
         lines.push(
-          '- Effort is high: inspect enough surrounding code to avoid shallow fixes, consider edge cases, and run meaningful verification.'
+          '- Effort is high: inspect enough surrounding code to avoid shallow fixes, prioritize the important path, and verify risks proportionate to the requested outcome.'
         );
         break;
       case 'extra_high':
       case 'xhigh':
       case 'max':
         lines.push(
-          '- Effort is max: do a deeper pass, look for cross-file implications, test the important path, and report milestones while working.'
+          '- Effort is max: reason deeply about priorities, architecture, and the important path, but keep exploration timeboxed and scope tied to the requested outcome.'
         );
         break;
       case 'medium':

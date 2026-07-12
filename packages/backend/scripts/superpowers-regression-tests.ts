@@ -57,6 +57,8 @@ async function makeUpstream(root: string): Promise<string> {
       '# Using Superpowers',
       '',
       'Invoke relevant skills before responding.',
+      'If there is even a 1% chance a skill applies, you MUST invoke it.',
+      'Before entering plan mode, invoke brainstorming and create a checklist.',
       '',
     ].join('\n')
   );
@@ -127,7 +129,14 @@ async function main(): Promise<void> {
   );
   await write(
     path.join(opencodeConfigDir, 'opencode.json'),
-    `${JSON.stringify({ plugin: ['user-plugin'], skills: { paths: ['/custom/skills'] } }, null, 2)}\n`
+    `${JSON.stringify(
+      {
+        plugin: ['user-plugin', source, 'https://github.com/obra/Superpowers.git'],
+        skills: { paths: ['/custom/skills'] },
+      },
+      null,
+      2
+    )}\n`
   );
 
   const { syncSuperpowers, buildSuperpowersBootstrapContext } =
@@ -171,7 +180,11 @@ async function main(): Promise<void> {
   const opencodeConfig = JSON.parse(
     await fs.readFile(path.join(opencodeConfigDir, 'opencode.json'), 'utf-8')
   ) as { plugin?: string[]; skills?: { paths?: string[] } };
-  assert.deepEqual(opencodeConfig.plugin, ['user-plugin', source]);
+  assert.deepEqual(
+    opencodeConfig.plugin,
+    ['user-plugin'],
+    'OpenCode must discover the skills without the upstream plugin that injects blanket workflow mandates'
+  );
   assert.deepEqual(opencodeConfig.skills?.paths, ['/custom/skills']);
 
   const opencodeBootstrap = await buildSuperpowersBootstrapContext('opencode', claudeHome);
@@ -179,6 +192,26 @@ async function main(): Promise<void> {
 
   const codexBootstrap = await buildSuperpowersBootstrapContext('codex', claudeHome);
   assert.ok(codexBootstrap?.includes('~/.agents/skills'), 'Codex bootstrap should mention alias');
+  assert.match(
+    codexBootstrap || '',
+    /Skills are optional accelerators/i,
+    'bootstrap should prevent blanket skill/workflow stacking'
+  );
+  assert.match(
+    codexBootstrap || '',
+    /product goal/i,
+    'bootstrap should preserve product-first execution'
+  );
+  assert.match(
+    codexBootstrap || '',
+    /Vale decision proxy/i,
+    'bootstrap should tell agents to resolve routine choices internally'
+  );
+  assert.doesNotMatch(
+    codexBootstrap || '',
+    /1% chance|MUST invoke|Before entering plan mode/i,
+    'bootstrap must not re-inject upstream blanket workflow mandates'
+  );
 
   await syncSuperpowers(claudeHome, { quiet: true });
   const codexConfigAfterSecondSync = await fs.readFile(
@@ -196,8 +229,8 @@ async function main(): Promise<void> {
   ) as { plugin?: string[] };
   assert.deepEqual(
     opencodeConfigAfterSecondSync.plugin,
-    ['user-plugin', source],
-    'OpenCode managed plugin should not be duplicated'
+    ['user-plugin'],
+    'OpenCode upstream bootstrap plugin should stay removed'
   );
 
   console.log('superpowers regression tests passed');

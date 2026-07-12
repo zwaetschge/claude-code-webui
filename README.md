@@ -63,7 +63,7 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 - **Mistral Vibe** - Mistral Medium 3.5 / Devstral coding models, argv-based prompt execution, per-session `VIBE_HOME`, and `--continue` resume
 - **Claude Code** (Anthropic) - legacy persistent stream-json provider
 - Per-session provider selection; switching providers restarts the underlying CLI cleanly
-- Shared Superpowers skills are installed into `~/.claude/skills`; Codex also gets a managed local `superpowers@plum-managed` plugin cache/config entry, OpenCode gets a managed local plugin entry plus `skills.paths` fallback, and Vibe gets `skill_paths`
+- Shared Superpowers skills are installed into `~/.claude/skills`; Codex also gets a managed local `superpowers@plum-managed` plugin cache/config entry, OpenCode uses `skills.paths` without the upstream auto-bootstrap plugin, and Vibe gets `skill_paths`
 - Dedicated auth routes: `/auth/codex`, `/auth/opencode`, `/auth/vibe`, `/auth/claude`
 - Independent CLI instances + persisted auth per provider (`~/.codex`, `~/.local/share/opencode`, `~/.vibe`, `~/.claude`)
 - Admin/helper LLM calls, such as commit message generation, route through the same Codex-first provider preference
@@ -130,7 +130,7 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 
 - Shared agents from `~/.claude/agents`
 - Shared skills from `~/.claude/skills`, including design-system skill packs
-- Managed Superpowers sync from `https://github.com/obra/Superpowers` with native Codex/OpenCode registration, provider-specific bootstrap, and tool mapping
+- Managed Superpowers sync from `https://github.com/obra/Superpowers` with native Codex registration, OpenCode skill discovery, and a provider-specific Plum bootstrap/tool mapping
 - Plugin management for user and marketplace plugins
 - Codex plugin browser/install flow for OpenAI-curated plugins
 - Auto-sync of external skill packs and provider links for OpenCode/Vibe where supported
@@ -262,6 +262,7 @@ Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on st
 | `CLI_PROVIDER_<PROVIDER>_MODELS`                                                   | Override model menus for `CODEX`, `OPENCODE`, `VIBE`, or `CLAUDE`; empty means auto-discover or use provider fallback.                                            | No          |
 | `CLI_PROVIDER_<PROVIDER>_DEFAULT_MODEL`                                            | Override defaults such as Codex `gpt-5.5`, OpenCode `z-ai/glm-5.1`, Vibe `mistral-vibe-cli-latest`, or Claude `sonnet`.                                           | No          |
 | `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` / `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`       | OpenCode WebUI primary agent and Codex-like communication style. Defaults to `build`; set style prompt to `0` or `false` to disable the injected reminder.        | No          |
+| `CLI_AUTO_UPDATE` / `CLI_AUTO_UPDATE_PROVIDERS` / `CLI_AUTO_UPDATE_INTERVAL_HOURS` | Runtime CLI autoupdater. Docker Compose defaults to Codex-only updates on boot and every 24 hours; set providers to a comma-separated list to opt in more CLIs.   | No          |
 | `SUPERPOWERS_ENABLED` / `SUPERPOWERS_REPO_URL` / `SUPERPOWERS_REF`                 | Managed Superpowers sync + provider registration. Enabled by default from `obra/Superpowers` `main`; set enabled to `0`/`false` to opt out or pin a fork/tag/ref. | No          |
 | `SUPERPOWERS_SYNC_INTERVAL_MS` / `SUPERPOWERS_GIT_TIMEOUT_MS`                      | Optional Superpowers refresh interval and Git operation timeout. Defaults: 6 hours / 45 seconds.                                                                  | No          |
 | `MISTRAL_API_KEY`                                                                  | Enables Mistral Vibe when no user-specific key is stored in Settings.                                                                                             | No          |
@@ -274,6 +275,8 @@ Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on st
 | `BLENDER_BIN` / `BLENDER_TIMEOUT_MS`                                               | Blender binary and timeout for the built-in Blender MCP. The runtime image defaults to `blender-headless`.                                                        | No          |
 | `PREVIEW_HOSTNAME`                                                                 | Optional hostname used by the dev-server preview proxy.                                                                                                           | No          |
 | `CHROME_BIN` / `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` / `PUPPETEER_EXECUTABLE_PATH` | System Chromium wrapper exposed to CLI sessions (default: `/usr/local/bin/plum-chromium`).                                                                        | No          |
+
+GPT-5.6 WebUI sessions use one root agent by default to avoid delegation loops. Set `CODEX_WEBUI_AGENT_MODE=parallel` or configure `CODEX_WEBUI_AGENT_MAX_DEPTH` / `CODEX_WEBUI_AGENT_MAX_THREADS` when parallel Codex agents are intentional.
 
 ### CLI Integration
 

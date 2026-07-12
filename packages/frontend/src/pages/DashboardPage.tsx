@@ -17,7 +17,6 @@ import {
   Settings,
   FolderPlus,
   Folder,
-  Palette,
   MoreHorizontal,
   Pencil,
   Star,
@@ -53,14 +52,12 @@ import type {
   ApiResponse,
   UserSettings,
   CLIProvider,
-  BackgroundAnimation,
   SessionMode,
   SessionSurface,
   Category,
 } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { getSessionRunState } from '@/lib/sessionRunState';
-import { useAppearanceStore, BACKGROUND_ANIMATION_OPTIONS } from '@/stores/appearanceStore';
 import { CLI_PROVIDER_DEFAULT_MODEL, toUiProvider } from '@/lib/providers';
 import { TASK_WORKFLOWS, type TaskWorkflow } from '@/lib/taskWorkflows';
 import {
@@ -156,10 +153,14 @@ function getDashboardReasoningOptions(provider: CLIProvider) {
     ];
   }
   return [
+    { value: 'none', label: 'None' },
+    { value: 'minimal', label: 'Minimal' },
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' },
     { value: 'xhigh', label: 'XHigh' },
+    { value: 'max', label: 'Max' },
+    { value: 'ultra', label: 'Ultra' },
   ];
 }
 
@@ -251,7 +252,6 @@ export function DashboardPage() {
     toolExecutions,
     queueState,
   } = useSessionStore();
-  const { backgroundAnimation, setBackgroundAnimation } = useAppearanceStore();
   const { categories, fetchCategories, createCategory } = useCategoryStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
@@ -297,12 +297,6 @@ export function DashboardPage() {
     },
   });
   const dashboardDefaultProvider = getDashboardDefaultProvider(settings?.defaultCliProvider);
-
-  useEffect(() => {
-    if (settings?.backgroundAnimation) {
-      setBackgroundAnimation(settings.backgroundAnimation);
-    }
-  }, [settings?.backgroundAnimation, setBackgroundAnimation]);
 
   useEffect(() => {
     fetchCategories();
@@ -421,36 +415,6 @@ export function DashboardPage() {
     },
   });
 
-  const backgroundMutation = useMutation({
-    mutationFn: async (animation: BackgroundAnimation) => {
-      const response = await api.put<ApiResponse<UserSettings>>('/api/settings', {
-        backgroundAnimation: animation,
-      });
-      return response.data.data;
-    },
-    onMutate: (animation) => {
-      setBackgroundAnimation(animation);
-      const previous = queryClient.getQueryData<UserSettings>(['settings']);
-      queryClient.setQueryData(['settings'], {
-        ...(previous || {}),
-        backgroundAnimation: animation,
-      });
-      return { previous };
-    },
-    onError: (error: Error, _animation, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['settings'], context.previous);
-        if (context.previous.backgroundAnimation) {
-          setBackgroundAnimation(context.previous.backgroundAnimation);
-        }
-      }
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-    onSuccess: (data) => {
-      if (data) queryClient.setQueryData(['settings'], data);
-    },
-  });
-
   const hasDefaultDir = !!settings?.defaultWorkingDir;
   const filteredSessions = sessions;
   const sessionRunStates = useMemo(
@@ -557,13 +521,13 @@ export function DashboardPage() {
 
     return [...priorityGroups, ...categoryGroups];
   }, [categories, filteredSessions, sessionRunStates]);
-  const activeBackgroundOption =
-    BACKGROUND_ANIMATION_OPTIONS.find((option) => option.value === backgroundAnimation) ??
-    BACKGROUND_ANIMATION_OPTIONS[0]!;
   const selectedProviderInfo = cliProviders?.find(
     (provider) => provider.id === selectedCliProvider
   );
-  const configuredModelsForProvider = settings?.cliProviderModelLists?.[selectedCliProvider] || [];
+  const configuredModelsForProvider = useMemo(
+    () => settings?.cliProviderModelLists?.[selectedCliProvider] || [],
+    [selectedCliProvider, settings?.cliProviderModelLists]
+  );
   const selectedProviderModelLabels = selectedProviderInfo?.modelLabels || {};
   const resolvedDefaultModel =
     selectedCliProvider === 'opencode'
@@ -1053,37 +1017,6 @@ export function DashboardPage() {
             <p className="dashboard-subtitle ui-text">
               Start a code workspace or a quieter task chat directly from here.
             </p>
-          </div>
-
-          <div className="dashboard-hero-actions">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <Palette className="h-4 w-4" />
-                  <span className="hidden md:inline">{activeBackgroundOption.label}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="panel-dropdown w-56">
-                {BACKGROUND_ANIMATION_OPTIONS.map((option) => (
-                  <DropdownMenuItem
-                    key={option.value}
-                    className="flex items-center gap-2 cursor-pointer"
-                    onClick={() => backgroundMutation.mutate(option.value)}
-                  >
-                    <Palette className="h-4 w-4 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{option.label}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {option.description}
-                      </span>
-                    </span>
-                    {backgroundAnimation === option.value ? (
-                      <CheckCircle className="h-4 w-4 text-primary" />
-                    ) : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
 

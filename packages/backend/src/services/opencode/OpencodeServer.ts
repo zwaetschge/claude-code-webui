@@ -48,14 +48,76 @@ type OpenCodeMessageSnapshot = {
   parts?: Array<Record<string, unknown>>;
 };
 
+export type OpenCodeToolActivitySummary = {
+  messageId?: string;
+  partId: string;
+  callId?: string;
+  tool: string;
+  status: string;
+  preview?: string;
+};
+
+const DIAGNOSTIC_PREVIEW_MAX = 180;
+const SENSITIVE_ASSIGNMENT_RE =
+  /\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH)[A-Z0-9_]*)=(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
+const SENSITIVE_HEADER_RE =
+  /\b(authorization|cookie|x-[a-z0-9-]*(?:token|key|secret|auth)[a-z0-9-]*):\s*(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
+const SENSITIVE_BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
+
+function diagnosticPreview(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value
+    .replace(SENSITIVE_ASSIGNMENT_RE, '$1=<redacted>')
+    .replace(SENSITIVE_BEARER_RE, 'Bearer <redacted>')
+    .replace(SENSITIVE_HEADER_RE, '$1: <redacted>')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return undefined;
+  return normalized.length > DIAGNOSTIC_PREVIEW_MAX
+    ? `${normalized.slice(0, DIAGNOSTIC_PREVIEW_MAX - 1)}…`
+    : normalized;
+}
+
+function summarizeOpenCodeToolPart(
+  part: Record<string, unknown>,
+  messageId?: string
+): OpenCodeToolActivitySummary | null {
+  const partId = typeof part.id === 'string' ? part.id : undefined;
+  if (!partId) return null;
+  const stateField = part.state as Record<string, unknown> | undefined;
+  const tool =
+    (typeof part.tool === 'string' && part.tool) ||
+    (typeof stateField?.tool === 'string' && stateField.tool) ||
+    (typeof stateField?.name === 'string' && stateField.name) ||
+    'tool';
+  const status =
+    (typeof stateField?.status === 'string' && stateField.status) ||
+    (typeof part.status === 'string' && part.status) ||
+    'unknown';
+  const input = stateField?.input as Record<string, unknown> | undefined;
+  const preview =
+    diagnosticPreview(stateField?.title) ||
+    diagnosticPreview(input?.command) ||
+    diagnosticPreview(stateField?.command) ||
+    diagnosticPreview(part.title);
+  const callId =
+    (typeof part.callID === 'string' && part.callID) ||
+    (typeof part.callId === 'string' && part.callId) ||
+    undefined;
+
+  return { messageId, partId, callId, tool, status, preview };
+}
+
 export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
   textLens: Map<string, number>;
   toolStatus: Map<string, string>;
   finishedMessages: Set<string>;
+  lastToolActivity: OpenCodeToolActivitySummary | null;
 } {
   const textLens = new Map<string, number>();
   const toolStatus = new Map<string, string>();
   const finishedMessages = new Set<string>();
+  let lastToolActivity: OpenCodeToolActivitySummary | null = null;
 
   for (const msg of data) {
     const info = msg.info as Record<string, unknown> | undefined;
@@ -76,6 +138,7 @@ export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
       if (partType === 'tool') {
         const stateField = part.state as { status?: string } | undefined;
         toolStatus.set(partId, stateField?.status ?? '');
+        lastToolActivity = summarizeOpenCodeToolPart(part, messageId);
         continue;
       }
 
@@ -89,7 +152,7 @@ export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
     }
   }
 
-  return { textLens, toolStatus, finishedMessages };
+  return { textLens, toolStatus, finishedMessages, lastToolActivity };
 }
 
 interface PromptOptions {
@@ -125,6 +188,167 @@ interface CreateSessionOptions {
 
 const READY_LINE_RE = /opencode server listening on (http:\/\/[^\s]+)/i;
 const WEBUI_SESSION_CONTEXT_FILE = path.join(os.tmpdir(), 'plum-opencode-webui-session.json');
+const DEFAULT_OPENCODE_NO_PROGRESS_TIMEOUT_MS = 10 * 60 * 1000;
+const MIN_OPENCODE_NO_PROGRESS_TIMEOUT_MS = 30_000;
+const OPENCODE_HARD_SAFETY_TIMEOUT_MS = 30 * 60 * 1000;
+
+export function resolveOpenCodeNoProgressTimeoutMs(
+  value: string | null | undefined = process.env.OPENCODE_NO_PROGRESS_TIMEOUT_MS
+): number {
+  if (value === null || value === undefined || value.trim() === '') {
+    return DEFAULT_OPENCODE_NO_PROGRESS_TIMEOUT_MS;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_OPENCODE_NO_PROGRESS_TIMEOUT_MS;
+  }
+  if (parsed <= 0) {
+    return 0;
+  }
+
+  return Math.max(Math.trunc(parsed), MIN_OPENCODE_NO_PROGRESS_TIMEOUT_MS);
+}
+
+export function hasOpenCodeHardSafetyTimeoutElapsed(now: number, startedAt: number): boolean {
+  return now - startedAt > OPENCODE_HARD_SAFETY_TIMEOUT_MS;
+}
+
+export type OpenCodeStallTimeoutReason = 'no-progress' | 'stalled';
+
+export function resolveOpenCodeStallTimeout(opts: {
+  now: number;
+  startedAt: number;
+  lastObservedAt: number | null;
+  observedChange: boolean;
+  timeoutMs: number;
+}): OpenCodeStallTimeoutReason | null {
+  if (opts.timeoutMs <= 0) return null;
+
+  if (!opts.observedChange) {
+    return opts.now - opts.startedAt > opts.timeoutMs ? 'no-progress' : null;
+  }
+
+  const lastObservedAt = opts.lastObservedAt ?? opts.startedAt;
+  return opts.now - lastObservedAt > opts.timeoutMs ? 'stalled' : null;
+}
+
+export function formatOpenCodeStallErrorMessage(
+  reason: OpenCodeStallTimeoutReason,
+  timeoutSeconds: number,
+  lastToolActivity?: OpenCodeToolActivitySummary | null
+): string {
+  const base =
+    reason === 'no-progress'
+      ? `OpenCode did not produce any output within ${timeoutSeconds}s. Slow first-token models can exceed this; check the selected provider/model or raise OPENCODE_NO_PROGRESS_TIMEOUT_MS.`
+      : `OpenCode produced output but then had no further activity for ${timeoutSeconds}s, so Plum aborted the turn. This usually means a tool call or provider stream stalled; raise OPENCODE_NO_PROGRESS_TIMEOUT_MS if this workload legitimately runs longer without output.`;
+
+  if (!lastToolActivity) return base;
+
+  const details = [
+    `Last observed tool: ${lastToolActivity.tool}`,
+    `status: ${lastToolActivity.status}`,
+  ];
+  if (lastToolActivity.preview) details.push(`preview: ${lastToolActivity.preview}`);
+  return `${base} ${details.join('; ')}.`;
+}
+
+export function resolveOpenCodeProviderTurnGateKey(
+  model: string | null | undefined
+): string | null {
+  if (!model) return null;
+  const parsed = splitModel(model);
+  const providerId = parsed?.providerID.trim().toLowerCase();
+  return providerId === 'z-ai' || providerId === 'zai' ? 'z-ai' : null;
+}
+
+export class OpenCodeProviderTurnGate {
+  private active = new Map<string, string>();
+  private queued = new Map<
+    string,
+    Array<{
+      sessionId: string;
+      resolve: (release: () => void) => void;
+      reject: (reason: Error) => void;
+    }>
+  >();
+
+  async acquire(key: string | null, sessionId: string): Promise<() => void> {
+    if (!key) return () => undefined;
+
+    if (!this.active.has(key)) {
+      this.active.set(key, sessionId);
+      return this.releaseOnce(key, sessionId);
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      const queue = this.queued.get(key) ?? [];
+      queue.push({ sessionId, resolve, reject });
+      this.queued.set(key, queue);
+    });
+  }
+
+  releaseForSession(sessionId: string): void {
+    for (const [key, queue] of this.queued.entries()) {
+      const cancelled = queue.filter((item) => item.sessionId === sessionId);
+      const nextQueue = queue.filter((item) => item.sessionId !== sessionId);
+      if (nextQueue.length === 0) {
+        this.queued.delete(key);
+      } else {
+        this.queued.set(key, nextQueue);
+      }
+      for (const item of cancelled) {
+        item.reject(new Error(`OpenCode provider turn cancelled for ${sessionId}`));
+      }
+    }
+
+    for (const [key, activeSessionId] of this.active.entries()) {
+      if (activeSessionId === sessionId) {
+        this.release(key, sessionId);
+      }
+    }
+  }
+
+  cancelAll(reason = 'OpenCode provider turn gate cancelled'): void {
+    const error = new Error(reason);
+    for (const queue of this.queued.values()) {
+      for (const item of queue) {
+        item.reject(error);
+      }
+    }
+    this.queued.clear();
+    this.active.clear();
+  }
+
+  private releaseOnce(key: string, sessionId: string): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.release(key, sessionId);
+    };
+  }
+
+  private release(key: string, sessionId: string): void {
+    if (this.active.get(key) !== sessionId) return;
+
+    const queue = this.queued.get(key) ?? [];
+    const next = queue.shift();
+    if (queue.length === 0) {
+      this.queued.delete(key);
+    } else {
+      this.queued.set(key, queue);
+    }
+
+    if (!next) {
+      this.active.delete(key);
+      return;
+    }
+
+    this.active.set(key, next.sessionId);
+    next.resolve(this.releaseOnce(key, next.sessionId));
+  }
+}
 
 class OpencodeServer {
   private proc: ChildProcess | null = null;
@@ -149,6 +373,9 @@ class OpencodeServer {
   // Fallback handler for events that arrive before we know the sessionID
   // mapping (e.g. provider errors at connect time). Rarely used.
   private globalHandlers = new Set<Handler>();
+  private timeoutAbortedSessions = new Set<string>();
+  private providerTurnGate = new OpenCodeProviderTurnGate();
+  private providerGateReleases = new Map<string, () => void>();
 
   // Per-session polling fallback. opencode 1.4.x/1.14.x publishes events to
   // its internal bus but the /event SSE stream only forwards heartbeats —
@@ -163,11 +390,15 @@ class OpencodeServer {
       textLens: Map<string, number>;
       // partID → last observed tool state.status, so we don't re-emit unchanged states
       toolStatus: Map<string, string>;
+      // Last observed tool part from the current turn, used for actionable stall diagnostics.
+      lastToolActivity: OpenCodeToolActivitySummary | null;
       // messageIDs we've already flushed as finished
       finishedMessages: Set<string>;
       // idle flag: once we emit session.idle we stop polling
       idled: boolean;
       observedChange: boolean;
+      // Last time polling observed assistant text, reasoning, tool state, or step progress.
+      lastObservedAt: number | null;
       // Timestamp when the last assistant message landed in a terminal state
       // (finish=stop). We wait 2s of no further activity before firing idle —
       // opencode's multi-step loop creates a fresh assistant message per step
@@ -176,6 +407,8 @@ class OpencodeServer {
       idleCandidateAt: number | null;
       // When polling started — safety cap so a stuck session doesn't poll forever.
       startedAt: number;
+      // Soft cap for no first observable assistant output. 0 disables this cap.
+      noProgressTimeoutMs: number;
     }
   >();
 
@@ -443,6 +676,15 @@ class OpencodeServer {
 
   private dispatch(evt: OpencodeEvent): void {
     const sid = extractSessionId(evt);
+    if (
+      sid &&
+      this.timeoutAbortedSessions.has(sid) &&
+      evt.type === 'session.error' &&
+      extractEventErrorMessage(evt) === 'Aborted'
+    ) {
+      ocDbg(`[OC-DISPATCH] suppress timeout abort sid=${sid}`);
+      return;
+    }
     if (evt.type !== 'server.heartbeat') {
       const routed = sid && this.handlers.has(sid);
       ocDbg(
@@ -459,6 +701,9 @@ class OpencodeServer {
       console.log(
         `[OPENCODE-SSE] type=${evt.type} sid=${sid ?? 'NONE'} routed=${routed} ${preview}`
       );
+    }
+    if (sid && (evt.type === 'session.idle' || evt.type === 'session.error')) {
+      this.releaseProviderTurnGate(sid);
     }
     if (sid && this.handlers.has(sid)) {
       try {
@@ -487,8 +732,18 @@ class OpencodeServer {
 
   unsubscribe(opencodeSessionId: string): void {
     this.handlers.delete(opencodeSessionId);
+    this.releaseProviderTurnGate(opencodeSessionId);
+    this.providerTurnGate.releaseForSession(opencodeSessionId);
     this.stopPolling(opencodeSessionId);
     this.pollState.delete(opencodeSessionId);
+  }
+
+  private releaseProviderTurnGate(opencodeSessionId: string): void {
+    const release = this.providerGateReleases.get(opencodeSessionId);
+    if (!release) return;
+    this.providerGateReleases.delete(opencodeSessionId);
+    release();
+    ocDbg(`[OC-GATE] released sid=${opencodeSessionId}`);
   }
 
   /** Create a new opencode session, returns the session ID. */
@@ -537,6 +792,12 @@ class OpencodeServer {
     await this.waitForSseReady();
     await this.primePollingState(opencodeSessionId);
     this.writeWebuiSessionContext(opencodeSessionId, opts);
+    const gateKey = resolveOpenCodeProviderTurnGateKey(opts.model);
+    const releaseGate = await this.providerTurnGate.acquire(gateKey, opencodeSessionId);
+    if (gateKey) {
+      this.providerGateReleases.set(opencodeSessionId, releaseGate);
+      ocDbg(`[OC-GATE] acquired key=${gateKey} sid=${opencodeSessionId}`);
+    }
     const body: Record<string, unknown> = {
       parts: [
         {
@@ -567,14 +828,20 @@ class OpencodeServer {
     ocDbg(
       `[OC-SEND] sid=${opencodeSessionId} subscribed=${this.handlers.has(opencodeSessionId)} handlerCount=${this.handlers.size} sseConnected=${this.sseConnected} body=${JSON.stringify(body).slice(0, 200)}`
     );
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    ocDbg(`[OC-SEND] response status=${res.status}`);
-    if (!res.ok) {
-      throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      ocDbg(`[OC-SEND] response status=${res.status}`);
+      if (!res.ok) {
+        this.releaseProviderTurnGate(opencodeSessionId);
+        throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
+      }
+    } catch (err) {
+      this.releaseProviderTurnGate(opencodeSessionId);
+      throw err;
     }
     this.startPolling(opencodeSessionId);
   }
@@ -589,6 +856,12 @@ class OpencodeServer {
     await this.waitForSseReady();
     await this.primePollingState(opencodeSessionId);
     this.writeWebuiSessionContext(opencodeSessionId, opts);
+    const gateKey = resolveOpenCodeProviderTurnGateKey(opts.model);
+    const releaseGate = await this.providerTurnGate.acquire(gateKey, opencodeSessionId);
+    if (gateKey) {
+      this.providerGateReleases.set(opencodeSessionId, releaseGate);
+      ocDbg(`[OC-GATE] acquired key=${gateKey} sid=${opencodeSessionId}`);
+    }
 
     const body: Record<string, unknown> = {
       command: opts.command,
@@ -604,14 +877,20 @@ class OpencodeServer {
     ocDbg(
       `[OC-COMMAND] sid=${opencodeSessionId} command=${opts.command} args=${JSON.stringify(opts.arguments ?? '').slice(0, 120)}`
     );
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    ocDbg(`[OC-COMMAND] response status=${res.status}`);
-    if (!res.ok) {
-      throw new Error(`sendCommand failed: ${res.status} ${await res.text()}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      ocDbg(`[OC-COMMAND] response status=${res.status}`);
+      if (!res.ok) {
+        this.releaseProviderTurnGate(opencodeSessionId);
+        throw new Error(`sendCommand failed: ${res.status} ${await res.text()}`);
+      }
+    } catch (err) {
+      this.releaseProviderTurnGate(opencodeSessionId);
+      throw err;
     }
     this.startPolling(opencodeSessionId);
   }
@@ -715,11 +994,14 @@ class OpencodeServer {
       this.pollState.set(opencodeSessionId, {
         textLens,
         toolStatus,
+        lastToolActivity: null,
         finishedMessages,
         idled: false,
         observedChange: false,
+        lastObservedAt: null,
         idleCandidateAt: null,
         startedAt: Date.now(),
+        noProgressTimeoutMs: resolveOpenCodeNoProgressTimeoutMs(),
       });
       ocDbg(
         `[OC-POLL] primed sid=${opencodeSessionId} text=${textLens.size} tools=${toolStatus.size} finished=${finishedMessages.size}`
@@ -765,11 +1047,14 @@ class OpencodeServer {
     this.pollState.set(opencodeSessionId, {
       textLens: prior?.textLens ?? new Map(),
       toolStatus: prior?.toolStatus ?? new Map(),
+      lastToolActivity: null,
       finishedMessages: prior?.finishedMessages ?? new Set(),
       idled: false,
       observedChange: false,
+      lastObservedAt: null,
       idleCandidateAt: null,
       startedAt: Date.now(),
+      noProgressTimeoutMs: resolveOpenCodeNoProgressTimeoutMs(),
     });
     const tick = () => {
       this.pollOnce(opencodeSessionId).catch((err) => {
@@ -798,24 +1083,60 @@ class OpencodeServer {
 
     // Safety cap: 30 minutes. opencode turns can run long (tool loops, large
     // generations), but something is wrong if we've been polling half an hour.
-    if (Date.now() - state.startedAt > 30 * 60 * 1000) {
+    if (hasOpenCodeHardSafetyTimeoutElapsed(Date.now(), state.startedAt)) {
       ocDbg(`[OC-POLL] safety-cap sid=${opencodeSessionId}`);
       state.idled = true;
-      this.dispatch({ type: 'session.idle', properties: { sessionID: opencodeSessionId } });
-      this.stopPolling(opencodeSessionId);
-      return;
-    }
-
-    if (!state.observedChange && Date.now() - state.startedAt > 120 * 1000) {
-      ocDbg(`[OC-POLL] no-progress sid=${opencodeSessionId}`);
-      state.idled = true;
+      this.timeoutAbortedSessions.add(opencodeSessionId);
+      const clearAbortSuppressor = setTimeout(() => {
+        this.timeoutAbortedSessions.delete(opencodeSessionId);
+      }, 30_000);
+      clearAbortSuppressor.unref?.();
+      void this.abort(opencodeSessionId);
       this.dispatch({
         type: 'session.error',
         properties: {
           sessionID: opencodeSessionId,
           error: {
             message:
-              'OpenCode did not produce any output within 120s. Check that the selected provider/model is configured and present in `opencode models`.',
+              'OpenCode exceeded the 30-minute safety limit, so Plum aborted the turn. Check for a stalled provider or tool call before retrying.',
+          },
+        },
+      });
+      this.dispatch({ type: 'session.idle', properties: { sessionID: opencodeSessionId } });
+      this.stopPolling(opencodeSessionId);
+      return;
+    }
+
+    const now = Date.now();
+    const stallTimeout = resolveOpenCodeStallTimeout({
+      now,
+      startedAt: state.startedAt,
+      lastObservedAt: state.lastObservedAt,
+      observedChange: state.observedChange,
+      timeoutMs: state.noProgressTimeoutMs,
+    });
+    if (stallTimeout) {
+      const timeoutSeconds = Math.round(state.noProgressTimeoutMs / 1000);
+      ocDbg(
+        `[OC-POLL] ${stallTimeout} sid=${opencodeSessionId} timeoutMs=${state.noProgressTimeoutMs}`
+      );
+      state.idled = true;
+      this.timeoutAbortedSessions.add(opencodeSessionId);
+      const clearAbortSuppressor = setTimeout(() => {
+        this.timeoutAbortedSessions.delete(opencodeSessionId);
+      }, 30_000);
+      clearAbortSuppressor.unref?.();
+      void this.abort(opencodeSessionId);
+      this.dispatch({
+        type: 'session.error',
+        properties: {
+          sessionID: opencodeSessionId,
+          error: {
+            message: formatOpenCodeStallErrorMessage(
+              stallTimeout,
+              timeoutSeconds,
+              state.lastToolActivity
+            ),
           },
         },
       });
@@ -888,6 +1209,7 @@ class OpencodeServer {
           const prev = state.toolStatus.get(partId) ?? '';
           if (status !== prev) {
             state.toolStatus.set(partId, status);
+            state.lastToolActivity = summarizeOpenCodeToolPart(part, messageId);
             sawChange = true;
             state.observedChange = true;
             this.dispatch({
@@ -928,6 +1250,7 @@ class OpencodeServer {
     if (sawChange) {
       // Any observable progress resets the idle grace period.
       state.idleCandidateAt = null;
+      state.lastObservedAt = Date.now();
     }
 
     if (isTerminal && !sawChange) {
@@ -1010,6 +1333,9 @@ class OpencodeServer {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.providerTurnGate.cancelAll('OpenCode server restarted');
+    this.providerGateReleases.clear();
+    this.timeoutAbortedSessions.clear();
     this.handlers.clear();
     this.globalHandlers.clear();
     for (const t of this.pollTimers.values()) clearInterval(t);
@@ -1071,6 +1397,16 @@ function extractSessionId(evt: OpencodeEvent): string | null {
     // `session.updated.properties.info` has `id` (the session ID itself).
     return info.id;
   }
+  return null;
+}
+
+function extractEventErrorMessage(evt: OpencodeEvent): string | null {
+  const p = evt.properties as Record<string, unknown> | undefined;
+  const error = p?.error as Record<string, unknown> | undefined;
+  if (!error) return null;
+  const data = error.data as Record<string, unknown> | undefined;
+  if (typeof data?.message === 'string') return data.message;
+  if (typeof error.message === 'string') return error.message;
   return null;
 }
 

@@ -204,7 +204,7 @@ export function RunCockpit({
   const completedAgents = agents.filter((agent) => agent.status !== 'started');
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const selectedAgent = selectedAgentId
-    ? agents.find((agent) => agent.id === selectedAgentId) ?? null
+    ? (agents.find((agent) => agent.id === selectedAgentId) ?? null)
     : null;
   const isLive =
     sessionStatus === 'running' ||
@@ -712,7 +712,9 @@ export function RunCockpit({
                   <div key={event.id} className="grid grid-cols-[16px_1fr_auto] gap-2 px-1 py-1.5">
                     <Icon className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
                     <div className="min-w-0">
-                      <div className="truncate text-xs font-medium text-foreground">{event.kind}</div>
+                      <div className="truncate text-xs font-medium text-foreground">
+                        {event.kind}
+                      </div>
                       <div className="truncate text-[11px] text-muted-foreground">{event.text}</div>
                     </div>
                     <div className="pt-0.5 text-[10px] tabular-nums text-muted-foreground">

@@ -56,8 +56,17 @@ const CLI_PROVIDER_MODELS: Record<CLIProvider, string[]> = {
   // Fallback only — runtime list comes from ~/.codex/models_cache.json (filtered to
   // visibility=list, sorted by priority). Cache refreshes via the codex CLI itself;
   // if the user's auth token is expired, the cache freezes and the dropdown stays on
-  // whatever was last fetched. gpt-5.5 is the new default (codex CLI 0.130+).
-  codex: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.2'],
+  // whatever was last fetched. gpt-5.5 remains the default; codex CLI 0.144.0
+  // lists the 5.6 family after it.
+  codex: [
+    'gpt-5.5',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.3-codex-spark',
+  ],
   opencode: [
     'opencode-go/kimi-k2.7',
     'opencode/kimi-k2.7',
@@ -81,9 +90,13 @@ const MODEL_DISPLAY_LABELS: Record<string, string> = {
   haiku: 'Haiku 4.5',
   // Codex (labels for the currently-listed models in upstream models_cache.json)
   'gpt-5.5': 'GPT 5.5',
+  'gpt-5.6-sol': 'GPT 5.6 Sol',
+  'gpt-5.6-terra': 'GPT 5.6 Terra',
+  'gpt-5.6-luna': 'GPT 5.6 Luna',
   'gpt-5.4': 'GPT 5.4',
   'gpt-5.4-mini': 'GPT 5.4 Mini',
   'gpt-5.3-codex': 'GPT 5.3 Codex',
+  'gpt-5.3-codex-spark': 'GPT 5.3 Codex Spark',
   'gpt-5.2': 'GPT 5.2',
   // OpenCode (provider/model format)
   'opencode-go/kimi-k2.7': 'Kimi K2.7 (OpenCode Go)',
@@ -145,6 +158,42 @@ function getCodexAllowedDirectories(options: {
       seen.add(dir);
       return true;
     });
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/**
+ * GPT-5.6's stronger delegation behaviour can turn an ordinary WebUI turn into
+ * dozens of child threads. Keep regular 5.6 work in the root thread unless the
+ * user deliberately selects Ultra or an operator explicitly enables parallel
+ * agents. This applies only to WebUI-launched Codex commands, never a user's
+ * direct Codex CLI invocation.
+ */
+function getCodexWebuiAgentLimitArgs(
+  model: string | undefined,
+  effort: string | undefined
+): string[] {
+  const configuredMode = (process.env.CODEX_WEBUI_AGENT_MODE || '').trim().toLowerCase();
+  const configuredDepth = parseNonNegativeInteger(process.env.CODEX_WEBUI_AGENT_MAX_DEPTH);
+  const configuredThreads = parseNonNegativeInteger(process.env.CODEX_WEBUI_AGENT_MAX_THREADS);
+  const shouldUseSingleAgentDefaults =
+    configuredMode === 'single' ||
+    (configuredMode !== 'parallel' && model?.startsWith('gpt-5.6-') && effort !== 'ultra');
+
+  // Codex CLI 0.144.0+ rejects agents.max_depth=0 ("must be at least 1").
+  // Use 1 as the single-agent floor: the root agent can spawn one level of
+  // children but those children cannot delegate further, which still keeps
+  // 5.6 delegation tightly bounded without crashing the spawn.
+  const maxDepth = configuredDepth ?? (shouldUseSingleAgentDefaults ? 1 : undefined);
+  const maxThreads = configuredThreads ?? (shouldUseSingleAgentDefaults ? 1 : undefined);
+  const args: string[] = [];
+  if (maxDepth !== undefined) args.push('-c', `agents.max_depth=${maxDepth}`);
+  if (maxThreads !== undefined) args.push('-c', `agents.max_threads=${maxThreads}`);
+  return args;
 }
 
 // ── CLI Model Discovery ──────────────────────────────────────────────
@@ -260,11 +309,11 @@ function discoverClaude(): void {
  * Falls back to extracting model strings from the Rust binary.
  */
 function discoverCodex(): void {
+  const cachePath = getCodexModelsCachePath();
+  codexModelsCacheFingerprint = readCodexModelsCacheFingerprint(cachePath);
+
   try {
     // Try models_cache.json first (maintained by Codex CLI from OpenAI API)
-    const credPath = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
-    const cachePath = path.join(credPath, 'models_cache.json');
-
     if (fs.existsSync(cachePath)) {
       const raw = fs.readFileSync(cachePath, 'utf-8');
       const cache = JSON.parse(raw) as {
@@ -288,7 +337,7 @@ function discoverCodex(): void {
           discoveredModels.codex = modelIds;
 
           for (const m of sorted) {
-            MODEL_DISPLAY_LABELS[m.slug] = formatCodexLabel(m.slug);
+            MODEL_DISPLAY_LABELS[m.slug] = formatCodexLabel(m.display_name || m.slug);
           }
 
           const age = cache.fetched_at
@@ -395,9 +444,9 @@ function discoverCodexFromBinary(): void {
 }
 
 function formatCodexLabel(modelId: string): string {
-  // "o4-mini" → "o4 mini", "gpt-4.1" → "GPT 4.1"
-  if (modelId.startsWith('gpt-')) {
-    return modelId.replace('gpt-', 'GPT ').replace(/-/g, ' ');
+  // "o4-mini" → "o4 mini", "gpt-5.6-luna" → "GPT 5.6 luna"
+  if (/^gpt-/i.test(modelId)) {
+    return modelId.replace(/^gpt-/i, 'GPT ').replace(/-/g, ' ');
   }
   return modelId.replace(/-/g, ' ');
 }
@@ -644,6 +693,21 @@ function discoverVibe(): void {
 
 const discoveredModels: Partial<Record<CLIProvider, string[]>> = {};
 let discoveryDone = false;
+let codexModelsCacheFingerprint: string | null = null;
+
+function getCodexModelsCachePath(): string {
+  const credPath = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+  return path.join(credPath, 'models_cache.json');
+}
+
+function readCodexModelsCacheFingerprint(cachePath = getCodexModelsCachePath()): string | null {
+  try {
+    const stat = fs.statSync(cachePath);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return null;
+  }
+}
 
 function ensureDiscovery(): void {
   if (discoveryDone) return;
@@ -660,6 +724,7 @@ function ensureDiscovery(): void {
  */
 export function resetDiscovery(): void {
   discoveryDone = false;
+  codexModelsCacheFingerprint = null;
   delete discoveredModels.claude;
   delete discoveredModels.codex;
   delete discoveredModels.opencode;
@@ -683,14 +748,13 @@ export async function refreshCodexModelsCache(): Promise<boolean> {
       const bin = findCliBinary('codex');
       if (!bin) return false;
 
-      const credPath = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
-      const cachePath = path.join(credPath, 'models_cache.json');
+      const cachePath = getCodexModelsCachePath();
       const beforeMtime = fs.existsSync(cachePath) ? fs.statSync(cachePath).mtimeMs : 0;
 
       // Async spawn so we don't block the event loop for up to 30s.
       await execFileAsync(
         bin,
-        ['exec', '--json', '--skip-git-repo-check', '--model', 'gpt-5.4', 'say OK'],
+        ['exec', '--json', '--skip-git-repo-check', '--model', 'gpt-5.5', 'say OK'],
         { cwd: '/app', timeout: 30000 }
       );
 
@@ -715,6 +779,13 @@ export async function refreshCodexModelsCache(): Promise<boolean> {
 
 function getDiscoveredModels(provider: CLIProvider): string[] {
   ensureDiscovery();
+  if (provider === 'codex') {
+    const latestFingerprint = readCodexModelsCacheFingerprint();
+    if (latestFingerprint !== codexModelsCacheFingerprint) {
+      delete discoveredModels.codex;
+      discoverCodex();
+    }
+  }
   return discoveredModels[provider] ?? CLI_PROVIDER_MODELS[provider];
 }
 
@@ -1002,16 +1073,24 @@ export function getCLIArgs(
         args.push('-c', 'service_tier="fast"');
       }
 
-      // Reasoning effort. Valid Codex values: none | minimal | low | medium | high | xhigh.
+      // Reasoning effort. Valid Codex values: none | minimal | low | medium | high | xhigh | max | ultra.
       // Map common aliases (extra_high / extrahigh / very_high) → xhigh; drop unknown
       // values silently so a stale user setting doesn't crash the spawn.
-      const VALID_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+      const VALID_EFFORTS = [
+        'none',
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+        'ultra',
+      ] as const;
       const EFFORT_ALIASES: Record<string, (typeof VALID_EFFORTS)[number]> = {
         extra_high: 'xhigh',
         extrahigh: 'xhigh',
         very_high: 'xhigh',
         veryhigh: 'xhigh',
-        max: 'xhigh',
       };
       const requestedEffort = options.reasoningLevel === 'fast' ? null : options.reasoningLevel;
       const rawEffort =
@@ -1028,6 +1107,8 @@ export function getCLIArgs(
       if (effort) {
         args.push('-c', `model_reasoning_effort="${effort}"`);
       }
+
+      args.push(...getCodexWebuiAgentLimitArgs(options.model || config.defaultModel, effort));
 
       if (options.webSearchMode && options.webSearchMode !== 'auto') {
         args.push('-c', `web_search="${options.webSearchMode}"`);

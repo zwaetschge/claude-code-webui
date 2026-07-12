@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2,
   Circle,
   Link2,
   Loader2,
+  MonitorSmartphone,
+  Play,
   RefreshCw,
   Smartphone,
+  Square,
   Trash2,
   Wifi,
   X,
@@ -33,6 +36,11 @@ interface ConnectResult {
   connect: unknown;
   selectedSerial: string | null;
   devices: AndroidDeviceSnapshot;
+}
+
+interface AndroidEmulatorStatus {
+  status: 'stopped' | 'starting' | 'running' | 'error';
+  vncUrl?: string | null;
 }
 
 function serialOf(device: AndroidLiveDevice | AndroidKnownDevice): string {
@@ -138,6 +146,7 @@ export function AndroidDevicePanel({ sessionId, className }: AndroidDevicePanelP
   const [friendlyName, setFriendlyName] = useState('');
   const [connectHost, setConnectHost] = useState('');
   const [connectHostPort, setConnectHostPort] = useState('5555');
+  const [screenshotVersion, setScreenshotVersion] = useState(() => Date.now());
 
   const devicesQuery = useQuery({
     queryKey: ['android-devices', sessionId],
@@ -161,6 +170,62 @@ export function AndroidDevicePanel({ sessionId, className }: AndroidDevicePanelP
     [liveSerials, snapshot?.known]
   );
   const selectedSerial = snapshot?.selectedSerial || null;
+  const emulatorSerial = useMemo(() => {
+    const live = snapshot?.live || [];
+    const selected = live.find((device) => serialOf(device) === selectedSerial);
+    if (selected?.type === 'emulator') return serialOf(selected);
+    const emulator = live.find((device) => device.type === 'emulator');
+    return emulator ? serialOf(emulator) : '';
+  }, [selectedSerial, snapshot?.live]);
+
+  const emulatorQuery = useQuery({
+    queryKey: ['android-emulator-status'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<AndroidEmulatorStatus>>(
+        '/api/android/emulator/status'
+      );
+      return response.data.data;
+    },
+    refetchInterval: 2500,
+  });
+
+  const emulatorRunning = emulatorQuery.data?.status === 'running';
+
+  const startEmulatorMutation = useMutation({
+    mutationFn: async () => api.post('/api/android/emulator/start', {}),
+    onSuccess: () => {
+      emulatorQuery.refetch();
+      toast({ title: 'Android emulator starting' });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Emulator start failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const stopEmulatorMutation = useMutation({
+    mutationFn: async () => api.post('/api/android/emulator/stop', {}),
+    onSuccess: () => {
+      emulatorQuery.refetch();
+      toast({ title: 'Android emulator stopped' });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Emulator stop failed',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (!emulatorRunning || !emulatorSerial) return;
+    const timer = window.setInterval(() => setScreenshotVersion(Date.now()), 2000);
+    return () => window.clearInterval(timer);
+  }, [emulatorRunning, emulatorSerial]);
 
   const refresh = async () => {
     await devicesQuery.refetch();
@@ -199,9 +264,9 @@ export function AndroidDevicePanel({ sessionId, className }: AndroidDevicePanelP
 
   const reconnectMutation = useMutation({
     mutationFn: async () => {
-      const response = await api.post<ApiResponse<{ result: unknown; devices: AndroidDeviceSnapshot }>>(
-        `/api/android/devices/reconnect-all?sessionId=${encodeURIComponent(sessionId)}`
-      );
+      const response = await api.post<
+        ApiResponse<{ result: unknown; devices: AndroidDeviceSnapshot }>
+      >(`/api/android/devices/reconnect-all?sessionId=${encodeURIComponent(sessionId)}`);
       return response.data.data;
     },
     onSuccess: (data) => {
@@ -301,7 +366,9 @@ export function AndroidDevicePanel({ sessionId, className }: AndroidDevicePanelP
     reconnectMutation.isPending ||
     pairMutation.isPending ||
     connectMutation.isPending ||
-    forgetMutation.isPending;
+    forgetMutation.isPending ||
+    startEmulatorMutation.isPending ||
+    stopEmulatorMutation.isPending;
 
   return (
     <div className={cn('flex h-full min-h-0 flex-col bg-background/20', className)}>
@@ -353,6 +420,63 @@ export function AndroidDevicePanel({ sessionId, className }: AndroidDevicePanelP
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
+        <section className="mb-4 rounded-lg border border-border/50 bg-foreground/[0.02] p-2.5">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <MonitorSmartphone className="h-4 w-4 shrink-0 text-primary" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-foreground">Android emulator</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {emulatorQuery.data?.status || (emulatorQuery.isLoading ? 'checking' : 'unknown')}
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="Start emulator"
+                disabled={busy || emulatorRunning || emulatorQuery.data?.status === 'starting'}
+                onClick={() => startEmulatorMutation.mutate()}
+              >
+                {startEmulatorMutation.isPending || emulatorQuery.data?.status === 'starting' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="Stop emulator"
+                disabled={busy || !emulatorRunning}
+                onClick={() => stopEmulatorMutation.mutate()}
+              >
+                <Square className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {emulatorRunning && emulatorSerial ? (
+            <img
+              src={`/api/android/devices/${encodeURIComponent(emulatorSerial)}/screenshot.png?t=${screenshotVersion}`}
+              alt="Live Android emulator screen"
+              className="mx-auto max-h-[420px] w-auto max-w-full rounded-md border border-border/50 bg-black object-contain"
+              draggable={false}
+            />
+          ) : (
+            <div className="flex h-28 items-center justify-center rounded-md border border-dashed border-border/50 bg-black/20 px-3 text-center text-[11px] text-muted-foreground">
+              {emulatorQuery.data?.status === 'starting'
+                ? 'Booting the emulator…'
+                : 'Start the emulator to see its live screen.'}
+            </div>
+          )}
+        </section>
+
         <div className="mb-4 flex gap-2">
           <Button
             type="button"

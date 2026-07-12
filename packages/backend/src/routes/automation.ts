@@ -1026,7 +1026,8 @@ router.post(
     const row = assertGoalOwnership(goalId, principal.userId);
     queueGoalNotification(row, principal, {
       eventType: goalEventType(row.status, 'goal.created'),
-      title: row.status === 'completed' ? `Goal completed: ${row.title}` : `Goal created: ${row.title}`,
+      title:
+        row.status === 'completed' ? `Goal completed: ${row.title}` : `Goal created: ${row.title}`,
       summary:
         row.status === 'completed'
           ? 'An automation goal was created already marked as completed.'
@@ -1158,7 +1159,8 @@ router.post(
         queueGoalNotification(row, principal, {
           eventType: 'goal.updated',
           title: `Goal started: ${row.title}`,
-          summary: 'A message was sent to the session for this goal, so Plum marked it in progress.',
+          summary:
+            'A message was sent to the session for this goal, so Plum marked it in progress.',
           previousStatus: 'pending',
         });
       }

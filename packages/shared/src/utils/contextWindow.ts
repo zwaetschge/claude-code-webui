@@ -12,6 +12,7 @@ export function resolveContextWindow(model: string | null | undefined): number {
   if (/(opus|sonnet|haiku)-?(4|5)/.test(id)) return 1_000_000;
 
   // Codex / GPT-5.x windows observed in live session logs.
+  if (id.startsWith('gpt-5.6')) return 1_050_000;
   if (id.startsWith('gpt-5.4-mini')) return 128_000;
   if (id.startsWith('gpt-5.4')) return 196_000;
   if (id.startsWith('gpt-5.3-codex')) return 400_000;

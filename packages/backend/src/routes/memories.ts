@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
-import { isPathInside } from '../utils/allowedPaths';
+import { isAllowedBasePath, isPathInside } from '../utils/allowedPaths';
 
 const router = Router();
 
@@ -20,8 +20,12 @@ function encodeClaudePath(workingDirectory: string): string {
  * Get the memory directory path for a given working directory.
  * Memory files are stored in: ~/.claude/projects/<encoded-path>/memory/
  */
-function getMemoryDir(workingDirectory: string): string {
-  const encoded = encodeClaudePath(workingDirectory);
+export function resolveMemoryDirectory(workingDirectory: string): string {
+  const resolvedWorkingDirectory = path.resolve(workingDirectory);
+  if (!isAllowedBasePath(resolvedWorkingDirectory)) {
+    throw new AppError('Working directory not allowed', 403, 'FORBIDDEN_PATH');
+  }
+  const encoded = encodeClaudePath(resolvedWorkingDirectory);
   return path.join(os.homedir(), '.claude', 'projects', encoded, 'memory');
 }
 
@@ -47,7 +51,7 @@ router.get(
       throw new AppError('workingDirectory is required', 400, 'MISSING_PARAM');
     }
 
-    const memoryDir = getMemoryDir(workingDirectory);
+    const memoryDir = resolveMemoryDirectory(workingDirectory);
 
     try {
       await fs.access(memoryDir);
@@ -98,7 +102,7 @@ router.get(
       throw new AppError('path and workingDirectory are required', 400, 'MISSING_PARAM');
     }
 
-    const memoryDir = getMemoryDir(workingDirectory);
+    const memoryDir = resolveMemoryDirectory(workingDirectory);
     const resolvedPath = validateMemoryPath(filePath, memoryDir);
 
     try {
@@ -134,7 +138,7 @@ router.put(
       throw new AppError('path, content, and workingDirectory are required', 400, 'MISSING_PARAM');
     }
 
-    const memoryDir = getMemoryDir(workingDirectory);
+    const memoryDir = resolveMemoryDirectory(workingDirectory);
 
     // Ensure memory directory exists
     await fs.mkdir(memoryDir, { recursive: true });
@@ -170,7 +174,7 @@ router.post(
       throw new AppError('Memory files must be .md files', 400, 'INVALID_EXTENSION');
     }
 
-    const memoryDir = getMemoryDir(workingDirectory);
+    const memoryDir = resolveMemoryDirectory(workingDirectory);
 
     // Ensure memory directory exists
     await fs.mkdir(memoryDir, { recursive: true });
@@ -214,7 +218,7 @@ router.delete(
       throw new AppError('path and workingDirectory are required', 400, 'MISSING_PARAM');
     }
 
-    const memoryDir = getMemoryDir(workingDirectory);
+    const memoryDir = resolveMemoryDirectory(workingDirectory);
     const resolvedPath = validateMemoryPath(filePath, memoryDir);
 
     try {

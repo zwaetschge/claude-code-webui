@@ -1,10 +1,13 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { SkillLibraryItem, SkillLibraryKind, WritingStyleType } from '@plum-code-webui/shared';
+import { readDesignMdFromSkillDir, toDesignMdSummary, type DesignMdDocument } from './designMd.js';
+import { syncManagedPlumSkills } from './managedPlumSkills.js';
 import { syncExternalSkills } from './skillSync.js';
 
-interface ParsedSkill extends SkillLibraryItem {
+interface ParsedSkill extends Omit<SkillLibraryItem, 'designMd'> {
   content: string;
+  designMd?: DesignMdDocument;
 }
 
 interface ListSkillLibraryOptions {
@@ -211,7 +214,10 @@ async function readSkillFromDir(
     const { frontmatter, body } = parseMarkdownFrontmatter(content);
     const name = frontmatter.name || baseName;
     const description = compactDescription(frontmatter.description, body);
-    const libraryKind = classifySkillLibraryKind(baseName, name, description, body);
+    const designMd = (await readDesignMdFromSkillDir(skillDir)) ?? undefined;
+    const libraryKind = designMd
+      ? 'design'
+      : classifySkillLibraryKind(baseName, name, description, body);
     const writingStyleType =
       libraryKind === 'writing'
         ? classifyWritingStyleType(baseName, name, description, content)
@@ -229,6 +235,7 @@ async function readSkillFromDir(
       enabled: !isDisabled,
       libraryKind,
       writingStyleType,
+      designMd,
       content: body,
     };
   } catch {
@@ -243,6 +250,7 @@ export async function listSkillLibrary(
   if (options.syncExternal !== false) {
     await syncExternalSkills(configHome);
   }
+  await syncManagedPlumSkills(configHome);
 
   const skillsDir = path.join(configHome, 'skills');
   let entries: import('fs').Dirent[];
@@ -271,6 +279,7 @@ export async function listSkillLibrary(
       enabled: parsed.enabled,
       libraryKind: parsed.libraryKind,
       writingStyleType: parsed.writingStyleType,
+      designMd: parsed.designMd ? toDesignMdSummary(parsed.designMd) : undefined,
     });
   }
 

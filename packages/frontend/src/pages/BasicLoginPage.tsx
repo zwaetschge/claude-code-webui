@@ -36,7 +36,8 @@ export function BasicLoginPage() {
       ? `${fromState.pathname}${fromState.search ?? ''}${fromState.hash ?? ''}`
       : '/';
   const proxyError = new URLSearchParams(location.search).get('proxy_error');
-  const displayedError = error || (proxyError ? PROXY_ERROR_MESSAGES[proxyError] || proxyError : null);
+  const displayedError =
+    error || (proxyError ? PROXY_ERROR_MESSAGES[proxyError] || proxyError : null);
 
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {

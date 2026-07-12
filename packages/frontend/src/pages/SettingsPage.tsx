@@ -8,6 +8,7 @@ import {
   Server,
   Sun,
   Moon,
+  Monitor,
   Terminal,
   CheckCircle2,
   RefreshCw,
@@ -96,6 +97,7 @@ import {
   getStoredBackgroundAnimation,
   getStoredTheme,
   normalizeTheme,
+  setStoredTheme,
   useAppearanceStore,
 } from '@/stores/appearanceStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -313,7 +315,8 @@ const SETTINGS_TAB_DESCRIPTORS: Record<SettingsTab, SettingsTabDescriptor> = {
   general: {
     label: 'General',
     eyebrow: 'Workspace',
-    description: 'Default workspace, provider runtime, model menus, and interface behavior live here.',
+    description:
+      'Default workspace, provider runtime, model menus, and interface behavior live here.',
     icon: Settings2,
     highlights: ['Workspace defaults', 'Provider runtime', 'Appearance'],
     sections: [
@@ -461,10 +464,7 @@ function SettingsPanel({
   children,
 }: SettingsPanelProps) {
   return (
-    <Card
-      id={id}
-      className={cn('settings-panel-card border border-border/70', className)}
-    >
+    <Card id={id} className={cn('settings-panel-card border border-border/70', className)}>
       <CardHeader className="settings-panel-header flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1.5">
           <p className="settings-panel-eyebrow text-[11px] font-semibold uppercase text-muted-foreground">
@@ -693,20 +693,6 @@ export function SettingsPage() {
       return response.data.data;
     },
   });
-
-  useEffect(() => {
-    if (settings?.theme) {
-      const nextTheme = normalizeTheme(settings.theme);
-      localStorage.setItem('theme', nextTheme);
-      applyTheme(nextTheme);
-      setCurrentTheme(nextTheme);
-    }
-
-    if (settings?.backgroundAnimation) {
-      setBackgroundAnimation(settings.backgroundAnimation);
-      setCurrentBackgroundAnimation(settings.backgroundAnimation);
-    }
-  }, [settings?.backgroundAnimation, settings?.theme, setBackgroundAnimation]);
 
   // Fetch MCP servers
   const { data: mcpServers, isLoading: mcpLoading } = useQuery({
@@ -1552,16 +1538,15 @@ export function SettingsPage() {
   };
 
   const handleThemeChange = (theme: Theme) => {
-    localStorage.setItem('theme', theme);
-    setCurrentTheme(theme);
-    applyTheme(theme);
-    updateSettingsMutation.mutate({ theme });
+    const nextTheme = normalizeTheme(theme);
+    setStoredTheme(nextTheme);
+    setCurrentTheme(nextTheme);
+    applyTheme(nextTheme);
   };
 
   const handleBackgroundAnimationChange = (backgroundAnimation: BackgroundAnimation) => {
     setCurrentBackgroundAnimation(backgroundAnimation);
     setBackgroundAnimation(backgroundAnimation);
-    updateSettingsMutation.mutate({ backgroundAnimation });
   };
 
   const saveOracleBrowserSettings = () => {
@@ -1665,6 +1650,18 @@ export function SettingsPage() {
   const themeOptions = [
     { value: 'light' as Theme, label: 'Light', icon: Sun, description: 'Bright glass surface' },
     { value: 'dark' as Theme, label: 'Dark', icon: Moon, description: 'Graphite glass surface' },
+    {
+      value: 'system' as Theme,
+      label: 'System',
+      icon: Monitor,
+      description: 'Follow device preference',
+    },
+    {
+      value: 'eink' as Theme,
+      label: 'E-Ink',
+      icon: FileText,
+      description: 'Static high-contrast grayscale',
+    },
   ];
 
   const configuredOpenCodeProviders =
@@ -1776,7 +1773,6 @@ export function SettingsPage() {
     discordSettings?.configured,
     discordSettings?.enabled,
     discordSettings?.transport,
-    discordSettings?.webhookUrlPreview,
     healthyProviderCount,
     installedPlugins?.length,
     integrations?.comfyuiUrl,
@@ -2380,7 +2376,6 @@ export function SettingsPage() {
                             )}
                           </Card>
                         </section>
-
                       </div>
                     </TabsContent>
 
@@ -2974,8 +2969,8 @@ export function SettingsPage() {
                         <SettingsPanel
                           id="appearance"
                           eyebrow="Appearance"
-                          title="Light, dark, and motion"
-                          description="Keep the Plum glass interface consistent while tuning contrast and background movement."
+                          title="Theme and background"
+                          description="Choose the interface contrast mode and the background used outside static E-Ink mode."
                         >
                           <div className="space-y-4">
                             <div className="flex flex-wrap gap-2">
@@ -2993,7 +2988,7 @@ export function SettingsPage() {
                                       handleThemeChange(option.value);
                                     }}
                                     className={cn(
-                                      'flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2.5 transition-all',
+                                      'flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2.5 text-left transition-all',
                                       'hover:scale-[1.02] active:scale-[0.98]',
                                       isActive
                                         ? 'border-primary bg-primary/10 text-primary'
@@ -3001,29 +2996,47 @@ export function SettingsPage() {
                                     )}
                                   >
                                     <Icon className="h-4 w-4" />
-                                    <span className="text-sm font-medium">{option.label}</span>
+                                    <span className="min-w-0">
+                                      <span className="block text-sm font-medium">
+                                        {option.label}
+                                      </span>
+                                      <span className="hidden text-xs text-muted-foreground sm:block">
+                                        {option.description}
+                                      </span>
+                                    </span>
                                     {isActive ? <CheckCircle2 className="ml-1 h-4 w-4" /> : null}
                                   </button>
                                 );
                               })}
                             </div>
 
+                            {currentTheme === 'eink' ? (
+                              <p className="text-xs text-muted-foreground">
+                                E-Ink mode keeps the interface static and ignores animated
+                                backgrounds until you switch back to Light, Dark, or System.
+                              </p>
+                            ) : null}
+
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                               {BACKGROUND_ANIMATION_OPTIONS.map((option) => {
                                 const isActive = currentBackgroundAnimation === option.value;
+                                const backgroundDisabled = currentTheme === 'eink';
 
                                 return (
                                   <button
                                     type="button"
                                     key={option.value}
+                                    disabled={backgroundDisabled}
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
+                                      if (backgroundDisabled) return;
                                       handleBackgroundAnimationChange(option.value);
                                     }}
                                     className={cn(
                                       'flex min-h-[58px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all',
                                       'hover:scale-[1.01] active:scale-[0.99]',
+                                      backgroundDisabled && 'cursor-not-allowed opacity-55',
                                       isActive
                                         ? 'border-primary bg-primary/10 text-primary'
                                         : 'border-border bg-card hover:border-primary/40'
@@ -3047,7 +3060,6 @@ export function SettingsPage() {
                             </div>
                           </div>
                         </SettingsPanel>
-
                       </div>
                     </TabsContent>
 

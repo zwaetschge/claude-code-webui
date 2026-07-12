@@ -11,9 +11,14 @@ import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 
-const API = (process.env.ANDROID_BUILDER_URL || 'http://host.docker.internal:4000').replace(/\/$/, '');
+const API = (process.env.ANDROID_BUILDER_URL || 'http://host.docker.internal:4000').replace(
+  /\/$/,
+  ''
+);
 const REQUEST_TIMEOUT_MS = Number(process.env.ANDROID_BUILDER_TIMEOUT_MS || 60_000);
-const BUILDER_PROJECTS_ROOT = (process.env.ANDROID_BUILDER_PROJECTS_CONTAINER_PATH || '/app/projects').replace(/\/$/, '');
+const BUILDER_PROJECTS_ROOT = (
+  process.env.ANDROID_BUILDER_PROJECTS_CONTAINER_PATH || '/app/projects'
+).replace(/\/$/, '');
 const HOST_PROJECTS_ROOT = (
   process.env.ANDROID_BUILDER_PROJECTS_HOST_PATH ||
   process.env.ANDROID_BUILDER_PROJECTS_PATH ||
@@ -21,7 +26,9 @@ const HOST_PROJECTS_ROOT = (
 ).replace(/\/$/, '');
 const WEBUI_SESSION_ID = process.env.WEBUI_SESSION_ID || '';
 const WEBUI_ANDROID_DEVICE_SERIAL = (process.env.WEBUI_ANDROID_DEVICE_SERIAL || '').trim();
-const CLAIM_TTL_MS = Number(process.env.ANDROID_BUILDER_PROJECT_CLAIM_TTL_MS || 12 * 60 * 60 * 1000);
+const CLAIM_TTL_MS = Number(
+  process.env.ANDROID_BUILDER_PROJECT_CLAIM_TTL_MS || 12 * 60 * 60 * 1000
+);
 const CLAIM_FILE = '.plum-session-claim.json';
 const CLAIMS_DIR = (
   process.env.ANDROID_BUILDER_PROJECT_CLAIMS_DIR ||
@@ -30,8 +37,12 @@ const CLAIMS_DIR = (
 
 const log = (...args) => console.error('[mcp-android]', ...args);
 
-function send(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
-function ok(id, value) { send({ jsonrpc: '2.0', id, result: value }); }
+function send(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
+}
+function ok(id, value) {
+  send({ jsonrpc: '2.0', id, result: value });
+}
 function fail(id, code, message, data) {
   send({ jsonrpc: '2.0', id, error: { code, message, ...(data ? { data } : {}) } });
 }
@@ -48,7 +59,11 @@ async function http(method, path, body) {
     });
     const text = await resp.text();
     let parsed;
-    try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text }; }
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { raw: text };
+    }
     if (!resp.ok) {
       const message = parsed?.error || parsed?.message || `HTTP ${resp.status}`;
       const err = new Error(message);
@@ -120,16 +135,40 @@ function safeProjectId(projectId) {
 }
 
 function getSessionId(args = {}) {
-  return String(args.webui_session_id || WEBUI_SESSION_ID || 'unknown-session').trim() || 'unknown-session';
+  return (
+    String(args.webui_session_id || WEBUI_SESSION_ID || 'unknown-session').trim() ||
+    'unknown-session'
+  );
 }
 
-function withSelectedSerial(args = {}) {
+async function withSelectedSerial(args = {}) {
   const input = args && typeof args === 'object' ? args : {};
   const serial = String(input.serial || WEBUI_ANDROID_DEVICE_SERIAL || '').trim();
-  if (!serial) {
-    throw new Error('serial required; select an Android test device in Plum WebUI or pass serial explicitly');
+  if (serial) return { ...input, serial };
+
+  const payload = await http('GET', '/api/devices');
+  const devices = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.devices)
+        ? payload.devices
+        : [];
+  const live = devices.filter((device) => {
+    const candidate = String(device?.serial || device?.id || '').trim();
+    const state = String(device?.status || device?.state || 'device').toLowerCase();
+    return candidate && state !== 'offline' && state !== 'unauthorized';
+  });
+
+  if (live.length === 1) {
+    return { ...input, serial: String(live[0].serial || live[0].id).trim() };
   }
-  return { ...input, serial };
+  if (live.length === 0) {
+    throw new Error('no live Android device; start the emulator or connect a device');
+  }
+  throw new Error(
+    'multiple live Android devices; select one in Plum WebUI or pass serial explicitly'
+  );
 }
 
 function claimPath(projectId) {
@@ -156,7 +195,9 @@ async function readClaimFile(path) {
 }
 
 async function readProjectClaim(projectId) {
-  return (await readClaimFile(claimPath(projectId))) || (await readClaimFile(legacyClaimPath(projectId)));
+  return (
+    (await readClaimFile(claimPath(projectId))) || (await readClaimFile(legacyClaimPath(projectId)))
+  );
 }
 
 async function writeProjectClaim(projectId, sessionId, reason = 'claimed') {
@@ -183,7 +224,8 @@ async function claimProject(args, reason = 'claimed') {
       projectId,
       sessionId,
       existingClaim: existing,
-      message: 'Project is claimed by another Plum session. Pass force=true only if you intentionally take over this app.',
+      message:
+        'Project is claimed by another Plum session. Pass force=true only if you intentionally take over this app.',
       ...projectPaths(projectId),
     };
   }
@@ -210,13 +252,20 @@ async function releaseProject(args) {
       projectId,
       sessionId,
       existingClaim: existing,
-      message: 'Project is claimed by another Plum session. Pass force=true only if you intentionally release that claim.',
+      message:
+        'Project is claimed by another Plum session. Pass force=true only if you intentionally release that claim.',
       ...projectPaths(projectId),
     };
   }
   await rm(claimPath(projectId), { force: true });
   await rm(legacyClaimPath(projectId), { force: true }).catch(() => {});
-  return { status: 'released', projectId, sessionId, releasedClaim: existing, ...projectPaths(projectId) };
+  return {
+    status: 'released',
+    projectId,
+    sessionId,
+    releasedClaim: existing,
+    ...projectPaths(projectId),
+  };
 }
 
 function claimSummary(claim, currentSessionId = getSessionId()) {
@@ -228,7 +277,10 @@ function claimSummary(claim, currentSessionId = getSessionId()) {
     };
   }
   return {
-    status: claim.sessionId === currentSessionId ? 'claimed_by_current_session' : 'claimed_by_other_session',
+    status:
+      claim.sessionId === currentSessionId
+        ? 'claimed_by_current_session'
+        : 'claimed_by_other_session',
     sessionId: claim.sessionId,
     isCurrentSession: claim.sessionId === currentSessionId,
     claimedAt: claim.claimedAt,
@@ -275,9 +327,15 @@ async function sessionAuthoredGeneration(args, mode) {
 
   let project = null;
   try {
-    project = await enrichProjectPayload(await http('GET', `/api/projects/${encodeURIComponent(projectId)}`));
+    project = await enrichProjectPayload(
+      await http('GET', `/api/projects/${encodeURIComponent(projectId)}`)
+    );
   } catch {
-    project = { id: projectId, ...projectPaths(projectId), sessionClaim: claimSummary(await readProjectClaim(projectId)) };
+    project = {
+      id: projectId,
+      ...projectPaths(projectId),
+      sessionClaim: claimSummary(await readProjectClaim(projectId)),
+    };
   }
 
   return {
@@ -304,12 +362,14 @@ const TOOLS = [
   // ── Project lifecycle ────────────────────────────────────────────────
   {
     name: 'android_list_projects',
-    description: 'List all Android projects known to the builder, including the host workspacePath the current Plum session can edit directly.',
+    description:
+      'List all Android projects known to the builder, including the host workspacePath the current Plum session can edit directly.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'android_get_project',
-    description: 'Get a single Android project by id (status, package, workspacePath, last build, etc).',
+    description:
+      'Get a single Android project by id (status, package, workspacePath, last build, etc).',
     inputSchema: {
       type: 'object',
       required: ['projectId'],
@@ -333,7 +393,10 @@ const TOOLS = [
         packageName: { type: 'string', pattern: '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$' },
         description: { type: 'string', minLength: 1 },
         template: { type: 'string', description: 'Optional template id.' },
-        webui_session_id: { type: 'string', description: 'Optional explicit Plum session id; usually provided by the environment.' },
+        webui_session_id: {
+          type: 'string',
+          description: 'Optional explicit Plum session id; usually provided by the environment.',
+        },
       },
     },
   },
@@ -349,21 +412,34 @@ const TOOLS = [
       required: ['projectId'],
       properties: {
         projectId: { type: 'string' },
-        force: { type: 'boolean', description: 'Take over a stale or intentional cross-session claim.' },
-        webui_session_id: { type: 'string', description: 'Optional explicit Plum session id; usually provided by the environment.' },
+        force: {
+          type: 'boolean',
+          description: 'Take over a stale or intentional cross-session claim.',
+        },
+        webui_session_id: {
+          type: 'string',
+          description: 'Optional explicit Plum session id; usually provided by the environment.',
+        },
       },
     },
   },
   {
     name: 'android_release_project',
-    description: 'Release a project claim when the current Plum session is done with that Android app.',
+    description:
+      'Release a project claim when the current Plum session is done with that Android app.',
     inputSchema: {
       type: 'object',
       required: ['projectId'],
       properties: {
         projectId: { type: 'string' },
-        force: { type: 'boolean', description: 'Release another session claim only when intentionally cleaning up.' },
-        webui_session_id: { type: 'string', description: 'Optional explicit Plum session id; usually provided by the environment.' },
+        force: {
+          type: 'boolean',
+          description: 'Release another session claim only when intentionally cleaning up.',
+        },
+        webui_session_id: {
+          type: 'string',
+          description: 'Optional explicit Plum session id; usually provided by the environment.',
+        },
       },
     },
   },
@@ -403,7 +479,8 @@ const TOOLS = [
   // ── Build / install / launch ────────────────────────────────────────
   {
     name: 'android_build',
-    description: 'Build the APK for a project (Gradle assembleDebug). Streams progress via the backend socket; returns initial accept response.',
+    description:
+      'Build the APK for a project (Gradle assembleDebug). Streams progress via the backend socket; returns initial accept response.',
     inputSchema: {
       type: 'object',
       required: ['projectId'],
@@ -430,8 +507,15 @@ const TOOLS = [
       required: ['projectId'],
       properties: {
         projectId: { type: 'string' },
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
-        apkPath: { type: 'string', description: 'Optional override path; defaults to app/build/outputs/apk/debug/app-debug.apk' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
+        apkPath: {
+          type: 'string',
+          description:
+            'Optional override path; defaults to app/build/outputs/apk/debug/app-debug.apk',
+        },
       },
     },
   },
@@ -442,7 +526,10 @@ const TOOLS = [
       type: 'object',
       required: ['packageName'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         packageName: { type: 'string', pattern: '^[\\w.]+$' },
       },
     },
@@ -454,7 +541,10 @@ const TOOLS = [
       type: 'object',
       required: ['packageName'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         packageName: { type: 'string', pattern: '^[\\w.]+$' },
         mainActivity: { type: 'string', description: 'Default ".MainActivity"' },
       },
@@ -469,12 +559,14 @@ const TOOLS = [
   },
   {
     name: 'adb_known_devices',
-    description: 'List remembered devices from the persistent registry (survives container restarts).',
+    description:
+      'List remembered devices from the persistent registry (survives container restarts).',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'adb_pair_wifi',
-    description: 'Pair a wireless device using a pairing code from Developer Options → Wireless debugging → Pair device with pairing code.',
+    description:
+      'Pair a wireless device using a pairing code from Developer Options → Wireless debugging → Pair device with pairing code.',
     inputSchema: {
       type: 'object',
       required: ['host', 'port', 'pairingCode'],
@@ -488,7 +580,8 @@ const TOOLS = [
   },
   {
     name: 'adb_connect_wifi',
-    description: 'Connect to a wireless device on host:port (after pairing). The device is added to the auto-reconnect registry on success.',
+    description:
+      'Connect to a wireless device on host:port (after pairing). The device is added to the auto-reconnect registry on success.',
     inputSchema: {
       type: 'object',
       required: ['host'],
@@ -510,7 +603,8 @@ const TOOLS = [
   },
   {
     name: 'adb_forget_device',
-    description: 'Remove a device from the persistent registry (it will not auto-reconnect on next startup).',
+    description:
+      'Remove a device from the persistent registry (it will not auto-reconnect on next startup).',
     inputSchema: {
       type: 'object',
       required: ['serial'],
@@ -543,7 +637,8 @@ const TOOLS = [
   },
   {
     name: 'adb_reconnect_all',
-    description: 'Re-attempt reconnect for every remembered wifi device that has autoReconnect=true.',
+    description:
+      'Re-attempt reconnect for every remembered wifi device that has autoReconnect=true.',
     inputSchema: { type: 'object', properties: {} },
   },
 
@@ -577,7 +672,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         lines: { type: 'integer', minimum: 10, maximum: 5000 },
         sinceMs: { type: 'integer', description: 'Only logs since this epoch ms.' },
         filter: { type: 'string', description: 'logcat filter spec, e.g. "MyApp:V *:S" or "*:E"' },
@@ -589,17 +687,26 @@ const TOOLS = [
     description: 'Clear the logcat buffer on a device.',
     inputSchema: {
       type: 'object',
-      properties: { serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' } },
+      properties: {
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
+      },
     },
   },
   {
     name: 'adb_shell',
-    description: 'Run an arbitrary adb shell command on a device. Destructive ops (rm -rf /, dd, mkfs, fork bomb, su root) are denied by the backend.',
+    description:
+      'Run an arbitrary adb shell command on a device. Destructive ops (rm -rf /, dd, mkfs, fork bomb, su root) are denied by the backend.',
     inputSchema: {
       type: 'object',
       required: ['command'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         command: { type: 'string', minLength: 1, maxLength: 4000 },
         timeoutMs: { type: 'integer', minimum: 1000, maximum: 120_000 },
       },
@@ -607,12 +714,16 @@ const TOOLS = [
   },
   {
     name: 'adb_screenshot',
-    description: 'Capture a PNG screenshot from a device and save it to a file inside the builder container. Use adb_screenshot_view if you want to actually SEE the screen content.',
+    description:
+      'Capture a PNG screenshot from a device and save it to a file inside the builder container. Use adb_screenshot_view if you want to actually SEE the screen content.',
     inputSchema: {
       type: 'object',
       required: ['outputPath'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         outputPath: { type: 'string', pattern: '^/[\\w./-]+\\.png$' },
       },
     },
@@ -626,17 +737,26 @@ const TOOLS = [
     ].join(' '),
     inputSchema: {
       type: 'object',
-      properties: { serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' } },
+      properties: {
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
+      },
     },
   },
   {
     name: 'adb_tap',
-    description: 'Tap at screen coordinates (x, y in pixels). Pair with adb_screenshot_view + adb_ui_dump to know where to tap.',
+    description:
+      'Tap at screen coordinates (x, y in pixels). Pair with adb_screenshot_view + adb_ui_dump to know where to tap.',
     inputSchema: {
       type: 'object',
       required: ['x', 'y'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         x: { type: 'number', minimum: 0, maximum: 10000 },
         y: { type: 'number', minimum: 0, maximum: 10000 },
       },
@@ -644,12 +764,16 @@ const TOOLS = [
   },
   {
     name: 'adb_swipe',
-    description: 'Swipe from (x1,y1) to (x2,y2). durationMs default 300 (use ~600 for slow scroll, 100-200 for fling).',
+    description:
+      'Swipe from (x1,y1) to (x2,y2). durationMs default 300 (use ~600 for slow scroll, 100-200 for fling).',
     inputSchema: {
       type: 'object',
       required: ['x1', 'y1', 'x2', 'y2'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         x1: { type: 'number', minimum: 0, maximum: 10000 },
         y1: { type: 'number', minimum: 0, maximum: 10000 },
         x2: { type: 'number', minimum: 0, maximum: 10000 },
@@ -660,12 +784,16 @@ const TOOLS = [
   },
   {
     name: 'adb_input_text',
-    description: 'Type text into the currently-focused input field (printable ASCII only; for special keys use adb_keyevent).',
+    description:
+      'Type text into the currently-focused input field (printable ASCII only; for special keys use adb_keyevent).',
     inputSchema: {
       type: 'object',
       required: ['text'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         text: { type: 'string', minLength: 1, maxLength: 1000 },
       },
     },
@@ -685,17 +813,35 @@ const TOOLS = [
       type: 'object',
       required: ['keyCode'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         keyCode: {
           oneOf: [
-            { type: 'string', description: 'Symbolic name like "HOME", "BACK", "VOLUME_UP" (KEYCODE_ prefix optional).' },
+            {
+              type: 'string',
+              description:
+                'Symbolic name like "HOME", "BACK", "VOLUME_UP" (KEYCODE_ prefix optional).',
+            },
             { type: 'integer', minimum: 0, maximum: 1000 },
           ],
         },
         source: {
           type: 'string',
-          enum: ['keyboard', 'gamepad', 'joystick', 'dpad', 'touchscreen', 'touchnavigation', 'mouse', 'stylus', 'trackball'],
-          description: 'Input source. Defaults to "keyboard". Use "gamepad" for controller buttons that games/emulators filter by SOURCE_GAMEPAD (or just call adb_gamepad).',
+          enum: [
+            'keyboard',
+            'gamepad',
+            'joystick',
+            'dpad',
+            'touchscreen',
+            'touchnavigation',
+            'mouse',
+            'stylus',
+            'trackball',
+          ],
+          description:
+            'Input source. Defaults to "keyboard". Use "gamepad" for controller buttons that games/emulators filter by SOURCE_GAMEPAD (or just call adb_gamepad).',
         },
       },
     },
@@ -714,12 +860,19 @@ const TOOLS = [
       type: 'object',
       required: ['button'],
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
         button: {
           type: 'string',
-          description: 'Symbolic gamepad keycode like "BUTTON_A", "BUTTON_L2", "DPAD_UP" (KEYCODE_ prefix optional).',
+          description:
+            'Symbolic gamepad keycode like "BUTTON_A", "BUTTON_L2", "DPAD_UP" (KEYCODE_ prefix optional).',
         },
-        longpress: { type: 'boolean', description: 'Default false. True sends --longpress for a held button.' },
+        longpress: {
+          type: 'boolean',
+          description: 'Default false. True sends --longpress for a held button.',
+        },
       },
     },
   },
@@ -733,17 +886,29 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' },
-        compressed: { type: 'boolean', description: 'Default true — strips redundant nodes for shorter output.' },
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
+        compressed: {
+          type: 'boolean',
+          description: 'Default true — strips redundant nodes for shorter output.',
+        },
       },
     },
   },
   {
     name: 'adb_current_activity',
-    description: 'Identify the foreground activity (package + activity class) — useful right after adb_launch to confirm the app is actually showing.',
+    description:
+      'Identify the foreground activity (package + activity class) — useful right after adb_launch to confirm the app is actually showing.',
     inputSchema: {
       type: 'object',
-      properties: { serial: { type: 'string', description: 'Optional when a WebUI session test device is selected.' } },
+      properties: {
+        serial: {
+          type: 'string',
+          description: 'Optional when a WebUI session test device is selected.',
+        },
+      },
     },
   },
 
@@ -757,11 +922,15 @@ const TOOLS = [
 
 const HANDLERS = {
   android_list_projects: async () => enrichProjectPayload(await http('GET', '/api/projects')),
-  android_get_project: async (a) => enrichProjectPayload(await http('GET', `/api/projects/${encodeURIComponent(a.projectId)}`)),
+  android_get_project: async (a) =>
+    enrichProjectPayload(await http('GET', `/api/projects/${encodeURIComponent(a.projectId)}`)),
   android_create_project: async (a) => {
     const project = await enrichProjectPayload(await http('POST', '/api/projects', a));
     if (project?.id) {
-      const claim = await claimProject({ projectId: project.id, webui_session_id: a?.webui_session_id }, 'created-by-session');
+      const claim = await claimProject(
+        { projectId: project.id, webui_session_id: a?.webui_session_id },
+        'created-by-session'
+      );
       const currentSessionId = getSessionId(a);
       return {
         ...project,
@@ -776,19 +945,34 @@ const HANDLERS = {
   android_generate: (a) => sessionAuthoredGeneration(a, 'generate'),
   android_iterate: (a) => sessionAuthoredGeneration(a, 'iterate'),
 
-  android_build: (a) => http('POST', `/api/build/${encodeURIComponent(a.projectId)}`, a.variant ? { variant: a.variant } : {}),
-  android_build_artifacts: (a) => http('GET', `/api/build/${encodeURIComponent(a.projectId)}/artifacts`),
-  android_install: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/install/${encodeURIComponent(args.projectId)}`, args.apkPath ? { apkPath: args.apkPath } : {});
+  android_build: (a) =>
+    http(
+      'POST',
+      `/api/build/${encodeURIComponent(a.projectId)}`,
+      a.variant ? { variant: a.variant } : {}
+    ),
+  android_build_artifacts: (a) =>
+    http('GET', `/api/build/${encodeURIComponent(a.projectId)}/artifacts`),
+  android_install: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http(
+      'POST',
+      `/api/devices/${encodeURIComponent(args.serial)}/install/${encodeURIComponent(args.projectId)}`,
+      args.apkPath ? { apkPath: args.apkPath } : {}
+    );
   },
-  android_uninstall: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/uninstall`, { packageName: args.packageName });
+  android_uninstall: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/uninstall`, {
+      packageName: args.packageName,
+    });
   },
-  android_launch: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/launch`, { packageName: args.packageName, mainActivity: args.mainActivity });
+  android_launch: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/launch`, {
+      packageName: args.packageName,
+      mainActivity: args.mainActivity,
+    });
   },
 
   adb_devices: () => http('GET', '/api/devices'),
@@ -797,70 +981,93 @@ const HANDLERS = {
   adb_connect_wifi: (a) => http('POST', '/api/devices/connect', a),
   adb_disconnect: (a) => http('POST', '/api/devices/disconnect', { serial: a.serial }),
   adb_forget_device: (a) => http('DELETE', `/api/devices/known/${encodeURIComponent(a.serial)}`),
-  adb_set_friendly_name: (a) => http('POST', `/api/devices/${encodeURIComponent(a.serial)}/friendly-name`, { friendlyName: a.friendlyName }),
-  adb_set_auto_reconnect: (a) => http('POST', `/api/devices/${encodeURIComponent(a.serial)}/auto-reconnect`, { autoReconnect: a.autoReconnect }),
+  adb_set_friendly_name: (a) =>
+    http('POST', `/api/devices/${encodeURIComponent(a.serial)}/friendly-name`, {
+      friendlyName: a.friendlyName,
+    }),
+  adb_set_auto_reconnect: (a) =>
+    http('POST', `/api/devices/${encodeURIComponent(a.serial)}/auto-reconnect`, {
+      autoReconnect: a.autoReconnect,
+    }),
   adb_reconnect_all: () => http('POST', '/api/devices/reconnect-all'),
 
   emulator_status: () => http('GET', '/api/emulator/status'),
-  emulator_start: (a) => http('POST', '/api/emulator/start', a),
+  emulator_start: (a) => http('POST', '/api/emulator/start', { avdName: a.avd }),
   emulator_stop: () => http('POST', '/api/emulator/stop'),
 
-  adb_logcat: (a) => {
-    const args = withSelectedSerial(a);
+  adb_logcat: async (a) => {
+    const args = await withSelectedSerial(a);
     const params = new URLSearchParams();
     if (args.lines) params.set('lines', String(args.lines));
     if (args.sinceMs) params.set('sinceMs', String(args.sinceMs));
     if (args.filter) params.set('filter', args.filter);
     const qs = params.toString();
-    return http('GET', `/api/devices/${encodeURIComponent(args.serial)}/logcat${qs ? `?${qs}` : ''}`);
+    return http(
+      'GET',
+      `/api/devices/${encodeURIComponent(args.serial)}/logcat${qs ? `?${qs}` : ''}`
+    );
   },
-  adb_logcat_clear: (a) => {
-    const args = withSelectedSerial(a);
+  adb_logcat_clear: async (a) => {
+    const args = await withSelectedSerial(a);
     return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/logcat/clear`);
   },
-  adb_shell: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/shell`, { command: args.command, timeoutMs: args.timeoutMs });
-  },
-  adb_screenshot: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/screenshot`, { outputPath: args.outputPath });
-  },
-  adb_tap: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/tap`, { x: args.x, y: args.y });
-  },
-  adb_swipe: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/swipe`, {
-      x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: args.durationMs,
+  adb_shell: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/shell`, {
+      command: args.command,
+      timeoutMs: args.timeoutMs,
     });
   },
-  adb_input_text: (a) => {
-    const args = withSelectedSerial(a);
-    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/input-text`, { text: args.text });
+  adb_screenshot: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/screenshot`, {
+      outputPath: args.outputPath,
+    });
   },
-  adb_keyevent: (a) => {
-    const args = withSelectedSerial(a);
+  adb_tap: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/tap`, {
+      x: args.x,
+      y: args.y,
+    });
+  },
+  adb_swipe: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/swipe`, {
+      x1: args.x1,
+      y1: args.y1,
+      x2: args.x2,
+      y2: args.y2,
+      durationMs: args.durationMs,
+    });
+  },
+  adb_input_text: async (a) => {
+    const args = await withSelectedSerial(a);
+    return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/input-text`, {
+      text: args.text,
+    });
+  },
+  adb_keyevent: async (a) => {
+    const args = await withSelectedSerial(a);
     return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/keyevent`, {
       keyCode: args.keyCode,
       ...(args.source ? { source: args.source } : {}),
     });
   },
-  adb_gamepad: (a) => {
-    const args = withSelectedSerial(a);
+  adb_gamepad: async (a) => {
+    const args = await withSelectedSerial(a);
     return http('POST', `/api/devices/${encodeURIComponent(args.serial)}/gamepad-button`, {
       button: args.button,
       ...(args.longpress ? { longpress: true } : {}),
     });
   },
-  adb_ui_dump: (a) => {
-    const args = withSelectedSerial(a);
+  adb_ui_dump: async (a) => {
+    const args = await withSelectedSerial(a);
     const qs = args.compressed === false ? '?compressed=false' : '';
     return http('GET', `/api/devices/${encodeURIComponent(args.serial)}/ui-dump${qs}`);
   },
-  adb_current_activity: (a) => {
-    const args = withSelectedSerial(a);
+  adb_current_activity: async (a) => {
+    const args = await withSelectedSerial(a);
     return http('GET', `/api/devices/${encodeURIComponent(args.serial)}/current-activity`);
   },
 
@@ -879,7 +1086,9 @@ function magickPipe(input, args) {
     proc.on('error', reject);
     proc.on('close', (code) => {
       if (code === 0) return resolve(Buffer.concat(chunks));
-      reject(new Error(`magick exit ${code}: ${Buffer.concat(errChunks).toString().slice(0, 400)}`));
+      reject(
+        new Error(`magick exit ${code}: ${Buffer.concat(errChunks).toString().slice(0, 400)}`)
+      );
     });
     proc.stdin.on('error', reject);
     proc.stdin.end(input);
@@ -892,7 +1101,7 @@ function magickPipe(input, args) {
 // we downscale + JPEG-recompress to stay well under the size cap. The
 // builder backend still serves the original PNG for adb_screenshot.
 async function callScreenshotView(args) {
-  const { serial } = withSelectedSerial(args);
+  const { serial } = await withSelectedSerial(args);
   const png = await httpBinary('GET', `/api/devices/${encodeURIComponent(serial)}/screenshot.png`);
 
   // Longest-edge 1024px, quality 78. Phone screens are pixel-dense; the agent
@@ -903,9 +1112,11 @@ async function callScreenshotView(args) {
   try {
     outBuf = await magickPipe(png, [
       '-',
-      '-resize', '1024x1024>',
+      '-resize',
+      '1024x1024>',
       '-strip',
-      '-quality', '78',
+      '-quality',
+      '78',
       'jpg:-',
     ]);
   } catch (err) {
@@ -981,7 +1192,9 @@ rl.on('line', async (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
   let msg;
-  try { msg = JSON.parse(trimmed); } catch (e) {
+  try {
+    msg = JSON.parse(trimmed);
+  } catch (e) {
     log('parse error', e.message, trimmed.slice(0, 200));
     return;
   }

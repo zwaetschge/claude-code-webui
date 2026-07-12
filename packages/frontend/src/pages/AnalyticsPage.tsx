@@ -32,6 +32,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { formatNumber } from '@/lib/analyticsFormat';
 import {
   CLI_PROVIDER_LABEL,
   CLI_PROVIDER_LIMIT_LABELS,
@@ -360,16 +361,6 @@ function getProviderColor(provider?: string): string {
   return PROVIDER_COLORS[provider || ''] ?? PROVIDER_FALLBACK_COLOR;
 }
 
-function formatNumber(num: number): string {
-  if (num >= 1_000_000) {
-    return (num / 1_000_000).toFixed(1) + 'M';
-  }
-  if (num >= 1_000) {
-    return (num / 1_000).toFixed(1) + 'K';
-  }
-  return num.toLocaleString();
-}
-
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -610,6 +601,9 @@ export function AnalyticsPage() {
       );
       return response.data.data;
     },
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   const {
@@ -624,6 +618,9 @@ export function AnalyticsPage() {
       );
       return response.data.data;
     },
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   // Fetch usage limits for all supported providers
@@ -867,9 +864,7 @@ export function AnalyticsPage() {
             Unified Analytics
           </div>
           <h1>All providers. One ledger.</h1>
-          <p>
-            Token volume and API-equivalent spend across every connected coding provider.
-          </p>
+          <p>Token volume and API-equivalent spend across every connected coding provider.</p>
           <div className="analytics-provider-pills">
             {providerSummary.length === 0 ? (
               <span className="ui-pill ui-pill-subtle">All providers</span>

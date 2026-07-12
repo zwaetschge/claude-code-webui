@@ -24,7 +24,10 @@ const pairSchema = z.object({
   sessionId: sessionIdSchema.optional(),
   host: z.string().trim().min(1).max(255),
   port: z.coerce.number().int().min(1).max(65535),
-  pairingCode: z.string().trim().regex(/^\d{4,8}$/),
+  pairingCode: z
+    .string()
+    .trim()
+    .regex(/^\d{4,8}$/),
   friendlyName: friendlyNameSchema,
   connectAfterPair: z.boolean().optional().default(true),
   connectPort: z.coerce.number().int().min(1).max(65535).optional().default(5555),
@@ -41,6 +44,10 @@ const connectSchema = z.object({
 
 const bindDeviceSchema = z.object({
   serial: serialSchema.nullable(),
+});
+
+const emulatorStartSchema = z.object({
+  avdName: z.string().trim().min(1).max(120).optional(),
 });
 
 function normalizeDevices<T extends Record<string, unknown>>(payload: unknown): T[] {
@@ -103,7 +110,8 @@ async function builderRequest<T>(method: string, path: string, body?: unknown): 
 
     if (!response.ok) {
       const payload = parsed as { error?: string; message?: string; raw?: string } | null;
-      const detail = payload?.error || payload?.message || payload?.raw || `HTTP ${response.status}`;
+      const detail =
+        payload?.error || payload?.message || payload?.raw || `HTTP ${response.status}`;
       throw new AppError(`Android builder request failed: ${detail}`, 502, 'ANDROID_BUILDER_ERROR');
     }
 
@@ -111,7 +119,44 @@ async function builderRequest<T>(method: string, path: string, body?: unknown): 
   } catch (error) {
     if (error instanceof AppError) throw error;
     const message = error instanceof Error ? error.message : 'unknown error';
-    throw new AppError(`Android builder unavailable: ${message}`, 502, 'ANDROID_BUILDER_UNAVAILABLE');
+    throw new AppError(
+      `Android builder unavailable: ${message}`,
+      502,
+      'ANDROID_BUILDER_UNAVAILABLE'
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function builderBinaryRequest(path: string): Promise<{
+  body: Buffer;
+  contentType: string;
+}> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BUILDER_API}${path}`, { signal: ctrl.signal });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new AppError(
+        `Android builder request failed: ${detail || `HTTP ${response.status}`}`,
+        502,
+        'ANDROID_BUILDER_ERROR'
+      );
+    }
+    return {
+      body: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get('content-type') || 'application/octet-stream',
+    };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    const message = error instanceof Error ? error.message : 'unknown error';
+    throw new AppError(
+      `Android builder unavailable: ${message}`,
+      502,
+      'ANDROID_BUILDER_UNAVAILABLE'
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -179,6 +224,52 @@ router.get(
   asyncHandler(async (_req, res) => {
     const health = await builderRequest<unknown>('GET', '/api/health');
     res.json({ success: true, data: health });
+  })
+);
+
+router.get(
+  '/emulator/status',
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    const status = await builderRequest<unknown>('GET', '/api/emulator/status');
+    res.json({ success: true, data: status });
+  })
+);
+
+router.post(
+  '/emulator/start',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const parsed = emulatorStartSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+    }
+    const result = await builderRequest<unknown>('POST', '/api/emulator/start', parsed.data);
+    res.json({ success: true, data: result });
+  })
+);
+
+router.post(
+  '/emulator/stop',
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    const result = await builderRequest<unknown>('POST', '/api/emulator/stop');
+    res.json({ success: true, data: result });
+  })
+);
+
+router.get(
+  '/devices/:serial/screenshot.png',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const serial = parsePathParam(serialSchema, req.params.serial, 'serial');
+    const screenshot = await builderBinaryRequest(
+      `/api/devices/${encodeURIComponent(serial)}/screenshot.png`
+    );
+    res.setHeader('Content-Type', screenshot.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Length', String(screenshot.body.length));
+    res.end(screenshot.body);
   })
 );
 

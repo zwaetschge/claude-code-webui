@@ -142,7 +142,9 @@ export class PeerService {
       JSON.stringify({ linkedBy: 'user' })
     );
 
-    return this.listPeers(source.id, params.userId).find((peer) => peer.targetSessionId === target.id)!;
+    return this.listPeers(source.id, params.userId).find(
+      (peer) => peer.targetSessionId === target.id
+    )!;
   }
 
   removePeer(sourceSessionId: string, targetSessionId: string, userId: string): void {

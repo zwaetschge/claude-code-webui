@@ -48,6 +48,7 @@ import { getMistralApiKeyForUser } from '../../routes/settings.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
 import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerLinks.js';
 import { buildSuperpowersBootstrapContext, syncSuperpowers } from '../../utils/superpowersSync.js';
+import { buildSessionExecutionPrompt } from '../sessionExecutionContext.js';
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { getFallbackToolActionSummary } from '../tool-action-summarizer.js';
@@ -209,7 +210,17 @@ async function getCliModelForSession(
 
 const REASONING_LEVELS_BY_PROVIDER: Record<CLIProvider, Set<string>> = {
   claude: new Set(['low', 'medium', 'high', 'max']),
-  codex: new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
+  codex: new Set([
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'extra_high',
+    'max',
+    'ultra',
+  ]),
   opencode: new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
   vibe: new Set(['off', 'low', 'medium', 'high', 'max']),
 };
@@ -507,6 +518,252 @@ export function readCodexThreadState(
       db?.close();
     } catch {
       // ignore close failures
+    }
+  }
+}
+
+function readLatestCodexRolloutTotalUsage(rolloutPath: string): CodexUsageCounters | null {
+  let fd: number | null = null;
+  try {
+    const stat = fsSync.statSync(rolloutPath);
+    fd = fsSync.openSync(rolloutPath, 'r');
+    const chunkSize = 1024 * 1024;
+    const maxBytes = 16 * chunkSize;
+    let position = stat.size;
+    let scanned = 0;
+    let carry = '';
+
+    while (position > 0 && scanned < maxBytes) {
+      const bytesToRead = Math.min(chunkSize, position, maxBytes - scanned);
+      position -= bytesToRead;
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      fsSync.readSync(fd, buffer, 0, bytesToRead, position);
+      scanned += bytesToRead;
+
+      const parts = `${buffer.toString('utf8')}${carry}`.split(/\n/);
+      carry = parts.shift() || '';
+      for (let index = parts.length - 1; index >= 0; index -= 1) {
+        const line = parts[index]?.trim();
+        if (!line) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const event = normalizeCodexRolloutEvent(parsed);
+        const eventType =
+          typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+        if (eventType !== 'token_count') continue;
+        const info =
+          event?.info && typeof event.info === 'object'
+            ? (event.info as Record<string, unknown>)
+            : null;
+        const usage = normalizeCodexTokenCountUsage(info?.total_token_usage);
+        if (usage) return usage;
+      }
+    }
+
+    if (position === 0 && carry.trim()) {
+      try {
+        const event = normalizeCodexRolloutEvent(JSON.parse(carry));
+        const eventType =
+          typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+        if (eventType === 'token_count') {
+          const info =
+            event?.info && typeof event.info === 'object'
+              ? (event.info as Record<string, unknown>)
+              : null;
+          const usage = normalizeCodexTokenCountUsage(info?.total_token_usage);
+          if (usage) return usage;
+        }
+      } catch {
+        // The file started before our scan window or the first line was incomplete.
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // Ignore close failures on a best-effort analytics snapshot.
+      }
+    }
+  }
+  return null;
+}
+
+const codexRolloutInheritedUsageCache = new Map<string, CodexUsageCounters | null>();
+
+function readCodexRolloutInheritedUsage(
+  rolloutPath: string,
+  threadCreatedAtMs: number | undefined
+): CodexUsageCounters | null {
+  if (!Number.isFinite(threadCreatedAtMs) || !threadCreatedAtMs || threadCreatedAtMs <= 0) {
+    return null;
+  }
+
+  const cacheKey = `${rolloutPath}:${threadCreatedAtMs}`;
+  if (codexRolloutInheritedUsageCache.has(cacheKey)) {
+    return codexRolloutInheritedUsageCache.get(cacheKey) ?? null;
+  }
+
+  let fd: number | null = null;
+  let inheritedUsage: CodexUsageCounters | null = null;
+  try {
+    const stat = fsSync.statSync(rolloutPath);
+    fd = fsSync.openSync(rolloutPath, 'r');
+    const chunkSize = 1024 * 1024;
+    const maxBytes = 64 * chunkSize;
+    const replayCutoffMs = threadCreatedAtMs + 1_000;
+    let position = 0;
+    let scanned = 0;
+    let carry = '';
+    let reachedLiveEvents = false;
+
+    while (position < stat.size && scanned < maxBytes && !reachedLiveEvents) {
+      const bytesToRead = Math.min(chunkSize, stat.size - position, maxBytes - scanned);
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      const bytesRead = fsSync.readSync(fd, buffer, 0, bytesToRead, position);
+      if (bytesRead <= 0) break;
+      position += bytesRead;
+      scanned += bytesRead;
+
+      const parts = `${carry}${buffer.subarray(0, bytesRead).toString('utf8')}`.split(/\n/);
+      carry = parts.pop() || '';
+      for (const rawLine of parts) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const envelope = parsed as Record<string, unknown>;
+        const event = normalizeCodexRolloutEvent(parsed);
+        const timestampRaw = envelope.timestamp ?? event?.timestamp;
+        const timestampMs =
+          typeof timestampRaw === 'string' || typeof timestampRaw === 'number'
+            ? new Date(timestampRaw).getTime()
+            : Number.NaN;
+        if (Number.isFinite(timestampMs) && timestampMs > replayCutoffMs) {
+          reachedLiveEvents = true;
+          break;
+        }
+
+        const eventType =
+          typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+        if (eventType !== 'token_count') continue;
+        const info =
+          event?.info && typeof event.info === 'object'
+            ? (event.info as Record<string, unknown>)
+            : null;
+        const usage = normalizeCodexTokenCountUsage(info?.total_token_usage);
+        if (usage) inheritedUsage = usage;
+      }
+    }
+  } catch {
+    inheritedUsage = null;
+  } finally {
+    if (fd !== null) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // Ignore close failures on a best-effort analytics snapshot.
+      }
+    }
+  }
+
+  codexRolloutInheritedUsageCache.set(cacheKey, inheritedUsage);
+  return inheritedUsage;
+}
+
+function subtractCodexUsageCounters(
+  total: CodexUsageCounters,
+  baseline: CodexUsageCounters | null
+): CodexUsageCounters {
+  if (!baseline) return total;
+  return {
+    input: Math.max(total.input - baseline.input, 0),
+    cached: Math.max(total.cached - baseline.cached, 0),
+    output: Math.max(total.output - baseline.output, 0),
+  };
+}
+
+export function readCodexDescendantUsage(
+  codexHome: string,
+  rootThreadId: string
+): CodexUsageCounters {
+  const empty = { input: 0, cached: 0, output: 0 };
+  const dbPath = findLatestCodexStateDatabase(codexHome);
+  if (!dbPath || !rootThreadId.trim()) return empty;
+
+  let db: SQLiteDatabase.Database | null = null;
+  try {
+    db = new SQLiteDatabase(dbPath, { readonly: true, fileMustExist: true });
+    const rows = db
+      .prepare(
+        `SELECT id, source, rollout_path as rolloutPath,
+                created_at as createdAt, created_at_ms as createdAtMs
+         FROM threads`
+      )
+      .all() as Array<{
+      id: string;
+      source?: string | null;
+      rolloutPath?: string | null;
+      createdAt?: number | null;
+      createdAtMs?: number | null;
+    }>;
+    const children = new Map<string, string[]>();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    for (const row of rows) {
+      if (!row.source || row.source === 'exec') continue;
+      const source = safeJsonParse<Record<string, unknown>>(row.source, {});
+      const subagent = source.subagent as Record<string, unknown> | undefined;
+      const spawn = subagent?.thread_spawn as Record<string, unknown> | undefined;
+      const parentId = typeof spawn?.parent_thread_id === 'string' ? spawn.parent_thread_id : '';
+      if (!parentId) continue;
+      const existing = children.get(parentId) || [];
+      existing.push(row.id);
+      children.set(parentId, existing);
+    }
+
+    const totals = { ...empty };
+    const pending = [...(children.get(rootThreadId) || [])];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const threadId = pending.pop() as string;
+      if (visited.has(threadId)) continue;
+      visited.add(threadId);
+      pending.push(...(children.get(threadId) || []));
+
+      const thread = byId.get(threadId);
+      const rolloutPath = thread?.rolloutPath;
+      if (!rolloutPath) continue;
+      const totalUsage = readLatestCodexRolloutTotalUsage(rolloutPath);
+      if (!totalUsage) continue;
+      const createdAtMs =
+        Number(thread?.createdAtMs) ||
+        (Number(thread?.createdAt) > 0 ? Number(thread?.createdAt) * 1000 : undefined);
+      const inheritedUsage = readCodexRolloutInheritedUsage(rolloutPath, createdAtMs);
+      const incrementalUsage = subtractCodexUsageCounters(totalUsage, inheritedUsage);
+      totals.input += incrementalUsage.input;
+      totals.cached += incrementalUsage.cached;
+      totals.output += incrementalUsage.output;
+    }
+    return totals;
+  } catch (error) {
+    console.warn('[CODEX] Failed to read descendant usage:', error);
+    return empty;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close failures on a best-effort analytics snapshot.
     }
   }
 }
@@ -918,19 +1175,24 @@ async function readSharedPlugins(configHome: string): Promise<SharedPlugin[]> {
   return plugins;
 }
 
+type CodexSharedContextResource = { name: string };
+
 function formatCodexSharedContext(
-  agents: SharedAgent[],
-  skills: SharedSkill[],
-  plugins: SharedPlugin[]
+  agents: ReadonlyArray<CodexSharedContextResource>,
+  skills: ReadonlyArray<CodexSharedContextResource>,
+  plugins: ReadonlyArray<CodexSharedContextResource>
 ): string | null {
   if (!agents.length && !skills.length && !plugins.length) {
     return null;
   }
 
   const lines: string[] = [];
-  lines.push('[Shared Claude Config]');
+  lines.push('[Shared Plum Config]');
   lines.push(
     'Registry of available skills, agents, and plugins. Load full instructions from their files only when needed.'
+  );
+  lines.push(
+    'Project-level persistent instructions and handoff notes belong in workspace `AGENTS.md`; `CLAUDE.md` is legacy compatibility only.'
   );
   lines.push('');
   lines.push('Runtime tools:');
@@ -943,35 +1205,35 @@ function formatCodexSharedContext(
 
   if (skills.length > 0) {
     lines.push('');
-    lines.push('Skills (~/.claude/skills/<name>/SKILL.md):');
-    for (const skill of skills) {
-      const desc = extractFrontmatterDescription(skill.content);
-      lines.push(desc ? `- ${skill.name} — ${desc}` : `- ${skill.name}`);
-    }
+    lines.push(`Skills (${skills.length}): ${skills.map((skill) => skill.name).join(', ')}`);
   }
 
   if (agents.length > 0) {
     lines.push('');
-    lines.push('Agents (~/.claude/agents/<name>.md):');
-    for (const agent of agents) {
-      const desc = extractFrontmatterDescription(agent.prompt);
-      lines.push(desc ? `- ${agent.name} — ${desc}` : `- ${agent.name}`);
-    }
+    lines.push(`Agents (${agents.length}): ${agents.map((agent) => agent.name).join(', ')}`);
   }
 
   if (plugins.length > 0) {
     lines.push('');
-    lines.push('Plugins:');
-    for (const plugin of plugins) {
-      const desc = plugin.description ? ` — ${plugin.description}` : '';
-      lines.push(`- ${plugin.name}${desc}`);
-    }
+    lines.push(`Plugins (${plugins.length}): ${plugins.map((plugin) => plugin.name).join(', ')}`);
   }
 
   lines.push('');
-  lines.push('[End Shared Claude Config]');
+  lines.push('[End Shared Plum Config]');
 
   return lines.join('\n');
+}
+
+export function formatCodexSharedContextForTest(resources: {
+  agents?: ReadonlyArray<CodexSharedContextResource>;
+  skills?: ReadonlyArray<CodexSharedContextResource>;
+  plugins?: ReadonlyArray<CodexSharedContextResource>;
+}): string | null {
+  return formatCodexSharedContext(
+    resources.agents || [],
+    resources.skills || [],
+    resources.plugins || []
+  );
 }
 
 function extractFrontmatterDescription(content: string): string | null {
@@ -1000,6 +1262,9 @@ function formatSharedInstructionFile(
   lines.push('');
   lines.push('- Skills: `~/.claude/skills/<name>/SKILL.md`');
   lines.push('- Agents: `~/.claude/agents/<name>.md`');
+  lines.push(
+    '- Project instructions: prefer workspace `AGENTS.md`; `CLAUDE.md` is legacy/provider compatibility only.'
+  );
   lines.push(
     '- System Chromium is available at `/usr/local/bin/plum-chromium`; browser env vars are preconfigured for Playwright/Puppeteer-style tests.'
   );
@@ -1081,7 +1346,7 @@ function escapeRegex(str: string): string {
 
 /**
  * Resolve parent dir via realpath and ensure the final file path stays inside it.
- * Blocks symlink-based escapes: /foo/bar/CLAUDE.md where bar -> /etc would otherwise land in /etc/CLAUDE.md.
+ * Blocks symlink-based escapes: /foo/bar/AGENTS.md where bar -> /etc would otherwise land in /etc/AGENTS.md.
  */
 async function resolveSafeFilePath(filePath: string): Promise<string> {
   const absolute = path.resolve(filePath);
@@ -1102,7 +1367,7 @@ async function resolveSafeFilePath(filePath: string): Promise<string> {
 
 /**
  * Write managed block to a file, handling create/replace/append.
- * Errors are logged but never thrown — writes to CLAUDE.md are best-effort and
+ * Errors are logged but never thrown — managed instruction writes are best-effort and
  * must not break session startup (e.g. read-only mounts, permission issues).
  */
 async function writeManagedBlock(
@@ -1166,13 +1431,17 @@ async function writeManagedBlock(
 }
 
 /**
- * Remove old shared-config block from a file (migration from old format).
+ * Remove a managed block from a file while preserving user-authored content.
  */
-async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
+async function removeManagedBlock(
+  filePath: string,
+  startMarker: string,
+  endMarker: string
+): Promise<void> {
   try {
     const existing = await fs.readFile(filePath, 'utf-8');
     const pattern = new RegExp(
-      `${escapeRegex(WEBUI_MANAGED_BLOCK_START)}[\\s\\S]*?${escapeRegex(WEBUI_MANAGED_BLOCK_END)}`,
+      `${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`,
       'm'
     );
     if (pattern.test(existing)) {
@@ -1185,6 +1454,13 @@ async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
   } catch {
     // File doesn't exist or can't be read — nothing to clean
   }
+}
+
+/**
+ * Remove old shared-config block from a file (migration from old format).
+ */
+async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
+  await removeManagedBlock(filePath, WEBUI_MANAGED_BLOCK_START, WEBUI_MANAGED_BLOCK_END);
 }
 
 /**
@@ -1239,28 +1515,14 @@ function truncateStyleTemplate(content: string): string {
   return `${trimmed.slice(0, STYLE_TEMPLATE_MAX_CHARS).trimEnd()}\n\n[Template truncated by WebUI: continue following the visible guidance and load the skill file if more detail is needed.]`;
 }
 
-async function buildSessionStyleContext(
-  sessionId: string,
-  userId: string,
-  cliProvider: CLIProvider
+async function buildSessionStyleContextFromSelection(
+  selection: { designStyleSkill?: string | null; writingStyleSkill?: string | null },
+  configHome: string
 ): Promise<string | null> {
-  const db = getDatabase();
-  const selection = db
-    .prepare(
-      `SELECT design_style_skill as designStyleSkill,
-              writing_style_skill as writingStyleSkill
-       FROM sessions
-       WHERE id = ? AND user_id = ?`
-    )
-    .get(sessionId, userId) as
-    | { designStyleSkill: string | null; writingStyleSkill: string | null }
-    | undefined;
-
-  if (!selection?.designStyleSkill && !selection?.writingStyleSkill) {
+  if (!selection.designStyleSkill && !selection.writingStyleSkill) {
     return null;
   }
 
-  const configHome = resolveConfigHome(cliProvider);
   const lines: string[] = [];
   lines.push('<session-style-library>');
   lines.push(
@@ -1279,6 +1541,19 @@ async function buildSessionStyleContext(
       );
       lines.push('');
       lines.push(truncateStyleTemplate(style.content));
+
+      if (style.designMd) {
+        lines.push('');
+        lines.push(`## Active DESIGN.md: ${style.designMd.name}`);
+        lines.push(`Source: ~/.claude/skills/${style.baseName}/DESIGN.md`);
+        lines.push(
+          'Treat this DESIGN.md as the structured source of truth for visual identity tokens and rationale. Use token values when they conflict with generic style preferences.'
+        );
+        lines.push('');
+        lines.push('```markdown');
+        lines.push(truncateStyleTemplate(style.designMd.raw));
+        lines.push('```');
+      }
     }
   }
 
@@ -1320,12 +1595,44 @@ async function buildSessionStyleContext(
   return lines.length > 3 ? lines.join('\n') : null;
 }
 
+export async function buildSessionStyleContextForTest(
+  selection: { designStyleSkill?: string | null; writingStyleSkill?: string | null },
+  configHome: string
+): Promise<string | null> {
+  return buildSessionStyleContextFromSelection(selection, configHome);
+}
+
+async function buildSessionStyleContext(
+  sessionId: string,
+  userId: string,
+  cliProvider: CLIProvider
+): Promise<string | null> {
+  const db = getDatabase();
+  const selection = db
+    .prepare(
+      `SELECT design_style_skill as designStyleSkill,
+              writing_style_skill as writingStyleSkill
+       FROM sessions
+       WHERE id = ? AND user_id = ?`
+    )
+    .get(sessionId, userId) as
+    | { designStyleSkill: string | null; writingStyleSkill: string | null }
+    | undefined;
+
+  if (!selection?.designStyleSkill && !selection?.writingStyleSkill) {
+    return null;
+  }
+
+  const configHome = resolveConfigHome(cliProvider);
+  return buildSessionStyleContextFromSelection(selection, configHome);
+}
+
 /**
- * Write lightweight project context to the project's CLAUDE.md.
+ * Write lightweight project context to the project's AGENTS.md.
  * For Claude provider: just project info (skills are in global CLAUDE.md).
  * For other providers: project info + skills summary (names only).
  */
-async function ensureProjectInstructions(
+export async function ensureProjectInstructions(
   workingDir: string,
   configHome: string,
   cliProvider: string
@@ -1358,22 +1665,23 @@ async function ensureProjectInstructions(
   lines.push(PROJECT_CONTEXT_BLOCK_END);
   const content = lines.join('\n');
 
+  const agentsMdPath = path.join(workingDir, 'AGENTS.md');
   const claudeMdPath = path.join(workingDir, 'CLAUDE.md');
 
   // First: remove old shared-config block if it exists (migration)
-  await removeOldSharedConfigBlock(claudeMdPath);
+  await removeOldSharedConfigBlock(agentsMdPath);
 
   // Then: write/update the new project-context block
   await writeManagedBlock(
-    claudeMdPath,
+    agentsMdPath,
     content,
     PROJECT_CONTEXT_BLOCK_START,
     PROJECT_CONTEXT_BLOCK_END
   );
 
-  // Also clean up old AGENTS.md managed block (no longer generated)
-  const agentsMdPath = path.join(workingDir, 'AGENTS.md');
-  await removeOldSharedConfigBlock(agentsMdPath);
+  // Migrate stale generated context out of legacy CLAUDE.md without deleting human notes.
+  await removeManagedBlock(claudeMdPath, PROJECT_CONTEXT_BLOCK_START, PROJECT_CONTEXT_BLOCK_END);
+  await removeOldSharedConfigBlock(claudeMdPath);
 }
 
 // Walk every vibe session log under VIBE_HOME and collect the message_ids vibe
@@ -1635,6 +1943,24 @@ export function extractCodexSessionId(event: CodexSessionIdentityEvent): string 
   return null;
 }
 
+/**
+ * A native Codex thread retains its initial messages across `exec resume` and
+ * backend restarts. Repeating the static Plum bootstrap in that same thread
+ * needlessly grows the context and is then inherited by every child thread.
+ */
+export function shouldInjectCodexStaticBootstrap(
+  nativeThreadId: string | null | undefined
+): boolean {
+  return !nativeThreadId?.trim();
+}
+
+export function shouldInjectSessionStyleContext(
+  previousContext: string | null | undefined,
+  nextContext: string | null
+): boolean {
+  return previousContext !== nextContext;
+}
+
 async function describeImagesWithCodex(opts: {
   imagePaths: string[];
   userPrompt: string;
@@ -1853,8 +2179,16 @@ function parseCodexReviewCommand(message: string): CodexReviewCommand | null {
   return prompt ? { args, prompt } : { args };
 }
 
-function isCodexNativeSlashCommand(message: string): boolean {
-  return /^\/(?:goal|compact)(?:\s|$)/i.test(message.trim());
+export function isCodexNativeSlashCommand(message: string): boolean {
+  return /^(?:\/(?:goal|compact)|\$imagegen)(?:\s|$)/i.test(message.trim());
+}
+
+function isSilentCodexNativeSlashCommand(message: string): boolean {
+  return /^\/goal(?:\s|$)/i.test(message.trim());
+}
+
+export function shouldRecordProviderUserMessage(provider: CLIProvider, message: string): boolean {
+  return !(provider === 'codex' && isSilentCodexNativeSlashCommand(message));
 }
 
 type OpenCodeSlashCommand =
@@ -2076,6 +2410,7 @@ interface ClaudeProcess {
   pendingPermissionDenials: PermissionDenial[] | null;
   sharedContextInjected: boolean;
   superpowersContextInjected: boolean;
+  sessionStyleContextInjected?: string | null;
   modePromptInjected: SessionMode | null;
   androidDeviceSerialInjected?: string | null;
   discordGatewayContextInjected?: string | null;
@@ -2120,6 +2455,7 @@ interface ClaudeProcess {
   codexLastObservedContextUsage?: CodexUsageCounters;
   codexLastObservedContextWindow?: number;
   codexTotalTokenUsage?: CodexUsageCounters;
+  codexDescendantUsageBaseline?: CodexUsageCounters;
   // Mistral Vibe is per-turn like Codex, but prompt is delivered via argv (-p TEXT)
   // not stdin. We always start `idle` and spawn a fresh child for each message.
   vibeIdle?: boolean;
@@ -2326,10 +2662,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   }
 
   private getModePrompt(mode: SessionMode): string | null {
-    if (mode === 'planning') {
-      return this.getPlanningPrompt();
-    }
-    return null;
+    return buildSessionExecutionPrompt(mode);
   }
 
   // Helper method to buffer a message
@@ -2975,6 +3308,12 @@ Discord Main Gateway:
       : resolvedWindow;
   }
 
+  private readCodexDescendantUsage(rootThreadId: string | null | undefined): CodexUsageCounters {
+    if (!rootThreadId) return { input: 0, cached: 0, output: 0 };
+    const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+    return readCodexDescendantUsage(codexHome, rootThreadId);
+  }
+
   // Get buffered messages since a timestamp for reconnection
   getSessionBuffer(sessionId: string, sinceTimestamp?: number): BufferedMessage[] {
     return this.getSessionBufferStatus(sessionId, sinceTimestamp).items;
@@ -3079,7 +3418,7 @@ Discord Main Gateway:
       console.warn('[superpowers] session sync skipped:', err);
     }
 
-    // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project context
+    // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project AGENTS.md context
     await ensureGlobalInstructions(configHome);
     await ensureProjectInstructions(session.working_directory, configHome, cliProvider);
     syncProviderLinks({ quiet: true });
@@ -3281,6 +3620,7 @@ Discord Main Gateway:
       // has the user prompt and attachments. This gives first-turn image input
       // the same behavior as later turns.
       const persistedCodexSessionId = session.claude_session_id || undefined;
+      const shouldInjectStaticBootstrap = shouldInjectCodexStaticBootstrap(persistedCodexSessionId);
       const codexTokenBaseline = persistedCodexSessionId
         ? getCodexUsageBaselineFromDatabase(sessionId)
         : undefined;
@@ -3334,8 +3674,8 @@ Discord Main Gateway:
         lastUserMessage: null,
         lastAttachments: null,
         pendingPermissionDenials: null,
-        sharedContextInjected: false,
-        superpowersContextInjected: false,
+        sharedContextInjected: !shouldInjectStaticBootstrap,
+        superpowersContextInjected: !shouldInjectStaticBootstrap,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         codexIdle: true,
@@ -4007,14 +4347,30 @@ Discord Main Gateway:
             output: totalOutput,
           };
 
-          // Sanity cap: even cumulative-delta values shouldn't exceed roughly 4x
-          // the context window in a single turn. If they do, clamp to keep
-          // analytics sane. Caps are generous (1M each) so legitimate large turns
-          // still pass through.
-          const PER_TURN_CAP = 1_000_000;
-          deltaInput = Math.min(deltaInput, PER_TURN_CAP);
-          deltaCached = Math.min(deltaCached, PER_TURN_CAP);
-          deltaOutput = Math.min(deltaOutput, PER_TURN_CAP);
+          const descendantUsage = this.readCodexDescendantUsage(
+            codexProc.codexSessionId || codexProc.claudeSessionId
+          );
+          const descendantBaseline = codexProc.codexDescendantUsageBaseline;
+          if (descendantBaseline) {
+            const countersReset =
+              descendantUsage.input < descendantBaseline.input ||
+              descendantUsage.cached < descendantBaseline.cached ||
+              descendantUsage.output < descendantBaseline.output;
+            deltaInput += countersReset
+              ? descendantUsage.input
+              : descendantUsage.input - descendantBaseline.input;
+            deltaCached += countersReset
+              ? descendantUsage.cached
+              : descendantUsage.cached - descendantBaseline.cached;
+            deltaOutput += countersReset
+              ? descendantUsage.output
+              : descendantUsage.output - descendantBaseline.output;
+          } else {
+            deltaInput += descendantUsage.input;
+            deltaCached += descendantUsage.cached;
+            deltaOutput += descendantUsage.output;
+          }
+          codexProc.codexDescendantUsageBaseline = descendantUsage;
 
           // Split into disjoint non-cached + cached for Claude-shape compatibility.
           const nonCachedInput = Math.max(deltaInput - deltaCached, 0);
@@ -5344,6 +5700,7 @@ Discord Main Gateway:
     Object.assign(extraEnv, buildIntegrationEnv());
     Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, proc.userId));
 
+    proc.codexDescendantUsageBaseline = this.readCodexDescendantUsage(resumeSessionId);
     const execStartedAtMs = Date.now();
     const newChildProc = cpSpawn(providerConfig.command, args, {
       cwd: session.working_directory,
@@ -7116,7 +7473,7 @@ ${proc.contextReminder.summary}
     if (
       !codexReviewCommand &&
       !providerNativeSlashCommand &&
-      (proc.cliProvider === 'codex' || proc.cliProvider === 'opencode') &&
+      proc.cliProvider !== 'opencode' &&
       proc.modePromptInjected !== proc.mode
     ) {
       const modePrompt = this.getModePrompt(proc.mode);
@@ -7146,8 +7503,18 @@ ${proc.contextReminder.summary}
         userId,
         proc.cliProvider
       );
-      if (sessionStyleContext) {
-        messageForClaude = `${sessionStyleContext}\n\n${messageForClaude}`;
+      if (shouldInjectSessionStyleContext(proc.sessionStyleContextInjected, sessionStyleContext)) {
+        if (sessionStyleContext) {
+          messageForClaude = `${sessionStyleContext}\n\n${messageForClaude}`;
+        } else if (proc.sessionStyleContextInjected) {
+          const styleClearedContext = [
+            '<session-style-library>',
+            'The active style-library selection was cleared for this session. Do not continue applying its prior style instructions unless the user asks for them.',
+            '</session-style-library>',
+          ].join('\n');
+          messageForClaude = `${styleClearedContext}\n\n${messageForClaude}`;
+        }
+        proc.sessionStyleContextInjected = sessionStyleContext;
       }
     }
 
@@ -7255,8 +7622,9 @@ ${proc.contextReminder.summary}
       })),
     ];
 
-    const recordMessage = options?.recordMessage !== false;
-    const updateLastMessage = options?.updateLastMessage !== false;
+    const defaultRecordMessage = shouldRecordProviderUserMessage(proc.cliProvider, message);
+    const recordMessage = options?.recordMessage ?? defaultRecordMessage;
+    const updateLastMessage = options?.updateLastMessage ?? defaultRecordMessage;
     const recordedMessageId = nanoid();
     const recordedCreatedAt = new Date().toISOString();
 
@@ -7421,6 +7789,12 @@ ${proc.contextReminder.summary}
       throw new Error('Unauthorized');
     }
 
+    if (proc.serverBacked && proc.cliProvider === 'opencode') {
+      this.detachProcessForRestart(proc);
+      this.cleanupProcess(sessionId);
+      return;
+    }
+
     // Close stdin to signal end
     proc.process.stdin?.end();
 
@@ -7430,6 +7804,16 @@ ${proc.contextReminder.summary}
         this.cleanupProcess(sessionId);
       }
     }, 2000);
+  }
+
+  private detachProcessForRestart(proc: ClaudeProcess): void {
+    if (proc.serverBacked && proc.cliProvider === 'opencode' && proc.claudeSessionId) {
+      void opencodeServer.abort(proc.claudeSessionId);
+      opencodeServer.unsubscribe(proc.claudeSessionId);
+      return;
+    }
+
+    proc.process.kill('SIGTERM');
   }
 
   // Restart a session (stop and start fresh)
@@ -7468,8 +7852,9 @@ ${proc.contextReminder.summary}
       proc.opencodeQueueDraining = false;
       proc.opencodeIdle = true;
       this.emitQueueState(sessionId, proc);
-      // Kill the process immediately
-      proc.process.kill('SIGTERM');
+      // Stop the provider transport immediately. Server-backed OpenCode sessions
+      // need an HTTP abort plus handler cleanup; their virtual child kill is a no-op.
+      this.detachProcessForRestart(proc);
       this.processes.delete(sessionId);
     }
 
@@ -7612,8 +7997,8 @@ ${proc.contextReminder.summary}
       proc.isStreaming = false;
     }
 
-    // Kill the current process and restart with new mode
-    proc.process.kill('SIGTERM');
+    // Stop the current provider transport and restart with the new mode.
+    this.detachProcessForRestart(proc);
 
     // Wait a bit for the process to terminate, then restart
     setTimeout(async () => {
@@ -7745,8 +8130,12 @@ ${proc.contextReminder.summary}
       const proc = this.processes.get(sessionId);
       if (!proc) continue;
       try {
-        proc.process.stdin?.end();
-        proc.process.kill('SIGTERM');
+        if (proc.serverBacked && proc.cliProvider === 'opencode') {
+          this.detachProcessForRestart(proc);
+        } else {
+          proc.process.stdin?.end();
+          proc.process.kill('SIGTERM');
+        }
       } catch (err) {
         console.error(`[SHUTDOWN] SIGTERM failed for ${sessionId}:`, err);
       }

@@ -496,6 +496,61 @@
     --aurora-opacity: 0.62;
   }
 
+  html.eink,
+  :root.eink {
+    --background: 0 0% 98%;
+    --foreground: 0 0% 3%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 92%;
+    --secondary-foreground: 0 0% 8%;
+    --muted: 0 0% 91%;
+    --muted-foreground: 0 0% 24%;
+    --accent: 0 0% 14%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 0% 20%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 0 0% 10%;
+    --success-foreground: 0 0% 100%;
+    --border: 0 0% 24%;
+    --input: 0 0% 22%;
+    --ring: 0 0% 0%;
+    --radius: 0.375rem;
+
+    --anthropic-dark: 0 0% 3%;
+    --anthropic-accent: 0 0% 0%;
+    --anthropic-gray: 0 0% 24%;
+    --anthropic-light: 0 0% 98%;
+    --anthropic-gradient-1: 0 0% 18%;
+    --anthropic-gradient-2: 0 0% 40%;
+    --claude-crail: 0 0% 0%;
+    --claude-terracotta: 0 0% 18%;
+    --claude-pampas: 0 0% 98%;
+    --claude-cloudy: 0 0% 24%;
+
+    --brand-accent: 0 0% 0%;
+    --brand-accent-2: 0 0% 26%;
+    --pattern-color: 0 0% 0%;
+    --pattern-opacity: 0;
+    --shadow-color: 0 0% 0%;
+    --glow-color: 0 0% 0%;
+    --aurora-violet: 0 0% 0%;
+    --aurora-cyan: 0 0% 0%;
+    --aurora-rose: 0 0% 0%;
+    --aurora-gold: 0 0% 0%;
+    --aurora-deep: 0 0% 98%;
+    --aurora-opacity: 0;
+
+    --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body:
+      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  }
+
   * {
     @apply border-border;
   }
@@ -1781,11 +1836,25 @@
 
 /* Plum app background variants - motion is an appearance preference, not a provider theme. */
 .plum-app-background {
+  --plum-ribbons-bg-start: 202 86% 96%;
+  --plum-ribbons-bg-mid: 188 62% 92%;
+  --plum-ribbons-bg-end: 166 44% 90%;
+  --plum-still-bg-start: 260 78% 97%;
+  --plum-still-bg-end: 188 58% 93%;
   background:
     radial-gradient(ellipse at 18% 16%, hsl(var(--primary) / 0.12), transparent 42%),
     radial-gradient(ellipse at 86% 82%, hsl(var(--accent) / 0.12), transparent 46%),
     linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--aurora-deep)) 100%);
   isolation: isolate;
+}
+
+html.dark .plum-app-background,
+:root.dark .plum-app-background {
+  --plum-ribbons-bg-start: 226 78% 4%;
+  --plum-ribbons-bg-mid: 196 76% 6%;
+  --plum-ribbons-bg-end: 178 70% 7%;
+  --plum-still-bg-start: 256 78% 5%;
+  --plum-still-bg-end: 188 74% 7%;
 }
 
 .plum-bg-base,
@@ -1918,7 +1987,12 @@
     radial-gradient(circle at 18% 72%, hsl(var(--aurora-violet) / 0.2), transparent 34%),
     radial-gradient(circle at 78% 22%, hsl(var(--accent) / 0.18), transparent 34%),
     radial-gradient(ellipse at 52% 112%, hsl(var(--aurora-cyan) / 0.16), transparent 42%),
-    linear-gradient(180deg, hsl(226 78% 4%) 0%, hsl(196 76% 6%) 58%, hsl(178 70% 7%) 100%);
+    linear-gradient(
+      180deg,
+      hsl(var(--plum-ribbons-bg-start)) 0%,
+      hsl(var(--plum-ribbons-bg-mid)) 58%,
+      hsl(var(--plum-ribbons-bg-end)) 100%
+    );
 }
 
 .plum-bg-ribbons .plum-bg-base {
@@ -2157,7 +2231,7 @@
     radial-gradient(ellipse at 24% 18%, hsl(var(--aurora-violet) / 0.28), transparent 38%),
     radial-gradient(ellipse at 72% 36%, hsl(var(--aurora-cyan) / 0.2), transparent 34%),
     radial-gradient(ellipse at 56% 92%, hsl(var(--aurora-rose) / 0.18), transparent 40%),
-    linear-gradient(180deg, hsl(256 78% 5%) 0%, hsl(188 74% 7%) 100%);
+    linear-gradient(180deg, hsl(var(--plum-still-bg-start)) 0%, hsl(var(--plum-still-bg-end)) 100%);
 }
 
 .plum-bg-still .plum-bg-base {
@@ -2254,6 +2328,134 @@
   filter: blur(34px);
   opacity: 0.5;
   animation: galaxy-core-turn 84s linear infinite;
+}
+
+html.light .plum-app-background,
+html.light .aurora-backdrop {
+  --aurora-violet: 268 82% 58%;
+  --aurora-cyan: 190 82% 42%;
+  --aurora-rose: 328 72% 55%;
+  --aurora-gold: 42 88% 48%;
+  --aurora-deep: 176 42% 91%;
+  --aurora-opacity: 0.5;
+}
+
+html.light .plum-bg-glass .plum-bg-base,
+html.light .plum-bg-glass .plum-bg-special-c,
+html.light .aurora-galaxy,
+html.light .aurora-ribbon::before,
+html.light .aurora-ribbon::after,
+html.light .aurora-horizon {
+  mix-blend-mode: multiply;
+}
+
+html.light .plum-bg-glass .plum-bg-base {
+  opacity: 0.46;
+}
+
+html.light .plum-bg-glass .plum-bg-sheet {
+  opacity: 0.38;
+  filter: blur(18px) saturate(122%);
+}
+
+html.light .plum-bg-glass .plum-bg-special-a {
+  opacity: 0.36;
+}
+
+html.light .plum-bg-glass .plum-bg-special-b {
+  opacity: 0.32;
+}
+
+html.light .plum-bg-ribbons .plum-bg-base,
+html.light .plum-bg-ribbons .plum-bg-sheet,
+html.light .plum-bg-ribbons .plum-bg-line,
+html.light .plum-bg-ribbons .plum-bg-special,
+html.light .plum-bg-ribbons .plum-bg-special::before,
+html.light .plum-bg-still .plum-bg-sheet,
+html.light .plum-bg-still .plum-bg-line,
+html.light .plum-bg-still .plum-bg-special-c {
+  mix-blend-mode: normal;
+}
+
+html.light .plum-bg-ribbons .plum-bg-base {
+  opacity: 0.58;
+}
+
+html.light .plum-bg-ribbons .plum-bg-sheet {
+  opacity: 0.42;
+  filter: saturate(128%);
+}
+
+html.light .plum-bg-ribbons .plum-bg-line-a {
+  opacity: 0.34;
+}
+
+html.light .plum-bg-ribbons .plum-bg-line-b {
+  opacity: 0.2;
+}
+
+html.light .plum-bg-ribbons .plum-bg-special {
+  filter: blur(4px) saturate(118%);
+}
+
+html.light .plum-bg-ribbons .plum-bg-special-a,
+html.light .plum-bg-ribbons .plum-bg-special-b {
+  opacity: 0.56;
+}
+
+html.light .plum-bg-ribbons .plum-bg-special-c {
+  opacity: 0.44;
+}
+
+html.light .plum-bg-ribbons .plum-bg-grain {
+  opacity: 0.42;
+  background:
+    linear-gradient(118deg, hsl(var(--foreground) / 0.028), transparent 32%),
+    radial-gradient(ellipse at 22% 8%, hsl(var(--foreground) / 0.035), transparent 42%),
+    radial-gradient(ellipse at 84% 84%, hsl(var(--aurora-cyan) / 0.06), transparent 46%),
+    linear-gradient(180deg, hsl(var(--foreground) / 0.018), hsl(var(--background) / 0.04));
+}
+
+html.light .plum-bg-still .plum-bg-base {
+  opacity: 0.24;
+}
+
+html.light .plum-bg-still .plum-bg-sheet {
+  opacity: 0.42;
+  filter: blur(30px) saturate(128%);
+}
+
+html.light .plum-bg-still .plum-bg-line-a {
+  opacity: 0.5;
+}
+
+html.light .plum-bg-still .plum-bg-special-a {
+  opacity: 0.2;
+}
+
+html.light .plum-bg-still .plum-bg-special-b {
+  opacity: 0.24;
+}
+
+html.light .plum-bg-still .plum-bg-special-c {
+  opacity: 0.38;
+}
+
+html.light .aurora-galaxy {
+  filter: blur(28px) saturate(126%);
+}
+
+html.light .aurora-ribbon {
+  opacity: calc(var(--aurora-local-opacity) * 0.84);
+}
+
+html.light .aurora-ribbon::after {
+  opacity: 0.38;
+}
+
+html.light .aurora-grain {
+  opacity: 0.045;
+  mix-blend-mode: multiply;
 }
 
 @keyframes mist-droplet-field {
@@ -6597,13 +6799,6 @@ html.dark .aurora-grain,
   font-size: 13px;
 }
 
-.dashboard-hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .dashboard-create-card,
 .dashboard-categories-panel,
 .dashboard-session-card,
@@ -7232,10 +7427,6 @@ html.dark .aurora-grain,
 
   .dashboard-command {
     padding: 0 0 6px;
-  }
-
-  .dashboard-hero-actions {
-    justify-content: flex-start;
   }
 
   .dashboard-title-row h1 {
@@ -10850,5 +11041,137 @@ html.dark .run-cockpit-rail,
 
   .operations-dashboard [data-ui='card-content']:not(.p-0) {
     padding: 16px;
+  }
+}
+
+html.eink,
+html.eink body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+html.eink *,
+html.eink *::before,
+html.eink *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.001ms !important;
+}
+
+html.eink .plum-app-background,
+html.eink .aurora-backdrop,
+html.eink .plum-bg-base,
+html.eink .plum-bg-sheet,
+html.eink .plum-bg-line,
+html.eink .plum-bg-special,
+html.eink .plum-bg-grain,
+html.eink .aurora-galaxy,
+html.eink .aurora-ribbon,
+html.eink .aurora-horizon,
+html.eink .aurora-grain,
+html.eink .dashboard-hero::before {
+  display: none !important;
+}
+
+html.eink .pattern-bg,
+html.eink .dashboard-shell,
+html.eink .settings-shell,
+html.eink .analytics-dashboard,
+html.eink .operations-dashboard,
+html.eink .glass-page {
+  background-image: none !important;
+}
+
+html.eink .glass,
+html.eink .glass-panel,
+html.eink .glass-chrome,
+html.eink .glass-input,
+html.eink .dashboard-command,
+html.eink .dashboard-create-card,
+html.eink .dashboard-categories-panel,
+html.eink .dashboard-session-card,
+html.eink .dashboard-empty-card,
+html.eink .settings-panel-card,
+html.eink .settings-utility-card,
+html.eink
+  .glass-page
+  :where(
+    div.rounded-lg.border,
+    div.rounded-xl.border,
+    a.rounded-lg.border,
+    button.rounded-lg.border,
+    button.rounded-xl.border,
+    [data-ui='card']
+  ),
+html.eink
+  :where(.analytics-dashboard, .operations-dashboard, .settings-shell)
+  :where([data-ui='card'], div.rounded-md.border, div.rounded-lg.border, div.rounded-xl.border) {
+  background: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.eink .dashboard-hero::after {
+  background: hsl(var(--border)) !important;
+}
+
+html.eink .card-hover,
+html.eink .claude-card,
+html.eink .dashboard-session-section,
+html.eink .dashboard-session-card,
+html.eink .settings-panel-card,
+html.eink .settings-utility-card {
+  box-shadow: none !important;
+}
+
+html.eink .card-hover:hover,
+html.eink .claude-card:hover,
+html.eink .dashboard-session-card:hover,
+html.eink .dashboard-category-item:hover,
+html.eink .settings-panel-card:hover {
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+html.eink .gradient-text,
+html.eink .gradient-pro-text {
+  background: none !important;
+  color: hsl(var(--foreground)) !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+html.eink .text-muted-foreground {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+html.eink :focus-visible {
+  outline: 2px solid hsl(var(--ring)) !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+
+html.eink ::selection {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+
+@media (max-width: 640px) {
+  html.eink body {
+    font-size: 17px;
+  }
+
+  html.eink .dashboard-shell,
+  html.eink .settings-shell {
+    padding-inline: 10px;
+  }
+
+  html.eink button,
+  html.eink [role='button'],
+  html.eink input,
+  html.eink select {
+    min-height: 42px;
   }
 }

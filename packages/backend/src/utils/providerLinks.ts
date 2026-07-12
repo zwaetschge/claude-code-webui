@@ -11,10 +11,7 @@ import {
   readOpenCodeProvidersForUser,
   type OpenCodeProvider,
 } from './opencodeProviderKeys.js';
-import {
-  getOpenCodeProviderCatalog,
-  type OpenCodeProviderCatalog,
-} from './opencodeCatalog.js';
+import { getOpenCodeProviderCatalog, type OpenCodeProviderCatalog } from './opencodeCatalog.js';
 
 const CLAUDE_SKILLS_DIR = '/home/node/.claude/skills';
 const CLAUDE_AGENTS_DIR = '/home/node/.claude/agents';
@@ -25,6 +22,10 @@ const VIBE_PROMPTS_DIR = '/home/node/.vibe/prompts';
 const VIBE_CONFIG_PATH = '/home/node/.vibe/config.toml';
 const VIBE_MANAGED_BLOCK_START = '# >>> webui-managed provider links >>>';
 const VIBE_MANAGED_BLOCK_END = '# <<< webui-managed provider links <<<';
+const ZAI_VISION_MCP_NAME = 'zai-vision';
+const ZAI_VISION_MCP_MARKER = 'zai-vision-v1';
+
+type ZaiVisionMcpPolicy = 'auto' | 'always' | 'off';
 
 // Claude Code tool names (PascalCase) → OpenCode tool names (lowercase).
 // OpenCode validates this list strictly; unlisted Claude tools are omitted.
@@ -291,12 +292,13 @@ export function buildWebuiOpenCodeProviderConfig(
 
 function applyWebuiOpenCodeProviderConfig(
   config: Record<string, unknown>,
-  userId?: string
+  userId?: string,
+  storedProvidersOverride?: OpenCodeProvider[]
 ): void {
-  if (!userId) return;
+  if (!userId && !storedProvidersOverride) return;
 
   const catalog = getOpenCodeProviderCatalog();
-  const storedProviders = readOpenCodeProvidersForUser(userId).filter(
+  const storedProviders = (storedProvidersOverride || readOpenCodeProvidersForUser(userId!)).filter(
     (provider) => provider.enabled && (provider.baseUrl || catalog[provider.id]?.api)
   );
   if (storedProviders.length === 0) return;
@@ -314,6 +316,92 @@ function applyWebuiOpenCodeProviderConfig(
   }
 
   config.provider = providers;
+}
+
+export function resolveZaiVisionMcpPolicy(
+  value: string | null | undefined = process.env.OPENCODE_ZAI_VISION_MCP
+): ZaiVisionMcpPolicy {
+  const normalized = (value || 'auto').trim().toLowerCase();
+  if (['0', 'false', 'off', 'disable', 'disabled', 'none'].includes(normalized)) {
+    return 'off';
+  }
+  if (['1', 'true', 'on', 'enable', 'enabled', 'always'].includes(normalized)) {
+    return 'always';
+  }
+  return 'auto';
+}
+
+function isZaiCodingProvider(provider: OpenCodeProvider): boolean {
+  const id = provider.id.trim().toLowerCase();
+  return id === 'z-ai' || id === 'zai';
+}
+
+function hasEnabledZaiCodingProviderKey(providers: OpenCodeProvider[]): boolean {
+  return providers.some(
+    (provider) => provider.enabled !== false && isZaiCodingProvider(provider) && !!provider.apiKey
+  );
+}
+
+function hasInheritedZaiVisionKey(env: Record<string, string | undefined>): boolean {
+  return typeof env.Z_AI_API_KEY === 'string' && env.Z_AI_API_KEY.trim().length > 0;
+}
+
+function isManagedZaiVisionMcpEntry(entry: unknown): boolean {
+  return isRecord(entry) && entry.webuiManaged === ZAI_VISION_MCP_MARKER;
+}
+
+function buildZaiVisionMcpEntry(): Record<string, unknown> {
+  return {
+    type: 'local',
+    command: ['npx', '-y', '@z_ai/mcp-server@latest'],
+    environment: {
+      Z_AI_MODE: 'ZAI',
+    },
+    enabled: true,
+    webuiManaged: ZAI_VISION_MCP_MARKER,
+  };
+}
+
+export function applyZaiVisionMcpConfig(
+  config: Record<string, unknown>,
+  opts: {
+    policy?: string | null;
+    providers?: OpenCodeProvider[];
+    inheritedEnv?: Record<string, string | undefined>;
+  } = {}
+): void {
+  const policy = resolveZaiVisionMcpPolicy(opts.policy);
+  const providersWereProvided = opts.providers !== undefined;
+  const providers = opts.providers || [];
+  const inheritedEnv = opts.inheritedEnv || process.env;
+  const mcp = isRecord(config.mcp) ? config.mcp : {};
+  const existing = mcp[ZAI_VISION_MCP_NAME];
+  const existingIsManaged = isManagedZaiVisionMcpEntry(existing);
+
+  if (policy === 'off') {
+    if (existingIsManaged) delete mcp[ZAI_VISION_MCP_NAME];
+    config.mcp = mcp;
+    return;
+  }
+
+  const active =
+    policy === 'always'
+      ? hasEnabledZaiCodingProviderKey(providers) || hasInheritedZaiVisionKey(inheritedEnv)
+      : hasEnabledZaiCodingProviderKey(providers);
+
+  if (!active) {
+    if (existingIsManaged && providersWereProvided) delete mcp[ZAI_VISION_MCP_NAME];
+    config.mcp = mcp;
+    return;
+  }
+
+  if (existing && !existingIsManaged) {
+    config.mcp = mcp;
+    return;
+  }
+
+  mcp[ZAI_VISION_MCP_NAME] = buildZaiVisionMcpEntry();
+  config.mcp = mcp;
 }
 
 export function applyOpenCodePrimaryAgentConfig(config: Record<string, unknown>): void {
@@ -602,8 +690,10 @@ export function syncOpenCodeConfig(
     mcpCount += 1;
   }
   config.mcp = mcp;
+  const storedProviders = opts.userId ? readOpenCodeProvidersForUser(opts.userId) : undefined;
+  applyZaiVisionMcpConfig(config, storedProviders ? { providers: storedProviders } : undefined);
   applyOpenCodePrimaryAgentConfig(config);
-  applyWebuiOpenCodeProviderConfig(config, opts.userId);
+  applyWebuiOpenCodeProviderConfig(config, opts.userId, storedProviders);
 
   const next = `${JSON.stringify(config, null, 2)}\n`;
   const updated = writeIfChanged(OPENCODE_CONFIG_PATH, next);

@@ -10,7 +10,10 @@ import {
   buildOpenCodePermissionRules,
   CLI_PROVIDERS,
   getCLIArgs,
+  getCliModels,
+  getModelDisplayLabels,
   getProviderCapabilities,
+  resetDiscovery,
   resolveCliProviderSelectedModel,
   resolveOpenCodeConfiguredModel,
 } from '../src/services/cli-providers.js';
@@ -29,14 +32,25 @@ import {
   OPENCODE_WEBUI_BUILD_AGENT_PROMPT_MARKER,
   OPENCODE_WEBUI_SESSION_ARG,
 } from '../src/services/opencode/sessionContext.js';
-import { applyOpenCodePrimaryAgentConfig } from '../src/utils/providerLinks.js';
-import { buildWebuiOpenCodeProviderConfig } from '../src/utils/providerLinks.js';
+import {
+  applyOpenCodePrimaryAgentConfig,
+  applyZaiVisionMcpConfig,
+  buildWebuiOpenCodeProviderConfig,
+  resolveZaiVisionMcpPolicy,
+} from '../src/utils/providerLinks.js';
 import { getOpenCodeCredentialEnvVars } from '../src/utils/opencodeProviderKeys.js';
 import { ensureDefaultClaudeMcpServers } from '../src/utils/mcpDefaults.js';
 import {
   collectOpenCodePollCursor,
   extractOpenCodeAssistantErrorMessage,
+  formatOpenCodeStallErrorMessage,
+  hasOpenCodeHardSafetyTimeoutElapsed,
+  OpenCodeProviderTurnGate,
   isTerminalOpenCodeAssistantMessage,
+  resolveOpenCodeProviderTurnGateKey,
+  resolveOpenCodeNoProgressTimeoutMs,
+  resolveOpenCodeStallTimeout,
+  opencodeServer,
 } from '../src/services/opencode/OpencodeServer.js';
 import {
   getOpenCodeProviderCatalog,
@@ -47,15 +61,33 @@ import {
   mapZaiUsage,
   parseOpenCodeGoQuotaHtml,
 } from '../src/routes/usage.js';
+import { readProjectIconCandidate } from '../src/routes/sessions.js';
+import { resolveMemoryDirectory } from '../src/routes/memories.js';
+import { buildTaskProxyHeaders, isTaskHookSecretValid } from '../src/routes/tasks.js';
+import {
+  buildCodexSessionIconCommand,
+  generateSessionIconImage,
+  buildSessionIconImagePrompt,
+} from '../src/services/sessionIconGenerator.js';
+import { stripDeviceAppearanceSettings, updateSettingsSchema } from '../src/routes/settings.js';
 import { upsertProxyUserInDatabase } from '../src/utils/proxyUser.js';
 import { syncCodexConfig } from '../src/utils/codexConfigSync.js';
 import { resolveContextWindow } from '../src/utils/contextWindow.js';
 import {
   ClaudeProcessManager,
   extractCodexSessionId,
+  formatCodexSharedContextForTest,
+  isCodexNativeSlashCommand,
+  readCodexDescendantUsage,
   readLatestCodexContextSnapshot,
   readCodexThreadState,
+  shouldInjectSessionStyleContext,
+  shouldInjectCodexStaticBootstrap,
+  shouldRecordProviderUserMessage,
 } from '../src/services/claude/ClaudeProcessManager.js';
+import { commandService, resolveAllowedCommandPath } from '../src/services/commands.js';
+import { getCliUpdateCommand } from '../src/services/cli-updates.js';
+import { buildSessionCookieOptions } from '../src/utils/sessionCookie.js';
 import { normalizeUsageSnapshot } from '../../shared/src/index.js';
 import { getProviderLabelForModel } from '../../shared/src/types/cli-providers.js';
 import { estimateModelCost, resolveModelPricing } from '../../shared/src/types/llm-pricing.js';
@@ -117,6 +149,14 @@ type OpenCodeQueueProcessStub = {
   disconnectedAt: number | null;
 };
 
+type OpenCodeMcpEntry = {
+  type?: string;
+  command?: string[];
+  environment?: Record<string, string>;
+  enabled?: boolean;
+  webuiManaged?: string;
+};
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '../../..');
 
@@ -126,6 +166,20 @@ function asUsageHarness(manager: ClaudeProcessManager): UsageHarness {
 
 function asProcessStore<T>(manager: ClaudeProcessManager): { processes: Map<string, T> } {
   return manager as unknown as { processes: Map<string, T> };
+}
+
+async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function testProviderLabels() {
@@ -140,6 +194,8 @@ function testProviderLabels() {
 function testContextWindowFallbacks() {
   assert.equal(resolveContextWindow('gpt-5.5'), 256_000);
   assert.equal(resolveContextWindow('gpt-5.5-pro'), 256_000);
+  assert.equal(resolveContextWindow('gpt-5.6-sol'), 1_050_000);
+  assert.equal(resolveContextWindow('gpt-5.6-terra'), 1_050_000);
   assert.equal(resolveContextWindow('gpt-5.4'), 196_000);
   assert.equal(resolveContextWindow('gpt-5.4-mini'), 128_000);
   assert.equal(resolveContextWindow('gpt-5.3-codex'), 400_000);
@@ -389,6 +445,126 @@ function testCodexFreshExecUsageDoesNotDelta() {
   assert.equal(translated?.usage?.output_tokens, 125);
 }
 
+function testCodexUsageDoesNotClampLargeAgenticTurns() {
+  const ioStub = {
+    to: () => ({
+      emit: () => undefined,
+    }),
+  };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    completeActiveSubagents: (...args: unknown[]) => void;
+    emitUsage: (...args: unknown[]) => void;
+    translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  managerPrivate.completeActiveSubagents = () => undefined;
+  managerPrivate.emitUsage = () => undefined;
+
+  const sessionId = 'session-codex-large-agentic-turn';
+  managerPrivate.processes.set(sessionId, {
+    cliProvider: 'codex',
+    model: 'gpt-5.6-sol',
+    contextWindow: 1_050_000,
+    totalCostUsd: 0,
+    previousTotalCostUsd: 0,
+    turnInputTokens: 0,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+    turnOutputTokens: 0,
+    codexCurrentExecUsedResume: false,
+    codexSawTokenCountThisTurn: true,
+    currentToolName: null,
+    currentToolId: null,
+    currentAgentType: null,
+    currentAgentDescription: null,
+    currentActivitySummary: null,
+    subagentRuns: new Map(),
+  });
+
+  const translated = managerPrivate.translateCodexMessage(sessionId, {
+    type: 'turn.completed',
+    usage: {
+      input_tokens: 24_000_000,
+      cached_input_tokens: 22_500_000,
+      output_tokens: 420_000,
+      reasoning_output_tokens: 80_000,
+    },
+  }) as { usage?: Record<string, number> } | null;
+
+  assert.equal(translated?.usage?.input_tokens, 1_500_000);
+  assert.equal(translated?.usage?.cache_read_input_tokens, 22_500_000);
+  assert.equal(translated?.usage?.output_tokens, 500_000);
+}
+
+function testCodexUsageIncludesDescendantThreadDelta() {
+  const ioStub = {
+    to: () => ({
+      emit: () => undefined,
+    }),
+  };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    completeActiveSubagents: (...args: unknown[]) => void;
+    emitUsage: (...args: unknown[]) => void;
+    readCodexDescendantUsage: (...args: unknown[]) => {
+      input: number;
+      cached: number;
+      output: number;
+    };
+    translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  managerPrivate.completeActiveSubagents = () => undefined;
+  managerPrivate.emitUsage = () => undefined;
+  managerPrivate.readCodexDescendantUsage = () => ({
+    input: 4_000,
+    cached: 3_000,
+    output: 500,
+  });
+
+  const sessionId = 'session-codex-descendant-usage';
+  managerPrivate.processes.set(sessionId, {
+    cliProvider: 'codex',
+    model: 'gpt-5.6-sol',
+    contextWindow: 1_050_000,
+    totalCostUsd: 0,
+    previousTotalCostUsd: 0,
+    turnInputTokens: 0,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+    turnOutputTokens: 0,
+    codexSessionId: 'root-thread',
+    codexCurrentExecUsedResume: false,
+    codexSawTokenCountThisTurn: true,
+    codexDescendantUsageBaseline: {
+      input: 1_000,
+      cached: 800,
+      output: 100,
+    },
+    currentToolName: null,
+    currentToolId: null,
+    currentAgentType: null,
+    currentAgentDescription: null,
+    currentActivitySummary: null,
+    subagentRuns: new Map(),
+  });
+
+  const translated = managerPrivate.translateCodexMessage(sessionId, {
+    type: 'turn.completed',
+    usage: {
+      input_tokens: 2_000,
+      cached_input_tokens: 500,
+      output_tokens: 100,
+      reasoning_output_tokens: 25,
+    },
+  }) as { usage?: Record<string, number> } | null;
+
+  assert.equal(translated?.usage?.input_tokens, 2_300);
+  assert.equal(translated?.usage?.cache_read_input_tokens, 2_700);
+  assert.equal(translated?.usage?.output_tokens, 525);
+}
+
 async function createCodexStateFixture(opts: {
   cwd: string;
   threadId: string;
@@ -566,6 +742,110 @@ async function testCodexContextSnapshotReadsRolloutTokenCount() {
     assert.equal(snapshot?.contextWindow, 256_000);
     assert.equal(snapshot?.recordedAt, '2026-06-17T20:22:00.000Z');
   } finally {
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+async function testCodexDescendantUsageReadsRecursiveRolloutTotals() {
+  const codexHome = await createCodexStateFixture({
+    cwd: '/workspace/plum',
+    threadId: 'root-thread',
+    tokensUsed: 10_000,
+    prompt: 'Root prompt',
+  });
+  const db = new Database(path.join(codexHome, 'state_5.sqlite'));
+  const insertChild = db.prepare(`
+    INSERT INTO threads (
+      id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+      sandbox_policy, approval_mode, tokens_used, has_user_event, archived,
+      cli_version, first_user_message, memory_mode, model, created_at_ms,
+      updated_at_ms, preview
+    ) VALUES (?, ?, 1, 1, ?, 'openai', '/workspace/plum', ?, 'workspace-write',
+      'on-request', 1, 0, 0, '0.144.0', '', 'enabled', 'gpt-5.6-sol', 1000, 1000, '')
+  `);
+  const writeChild = async (
+    id: string,
+    parentId: string,
+    usage: { input: number; cached: number; output: number },
+    inheritedUsage?: { input: number; cached: number; output: number }
+  ) => {
+    const rolloutPath = path.join(codexHome, 'sessions', `${id}.jsonl`);
+    insertChild.run(
+      id,
+      rolloutPath,
+      JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: parentId } } }),
+      id
+    );
+    if (inheritedUsage) {
+      db.prepare('UPDATE threads SET created_at_ms = ? WHERE id = ?').run(
+        Date.parse('2026-07-12T10:00:00.000Z'),
+        id
+      );
+    }
+    const tokenCount = (
+      timestamp: string,
+      counters: { input: number; cached: number; output: number }
+    ) =>
+      JSON.stringify({
+        timestamp,
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              input_tokens: counters.input,
+              cached_input_tokens: counters.cached,
+              output_tokens: counters.output,
+            },
+          },
+        },
+      });
+    const lines = inheritedUsage
+      ? [
+          tokenCount('2026-07-12T10:00:00.000Z', {
+            input: Math.floor(inheritedUsage.input / 2),
+            cached: Math.floor(inheritedUsage.cached / 2),
+            output: Math.floor(inheritedUsage.output / 2),
+          }),
+          tokenCount('2026-07-12T10:00:00.001Z', inheritedUsage),
+          tokenCount('2026-07-12T10:00:02.000Z', usage),
+        ]
+      : [tokenCount('2026-07-12T10:00:02.000Z', usage)];
+    await fs.writeFile(
+      rolloutPath,
+      `${lines.join('\n')}\n`,
+      'utf8'
+    );
+  };
+
+  try {
+    await fs.mkdir(path.join(codexHome, 'sessions'), { recursive: true });
+    await writeChild('child-a', 'root-thread', { input: 5_000, cached: 4_000, output: 500 });
+    await writeChild('grandchild-a', 'child-a', {
+      input: 7_000,
+      cached: 6_000,
+      output: 700,
+    });
+    await writeChild(
+      'child-with-inherited-history',
+      'root-thread',
+      { input: 12_600, cached: 10_500, output: 1_300 },
+      { input: 12_000, cached: 10_000, output: 1_200 }
+    );
+    await writeChild('unrelated-child', 'other-root', {
+      input: 99_000,
+      cached: 98_000,
+      output: 9_000,
+    });
+    db.close();
+
+    assert.deepEqual(readCodexDescendantUsage(codexHome, 'root-thread'), {
+      input: 12_600,
+      cached: 10_500,
+      output: 1_300,
+    });
+  } finally {
+    if (db.open) db.close();
     await fs.rm(codexHome, { recursive: true, force: true });
   }
 }
@@ -1039,6 +1319,13 @@ function testProviderCapabilities() {
 }
 
 function testCodexFastTierArgs() {
+  assert.deepEqual(CLI_PROVIDERS.codex.models.slice(0, 4), [
+    'gpt-5.5',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+  ]);
+
   const fastXhigh = getCLIArgs('codex', {
     serviceTier: 'fast',
     reasoningLevel: 'xhigh',
@@ -1058,6 +1345,167 @@ function testCodexFastTierArgs() {
   assert.equal(explicitModel.includes('gpt-5.4'), false);
   assert.ok(explicitModel.includes('service_tier="fast"'));
   assert.ok(explicitModel.includes('model_reasoning_effort="xhigh"'));
+
+  const maxEffort = getCLIArgs('codex', {
+    model: 'gpt-5.6-luna',
+    reasoningLevel: 'max',
+  });
+  assert.ok(maxEffort.includes('gpt-5.6-luna'));
+  assert.ok(maxEffort.includes('model_reasoning_effort="max"'));
+  assert.equal(maxEffort.includes('model_reasoning_effort="xhigh"'), false);
+
+  const ultraEffort = getCLIArgs('codex', {
+    model: 'gpt-5.6-sol',
+    reasoningLevel: 'ultra',
+  });
+  assert.ok(ultraEffort.includes('model_reasoning_effort="ultra"'));
+  assert.equal(ultraEffort.includes('model_reasoning_effort="max"'), false);
+
+  const legacyAlias = getCLIArgs('codex', {
+    reasoningLevel: 'very_high',
+  });
+  assert.ok(legacyAlias.includes('model_reasoning_effort="xhigh"'));
+}
+
+function testSolUsesSingleAgentPolicyUnlessParallelismIsExplicit() {
+  const solXhigh = getCLIArgs('codex', {
+    model: 'gpt-5.6-sol',
+    reasoningLevel: 'xhigh',
+  });
+  assert.ok(solXhigh.includes('agents.max_depth=1'));
+  assert.ok(solXhigh.includes('agents.max_threads=1'));
+
+  const resumedSolXhigh = getCLIArgs('codex', {
+    model: 'gpt-5.6-sol',
+    reasoningLevel: 'xhigh',
+    resumeSessionId: 'thread-123',
+  });
+  assert.ok(resumedSolXhigh.includes('agents.max_depth=1'));
+  assert.ok(resumedSolXhigh.includes('agents.max_threads=1'));
+
+  const solUltra = getCLIArgs('codex', {
+    model: 'gpt-5.6-sol',
+    reasoningLevel: 'ultra',
+  });
+  assert.equal(solUltra.includes('agents.max_depth=1'), false);
+
+  const gpt55Xhigh = getCLIArgs('codex', {
+    model: 'gpt-5.5',
+    reasoningLevel: 'xhigh',
+  });
+  assert.equal(gpt55Xhigh.includes('agents.max_depth=1'), false);
+}
+
+function testNativeCodexResumeDoesNotRepeatStaticBootstrap() {
+  assert.equal(shouldInjectCodexStaticBootstrap(undefined), true);
+  assert.equal(shouldInjectCodexStaticBootstrap(''), true);
+  assert.equal(shouldInjectCodexStaticBootstrap('native-codex-thread'), false);
+}
+
+function testCodexSharedRegistryDoesNotRepeatLongDescriptions() {
+  const context = formatCodexSharedContextForTest({
+    skills: [{ name: 'debugging-playbook', description: 'A deliberately long skill description.' }],
+    agents: [{ name: 'backend-dev', description: 'A deliberately long agent description.' }],
+    plugins: [{ name: 'github', description: 'A deliberately long plugin description.' }],
+  });
+
+  assert.match(context || '', /Skills \(1\): debugging-playbook/);
+  assert.match(context || '', /Agents \(1\): backend-dev/);
+  assert.match(context || '', /Plugins \(1\): github/);
+  assert.doesNotMatch(context || '', /deliberately long/);
+}
+
+function testSessionStyleContextIsSentOnlyWhenItChanges() {
+  assert.equal(shouldInjectSessionStyleContext(undefined, 'style-a'), true);
+  assert.equal(shouldInjectSessionStyleContext('style-a', 'style-a'), false);
+  assert.equal(shouldInjectSessionStyleContext('style-a', 'style-b'), true);
+  assert.equal(shouldInjectSessionStyleContext('style-a', null), true);
+}
+
+async function testCodexModelsCacheChangeInvalidatesDiscovery() {
+  const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
+  const originalEnvModels = process.env.CLI_PROVIDER_CODEX_MODELS;
+  const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-model-cache-'));
+  const cachePath = path.join(codexHome, 'models_cache.json');
+
+  async function writeCache(
+    models: Array<{ slug: string; displayName: string; priority: number }>
+  ) {
+    await fs.writeFile(
+      cachePath,
+      JSON.stringify(
+        {
+          fetched_at: new Date().toISOString(),
+          client_version: '0.144.0',
+          models: models.map((model) => ({
+            slug: model.slug,
+            display_name: model.displayName,
+            visibility: 'list',
+            priority: model.priority,
+          })),
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  try {
+    CLI_PROVIDERS.codex.credentialsPath = codexHome;
+    delete process.env.CLI_PROVIDER_CODEX_MODELS;
+    resetDiscovery();
+
+    await writeCache([
+      { slug: 'gpt-5.5', displayName: 'GPT-5.5', priority: 0 },
+      { slug: 'gpt-5.4', displayName: 'GPT-5.4', priority: 10 },
+    ]);
+
+    assert.deepEqual(getCliModels('codex'), ['gpt-5.5', 'gpt-5.4']);
+
+    await writeCache([
+      { slug: 'gpt-5.5', displayName: 'GPT-5.5', priority: 0 },
+      { slug: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', priority: 1 },
+      { slug: 'gpt-5.6-terra', displayName: 'GPT-5.6 Terra', priority: 2 },
+      { slug: 'gpt-5.6-luna', displayName: 'GPT-5.6 Luna', priority: 3 },
+    ]);
+    await fs.utimes(cachePath, new Date(), new Date(Date.now() + 1000));
+
+    assert.deepEqual(getCliModels('codex'), [
+      'gpt-5.5',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+    ]);
+    assert.equal(getModelDisplayLabels()['gpt-5.6-sol'], 'GPT 5.6 Sol');
+  } finally {
+    CLI_PROVIDERS.codex.credentialsPath = originalCredentialsPath;
+    if (originalEnvModels === undefined) {
+      delete process.env.CLI_PROVIDER_CODEX_MODELS;
+    } else {
+      process.env.CLI_PROVIDER_CODEX_MODELS = originalEnvModels;
+    }
+    resetDiscovery();
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+async function testCodexReasoningUiListsExposeFullEffortRange() {
+  const expected = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+  const files = [
+    path.join(repoRoot, 'packages/frontend/src/pages/SessionPage.tsx'),
+    path.join(repoRoot, 'packages/frontend/src/pages/DashboardPage.tsx'),
+  ];
+
+  for (const file of files) {
+    const content = await fs.readFile(file, 'utf8');
+    for (const value of expected) {
+      assert.match(
+        content,
+        new RegExp(`value: '${value}'`),
+        `${path.basename(file)} lacks ${value}`
+      );
+    }
+  }
 }
 
 function testOpenCodeConfiguredModelAllowList() {
@@ -1145,6 +1593,112 @@ function testOpenCodeWebuiProviderConfig() {
 
   assert.equal(defaultUrlBlock?.api, 'https://api.z.ai/api/coding/paas/v4');
   assert.equal(defaultUrlBlock?.options?.baseURL, 'https://api.z.ai/api/coding/paas/v4');
+}
+
+function testZaiVisionMcpPolicyManagedConfig() {
+  assert.equal(resolveZaiVisionMcpPolicy(undefined), 'auto');
+  assert.equal(resolveZaiVisionMcpPolicy('always'), 'always');
+  assert.equal(resolveZaiVisionMcpPolicy('off'), 'off');
+  assert.equal(resolveZaiVisionMcpPolicy('false'), 'off');
+  assert.equal(resolveZaiVisionMcpPolicy('unexpected'), 'auto');
+
+  const provider = {
+    id: 'z-ai',
+    name: 'Z-AI',
+    apiKey: 'encrypted-secret',
+    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    enabled: true,
+    createdAt: '2026-07-05T00:00:00.000Z',
+    updatedAt: '2026-07-05T00:00:00.000Z',
+  };
+
+  const autoConfig: Record<string, unknown> = {};
+  applyZaiVisionMcpConfig(autoConfig, { policy: 'auto', providers: [provider] });
+  const autoMcp = autoConfig.mcp as Record<string, OpenCodeMcpEntry>;
+  assert.deepEqual(autoMcp['zai-vision']?.command, ['npx', '-y', '@z_ai/mcp-server@latest']);
+  assert.equal(autoMcp['zai-vision']?.type, 'local');
+  assert.equal(autoMcp['zai-vision']?.enabled, true);
+  assert.equal(autoMcp['zai-vision']?.webuiManaged, 'zai-vision-v1');
+  assert.equal(autoMcp['zai-vision']?.environment?.Z_AI_MODE, 'ZAI');
+  assert.equal(autoMcp['zai-vision']?.environment?.Z_AI_API_KEY, undefined);
+
+  const missingKeyConfig: Record<string, unknown> = {};
+  applyZaiVisionMcpConfig(missingKeyConfig, {
+    policy: 'auto',
+    providers: [{ ...provider, apiKey: '' }],
+  });
+  assert.equal((missingKeyConfig.mcp as Record<string, unknown>)?.['zai-vision'], undefined);
+
+  const globalAutoConfig: Record<string, unknown> = {
+    mcp: {
+      'zai-vision': {
+        type: 'local',
+        command: ['npx', '-y', '@z_ai/mcp-server@latest'],
+        enabled: true,
+        webuiManaged: 'zai-vision-v1',
+      },
+    },
+  };
+  applyZaiVisionMcpConfig(globalAutoConfig, { policy: 'auto' });
+  assert.equal(
+    (globalAutoConfig.mcp as Record<string, OpenCodeMcpEntry>)['zai-vision']?.webuiManaged,
+    'zai-vision-v1'
+  );
+
+  const explicitNoKeyConfig: Record<string, unknown> = {
+    mcp: {
+      'zai-vision': {
+        type: 'local',
+        command: ['npx', '-y', '@z_ai/mcp-server@latest'],
+        enabled: true,
+        webuiManaged: 'zai-vision-v1',
+      },
+    },
+  };
+  applyZaiVisionMcpConfig(explicitNoKeyConfig, {
+    policy: 'auto',
+    providers: [{ ...provider, apiKey: '' }],
+  });
+  assert.equal((explicitNoKeyConfig.mcp as Record<string, unknown>)['zai-vision'], undefined);
+
+  const alwaysConfig: Record<string, unknown> = {};
+  applyZaiVisionMcpConfig(alwaysConfig, {
+    policy: 'always',
+    providers: [],
+    inheritedEnv: { Z_AI_API_KEY: 'redacted' },
+  });
+  const alwaysMcp = alwaysConfig.mcp as Record<string, OpenCodeMcpEntry>;
+  assert.equal(alwaysMcp['zai-vision']?.enabled, true);
+  assert.equal(alwaysMcp['zai-vision']?.environment?.Z_AI_API_KEY, undefined);
+
+  const offConfig: Record<string, unknown> = {
+    mcp: {
+      'zai-vision': {
+        type: 'local',
+        command: ['npx', '-y', '@z_ai/mcp-server@latest'],
+        enabled: true,
+        webuiManaged: 'zai-vision-v1',
+      },
+    },
+  };
+  applyZaiVisionMcpConfig(offConfig, { policy: 'off', providers: [provider] });
+  assert.equal((offConfig.mcp as Record<string, unknown>)['zai-vision'], undefined);
+
+  const userOwnedConfig: Record<string, unknown> = {
+    mcp: {
+      'zai-vision': {
+        type: 'local',
+        command: ['custom-zai-vision'],
+        enabled: true,
+      },
+    },
+  };
+  applyZaiVisionMcpConfig(userOwnedConfig, { policy: 'auto', providers: [provider] });
+  assert.deepEqual(
+    ((userOwnedConfig.mcp as Record<string, OpenCodeMcpEntry>)['zai-vision'] as OpenCodeMcpEntry)
+      .command,
+    ['custom-zai-vision']
+  );
 }
 
 function testOpenCodeSessionModelSelection() {
@@ -1249,10 +1803,58 @@ function testOpenCodePromptContext() {
 }
 
 function testOpenCodeRuntimePrompt() {
-  assert.match(buildOpenCodeRuntimePrompt({ mode: 'manual' }), /Mode is manual/);
+  const manualPrompt = buildOpenCodeRuntimePrompt({ mode: 'manual' });
+  assert.match(manualPrompt, /Mode is manual/);
+  assert.match(manualPrompt, /Bound shell and browser checks/);
+  assert.match(manualPrompt, /avoid broad `pkill -f`/);
   assert.match(buildOpenCodeRuntimePrompt({ reasoningLevel: 'extra-high' }), /Effort is max/);
+  assert.match(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'extra-high' }),
+    /product goal/i
+  );
+  assert.match(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'extra-high' }),
+    /visible|screenshot/i
+  );
+  assert.match(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'extra-high' }),
+    /real blocker/i
+  );
+  assert.match(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'extra-high' }),
+    /does not mean/i
+  );
+  assert.match(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'extra-high' }),
+    /Vale decision proxy/i
+  );
+  assert.match(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'extra-high' }),
+    /silently choose/i
+  );
+  assert.doesNotMatch(
+    buildOpenCodeRuntimePrompt({ mode: 'danger', reasoningLevel: 'high' }),
+    /consider edge cases/i
+  );
   assert.match(buildOpenCodeRuntimePrompt({ reasoningLevel: 'medium' }), /Effort is medium/);
   assert.equal(buildOpenCodeRuntimePrompt(), '');
+}
+
+function testDangerModeProvidesAutonomousExecutionContract() {
+  const ioStub = { to: () => ({ emit: () => undefined }) };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const prompt = (
+    manager as unknown as { getModePrompt: (mode: 'danger') => string | null }
+  ).getModePrompt('danger');
+
+  assert.ok(prompt, 'YOLO/danger mode needs behavioral guidance, not only permission flags');
+  assert.match(prompt, /supervisor/i);
+  assert.match(prompt, /real blocker/i);
+  assert.match(prompt, /product goal/i);
+  assert.match(prompt, /visible|screenshot/i);
+  assert.match(prompt, /Vale decision proxy/i);
+  assert.match(prompt, /reversible/i);
+  assert.match(prompt, /silently choose/i);
 }
 
 function testOpenCodePrimaryAgentConfig() {
@@ -1364,6 +1966,328 @@ function testOpenCodeFallbackCatalogIncludesKimiK27() {
 
   assert.ok(catalog['opencode-go']?.models.includes('kimi-k2.7'));
   assert.ok(catalog.opencode?.models.includes('kimi-k2.7'));
+}
+
+function testOpenCodeNoProgressTimeoutAllowsSlowFirstTokenModels() {
+  assert.equal(resolveOpenCodeNoProgressTimeoutMs(undefined), 10 * 60 * 1000);
+  assert.equal(resolveOpenCodeNoProgressTimeoutMs('120000'), 120_000);
+  assert.equal(resolveOpenCodeNoProgressTimeoutMs('0'), 0);
+  assert.equal(resolveOpenCodeNoProgressTimeoutMs('5000'), 30_000);
+  assert.equal(resolveOpenCodeNoProgressTimeoutMs('not-a-number'), 10 * 60 * 1000);
+}
+
+function testOpenCodeStallTimeoutCoversSilentToolHangs() {
+  const startedAt = 1_000_000;
+  const timeoutMs = 10 * 60 * 1000;
+
+  assert.equal(
+    resolveOpenCodeStallTimeout({
+      now: startedAt + timeoutMs + 1,
+      startedAt,
+      lastObservedAt: null,
+      observedChange: false,
+      timeoutMs,
+    }),
+    'no-progress'
+  );
+
+  assert.equal(
+    resolveOpenCodeStallTimeout({
+      now: startedAt + 30_000,
+      startedAt,
+      lastObservedAt: startedAt + 10_000,
+      observedChange: true,
+      timeoutMs,
+    }),
+    null
+  );
+
+  assert.equal(
+    resolveOpenCodeStallTimeout({
+      now: startedAt + 10_000 + timeoutMs + 1,
+      startedAt,
+      lastObservedAt: startedAt + 10_000,
+      observedChange: true,
+      timeoutMs,
+    }),
+    'stalled'
+  );
+
+  assert.equal(
+    resolveOpenCodeStallTimeout({
+      now: startedAt + 10_000 + timeoutMs + 1,
+      startedAt,
+      lastObservedAt: startedAt + 10_000,
+      observedChange: true,
+      timeoutMs: 0,
+    }),
+    null
+  );
+}
+
+function testOpenCodeHardSafetyTimeoutAlwaysStopsTurn() {
+  const startedAt = 1_000_000;
+  assert.equal(hasOpenCodeHardSafetyTimeoutElapsed(startedAt + 30 * 60 * 1000, startedAt), false);
+  assert.equal(
+    hasOpenCodeHardSafetyTimeoutElapsed(startedAt + 30 * 60 * 1000 + 1, startedAt),
+    true
+  );
+}
+
+async function testOpenCodeZaiTurnsAreSerializedByProviderGate() {
+  assert.equal(resolveOpenCodeProviderTurnGateKey('z-ai/glm-5.2'), 'z-ai');
+  assert.equal(resolveOpenCodeProviderTurnGateKey('zai/glm-5.2'), 'z-ai');
+  assert.equal(resolveOpenCodeProviderTurnGateKey('opencode-go/glm-5.2'), null);
+  assert.equal(resolveOpenCodeProviderTurnGateKey('codex/gpt-5.5'), null);
+  assert.equal(resolveOpenCodeProviderTurnGateKey(null), null);
+
+  const gate = new OpenCodeProviderTurnGate();
+  const releaseFirst = await gate.acquire('z-ai', 'session-a');
+  let secondStarted = false;
+  const secondAcquire = gate.acquire('z-ai', 'session-b').then((release) => {
+    secondStarted = true;
+    return release;
+  });
+
+  await Promise.resolve();
+  assert.equal(secondStarted, false);
+
+  releaseFirst();
+  const releaseSecond = await promiseWithTimeout(secondAcquire, 100);
+  assert.equal(secondStarted, true);
+  releaseSecond();
+
+  const releaseZai = await gate.acquire('z-ai', 'session-c');
+  const releaseOther = await promiseWithTimeout(gate.acquire(null, 'session-d'), 100);
+  releaseOther();
+  releaseZai();
+}
+
+async function testOpenCodeQueuedProviderTurnCancellationDoesNotHang() {
+  const gate = new OpenCodeProviderTurnGate();
+  const releaseFirst = await gate.acquire('z-ai', 'session-active');
+  const queuedAcquire = gate.acquire('z-ai', 'session-cancelled');
+
+  gate.releaseForSession('session-cancelled');
+
+  await assert.rejects(
+    promiseWithTimeout(queuedAcquire, 100),
+    /cancelled.*session-cancelled/i,
+    'unsubscribing a queued session must settle its pending gate acquisition'
+  );
+
+  releaseFirst();
+  const releaseNext = await promiseWithTimeout(gate.acquire('z-ai', 'session-next'), 100);
+  releaseNext();
+}
+
+async function testOpenCodeProviderTurnGateShutdownCancelsAllWaiters() {
+  const gate = new OpenCodeProviderTurnGate();
+  const releaseActive = await gate.acquire('z-ai', 'session-active');
+  const queuedAcquire = gate.acquire('z-ai', 'session-waiting');
+
+  (gate as OpenCodeProviderTurnGate & { cancelAll(reason: string): void }).cancelAll(
+    'OpenCode server restarted'
+  );
+
+  await assert.rejects(
+    promiseWithTimeout(queuedAcquire, 100),
+    /OpenCode server restarted/,
+    'server shutdown must settle every queued gate acquisition'
+  );
+  releaseActive();
+
+  const releaseAfterRestart = await promiseWithTimeout(
+    gate.acquire('z-ai', 'session-after-restart'),
+    100
+  );
+  releaseAfterRestart();
+}
+
+function testSettingsThemeSchemaAcceptsEink() {
+  const parsed = updateSettingsSchema.safeParse({ theme: 'eink' });
+  assert.equal(parsed.success, true);
+}
+
+function testDeviceAppearanceSettingsAreNotAccountPersisted() {
+  const accountSettings = stripDeviceAppearanceSettings({
+    theme: 'eink',
+    backgroundAnimation: 'glass',
+    defaultWorkingDir: '/workspace/project',
+    defaultCliProvider: 'codex',
+  });
+
+  assert.equal('theme' in accountSettings, false);
+  assert.equal('backgroundAnimation' in accountSettings, false);
+  assert.equal(accountSettings.defaultWorkingDir, '/workspace/project');
+  assert.equal(accountSettings.defaultCliProvider, 'codex');
+}
+
+function testMemoryDirectoryRejectsWorkingDirectoriesOutsideAllowedBases() {
+  assert.throws(
+    () => resolveMemoryDirectory('/etc'),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      (error as Error & { code?: string }).code === 'FORBIDDEN_PATH'
+  );
+}
+
+function testSessionCookiePolicyBlocksCrossSiteMutationByDefault() {
+  const development = buildSessionCookieOptions(false);
+  const production = buildSessionCookieOptions(true);
+
+  assert.equal(development.httpOnly, true);
+  assert.equal(development.sameSite, 'lax');
+  assert.equal(development.secure, false);
+  assert.equal(production.httpOnly, true);
+  assert.equal(production.sameSite, 'lax');
+  assert.equal(production.secure, true);
+  assert.equal(production.maxAge, 7 * 24 * 60 * 60 * 1000);
+}
+
+function testInternalTaskEndpointsRequireSharedHookSecret() {
+  assert.equal(isTaskHookSecretValid('shared-secret', 'shared-secret'), true);
+  assert.equal(isTaskHookSecretValid('', 'shared-secret'), false);
+  assert.equal(isTaskHookSecretValid('wrong-secret', 'shared-secret'), false);
+  assert.deepEqual(buildTaskProxyHeaders('shared-secret'), {
+    'Content-Type': 'application/json',
+    'X-Webui-Hook-Secret': 'shared-secret',
+  });
+}
+
+function testCommandFileRootsStayInsideAllowedBasePaths() {
+  assert.throws(
+    () => resolveAllowedCommandPath('/etc'),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      (error as Error & { code?: string }).code === 'FORBIDDEN_PATH'
+  );
+}
+
+function testSessionIconGenerationUsesProviderIndependentCodexImagegenCommand() {
+  const command = buildCodexSessionIconCommand({
+    command: '/home/node/.npm-global/bin/codex',
+    codexHome: '/home/node/.codex',
+    cwd: '/workspace/plum-code-webui',
+    prompt: 'Create a square icon, no text.',
+    forceChatGptAuth: true,
+  });
+
+  assert.equal(command.command, '/home/node/.npm-global/bin/codex');
+  assert.deepEqual(command.args.slice(0, 4), [
+    'exec',
+    '--json',
+    '--skip-git-repo-check',
+    '--ephemeral',
+  ]);
+  assert.equal(command.args[command.args.indexOf('--config') + 1], 'auth_mode="chatgpt"');
+  assert.equal(command.args[command.args.indexOf('--cd') + 1], '/workspace/plum-code-webui');
+  assert.match(command.args.at(-1) || '', /^\$imagegen\s+/);
+  assert.doesNotMatch(command.args.join(' '), /comfyui|z-image|flux|openai-image|OPENAI_API_KEY/i);
+}
+
+function testSessionIconPromptIsPlainImagePrompt() {
+  const prompt = buildSessionIconImagePrompt(
+    {
+      name: 'Plum Code',
+      workingDirectory: '/workspace/plum-code-webui',
+    },
+    null,
+    {
+      framework: 'Vite',
+      techStack: ['React', 'TypeScript', 'SQLite', 'Docker', 'Tailwind'],
+    }
+  );
+
+  assert.match(prompt, /Plum Code/);
+  assert.match(prompt, /plum-code-webui/);
+  assert.match(prompt, /Framework signal: Vite/);
+  assert.match(prompt, /Tech stack: React, TypeScript, SQLite, Docker/);
+  assert.doesNotMatch(prompt, /^\$imagegen\s+/);
+  assert.doesNotMatch(prompt, /comfyui|z-image|flux/i);
+  assert.equal(isCodexNativeSlashCommand(`$imagegen ${prompt}`), true);
+}
+
+async function testGoalCommandForwardingIsSilent() {
+  const parsed = commandService.parseCommand('/goal Ship the feature')!;
+  const result = await commandService.executeCommand(parsed, {
+    provider: 'codex',
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.action, 'forward_to_cli');
+  assert.equal(result.response, '/goal Ship the feature');
+  assert.equal(result.data?.recordMessage, false);
+  assert.equal(result.data?.updateLastMessage, false);
+
+  assert.equal(shouldRecordProviderUserMessage('codex', '/goal Ship the feature'), false);
+  assert.equal(shouldRecordProviderUserMessage('codex', 'Ship the feature'), true);
+  assert.equal(shouldRecordProviderUserMessage('codex', '$imagegen square app icon'), true);
+  assert.equal(shouldRecordProviderUserMessage('claude', '/goal Ship the feature'), true);
+}
+
+async function testGeneratedSessionIconImageReadsOneShotOutput() {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-icon-generator-'));
+  const codexHome = path.join(tempDir, 'codex-home');
+  const scriptPath = path.join(tempDir, 'codex');
+  await fs.writeFile(
+    scriptPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'OUT_DIR="$CODEX_HOME/generated_images/test-session"',
+      'mkdir -p "$OUT_DIR"',
+      'OUTPUT="$OUT_DIR/ig_fake.png"',
+      'printf "\\211PNG\\015\\012\\032\\012" > "$OUTPUT"',
+      'echo "{\\"type\\":\\"item.completed\\",\\"item\\":{\\"type\\":\\"agent_message\\",\\"text\\":\\"done\\"}}"',
+      '',
+    ].join('\n'),
+    'utf8'
+  );
+  await fs.chmod(scriptPath, 0o755);
+
+  try {
+    const result = await generateSessionIconImage({
+      sessionId: 'session-1',
+      session: {
+        name: 'Plum Code',
+        workingDirectory: '/workspace/plum-code-webui',
+      },
+      command: scriptPath,
+      codexHome,
+      cwd: tempDir,
+      timeoutMs: 5_000,
+    });
+
+    assert.equal(result.ext, '.png');
+    assert.deepEqual([...result.buffer.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    assert.match(result.outputPath, /generated_images\/test-session\/ig_fake\.png$/);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function testLegacySessionIconMessageIsNotUsedForGeneratedIcons() {
+  const prompt = buildSessionIconImagePrompt({
+    name: 'Plum Code',
+    workingDirectory: '/workspace/plum-code-webui',
+  });
+
+  assert.doesNotMatch(prompt, /^\$imagegen\s+/);
+}
+
+async function testProjectIconCandidateFindsMonorepoDesktopIcon() {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-icon-project-'));
+  const iconPath = path.join(projectDir, 'packages/desktop/resources/icon.png');
+  await fs.mkdir(path.dirname(iconPath), { recursive: true });
+  await fs.writeFile(iconPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+  const icon = await readProjectIconCandidate(projectDir);
+
+  assert.equal(icon?.path, iconPath);
+  assert.equal(icon?.ext, '.png');
 }
 
 function testZaiUsageTrackerQuotaShape() {
@@ -1531,6 +2455,37 @@ function testOpenCodePollCursorPriming() {
   assert.equal(cursor.finishedMessages.has('msg-error'), true);
 }
 
+function testOpenCodeStallErrorDescribesLastToolWithoutSecrets() {
+  const cursor = collectOpenCodePollCursor([
+    {
+      info: { id: 'msg-running', role: 'assistant' },
+      parts: [
+        {
+          id: 'tool-running',
+          type: 'tool',
+          tool: 'bash',
+          callID: 'call-running',
+          state: {
+            status: 'running',
+            title:
+              'API_TOKEN=secret-value curl -H "Authorization: Bearer hidden-token" http://127.0.0.1:8787/api/dashboard',
+          },
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(cursor.lastToolActivity?.tool, 'bash');
+  assert.equal(cursor.lastToolActivity?.status, 'running');
+  assert.match(cursor.lastToolActivity?.preview ?? '', /API_TOKEN=<redacted>/);
+  assert.doesNotMatch(cursor.lastToolActivity?.preview ?? '', /secret-value|hidden-token/);
+
+  const message = formatOpenCodeStallErrorMessage('stalled', 600, cursor.lastToolActivity);
+  assert.match(message, /Last observed tool: bash/);
+  assert.match(message, /status: running/);
+  assert.match(message, /API_TOKEN=<redacted>/);
+}
+
 function testProxyUserAdoptsLegacySharedCliUser() {
   const db = new Database(':memory:');
   db.exec(`
@@ -1673,6 +2628,49 @@ function testDisconnectedSessionStaysRunning() {
 
   assert.equal(manager.isSessionRunning(sessionId), true);
   assert.notEqual(harness.processes.get(sessionId)?.disconnectedAt, null);
+}
+
+async function testOpenCodeRestartCleanupAbortsAndUnsubscribesRemoteTurn() {
+  const ioStub = {
+    to: () => ({ emit: () => undefined }),
+  };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const restartHarness = manager as unknown as {
+    detachProcessForRestart: (proc: Record<string, unknown>) => void;
+  };
+  const abortCalls: string[] = [];
+  const unsubscribeCalls: string[] = [];
+  let localKillCalls = 0;
+  const originalAbort = opencodeServer.abort;
+  const originalUnsubscribe = opencodeServer.unsubscribe;
+
+  opencodeServer.abort = async (sessionId: string) => {
+    abortCalls.push(sessionId);
+  };
+  opencodeServer.unsubscribe = (sessionId: string) => {
+    unsubscribeCalls.push(sessionId);
+  };
+
+  try {
+    restartHarness.detachProcessForRestart({
+      cliProvider: 'opencode',
+      serverBacked: true,
+      claudeSessionId: 'remote-opencode-session',
+      process: {
+        kill: () => {
+          localKillCalls += 1;
+          return true;
+        },
+      },
+    });
+
+    assert.deepEqual(abortCalls, ['remote-opencode-session']);
+    assert.deepEqual(unsubscribeCalls, ['remote-opencode-session']);
+    assert.equal(localKillCalls, 0);
+  } finally {
+    opencodeServer.abort = originalAbort;
+    opencodeServer.unsubscribe = originalUnsubscribe;
+  }
 }
 
 function testOpenCodeQueueStateAndRuntime() {
@@ -2419,6 +3417,9 @@ async function testOracleMcpStartsEmbeddedBrowserForManualMode() {
 }
 
 function testPricingTable() {
+  assert.deepEqual(resolveModelPricing('gpt-5.6-sol')?.input, 5);
+  assert.deepEqual(resolveModelPricing('gpt-5.6-terra')?.output, 15);
+  assert.deepEqual(resolveModelPricing('gpt-5.6-luna')?.cacheWrite, 1.25);
   assert.deepEqual(resolveModelPricing('gpt-5.5')?.input, 5);
   assert.deepEqual(resolveModelPricing('gpt-5.4-mini')?.output, 4.5);
   assert.deepEqual(resolveModelPricing('gpt-5.2')?.input, 1.75);
@@ -2446,6 +3447,10 @@ function testPricingTable() {
   assert.deepEqual(resolveModelPricing('opencode/deepseek-v4-flash')?.cacheRead, 0.03);
   assert.deepEqual(resolveModelPricing('opencode/big-pickle')?.input, 0);
   assert.deepEqual(resolveModelPricing('opencode-go/glm-5.1')?.input, 1.4);
+  assert.deepEqual(resolveModelPricing('opencode-go/qwen3.7-max')?.output, 7.5);
+  assert.deepEqual(resolveModelPricing('opencode-go/mimo-v2.5-pro')?.input, 1.74);
+  assert.deepEqual(resolveModelPricing('opencode-go/mimo-v2.5-pro')?.cacheRead, 0.0145);
+  assert.deepEqual(resolveModelPricing('opencode-go/minimax-m3')?.cacheRead, 0.06);
   assert.equal(resolveModelPricing('ollama-cloud/devstral-small-2:24b'), null);
 
   const estimate = estimateModelCost(
@@ -2526,6 +3531,12 @@ async function testPwaInstallAssets() {
   assert.match(legacyServiceWorker, /importScripts\('\/sw\.js'\)/);
 }
 
+function testCodexCliUpdaterTracksLatest() {
+  const command = getCliUpdateCommand('codex') || '';
+  assert.match(command, /@openai\/codex@latest/);
+  assert.doesNotMatch(command, /@openai\/codex@\d+\.\d+\.\d+/);
+}
+
 testProviderLabels();
 testContextWindowFallbacks();
 testUsageWindowNormalization();
@@ -2533,8 +3544,11 @@ testContextUsageIncludesAssistantOutput();
 testCodexUsageUsesNormalizedContextWindow();
 testContextUsageCapsAtWindow();
 testCodexFreshExecUsageDoesNotDelta();
+testCodexUsageDoesNotClampLargeAgenticTurns();
+testCodexUsageIncludesDescendantThreadDelta();
 await testCodexThreadStateReaderMatchesPrompt();
 await testCodexContextSnapshotReadsRolloutTokenCount();
+await testCodexDescendantUsageReadsRecursiveRolloutTotals();
 await testCodexContextFallbackUsesThreadState();
 await testCodexContextFallbackCapsThreadStateAtWindow();
 testCodexCompactEventRetainsCompactedContext();
@@ -2542,25 +3556,53 @@ testCodexImplicitCompactDetectedFromContextDrop();
 testCodexImplicitCompactDetectedFromMidWindowReset();
 testProviderCapabilities();
 testCodexFastTierArgs();
+testSolUsesSingleAgentPolicyUnlessParallelismIsExplicit();
+testNativeCodexResumeDoesNotRepeatStaticBootstrap();
+testCodexSharedRegistryDoesNotRepeatLongDescriptions();
+testSessionStyleContextIsSentOnlyWhenItChanges();
+await testCodexModelsCacheChangeInvalidatesDiscovery();
+await testCodexReasoningUiListsExposeFullEffortRange();
 testOpenCodeConfiguredModelAllowList();
 testOpenCodeZaiCredentialAliases();
 testOpenCodeWebuiProviderConfig();
+testZaiVisionMcpPolicyManagedConfig();
 testOpenCodeSessionModelSelection();
 testOpenCodeAllowedDirectories();
 testAttachmentNormalization();
 testOpenCodePromptContext();
 testOpenCodeRuntimePrompt();
+testDangerModeProvidesAutonomousExecutionContract();
 testOpenCodePrimaryAgentConfig();
 testOpenCodeModelsCacheParsing();
 testOpenCodeFallbackCatalogIncludesKimiK27();
+testOpenCodeNoProgressTimeoutAllowsSlowFirstTokenModels();
+testOpenCodeStallTimeoutCoversSilentToolHangs();
+testOpenCodeHardSafetyTimeoutAlwaysStopsTurn();
+await testOpenCodeZaiTurnsAreSerializedByProviderGate();
+await testOpenCodeQueuedProviderTurnCancellationDoesNotHang();
+await testOpenCodeProviderTurnGateShutdownCancelsAllWaiters();
+testSettingsThemeSchemaAcceptsEink();
+testDeviceAppearanceSettingsAreNotAccountPersisted();
+testMemoryDirectoryRejectsWorkingDirectoriesOutsideAllowedBases();
+testSessionCookiePolicyBlocksCrossSiteMutationByDefault();
+testInternalTaskEndpointsRequireSharedHookSecret();
+testCommandFileRootsStayInsideAllowedBasePaths();
+testSessionIconGenerationUsesProviderIndependentCodexImagegenCommand();
+testSessionIconPromptIsPlainImagePrompt();
+await testGoalCommandForwardingIsSilent();
+await testGeneratedSessionIconImageReadsOneShotOutput();
+testLegacySessionIconMessageIsNotUsedForGeneratedIcons();
+await testProjectIconCandidateFindsMonorepoDesktopIcon();
 testZaiUsageTrackerQuotaShape();
 testOpenCodeGoMonitorHtmlShape();
 testOpenCodeGoLocalEstimateRequiresUsage();
 testOpenCodeTerminalMessageDetection();
 testOpenCodePollCursorPriming();
+testOpenCodeStallErrorDescribesLastToolWithoutSecrets();
 testProxyUserAdoptsLegacySharedCliUser();
 testCodexSessionIdExtraction();
 testDisconnectedSessionStaysRunning();
+await testOpenCodeRestartCleanupAbortsAndUnsubscribesRemoteTurn();
 testOpenCodeQueueStateAndRuntime();
 testLatestContextSnapshotOrdering();
 await testCodexConfigSyncIdempotence();
@@ -2569,6 +3611,8 @@ await testGodotAndBlenderMcpToolLists();
 await testOracleMcpPrefersEmbeddedBrowserTarget();
 await testOracleMcpStartsEmbeddedBrowserForManualMode();
 await testPwaInstallAssets();
+testCodexCliUpdaterTracksLatest();
 testPricingTable();
 
 console.log('provider regression tests passed');
+process.exit(0);

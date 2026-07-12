@@ -5,7 +5,12 @@ import type {
   DiscordOutboxItem,
 } from '@plum-code-webui/shared';
 import { getDatabase } from '../../db';
-import { redactDiscordField, redactDiscordMetadata, redactDiscordText, redactDiscordTitle } from './discordRedaction';
+import {
+  redactDiscordField,
+  redactDiscordMetadata,
+  redactDiscordText,
+  redactDiscordTitle,
+} from './discordRedaction';
 import { discordIntegrationService } from './DiscordIntegrationService';
 
 const COLOR_BY_SEVERITY: Record<DiscordAlertSeverity, number> = {
@@ -136,7 +141,9 @@ function buildPayload(input: QueueAlertInput): {
         color: COLOR_BY_SEVERITY[input.severity],
         timestamp: new Date().toISOString(),
         footer: {
-          text: runtime.channelLabel ? `Plum Code Alerts · ${runtime.channelLabel}` : 'Plum Code Alerts',
+          text: runtime.channelLabel
+            ? `Plum Code Alerts · ${runtime.channelLabel}`
+            : 'Plum Code Alerts',
         },
         fields: fields.slice(0, 12),
       },

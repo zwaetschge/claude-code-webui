@@ -2,6 +2,12 @@
 
 Notes on the multi-provider integration in Plum Code WebUI.
 
+## Language and Unicode
+
+- In German chat responses, documentation, skill descriptions, memories, and other user-visible text, use real UTF-8 umlauts (`ä`, `ö`, `ü`, including uppercase forms). Do not transliterate them as `ae`, `oe`, or `ue` unless an external format explicitly requires ASCII.
+- Keep established technical identifiers, slugs, environment variables, and filenames ASCII when changing them would break compatibility; this exception does not apply to visible prose.
+- In Swiss Standard German, use `ss` instead of `ß`. In other German contexts, follow the requested orthography.
+
 ## Goals implemented
 
 - **Codex is now the default / primary provider** — Anthropic is restricting `claude -p` / introducing a credit system, so Codex took over as the main horse. Claude stays available as a legacy option.
@@ -40,7 +46,9 @@ All four CLIs ship inside the container; their config dirs are bind-mounted from
 ## Codex notes (primary)
 
 - Default model: `gpt-5.5` (override with `CLI_PROVIDER_CODEX_DEFAULT_MODEL`)
-- Available model menu: hardcoded fallback list; runtime list comes from `~/.codex/models_cache.json` (filtered to `visibility=list`, sorted by priority). Cache refreshes via the codex CLI itself; if the user's auth token is expired, the dropdown freezes on whatever was last fetched.
+- Available model menu: hardcoded fallback list; runtime list comes from `~/.codex/models_cache.json` (filtered to `visibility=list`, sorted by priority). Cache refreshes via the codex CLI itself; if the user's auth token is expired, the dropdown freezes on whatever was last fetched. Codex CLI 0.144.0 cache currently lists `gpt-5.5`, then `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`.
+- Codex reasoning efforts exposed by the UI/backend: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. Codex 0.144.0 exposes `ultra` natively for models that support automatic task delegation, including `gpt-5.6-sol` and `gpt-5.6-terra`; preserve it instead of normalizing it to `max`.
+- GPT-5.6 WebUI sessions use `agents.max_depth=1` and `agents.max_threads=1` by default for regular efforts, keeping delegation tightly bounded. (Codex CLI 0.144.0+ rejects `max_depth=0`, so 1 is the single-agent floor.) `ultra` and `CODEX_WEBUI_AGENT_MODE=parallel` retain Codex's parallel-agent behaviour; `CODEX_WEBUI_AGENT_MAX_DEPTH` / `CODEX_WEBUI_AGENT_MAX_THREADS` override either policy.
 - Streaming is simulated — `translateCodexMessage` in `ClaudeProcessManager` listens for `item.delta`, `agent_message.delta`, `text.delta`, and `response.output_text.delta` events and emits `session:output` deltas. Falls back to full-message emit on `item.completed` if the CLI doesn't send deltas (older versions).
 - Resume is simulated — `buildCodexContextPrefix()` reads the last 40 turns (≤24k chars) from SQLite and prepends them as a `[Prior conversation context]` block to stdin on each respawn. Codex CLI has no native `--resume`.
 - Per-turn respawn is required: `codex exec` is single-shot. `respawnCodexProcess` creates a fresh child on each user message and reattaches stdout/stderr handlers.
@@ -51,6 +59,8 @@ All four CLIs ship inside the container; their config dirs are bind-mounted from
 - Default model: `z-ai/glm-5.1` (override with `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL`)
 - Available model menu: empty = auto-discover from the installed CLI (override with `CLI_PROVIDER_OPENCODE_MODELS=…`)
 - WebUI defaults OpenCode sessions to the native `build` primary agent (`CLI_PROVIDER_OPENCODE_DEFAULT_AGENT`) and injects a Codex-like communication contract via the managed `build.prompt`; override with `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`, or set it to `0`/`false` to disable
+- OpenCode async polling waits up to `OPENCODE_NO_PROGRESS_TIMEOUT_MS` for the first observable assistant output and for later silent stalls after output/tool activity (default `600000`; set `0` to disable the soft cap). On timeout Plum aborts the remote OpenCode turn and marks the WebUI session idle. The separate 30-minute safety cap still stops truly stuck turns.
+- Z.AI Vision MCP is managed for OpenCode through `OPENCODE_ZAI_VISION_MCP=auto|always|off` (default `auto`). `auto` enables the `zai-vision` MCP only when the user has an enabled `z-ai`/`zai` provider key; `always` enables it as a Z.AI visual second opinion whenever `Z_AI_API_KEY` is inherited; `off` removes the WebUI-managed entry. The API key must stay in env and must not be written to `opencode.json`.
 - Debug stream events with `OPENCODE_DEBUG_EVENTS=1`
 
 ## Mistral Vibe notes
@@ -125,6 +135,11 @@ instead of silently inheriting a fallback.
 | gpt-5.4                   | 2.5   | 15     | 0.25       | 0           |
 | gpt-5.4-mini              | 0.75  | 4.5    | 0.075      | 0           |
 | gpt-5.3-codex / 5.2-codex | 1.75  | 14     | 0.175      | 0           |
+| opencode-go/qwen3.7-max   | 2.5   | 7.5    | 0.5        | 3.125       |
+| opencode-go/mimo-v2.5-pro | 1.74  | 3.48   | 0.0145     | 0           |
+| opencode-go/minimax-m3    | 0.3   | 1.2    | 0.06       | 0           |
+| Kimi K2.7 Code            | 0.95  | 4      | 0.19       | 0           |
+| z-ai/glm-5.2              | 1.4   | 4.4    | 0.26       | 0           |
 | z-ai/glm-5.1              | 1.4   | 4.4    | 0.26       | 0           |
 | z-ai/glm-5                | 1     | 3.2    | 0.2        | 0           |
 | z-ai/glm-4.7/4.6/4.5      | 0.6   | 2.2    | 0.11       | 0           |
@@ -204,10 +219,11 @@ badge, and forwards `additional_rate_limits` as an `additional` array.
 - Provider exposure:
   - Codex: managed local plugin cache/config entry `[plugins."superpowers@plum-managed"]` plus Docker symlink fallback `~/.agents/skills -> ~/.claude/skills`
   - Claude: native `~/.claude/skills`
-  - OpenCode: managed local `plugin` entry pointing at the synced Superpowers checkout plus `skills.paths` fallback in `opencode.json`
+  - OpenCode: `skills.paths` in `opencode.json`; the upstream Superpowers `plugin` entry is deliberately removed because it injects the blanket `using-superpowers` workflow on every agent step, bypassing Plum's scoped execution policy
   - Vibe: `skill_paths` in `config.toml`
-- `buildSuperpowersBootstrapContext()` injects the upstream `using-superpowers` skill once per WebUI session with provider-specific tool mapping. Do not duplicate this in project `CLAUDE.md`/`AGENTS.md`.
-- Regression: `pnpm --filter @plum-code-webui/backend run test:superpowers` checks sync, skip/disabled handling, Codex/OpenCode native registration, and provider bootstrap mappings.
+- `buildSuperpowersBootstrapContext()` injects a compact Plum-controlled skill policy once per WebUI session with provider-specific tool mapping. It deliberately does not paste the upstream `using-superpowers` body, whose blanket skill/brainstorming mandates conflict with autonomous supervisor-mode execution. Do not duplicate this in project `CLAUDE.md`/`AGENTS.md`.
+- The session execution contract includes a silent "What would Vale do?" decision proxy for routine or reversible choices. It must resolve decisions internally and must never become another skill, checklist, review, or approval gate.
+- Regression: `pnpm --filter @plum-code-webui/backend run test:superpowers` checks sync, skip/disabled handling, Codex native registration, OpenCode upstream-plugin removal, and provider bootstrap mappings.
 - CLI sessions export `SUPERPOWERS_DISABLE_TELEMETRY=1` by default, unless explicitly overridden.
 
 ### Design system skills (`design-*`)
@@ -302,6 +318,8 @@ The WebUI talks to ComfyUI **directly** — no LoRA Tester sidecar. Workflow def
 - `CLI_PROVIDER_CODEX_DEFAULT_MODEL` (default `gpt-5.5`), `CLI_PROVIDER_OPENCODE_DEFAULT_MODEL` (default `z-ai/glm-5.1`), `CLI_PROVIDER_VIBE_DEFAULT_MODEL` (default `mistral-vibe-cli-latest`), `CLI_PROVIDER_CLAUDE_DEFAULT_MODEL` (default `sonnet`)
 - `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` (default `build`) and `CLI_PROVIDER_OPENCODE_STYLE_PROMPT` (empty = Codex-like WebUI default; `0`/`false` disables the style prompt)
 - `ADMIN_LLM_PROVIDER`: pin the admin/helper LLM choice for commit messages etc. (default order: `codex` → `opencode` → `vibe` → `claude`)
+- `OPENCODE_NO_PROGRESS_TIMEOUT_MS`: soft timeout before Plum reports that OpenCode produced no first output (default `600000`; `0` disables this soft cap)
+- `OPENCODE_ZAI_VISION_MCP`: Z.AI Vision MCP policy for OpenCode (`auto`, `always`, or `off`; default `auto`)
 - `OPENCODE_DEBUG_EVENTS=1`: log raw OpenCode events to backend logs
 
 ## Rebuild / redeploy protocol (MANDATORY for agents)
@@ -368,3 +386,28 @@ The Rebuild Robot sidecar (`scripts/rebuild-robot-sidecar.sh`, opt-in via `docke
 - Codex usage endpoint requires a valid cookie (`CODEX_USAGE_COOKIE` / `CODEX_USAGE_URL`); otherwise reports unsupported
 - MCP tools are bound at CLI spawn — existing sessions won't see new tools until a fresh chat is started
 - Custom agents created before the Codex switch may still have `model='claude-sonnet-4-20250514'` (the old default). New agents default to `gpt-5.5`. Users running Claude-flavored agents under Codex sessions will need to edit the model field.
+
+<!-- webui-managed: project-context:start -->
+# Project: plum-code-webui
+
+Web UI for Codex, OpenCode, Mistral Vibe, and Claude Code CLIs
+
+## Tech Stack
+Docker, Docker Compose
+
+**Monorepo** (pnpm)
+
+## Commands
+- `pnpm dev` — dev
+- `pnpm run build` — build
+- `pnpm test` — test
+- `pnpm run lint` — lint
+- `pnpm run typecheck` — typecheck
+- `pnpm run format` — format
+
+## Key Directories
+packages/, scripts/
+
+Available Skills: agent-team-orchestration, android-build, api-design, auto-researcher, blender-asset-pipeline, blender-character-pipeline, book-promo-website, brainstorming, campaign-architect, codex-prompt-rewriter, comfyui-asset-gen, data-visualization, debugging-playbook, decensor-engine, developmental-editor, devops-deploy, dispatching-parallel-agents, documentation-writer, e-ink-application-architecture, e-ink-device-qa, e-ink-rendering-performance, epub-forge, executing-plans, fallacy-finder, finishing-a-development-branch, frontend-design, game-accessibility-localization, game-ai-behavior, game-android-porting, game-animation-state-machines, game-art-direction, game-asset-pipeline, game-audio-haptics, game-automated-qa, game-backend-services, game-build-ci, game-cinematics-camera, game-controller-input, game-core-architecture, game-economy-monetization, game-engine-godot, game-engine-unity, game-engine-unreal, game-feel-motion, game-first-person, game-gameplay-combat, game-level-content, game-metroidvania, game-mobile-performance, game-mod-support, game-multiplayer-networking, game-narrative-dialogue, game-on-device-playtest, game-physics-collision, game-platform-compliance, game-platformer, game-procedural-generation, game-racing-vehicle, game-release-builds, game-roguelike, game-rpg-quest, game-save-progression, game-shader-vfx, game-steam-deck-publishing, game-survival-crafting, game-systems-design, game-tactics-strategy, game-third-person, game-tools-editor, game-top-down-action, game-touch-input, game-ui-hud-menus, game-world-streaming, idea-forge, idea-to-code-plan, literary-critique, mental-reflection, musical-architect, musical-composer, nano-banana-prompt-engineer, openai-image-gen, panel-transcription, pentest-analyst, performance-tuning, plum-discord-automation-client, plum-discord-qa-gate, plum-discord-supervisor-gateway, premium-frontend-design, production-ui-review, prompt-architect, prompt-expander, receiving-code-review, refactor-guide, requesting-code-review, research-prompt-architect, reverse-prompt-engineer, ricardo-marketplace-discovery-liquidity, ricardo-marketplace-frontend-design, ricardo-marketplace-payments-shipping-disputes, ricardo-marketplace-product-architect, ricardo-marketplace-trust-safety, schreiner-planer-kontext, screenplay-to-novel, security-review, session-handover, skill-designer, social-navigator, storysmith-60, strudel-livecode, subagent-driven-development, suno-v5-songwriter, svg-expert, systematic-debugging, test-driven-development, testing-playbook, thinker-frameworks, tutorial-architect, unraid-array-health, unraid-backup-recovery, unraid-cache-filesystem-maintenance, unraid-docker-appdata-maintenance, unraid-security-network-maintenance, unreal-engine-studio, unreal-gameplay-implementation, unreal-level-content, unreal-qa-playtest, using-git-worktrees, using-superpowers, verification-before-completion, visual-prompt-architect, vocarium-audio-api, web-game-polish, writing-plans
+Available Agents: agent-team-strategist, api-designer, backend-dev, blender-asset-pipeline-engineer, blender-character-pipeline-engineer, comfyui-asset-gen, data-engineer, database-specialist, debugging-expert, devops-engineer, documentation-writer, Explore, frontend-developer, fullstack-dev, game-accessibility-localization-specialist, game-ai-behavior-engineer, game-android-porting-engineer, game-animation-state-engineer, game-art-asset-director, game-asset-pipeline-producer, game-audio-haptics-engineer, game-automated-qa-engineer, game-backend-services-engineer, game-build-ci-engineer, game-cinematics-camera-director, game-combat-engineer, game-controller-input-engineer, game-core-architect, game-economy-monetization-designer, game-feel-motion-engineer, game-first-person-engineer, game-godot-engineer, game-level-content-designer, game-liveops-telemetry-engineer, game-metroidvania-architect, game-mobile-performance-engineer, game-mod-support-engineer, game-multiplayer-network-engineer, game-narrative-dialogue-designer, game-on-device-playtester, game-physics-collision-engineer, game-platform-compliance-producer, game-platformer-engineer, game-procedural-generation-architect, game-racing-vehicle-engineer, game-release-build-engineer, game-roguelike-architect, game-rpg-quest-designer, game-save-progression-engineer, game-shader-vfx-engineer, game-steam-deck-release-producer, game-survival-crafting-designer, game-systems-designer, game-tactics-strategy-architect, game-third-person-engineer, game-tools-editor-engineer, game-top-down-action-engineer, game-touch-input-designer, game-ui-hud-engineer, game-unity-engineer, game-unreal-engineer, game-world-streaming-engineer, git-operations, mobile-developer, performance-optimizer, Plan, playtest-qa-engineer, release-manager, research-bot, security-auditor, system-architect, test-engineer, ui-designer, unraid-array-health, unraid-backup-recovery, unraid-cache-filesystem, unraid-docker-appdata, unraid-security-network, unreal-engine-studio-engineer, unreal-gameplay-engineer, unreal-level-content-designer, unreal-qa-playtester, web-game-engineer
+<!-- webui-managed: project-context:end -->

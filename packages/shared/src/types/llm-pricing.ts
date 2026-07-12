@@ -20,7 +20,7 @@ export interface ModelCostEstimate {
   known: boolean;
 }
 
-export const LLM_PRICING_RATE_CARD_VERSION = '2026-06-17-standard-api-equivalent-v5';
+export const LLM_PRICING_RATE_CARD_VERSION = '2026-07-06-standard-api-equivalent-v6';
 
 export const DEFAULT_MODEL_PRICING: ModelPricing = {
   input: 5,
@@ -69,13 +69,22 @@ function price(
 }
 
 function resolveOpenCodeZenPricing(id: string): ModelPricing | null {
-  const source = 'OpenCode Zen pricing, 2026-06-09';
+  const source = 'OpenCode Go/Zen pricing, 2026-07-06';
 
   if (id === 'big-pickle' || id === 'deepseek-v4-flash-free') {
     return price(0, 0, 0, 0, source, 'OpenCode Zen free model');
   }
   if (id === 'mimo-v2.5-free' || id === 'nemotron-3-ultra-free') {
     return price(0, 0, 0, 0, source, 'OpenCode Zen free model');
+  }
+  if (id === 'mimo-v2.5-pro') {
+    return price(1.74, 3.48, 0.0145, 0, source, 'OpenCode Go MiMo V2.5 Pro');
+  }
+  if (id === 'mimo-v2.5') {
+    return price(0.14, 0.28, 0.0028, 0, source, 'OpenCode Go MiMo V2.5');
+  }
+  if (id === 'minimax-m3') {
+    return price(0.3, 1.2, 0.06, 0, source, 'OpenCode Go MiniMax M3');
   }
   if (id === 'minimax-m2.7' || id === 'minimax-m2.5') {
     return price(0.3, 1.2, 0.06, 0.375, source, 'OpenCode Zen MiniMax');
@@ -161,7 +170,7 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
     return null;
   }
 
-  if (provider === 'opencode') {
+  if (provider === 'opencode' || provider === 'opencode-go') {
     const zenPricing = resolveOpenCodeZenPricing(providerId);
     if (zenPricing) return zenPricing;
   }
@@ -169,6 +178,15 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   const id = normalizeProviderModelId(provider, providerId, raw);
 
   // OpenAI, USD per 1M tokens.
+  if (id.startsWith('gpt-5.6-sol') || id === 'gpt-5.6') {
+    return price(5, 30, 0.5, 6.25, 'OpenAI API pricing, 2026-07-09', 'GPT-5.6 Sol');
+  }
+  if (id.startsWith('gpt-5.6-terra')) {
+    return price(2.5, 15, 0.25, 3.125, 'OpenAI API pricing, 2026-07-09', 'GPT-5.6 Terra');
+  }
+  if (id.startsWith('gpt-5.6-luna')) {
+    return price(1, 6, 0.1, 1.25, 'OpenAI API pricing, 2026-07-09', 'GPT-5.6 Luna');
+  }
   if (id.startsWith('gpt-5.5')) {
     return price(5, 30, 0.5, 0, 'OpenAI API pricing, 2026-06-01', 'GPT-5.5');
   }

@@ -26,6 +26,7 @@ import { ensureCliPath } from './utils/cliPaths';
 import { ensureDefaultClaudeMcpServers } from './utils/mcpDefaults';
 import { syncProviderLinks } from './utils/providerLinks';
 import { syncSuperpowers } from './utils/superpowersSync';
+import { buildSessionCookieOptions } from './utils/sessionCookie';
 import type { CLIProvider } from '@plum-code-webui/shared';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from './services/cli-updates.js';
 
@@ -277,11 +278,7 @@ async function main() {
       secret: config.sessionSecret,
       resave: false,
       saveUninitialized: false,
-      cookie: {
-        secure: config.isProduction,
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      },
+      cookie: buildSessionCookieOptions(config.isProduction),
     })
   );
 

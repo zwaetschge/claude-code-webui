@@ -286,7 +286,11 @@ function splitReferenceSuffix(value: string): { pathPart: string; suffix: string
   return { pathPart: value.slice(0, index), suffix: value.slice(index) };
 }
 
-function resolveInlineAssetPath(reference: string, filePath: string, projectPath: string): string | null {
+function resolveInlineAssetPath(
+  reference: string,
+  filePath: string,
+  projectPath: string
+): string | null {
   const trimmed = reference.trim();
   if (
     !trimmed ||
@@ -778,7 +782,13 @@ export function WorkspaceFiles({
     }
     if (viewerState.inlineHtml) {
       const blob = new Blob(
-        [buildInlineHtmlDocument(viewerState.inlineHtml, viewerState.file.path, viewerState.projectPath)],
+        [
+          buildInlineHtmlDocument(
+            viewerState.inlineHtml,
+            viewerState.file.path,
+            viewerState.projectPath
+          ),
+        ],
         { type: 'text/html' }
       );
       const url = URL.createObjectURL(blob);
@@ -1270,7 +1280,8 @@ function FileViewer({
   }
 
   if (state.kind === 'html') {
-    const src = htmlHostname && state.target ? buildStaticInitUrl(htmlHostname, state.target) : null;
+    const src =
+      htmlHostname && state.target ? buildStaticInitUrl(htmlHostname, state.target) : null;
     return state.inlineHtml ? (
       <iframe
         srcDoc={buildInlineHtmlDocument(state.inlineHtml, state.file.path, state.projectPath)}

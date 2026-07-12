@@ -76,7 +76,7 @@ ENV XDG_RUNTIME_DIR=/tmp/runtime-node
 # inside the running container.
 RUN mkdir -p /home/node/.npm-global && \
     npm install -g @anthropic-ai/claude-code && \
-    (npm install -g @openai/codex@0.135.0 || echo "WARN: codex install failed at build time — install via /api/cli-updates at runtime") && \
+    (npm install -g @openai/codex@latest || echo "WARN: codex install failed at build time — install via /api/cli-updates at runtime") && \
     (npm install -g opencode-ai && rm -f /home/node/.npm-global/lib/node_modules/opencode-ai/bin/.opencode \
         || echo "WARN: opencode-ai install failed at build time — install via /api/cli-updates at runtime")
 

@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 import type { CLIProvider } from '../services/cli-providers.js';
+import { buildValeDecisionProxyPrompt } from '../services/sessionExecutionContext.js';
 import { resolveConfigHome } from './configPaths.js';
 import { safeJsonParse } from './json.js';
 
@@ -229,17 +230,16 @@ function hasSuperpowersOpenCodePlugin(entry: string, sourceDir: string): boolean
   );
 }
 
-async function syncOpenCodeSuperpowersPlugin(sourceDir: string): Promise<void> {
+async function removeOpenCodeSuperpowersPlugin(sourceDir: string): Promise<void> {
   const filePath = opencodeConfigPath();
   const config = (await readJsonFile<Record<string, unknown>>(filePath)) || {};
   const existingPlugins = Array.isArray(config.plugin)
     ? config.plugin.filter((value): value is string => typeof value === 'string')
     : [];
 
-  if (!existingPlugins.some((entry) => hasSuperpowersOpenCodePlugin(entry, sourceDir))) {
-    existingPlugins.push(sourceDir);
-  }
-  config.plugin = existingPlugins;
+  config.plugin = existingPlugins.filter(
+    (entry) => !hasSuperpowersOpenCodePlugin(entry, sourceDir)
+  );
 
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
@@ -250,7 +250,7 @@ async function syncNativeProviderArtifacts(
   marker: SuperpowersMarker
 ): Promise<void> {
   await syncCodexSuperpowersPlugin(sourceDir, marker);
-  await syncOpenCodeSuperpowersPlugin(sourceDir);
+  await removeOpenCodeSuperpowersPlugin(sourceDir);
 }
 
 async function cloneManagedSource(sourceDir: string, repoUrl: string, ref: string): Promise<void> {
@@ -458,32 +458,27 @@ export async function syncSuperpowers(
   };
 }
 
-function stripFrontmatter(source: string): string {
-  const trimmed = source.trimStart();
-  if (!trimmed.startsWith('---')) return source.trim();
-  const end = trimmed.indexOf('\n---', 3);
-  if (end === -1) return source.trim();
-  return trimmed.slice(end + 4).trim();
-}
-
 function providerSkillInstructions(provider: CLIProvider): string {
   switch (provider) {
     case 'codex':
       return [
         'Codex sees these skills through `~/.agents/skills`, which Plum Code symlinks to `~/.claude/skills`.',
         'Load and follow applicable skills through Codex skill activation. When upstream text says `superpowers:<name>`, use the installed skill named `<name>`.',
+        'Persist project instructions, handoff notes, and agent/subagent guidance in workspace `AGENTS.md`; treat `CLAUDE.md` as legacy compatibility only.',
         'Plum Code tool mapping for Codex: todos/checklists -> `update_plan`; shell commands, reads, and searches -> `exec_command` with `rg` preferred; file edits -> `apply_patch`; parallel independent tool calls -> `multi_tool_use.parallel`; URL fetches -> web access when available.',
       ].join('\n');
     case 'opencode':
       return [
         'OpenCode discovers these skills through `skills.paths` in `opencode.json`, pointing at `~/.claude/skills`.',
         "Use OpenCode's native `skill` tool to list/load skills. When upstream text says `superpowers:<name>`, use the installed skill named `<name>`.",
+        'Persist project instructions, handoff notes, and agent/subagent guidance in workspace `AGENTS.md`; treat `CLAUDE.md` as legacy compatibility only.',
         'Tool mapping for OpenCode: todos -> `todowrite`; subagents -> `task` with `subagent_type: "general"`; read files -> `read`; create/edit/delete files -> `apply_patch`; shell -> `bash`; search -> `grep`/`glob`; fetch URL -> `webfetch`.',
       ].join('\n');
     case 'vibe':
       return [
         'Mistral Vibe discovers these skills through `skill_paths` in `config.toml`, pointing at `~/.claude/skills`.',
         "Use Vibe's skill mechanism when available. When upstream text says `superpowers:<name>`, use the installed skill named `<name>`.",
+        'Persist project instructions, handoff notes, and agent/subagent guidance in workspace `AGENTS.md`; treat `CLAUDE.md` as legacy compatibility only.',
         'Tool mapping for Vibe: todos -> `todo`; subagents -> `task`; read files -> `read_file`; edit/write files -> `search_replace`/`write_file`; shell -> `bash`; search -> `grep`; fetch/search web -> `web_fetch`/`web_search`.',
       ].join('\n');
     case 'claude':
@@ -491,6 +486,7 @@ function providerSkillInstructions(provider: CLIProvider): string {
       return [
         'Claude Code sees these skills in `~/.claude/skills`.',
         'Use the Skill tool for applicable skills. When upstream text says `superpowers:<name>`, use the installed skill named `<name>`.',
+        'Persist project instructions, handoff notes, and agent/subagent guidance in workspace `AGENTS.md`; `CLAUDE.md` remains only for Claude Code compatibility when explicitly needed.',
       ].join('\n');
   }
 }
@@ -512,20 +508,24 @@ export async function buildSuperpowersBootstrapContext(
   }
 
   if (!(await pathExists(skillPath))) return null;
-  const rawSkill = await fs.readFile(skillPath, 'utf-8');
-  const skillBody = stripFrontmatter(rawSkill);
   const displayHome = configHome === path.join(os.homedir(), '.claude') ? '~/.claude' : configHome;
 
   return [
     '<EXTREMELY_IMPORTANT>',
     'You have Superpowers in Plum Code WebUI.',
     '',
+    'Plum execution policy:',
+    '- Skills are optional accelerators unless the user explicitly names one or it clearly and materially matches the task. A merely conceivable match is not enough.',
+    '- Do not stack process skills, plans, checklists, reviews, or subagents by default. Use the smallest workflow that helps deliver the requested outcome.',
+    '- A concrete request does not require compulsory brainstorming. Do not let a skill checklist create approval gates or clarifying questions when a reasonable autonomous decision is available.',
+    '- In an autonomous or permissive session, treat the user as supervisor: own routine planning and decisions, ask only for a real blocker, and keep the product goal and visible result ahead of ceremony and peripheral hardening.',
+    '- Higher reasoning effort should improve prioritization and decision quality, not expand scope or multiply workflow layers.',
+    '- User instructions and the current session execution contract override conflicting generic skill instructions.',
+    '',
+    buildValeDecisionProxyPrompt(),
+    '',
     providerSkillInstructions(provider),
     `Shared skills home: ${displayHome}/skills`,
-    '',
-    '**Below is the content of the `using-superpowers` skill. It is already loaded for this session; follow it before responding or acting.**',
-    '',
-    skillBody,
     '</EXTREMELY_IMPORTANT>',
   ].join('\n');
 }

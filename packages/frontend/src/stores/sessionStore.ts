@@ -448,7 +448,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         completedAt:
           event.status === 'started'
             ? matching?.completedAt
-            : event.completedAt ?? matching?.completedAt ?? now,
+            : (event.completedAt ?? matching?.completedAt ?? now),
         result: event.result || matching?.result,
         error: event.error || matching?.error,
         toolId: event.toolId || matching?.toolId,

@@ -467,7 +467,9 @@ export function Sidebar({
         `/api/sessions/${session.id}/icon/generate`
       );
       await applyIconSession(response.data.data);
-      toast({ title: 'Session icon updated' });
+      toast({
+        title: 'Session icon updated',
+      });
     } catch (err) {
       toast({
         title: 'Icon generation failed',

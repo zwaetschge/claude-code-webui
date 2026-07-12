@@ -20,8 +20,11 @@ import { readSkillLibraryItem } from '../utils/skillLibrary';
 import { resolveContextWindow as contextWindowFor } from '../utils/contextWindow.js';
 import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
 import { readLatestCodexContextSnapshot } from '../services/claude/ClaudeProcessManager';
-import { comfyui } from '../services/comfyui';
 import { scanProject } from '../utils/projectScanner';
+import {
+  buildSessionIconImagePrompt,
+  generateSessionIconImage,
+} from '../services/sessionIconGenerator';
 
 const router = Router();
 
@@ -135,8 +138,6 @@ async function attachProjectDescription<T extends Record<string, unknown>>(sessi
 const SESSION_ICON_DIR =
   process.env.SESSION_ICON_DIR ||
   path.resolve(process.cwd(), 'packages/backend/data/session-icons');
-const GENERATED_IMAGE_DIR =
-  process.env.COMFYUI_OUTPUT_DIR || path.resolve(process.cwd(), 'packages/backend/data/generated');
 const MAX_ICON_BYTES = 6 * 1024 * 1024;
 
 const ICON_EXT_BY_MIME: Record<string, string> = {
@@ -391,37 +392,215 @@ async function storeSessionIcon(
   return { ...updated, starred: Boolean(updated.starred) };
 }
 
-async function readProjectIconCandidate(projectPath: string): Promise<{
+const ROOT_PROJECT_ICON_CANDIDATES = [
+  '.plum/icon.png',
+  '.plum/icon.webp',
+  '.plum/icon.jpg',
+  '.plum/icon.svg',
+  'plum-icon.png',
+  'icon.png',
+  'icon.webp',
+  'favicon.png',
+  'favicon.ico',
+  'favicon.svg',
+  'public/icon.png',
+  'public/icon.webp',
+  'public/favicon.png',
+  'public/favicon.ico',
+  'public/favicon.svg',
+  'public/icons/icon-1024.png',
+  'public/icons/icon-512.png',
+  'public/icons/icon-384.png',
+  'public/icons/icon-256.png',
+  'public/icons/icon-192.png',
+  'public/icons/maskable-512.png',
+  'public/icons/maskable-192.png',
+  'public/icons/apple-touch-icon.png',
+  'app/icon.png',
+  'app/favicon.ico',
+  'src/app/icon.png',
+  'src/app/favicon.ico',
+  'src-tauri/icons/icon.png',
+  'src-tauri/icons/128x128.png',
+  'assets/icon.png',
+  'assets/favicon.png',
+  'resources/icon.png',
+];
+
+const NESTED_PROJECT_ICON_CANDIDATES = [
+  'resources/icon.png',
+  'resources/icon.webp',
+  'resources/icon.jpg',
+  'public/icons/icon-1024.png',
+  'public/icons/icon-512.png',
+  'public/icons/icon-384.png',
+  'public/icons/icon-256.png',
+  'public/icons/icon-192.png',
+  'public/icons/maskable-512.png',
+  'public/icons/maskable-192.png',
+  'public/icons/apple-touch-icon.png',
+  'public/favicon.svg',
+  'public/favicon.ico',
+  'public/favicon.png',
+  'public/icon.png',
+  'app/icon.png',
+  'app/favicon.ico',
+  'src/app/icon.png',
+  'src/app/favicon.ico',
+  'assets/icon.png',
+  'assets/favicon.png',
+  'src-tauri/icons/icon.png',
+  'src-tauri/icons/128x128.png',
+];
+
+function isPathInside(basePath: string, candidatePath: string): boolean {
+  const relative = path.relative(path.resolve(basePath), path.resolve(candidatePath));
+  return (
+    relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+  );
+}
+
+function addIconCandidate(
+  candidates: string[],
+  seen: Set<string>,
+  projectRoot: string,
+  basePath: string,
+  relPath: string | null | undefined
+): void {
+  const trimmed = relPath?.trim();
+  if (!trimmed || /^(?:https?:|data:|file:)/i.test(trimmed)) return;
+  const resolved = path.resolve(basePath, trimmed.replace(/^[/\\]+/, ''));
+  if (!isPathInside(projectRoot, resolved) || seen.has(resolved)) return;
+  seen.add(resolved);
+  candidates.push(resolved);
+}
+
+async function collectProjectIconSearchRoots(projectRoot: string): Promise<string[]> {
+  const roots = [projectRoot];
+  const seen = new Set(roots.map((root) => path.resolve(root)));
+
+  const addRoot = async (candidate: string) => {
+    const resolved = path.resolve(candidate);
+    if (seen.has(resolved) || !isPathInside(projectRoot, resolved)) return;
+    try {
+      const stat = await fs.stat(resolved);
+      if (!stat.isDirectory()) return;
+      seen.add(resolved);
+      roots.push(resolved);
+    } catch {
+      // not a directory
+    }
+  };
+
+  for (const rel of ['desktop', 'frontend', 'client', 'app']) {
+    await addRoot(path.join(projectRoot, rel));
+  }
+
+  for (const rel of ['packages', 'apps']) {
+    const container = path.join(projectRoot, rel);
+    const entries = await fs.readdir(container, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await addRoot(path.join(container, entry.name));
+      }
+    }
+  }
+
+  return roots;
+}
+
+function manifestIconScore(sizes: string | undefined): number {
+  if (!sizes) return 0;
+  if (sizes.toLowerCase() === 'any') return 1_000_000;
+  const scores = [...sizes.matchAll(/(\d+)\s*x\s*(\d+)/gi)].map((match) => {
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    return Number.isFinite(width) && Number.isFinite(height) ? width * height : 0;
+  });
+  return scores.length ? Math.max(...scores) : 0;
+}
+
+async function addPackageJsonIconCandidates(
+  candidates: string[],
+  seen: Set<string>,
+  projectRoot: string,
+  searchRoot: string
+): Promise<void> {
+  try {
+    const raw = await fs.readFile(path.join(searchRoot, 'package.json'), 'utf8');
+    const parsed = safeJsonParse<{
+      icon?: unknown;
+      icons?: unknown;
+      build?: {
+        icon?: unknown;
+        linux?: { icon?: unknown };
+        directories?: { buildResources?: unknown };
+      };
+    }>(raw, {});
+    const refs = [parsed.icon, parsed.build?.icon, parsed.build?.linux?.icon].filter(
+      (value): value is string => typeof value === 'string'
+    );
+
+    const buildResources =
+      typeof parsed.build?.directories?.buildResources === 'string'
+        ? parsed.build.directories.buildResources
+        : null;
+    for (const ref of refs) {
+      addIconCandidate(candidates, seen, projectRoot, searchRoot, ref);
+      if (buildResources && !ref.includes('/') && !ref.includes('\\')) {
+        addIconCandidate(candidates, seen, projectRoot, searchRoot, path.join(buildResources, ref));
+      }
+    }
+  } catch {
+    // package.json is optional
+  }
+}
+
+async function addManifestIconCandidates(
+  candidates: string[],
+  seen: Set<string>,
+  projectRoot: string,
+  searchRoot: string
+): Promise<void> {
+  for (const manifest of ['public/manifest.json', 'public/site.webmanifest', 'manifest.json']) {
+    try {
+      const manifestPath = path.join(searchRoot, manifest);
+      const raw = await fs.readFile(manifestPath, 'utf8');
+      const parsed = safeJsonParse<{ icons?: Array<{ src?: string; sizes?: string }> }>(raw, {});
+      const icons = parsed.icons
+        ?.slice()
+        .sort((a, b) => manifestIconScore(b.sizes) - manifestIconScore(a.sizes))
+        .filter((item) => item.src);
+      for (const icon of icons ?? []) {
+        addIconCandidate(candidates, seen, projectRoot, path.dirname(manifestPath), icon.src);
+      }
+    } catch {
+      // manifest is optional
+    }
+  }
+}
+
+export async function readProjectIconCandidate(projectPath: string): Promise<{
   path: string;
   buffer: Buffer;
   ext: string;
 } | null> {
-  const candidates = [
-    '.plum/icon.png',
-    '.plum/icon.webp',
-    '.plum/icon.jpg',
-    '.plum/icon.svg',
-    'plum-icon.png',
-    'icon.png',
-    'icon.webp',
-    'favicon.png',
-    'favicon.ico',
-    'public/icon.png',
-    'public/icon.webp',
-    'public/favicon.png',
-    'public/favicon.ico',
-    'public/favicon.svg',
-    'app/icon.png',
-    'app/favicon.ico',
-    'src-tauri/icons/icon.png',
-    'src-tauri/icons/128x128.png',
-    'assets/icon.png',
-    'assets/favicon.png',
-    'resources/icon.png',
-  ];
+  const projectRoot = path.resolve(projectPath);
+  const searchRoots = await collectProjectIconSearchRoots(projectRoot);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
 
-  for (const rel of candidates) {
-    const candidate = path.join(projectPath, rel);
+  for (const searchRoot of searchRoots) {
+    const rels =
+      searchRoot === projectRoot ? ROOT_PROJECT_ICON_CANDIDATES : NESTED_PROJECT_ICON_CANDIDATES;
+    for (const rel of rels) {
+      addIconCandidate(candidates, seen, projectRoot, searchRoot, rel);
+    }
+    await addPackageJsonIconCandidates(candidates, seen, projectRoot, searchRoot);
+    await addManifestIconCandidates(candidates, seen, projectRoot, searchRoot);
+  }
+
+  for (const candidate of candidates) {
     try {
       const stat = await fs.stat(candidate);
       if (!stat.isFile() || stat.size > MAX_ICON_BYTES) continue;
@@ -433,41 +612,22 @@ async function readProjectIconCandidate(projectPath: string): Promise<{
     }
   }
 
-  for (const manifest of ['public/manifest.json', 'public/site.webmanifest', 'manifest.json']) {
-    try {
-      const manifestPath = path.join(projectPath, manifest);
-      const raw = await fs.readFile(manifestPath, 'utf8');
-      const parsed = safeJsonParse<{ icons?: Array<{ src?: string; sizes?: string }> }>(raw, {});
-      const icon = parsed.icons
-        ?.slice()
-        .sort((a, b) => (b.sizes || '').localeCompare(a.sizes || ''))
-        .find((item) => item.src);
-      if (!icon?.src) continue;
-      const src = icon.src.replace(/^\//, '');
-      const candidate = path.resolve(path.dirname(manifestPath), src);
-      if (!candidate.startsWith(path.resolve(projectPath))) continue;
-      const stat = await fs.stat(candidate);
-      if (!stat.isFile() || stat.size > MAX_ICON_BYTES) continue;
-      const ext = getIconExtension(candidate);
-      const buffer = await fs.readFile(candidate);
-      return { path: candidate, buffer, ext };
-    } catch {
-      // try next manifest
-    }
-  }
-
   return null;
 }
 
-function buildGeneratedIconPrompt(session: { name: string; workingDirectory: string }): string {
-  const projectName = path.basename(session.workingDirectory);
-  return [
-    `Create a polished square app icon for a developer workspace session named "${session.name}".`,
-    `Project folder: "${projectName}".`,
-    'Use a single centered abstract symbol that suggests software, tooling, and focused work.',
-    'Modern premium icon, high contrast, crisp edges, dark transparent-looking background, subtle depth.',
-    'No words, no letters, no numbers, no watermark, no UI screenshot, no tiny details.',
-  ].join(' ');
+export function buildGeneratedIconPrompt(session: {
+  name: string;
+  workingDirectory: string;
+}): string {
+  return buildSessionIconImagePrompt(session);
+}
+
+export function buildCodexSessionIconMessage(
+  session: { name: string; workingDirectory: string },
+  prompt?: string | null
+): string {
+  const text = (prompt?.trim() || buildGeneratedIconPrompt(session)).replace(/\s+/g, ' ').trim();
+  return `$imagegen ${text}`;
 }
 
 function attachRuntime<T extends Record<string, unknown>>(session: T): T & { runtime: unknown } {
@@ -910,7 +1070,31 @@ router.post(
       storedServiceTier
     );
 
-    const newSession = selectSessionById(db, sessionId, userId) as Record<string, unknown>;
+    let newSession = selectSessionById(db, sessionId, userId) as Record<string, unknown>;
+    const projectIcon = await readProjectIconCandidate(workingDirectory).catch((err) => {
+      console.warn(
+        '[Sessions] Failed to scan project icon:',
+        err instanceof Error ? err.message : err
+      );
+      return null;
+    });
+    if (projectIcon) {
+      try {
+        newSession = await storeSessionIcon(
+          db,
+          sessionId,
+          userId,
+          projectIcon.buffer,
+          projectIcon.ext,
+          'project'
+        );
+      } catch (err) {
+        console.warn(
+          '[Sessions] Failed to apply project icon:',
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -1437,51 +1621,29 @@ router.post(
     if (!session) throw new AppError('Session not found', 404, 'NOT_FOUND');
 
     const scanned = await scanProject(session.workingDirectory).catch(() => null);
-    const defaultPrompt = buildGeneratedIconPrompt(session);
-    const prompt = [
-      parsed.data.prompt?.trim() || defaultPrompt,
-      scanned?.framework ? `Framework signal: ${scanned.framework}.` : null,
-      scanned?.techStack?.length
-        ? `Tech stack: ${scanned.techStack.slice(0, 4).join(', ')}.`
+    const generatedIcon = await generateSessionIconImage({
+      sessionId,
+      session,
+      prompt: parsed.data.prompt,
+      project: scanned
+        ? {
+            framework: scanned.framework,
+            techStack: scanned.techStack,
+          }
         : null,
-    ]
-      .filter(Boolean)
-      .join(' ');
-
-    const job = await comfyui.generateAndWait(
-      userId,
-      'z-image-turbo',
-      {
-        prompt,
-        negative_prompt:
-          'text, letters, words, numbers, watermark, logo text, screenshot, busy background, tiny details, low contrast',
-        aspect_ratio: '1:1 (Perfect Square)',
-        megapixel: '1.0',
-        steps: 9,
-        cfg: 2.2,
-        filename_prefix: `session-icon-${sessionId}`,
-      },
-      { timeoutMs: 2 * 60 * 1000 }
-    );
-
-    if (job.status !== 'completed' || !job.outputFilename) {
-      throw new AppError(job.error || 'Icon generation failed', 502, 'GENERATE_FAILED');
-    }
-
-    const generatedPath = path.join(GENERATED_IMAGE_DIR, job.outputFilename);
-    const buffer = await fs.readFile(generatedPath);
+    });
     const updatedSession = await storeSessionIcon(
       db,
       sessionId,
       userId,
-      buffer,
-      '.png',
+      generatedIcon.buffer,
+      generatedIcon.ext,
       'generated'
     );
     res.json({
       success: true,
       data: attachRuntimeAndTelemetry(updatedSession),
-      meta: { generationId: job.id, prompt, seed: job.seed ?? null },
+      meta: { generator: 'codex-imagegen', prompt: generatedIcon.prompt },
     });
   })
 );

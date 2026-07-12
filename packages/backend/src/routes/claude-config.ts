@@ -7,7 +7,8 @@ import { asyncHandler } from '../middleware/errorHandler';
 import { isValidGitHubRepo, isValidGitUrl, sanitizeShellArg } from '../utils/sanitize';
 import { resolveConfigHome } from '../utils/configPaths';
 import { importSkillFromBuffer } from '../utils/skillImport';
-import { listSkillLibrary } from '../utils/skillLibrary';
+import { listSkillLibrary, readSkillLibraryItem } from '../utils/skillLibrary';
+import { buildFallbackDesignMd, importDesignMdPreset, serializeDesignMd } from '../utils/designMd';
 
 const router = Router();
 
@@ -208,6 +209,83 @@ router.get(
         writingStyles,
       },
     });
+  })
+);
+
+const designMdUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const lower = file.originalname.toLowerCase();
+    cb(null, lower === 'design.md' || lower.endsWith('.design.md') || lower.endsWith('.md'));
+  },
+});
+
+// POST /api/claude-config/style-library/design-md/import - Import DESIGN.md as a design preset.
+router.post(
+  '/style-library/design-md/import',
+  requireAuth,
+  designMdUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    const file = req.file as Express.Multer.File | undefined;
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'NO_FILE', message: 'No DESIGN.md file provided (field name: file)' },
+      });
+    }
+
+    const conflict = String(req.query.conflict || 'skip') === 'overwrite' ? 'overwrite' : 'skip';
+    const configHome = resolveConfigHome(req.query.provider);
+    const result = await importDesignMdPreset(file.buffer, file.originalname, configHome, {
+      conflict,
+    });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
+// GET /api/claude-config/style-library/design/:name/design-md - Export a design preset as DESIGN.md.
+router.get(
+  '/style-library/design/:name/design-md',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const configHome = resolveConfigHome(req.query.provider);
+    const name = req.params.name;
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Design style name missing' },
+      });
+    }
+
+    const style = await readSkillLibraryItem(configHome, name, {
+      includeDisabled: true,
+    });
+
+    if (!style || style.libraryKind !== 'design') {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Design style not found' },
+      });
+    }
+
+    const content = style.designMd
+      ? serializeDesignMd(style.designMd)
+      : buildFallbackDesignMd({
+          baseName: style.baseName,
+          name: style.name,
+          description: style.description,
+          content: style.content,
+        });
+    const filename = `${style.baseName}-DESIGN.md`;
+
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(content);
   })
 );
 

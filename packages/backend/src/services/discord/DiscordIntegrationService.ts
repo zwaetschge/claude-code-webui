@@ -141,7 +141,9 @@ function previewWebhookUrl(value: string | null): string | null {
     const url = new URL(value);
     const parts = url.pathname.split('/').filter(Boolean);
     const webhookId = parts[2];
-    return webhookId ? `${url.origin}/api/webhooks/${webhookId}/...` : `${url.origin}/api/webhooks/...`;
+    return webhookId
+      ? `${url.origin}/api/webhooks/${webhookId}/...`
+      : `${url.origin}/api/webhooks/...`;
   } catch {
     return 'configured';
   }
@@ -174,7 +176,8 @@ export class DiscordIntegrationService {
     const storedBotToken = safeDecrypt(getAppConfig(CONFIG_KEYS.botToken));
     const envEnabled = parseBoolean(process.env.DISCORD_ALERTS_ENABLED);
     const storedEnabled = parseBoolean(getAppConfig(CONFIG_KEYS.enabled));
-    const configuredTransport = process.env.DISCORD_ALERT_TRANSPORT || getAppConfig(CONFIG_KEYS.transport);
+    const configuredTransport =
+      process.env.DISCORD_ALERT_TRANSPORT || getAppConfig(CONFIG_KEYS.transport);
     const minSeverity = parseSeverity(
       process.env.DISCORD_ALERT_MIN_SEVERITY || getAppConfig(CONFIG_KEYS.minSeverity)
     );
@@ -307,7 +310,10 @@ export class DiscordIntegrationService {
       setAppConfig(CONFIG_KEYS.channelLabel, normalizeOptionalText(input.channelLabel, 80) ?? '');
     }
     if (input.criticalRoleId !== undefined) {
-      setAppConfig(CONFIG_KEYS.criticalRoleId, normalizeOptionalText(input.criticalRoleId, 40) ?? '');
+      setAppConfig(
+        CONFIG_KEYS.criticalRoleId,
+        normalizeOptionalText(input.criticalRoleId, 40) ?? ''
+      );
     }
     if (input.clearWebhookUrl) {
       setAppConfig(CONFIG_KEYS.webhookUrl, '');
@@ -322,7 +328,10 @@ export class DiscordIntegrationService {
       setAppConfig(CONFIG_KEYS.botToken, safeEncrypt(normalized) ?? normalized);
     }
     if (input.channelId !== undefined) {
-      setAppConfig(CONFIG_KEYS.channelId, input.channelId ? validateChannelId(input.channelId) : '');
+      setAppConfig(
+        CONFIG_KEYS.channelId,
+        input.channelId ? validateChannelId(input.channelId) : ''
+      );
     }
 
     return this.getSettings();

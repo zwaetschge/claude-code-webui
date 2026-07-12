@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "pnpm --parallel -r run dev",
     "build": "pnpm -r run build",
+    "test": "node scripts/run-regression-tests.mjs",
     "lint": "eslint \"packages/**/*.{ts,tsx}\"",
     "format": "prettier --write \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
@@ -30,6 +31,20 @@
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "overrides": {
+      "diff@5.2.0": "5.2.2",
+      "exceljs>tmp": "0.2.7",
+      "exceljs>uuid": "11.1.1",
+      "fast-uri@3.1.0": "3.1.2",
+      "path-to-regexp@0.1.12": "0.1.13",
+      "prismjs@1.27.0": "1.30.0",
+      "qs@6.14.1": "6.15.2",
+      "socket.io-parser@4.2.5": "4.2.6",
+      "ws@8.18.3": "8.21.0",
+      "yaml@1.10.2": "1.10.3"
+    }
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "eslint": "^9.39.4",

@@ -1,13 +1,44 @@
-import { Router } from 'express';
+import { timingSafeEqual } from 'node:crypto';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { getTaskManager } from '../services/tasks';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { resolveTargetUrl } from '../utils/containers';
+import { config } from '../config';
 
 const router = Router();
 
-// ─── Internal endpoints (no auth, Docker-internal network) ──────────
+export function isTaskHookSecretValid(provided: string, expected: string): boolean {
+  if (!provided || !expected) return false;
+  const providedBuffer = Buffer.from(provided);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    providedBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(providedBuffer, expectedBuffer)
+  );
+}
+
+function requireTaskHookSecret(req: Request, res: Response, next: NextFunction): void {
+  const provided = req.header('x-webui-hook-secret') || '';
+  if (!isTaskHookSecretValid(provided, config.hookSecret)) {
+    res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTH', message: 'Invalid internal task secret' },
+    });
+    return;
+  }
+  next();
+}
+
+export function buildTaskProxyHeaders(hookSecret = config.hookSecret): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'X-Webui-Hook-Secret': hookSecret,
+  };
+}
+
+// ─── Internal endpoints (shared hook-secret auth) ───────────────────
 
 const submitSchema = z.object({
   taskType: z.string().min(1),
@@ -15,7 +46,7 @@ const submitSchema = z.object({
   requestedBy: z.string().default('internal'),
 });
 
-router.post('/submit', (req, res) => {
+router.post('/submit', requireTaskHookSecret, (req, res) => {
   const parsed = submitSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
@@ -26,20 +57,20 @@ router.post('/submit', (req, res) => {
   res.json({ success: true, data: result });
 });
 
-router.get('/list', (_req, res) => {
+router.get('/list', requireTaskHookSecret, (_req, res) => {
   const tm = getTaskManager();
   const tasks = tm.listTasks();
   res.json({ success: true, data: tasks });
 });
 
-router.get('/:id', (req, res) => {
+router.get('/:id', requireTaskHookSecret, (req, res) => {
   const tm = getTaskManager();
   const task = tm.getTask(req.params.id!);
   if (!task) throw new AppError('Task not found', 404, 'NOT_FOUND');
   res.json({ success: true, data: task });
 });
 
-router.get('/:id/poll', async (req, res) => {
+router.get('/:id/poll', requireTaskHookSecret, async (req, res) => {
   const tm = getTaskManager();
   const timeoutMs = Math.min(Number(req.query.timeout) || 30000, 60000);
   const task = await tm.pollTask(req.params.id!, timeoutMs);
@@ -51,7 +82,7 @@ const inputSchema = z.object({
   data: z.unknown(),
 });
 
-router.post('/:id/input', (req, res) => {
+router.post('/:id/input', requireTaskHookSecret, (req, res) => {
   const parsed = inputSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
@@ -63,7 +94,7 @@ router.post('/:id/input', (req, res) => {
   res.json({ success: true });
 });
 
-router.post('/:id/cancel', (req, res) => {
+router.post('/:id/cancel', requireTaskHookSecret, (req, res) => {
   const tm = getTaskManager();
   const ok = tm.cancelTask(req.params.id!);
   if (!ok) throw new AppError('Task not found', 404, 'NOT_FOUND');
@@ -87,7 +118,7 @@ async function proxyToTarget(
   const url = `${targetUrl}/api/tasks${path}`;
   const opts: RequestInit = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildTaskProxyHeaders(),
   };
   if (body !== undefined) {
     opts.body = JSON.stringify(body);

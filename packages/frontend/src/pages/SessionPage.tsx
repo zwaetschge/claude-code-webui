@@ -519,9 +519,7 @@ export function SessionPage() {
     queryKey: ['session-peers', id],
     enabled: !!id,
     queryFn: async () => {
-      const response = await api.get<ApiResponse<SessionPeerLink[]>>(
-        `/api/sessions/${id}/peers`
-      );
+      const response = await api.get<ApiResponse<SessionPeerLink[]>>(`/api/sessions/${id}/peers`);
       return response.data.data || [];
     },
   });
@@ -1326,10 +1324,14 @@ export function SessionPage() {
       ];
     }
     return [
+      { value: 'none', label: 'None' },
+      { value: 'minimal', label: 'Minimal' },
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
       { value: 'high', label: 'High' },
       { value: 'xhigh', label: 'XHigh' },
+      { value: 'max', label: 'Max' },
+      { value: 'ultra', label: 'Ultra' },
     ];
   }, [sessionProvider]);
   // Fetch messages
@@ -2080,7 +2082,7 @@ export function SessionPage() {
     [goalDraft, handleCommandExecute, id]
   );
 
-  const meshPeers = meshPeersQuery.data || [];
+  const meshPeers = useMemo(() => meshPeersQuery.data || [], [meshPeersQuery.data]);
   const meshPeerTargetIds = useMemo(
     () => new Set(meshPeers.filter((peer) => peer.enabled).map((peer) => peer.targetSessionId)),
     [meshPeers]
@@ -3326,9 +3328,7 @@ export function SessionPage() {
           {mobileSheetPanel === 'tasks' && (
             <div className="h-[56dvh] overflow-auto">{tasksBody}</div>
           )}
-          {mobileSheetPanel === 'mesh' && (
-            <div className="h-[76dvh] overflow-auto">{meshBody}</div>
-          )}
+          {mobileSheetPanel === 'mesh' && <div className="h-[76dvh] overflow-auto">{meshBody}</div>}
           {mobileSheetPanel === 'browser' && (
             <OracleBrowserPanel sessionId={session.id} className="h-[76dvh]" />
           )}
