@@ -13,12 +13,20 @@ import {
 } from './opencodeProviderKeys.js';
 import { getOpenCodeProviderCatalog, type OpenCodeProviderCatalog } from './opencodeCatalog.js';
 
-const CLAUDE_SKILLS_DIR = '/home/node/.claude/skills';
-const CLAUDE_AGENTS_DIR = '/home/node/.claude/agents';
-const OPENCODE_CONFIG_PATH = '/home/node/.opencode/config/opencode.json';
-const OPENCODE_AGENTS_DIR = '/home/node/.opencode/config/agents';
 const ZAI_VISION_MCP_NAME = 'zai-vision';
 const ZAI_VISION_MCP_MARKER = 'zai-vision-v1';
+
+function getClaudeConfigHome(): string {
+  return (
+    process.env.WEBUI_CONFIG_HOME ||
+    process.env.CLAUDE_CONFIG_HOME ||
+    path.join(os.homedir(), '.claude')
+  );
+}
+
+function getOpenCodeConfigDir(): string {
+  return process.env.OPENCODE_CONFIG_DIR || path.join(os.homedir(), '.opencode', 'config');
+}
 
 type ZaiVisionMcpPolicy = 'auto' | 'always' | 'off';
 
@@ -405,8 +413,8 @@ export function syncOpencodeAgents(opts: { quiet?: boolean; destinationDir?: str
   converted: number;
   skipped: number;
 } {
-  const srcDir = CLAUDE_AGENTS_DIR;
-  const dstDir = opts.destinationDir || OPENCODE_AGENTS_DIR;
+  const srcDir = path.join(getClaudeConfigHome(), 'agents');
+  const dstDir = opts.destinationDir || path.join(getOpenCodeConfigDir(), 'agents');
 
   if (!fs.existsSync(srcDir)) return { converted: 0, skipped: 0 };
 
@@ -493,7 +501,7 @@ export function syncOpenCodeConfig(
     configPath?: string;
   } = {}
 ): { updated: boolean; mcpCount: number } {
-  const configPath = opts.configPath || OPENCODE_CONFIG_PATH;
+  const configPath = opts.configPath || path.join(getOpenCodeConfigDir(), 'opencode.json');
   const config = readJsonObject(configPath);
   if (!config.$schema) {
     config.$schema = 'https://opencode.ai/config.json';
@@ -503,7 +511,8 @@ export function syncOpenCodeConfig(
   const paths = Array.isArray(skills.paths)
     ? skills.paths.filter((value): value is string => typeof value === 'string')
     : [];
-  if (!paths.includes(CLAUDE_SKILLS_DIR)) paths.push(CLAUDE_SKILLS_DIR);
+  const claudeSkillsDir = path.join(getClaudeConfigHome(), 'skills');
+  if (!paths.includes(claudeSkillsDir)) paths.push(claudeSkillsDir);
   skills.paths = paths;
   config.skills = skills;
 
