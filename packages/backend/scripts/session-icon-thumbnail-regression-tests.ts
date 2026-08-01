@@ -13,7 +13,11 @@ import {
 import { buildSessionIconSrc } from '../../frontend/src/lib/sessionIconUrl.js';
 
 function runMagick(args: string[]): string {
-  const result = spawnSync(process.env.IMAGEMAGICK_BIN || 'magick', args, {
+  const configuredBinary = process.env.IMAGEMAGICK_BIN || 'magick';
+  const isLegacyCli = path.basename(configuredBinary) !== 'magick';
+  const binary = isLegacyCli && args[0] === 'identify' ? 'identify' : configuredBinary;
+  const commandArgs = isLegacyCli && args[0] === 'identify' ? args.slice(1) : args;
+  const result = spawnSync(binary, commandArgs, {
     encoding: 'utf8',
   });
   assert.equal(

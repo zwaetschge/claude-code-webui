@@ -25,6 +25,7 @@ jobs:
     env:
       SESSION_SECRET: ci-session-secret-ci-session-secret-0001
       JWT_SECRET: ci-jwt-secret-ci-jwt-secret-000000001
+      IMAGEMAGICK_BIN: convert
     permissions:
       contents: read
 
@@ -46,6 +47,9 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install image test dependency
+        run: sudo apt-get update && sudo apt-get install --yes imagemagick
 
       - name: Typecheck
         run: pnpm typecheck
