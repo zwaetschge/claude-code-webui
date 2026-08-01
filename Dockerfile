@@ -85,6 +85,7 @@ ARG PI_CODING_AGENT_VERSION=0.83.0
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
 ARG KIMI_CODE_VERSION=0.31.1
 ARG NPM_VERSION=12.0.2
+ARG NPM_BRACE_EXPANSION_VERSION=5.0.8
 RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     npm install -g --prefix /opt/plum-cli \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
@@ -102,6 +103,17 @@ RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     test -x /opt/plum-cli/bin/pi-mcp-adapter && \
     npm install -g --prefix /usr/local npm@${NPM_VERSION} && \
     /usr/local/bin/npm --version | grep -Fx "${NPM_VERSION}" && \
+    /usr/local/bin/npm pack brace-expansion@${NPM_BRACE_EXPANSION_VERSION} \
+      --pack-destination /tmp --silent >/dev/null && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/brace-expansion && \
+    mkdir -p /usr/local/lib/node_modules/npm/node_modules/brace-expansion && \
+    tar -xzf /tmp/brace-expansion-${NPM_BRACE_EXPANSION_VERSION}.tgz \
+      -C /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
+      --strip-components=1 && \
+    rm -f /tmp/brace-expansion-${NPM_BRACE_EXPANSION_VERSION}.tgz && \
+    node -p \
+      "require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version" \
+      | grep -Fx "${NPM_BRACE_EXPANSION_VERSION}" && \
     /usr/local/bin/npm cache clean --force && rm -rf /root/.npm
 
 WORKDIR /app
