@@ -277,7 +277,8 @@ export function mapCodexUsage(data: CodexUsageApiResponse | null): {
     )?.value ?? null;
 
   for (const candidate of candidates.filter(
-    (item) => item.value.windowSeconds === null && item.value !== fiveHour && item.value !== sevenDay
+    (item) =>
+      item.value.windowSeconds === null && item.value !== fiveHour && item.value !== sevenDay
   )) {
     if (candidate.position === 'primary' && !fiveHour) fiveHour = candidate.value;
     else if (candidate.position === 'secondary' && !sevenDay) sevenDay = candidate.value;

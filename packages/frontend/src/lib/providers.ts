@@ -3,13 +3,7 @@ export type { CLIProvider } from '@plum-code-webui/shared';
 type CLIProvider = CLIProviderType;
 
 export type UiProvider = 'plum' | 'claude' | 'zai' | 'codex' | 'opencode' | 'pi' | 'kimi';
-export const ACCOUNT_USAGE_LIMIT_PROVIDERS = [
-  'codex',
-  'claude',
-  'zai',
-  'kimi',
-  'alibaba',
-] as const;
+export const ACCOUNT_USAGE_LIMIT_PROVIDERS = ['codex', 'claude', 'zai', 'kimi', 'alibaba'] as const;
 export type AccountUsageLimitProvider = (typeof ACCOUNT_USAGE_LIMIT_PROVIDERS)[number];
 export type UsageLimitProvider = AccountUsageLimitProvider | 'z-ai' | 'opencode-go';
 

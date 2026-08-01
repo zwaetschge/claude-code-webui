@@ -100,7 +100,8 @@ function mapDetail(
   const limit = numberValue(detail.limit);
   let used = numberValue(detail.used);
   const suppliedRemaining = numberValue(detail.remaining);
-  if (used === null && limit !== null && suppliedRemaining !== null) used = limit - suppliedRemaining;
+  if (used === null && limit !== null && suppliedRemaining !== null)
+    used = limit - suppliedRemaining;
   if (limit === null || used === null) return null;
   const remaining = suppliedRemaining ?? Math.max(0, limit - used);
   return {
@@ -148,7 +149,9 @@ export function mapKimiUsage(payload: KimiUsageResponse): KimiMappedUsage {
 
 async function readCredentials(): Promise<KimiCredentials | null> {
   try {
-    const parsed = JSON.parse(await fs.readFile(credentialsPath, 'utf8')) as Partial<KimiCredentials>;
+    const parsed = JSON.parse(
+      await fs.readFile(credentialsPath, 'utf8')
+    ) as Partial<KimiCredentials>;
     if (!parsed.access_token || !parsed.refresh_token) return null;
     return parsed as KimiCredentials;
   } catch {
@@ -229,12 +232,16 @@ async function requestUsage(credentials: KimiCredentials): Promise<Response> {
 }
 
 export async function fetchKimiUsage(): Promise<
-  | { ok: true; data: KimiMappedUsage }
-  | { ok: false; status: number; code: string; message: string }
+  { ok: true; data: KimiMappedUsage } | { ok: false; status: number; code: string; message: string }
 > {
   let credentials = await freshCredentials();
   if (!credentials) {
-    return { ok: false, status: 401, code: 'NO_CREDENTIALS', message: 'Kimi credentials not found' };
+    return {
+      ok: false,
+      status: 401,
+      code: 'NO_CREDENTIALS',
+      message: 'Kimi credentials not found',
+    };
   }
 
   let response = await requestUsage(credentials);
@@ -246,7 +253,8 @@ export async function fetchKimiUsage(): Promise<
     return {
       ok: false,
       status: response.status,
-      code: response.status === 401 || response.status === 403 ? 'NO_CREDENTIALS' : 'KIMI_USAGE_ERROR',
+      code:
+        response.status === 401 || response.status === 403 ? 'NO_CREDENTIALS' : 'KIMI_USAGE_ERROR',
       message:
         response.status === 401 || response.status === 403
           ? 'Kimi credentials not found or expired'

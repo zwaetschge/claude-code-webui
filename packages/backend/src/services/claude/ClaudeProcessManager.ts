@@ -2404,7 +2404,9 @@ function kimiAcpConfigSupports(
   });
 }
 
-function kimiAcpToolResultText(update: Extract<AcpSessionUpdate, { sessionUpdate: 'tool_call_update' }>): string {
+function kimiAcpToolResultText(
+  update: Extract<AcpSessionUpdate, { sessionUpdate: 'tool_call_update' }>
+): string {
   if (typeof update.rawOutput === 'string') return update.rawOutput;
   if (update.rawOutput !== undefined && update.rawOutput !== null) {
     try {
@@ -7906,7 +7908,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
               ? proc.claudeIdle === false || items.length > 0
               : proc.cliProvider === 'kimi'
                 ? proc.kimiIdle === false || items.length > 0
-              : proc.isStreaming || !!proc.currentToolName,
+                : proc.isStreaming || !!proc.currentToolName,
       preempting: !!proc.codexPreemptingForSteer,
     });
   }

@@ -1169,20 +1169,33 @@
     border-color: hsl(var(--border) / 0.8);
     border-radius: 14px;
     background:
-      linear-gradient(135deg, rgb(30 58 105 / 0.2), transparent 46%),
-      hsl(var(--card) / 0.94);
+      linear-gradient(135deg, rgb(30 58 105 / 0.2), transparent 46%), hsl(var(--card) / 0.94);
     box-shadow:
       0 18px 48px -36px rgb(1 8 24 / 0.92),
       inset 0 1px 0 rgb(255 255 255 / 0.035);
   }
 
-  .analytics-hero { order: 1; }
-  .analytics-metric-grid { order: 2; }
-  .analytics-main-grid { order: 3; }
-  .analytics-quota-panel { order: 4; }
-  .analytics-audit-panel { order: 5; }
-  .analytics-lower-grid { order: 6; }
-  .analytics-sessions-panel { order: 7; }
+  .analytics-hero {
+    order: 1;
+  }
+  .analytics-metric-grid {
+    order: 2;
+  }
+  .analytics-main-grid {
+    order: 3;
+  }
+  .analytics-quota-panel {
+    order: 4;
+  }
+  .analytics-audit-panel {
+    order: 5;
+  }
+  .analytics-lower-grid {
+    order: 6;
+  }
+  .analytics-sessions-panel {
+    order: 7;
+  }
 
   .analytics-hero {
     position: relative;
