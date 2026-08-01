@@ -10,6 +10,7 @@
     "start": "node packages/backend/dist/index.js",
     "test": "node scripts/run-regression-tests.mjs",
     "lint": "eslint \"packages/**/*.{ts,tsx}\"",
+    "audit:prod": "node scripts/audit-production.mjs",
     "format": "prettier --write \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"packages/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "typecheck": "pnpm -r run typecheck",
