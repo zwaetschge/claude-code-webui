@@ -22,6 +22,9 @@ jobs:
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      SESSION_SECRET: ci-session-secret-ci-session-secret-0001
+      JWT_SECRET: ci-jwt-secret-ci-jwt-secret-000000001
     permissions:
       contents: read
 
