@@ -13,8 +13,6 @@ import com.claudewebui.app.ui.screens.chat.GitViewModel
 import com.claudewebui.app.ui.screens.chat.UsageViewModel
 import com.claudewebui.app.ui.screens.dashboard.DashboardViewModel
 import com.claudewebui.app.ui.screens.filemanager.FileManagerViewModel
-import com.claudewebui.app.ui.screens.orchestration.OrchestrationViewModel
-import com.claudewebui.app.ui.screens.ralph.RalphViewModel
 import com.claudewebui.app.ui.screens.settings.SettingsViewModel
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
@@ -56,12 +54,6 @@ val viewModelModule = module {
 
     // WatchdogViewModel(apiClient)
     viewModel { WatchdogViewModel(get()) }
-
-    // OrchestrationViewModel(sessionId, socketManager, sessionRepository)
-    viewModel { (sessionId: String) -> OrchestrationViewModel(sessionId, get(), get()) }
-
-    // RalphViewModel(sessionId, socketManager, sessionRepository)
-    viewModel { (sessionId: String) -> RalphViewModel(sessionId, get(), get()) }
 
     // CheckpointViewModel(sessionId, apiClient)
     viewModel { (sessionId: String) -> CheckpointViewModel(sessionId, get()) }

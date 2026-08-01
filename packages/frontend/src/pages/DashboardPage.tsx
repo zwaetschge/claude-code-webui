@@ -17,7 +17,6 @@ import {
   Settings,
   FolderPlus,
   Folder,
-  Palette,
   MoreHorizontal,
   Pencil,
   Star,
@@ -36,6 +35,8 @@ import {
   CheckCircle,
   SlidersHorizontal,
   ChevronRight,
+  Search,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,14 +54,13 @@ import type {
   ApiResponse,
   UserSettings,
   CLIProvider,
-  BackgroundAnimation,
   SessionMode,
   SessionSurface,
   Category,
 } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { getSessionRunState } from '@/lib/sessionRunState';
-import { useAppearanceStore, BACKGROUND_ANIMATION_OPTIONS } from '@/stores/appearanceStore';
+import { RECENT_SESSIONS_LIMIT } from '@/lib/sessionGrouping';
 import { CLI_PROVIDER_DEFAULT_MODEL, toUiProvider } from '@/lib/providers';
 import { TASK_WORKFLOWS, type TaskWorkflow } from '@/lib/taskWorkflows';
 import {
@@ -89,6 +89,7 @@ const DASHBOARD_SESSION_MODE_OPTIONS: Array<{
 const DASHBOARD_FAVORITES_GROUP_ID = '__favorites';
 const DASHBOARD_RECENT_GROUP_ID = '__recent';
 const DASHBOARD_UNCATEGORIZED_GROUP_ID = '__uncategorized';
+const DASHBOARD_SEARCH_GROUP_ID = '__search';
 const DASHBOARD_SESSION_DRAG_TYPE = 'application/x-plum-session-id';
 
 const DASHBOARD_CATEGORY_COLOR_VALUES: Record<string, string> = {
@@ -129,7 +130,7 @@ interface DashboardSessionGroup {
 }
 
 function getDashboardReasoningOptions(provider: CLIProvider) {
-  if (provider === 'claude') {
+  if (provider === 'claude' || provider === 'zai') {
     return [
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
@@ -137,16 +138,7 @@ function getDashboardReasoningOptions(provider: CLIProvider) {
       { value: 'max', label: 'Max' },
     ];
   }
-  if (provider === 'vibe') {
-    return [
-      { value: 'off', label: 'Off' },
-      { value: 'low', label: 'Low' },
-      { value: 'medium', label: 'Medium' },
-      { value: 'high', label: 'High' },
-      { value: 'max', label: 'Max' },
-    ];
-  }
-  if (provider === 'opencode') {
+  if (provider === 'opencode' || provider === 'pi') {
     return [
       { value: 'minimal', label: 'Minimal' },
       { value: 'low', label: 'Low' },
@@ -156,10 +148,14 @@ function getDashboardReasoningOptions(provider: CLIProvider) {
     ];
   }
   return [
+    { value: 'none', label: 'None' },
+    { value: 'minimal', label: 'Minimal' },
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' },
     { value: 'xhigh', label: 'XHigh' },
+    { value: 'max', label: 'Max' },
+    { value: 'ultra', label: 'Ultra' },
   ];
 }
 
@@ -189,12 +185,17 @@ function formatDashboardFileSize(bytes: number): string {
   return `${bytes} B`;
 }
 
-function getDashboardDefaultProvider(savedDefaultProvider: CLIProvider | undefined): CLIProvider {
-  if (savedDefaultProvider && savedDefaultProvider !== 'claude') {
+function getDashboardDefaultProvider(
+  savedDefaultProvider: CLIProvider | undefined,
+  enabledProviders?: CLIProvider[]
+): CLIProvider {
+  if (
+    savedDefaultProvider &&
+    (!enabledProviders || enabledProviders.includes(savedDefaultProvider))
+  ) {
     return savedDefaultProvider;
   }
-
-  return 'codex';
+  return enabledProviders?.[0] ?? 'codex';
 }
 
 function toDashboardSentence(value: string | null | undefined): string | null {
@@ -251,7 +252,6 @@ export function DashboardPage() {
     toolExecutions,
     queueState,
   } = useSessionStore();
-  const { backgroundAnimation, setBackgroundAnimation } = useAppearanceStore();
   const { categories, fetchCategories, createCategory } = useCategoryStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
@@ -278,6 +278,9 @@ export function DashboardPage() {
   const [renamingSession, setRenamingSession] = useState<Session | null>(null);
   const [iconUploadSessionId, setIconUploadSessionId] = useState<string | null>(null);
   const [iconBusySessionId, setIconBusySessionId] = useState<string | null>(null);
+  const [dashboardSearchQuery, setDashboardSearchQuery] = useState(
+    () => searchParams.get('q') || ''
+  );
   const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() =>
     getDashboardDefaultProvider(undefined)
   );
@@ -296,13 +299,10 @@ export function DashboardPage() {
       return response.data.data;
     },
   });
-  const dashboardDefaultProvider = getDashboardDefaultProvider(settings?.defaultCliProvider);
-
-  useEffect(() => {
-    if (settings?.backgroundAnimation) {
-      setBackgroundAnimation(settings.backgroundAnimation);
-    }
-  }, [settings?.backgroundAnimation, setBackgroundAnimation]);
+  const dashboardDefaultProvider = getDashboardDefaultProvider(
+    settings?.defaultCliProvider,
+    settings?.enabledCliProviders
+  );
 
   useEffect(() => {
     fetchCategories();
@@ -342,8 +342,6 @@ export function DashboardPage() {
       }
       return [];
     },
-    refetchInterval: 4000,
-    refetchIntervalInBackground: true,
   });
 
   // Fetch available CLI providers
@@ -352,8 +350,10 @@ export function DashboardPage() {
     name: string;
     icon: string;
     available: boolean;
+    enabled?: boolean;
     models?: string[];
     modelLabels?: Record<string, string>;
+    defaultModel?: string;
   }
   const { data: cliProviders } = useQuery({
     queryKey: ['cli-providers'],
@@ -421,38 +421,36 @@ export function DashboardPage() {
     },
   });
 
-  const backgroundMutation = useMutation({
-    mutationFn: async (animation: BackgroundAnimation) => {
-      const response = await api.put<ApiResponse<UserSettings>>('/api/settings', {
-        backgroundAnimation: animation,
-      });
-      return response.data.data;
-    },
-    onMutate: (animation) => {
-      setBackgroundAnimation(animation);
-      const previous = queryClient.getQueryData<UserSettings>(['settings']);
-      queryClient.setQueryData(['settings'], {
-        ...(previous || {}),
-        backgroundAnimation: animation,
-      });
-      return { previous };
-    },
-    onError: (error: Error, _animation, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['settings'], context.previous);
-        if (context.previous.backgroundAnimation) {
-          setBackgroundAnimation(context.previous.backgroundAnimation);
-        }
-      }
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-    onSuccess: (data) => {
-      if (data) queryClient.setQueryData(['settings'], data);
-    },
-  });
-
   const hasDefaultDir = !!settings?.defaultWorkingDir;
-  const filteredSessions = sessions;
+  const normalizedDashboardSearch = dashboardSearchQuery.trim().toLocaleLowerCase();
+  const dashboardCategoryNames = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories]
+  );
+  const filteredSessions = useMemo(() => {
+    if (!normalizedDashboardSearch) return sessions;
+
+    return sessions.filter((session) => {
+      const searchableValues = [
+        session.name,
+        session.workingDirectory,
+        session.projectDescription,
+        session.lastMessage,
+        session.cliProvider,
+        session.cliModel,
+        session.category ? dashboardCategoryNames.get(session.category) : null,
+      ];
+      return searchableValues.some((value) => {
+        if (!value) return false;
+        const normalizedValue = value.toLocaleLowerCase();
+        if (normalizedDashboardSearch.length > 2) {
+          return normalizedValue.includes(normalizedDashboardSearch);
+        }
+        const words: string[] = normalizedValue.match(/[\p{L}\p{N}]+/gu) ?? [];
+        return words.includes(normalizedDashboardSearch);
+      });
+    });
+  }, [dashboardCategoryNames, normalizedDashboardSearch, sessions]);
   const sessionRunStates = useMemo(
     () =>
       new Map(
@@ -471,6 +469,22 @@ export function DashboardPage() {
     [activity, activeAgent, agentRuns, queueState, sessions, streamingContent, toolExecutions]
   );
   const dashboardSessionGroups = useMemo(() => {
+    if (normalizedDashboardSearch) {
+      if (filteredSessions.length === 0) return [];
+      return [
+        {
+          id: DASHBOARD_SEARCH_GROUP_ID,
+          label: 'Search results',
+          sessions: filteredSessions,
+          hasWorking: filteredSessions.some(
+            (session) => sessionRunStates.get(session.id)?.isWorking
+          ),
+          categoryId: null,
+          isDropTarget: false,
+        },
+      ];
+    }
+
     const knownCategoryIds = new Set(categories.map((category) => category.id));
     const usedSessionIds = new Set<string>();
     const grouped = new Map<string, Session[]>();
@@ -496,7 +510,7 @@ export function DashboardPage() {
       .sort((a, b) =>
         (b.updatedAt ?? b.createdAt ?? '').localeCompare(a.updatedAt ?? a.createdAt ?? '')
       )
-      .slice(0, 5);
+      .slice(0, RECENT_SESSIONS_LIMIT);
 
     if (recentSessions.length > 0) {
       priorityGroups.push({
@@ -556,38 +570,45 @@ export function DashboardPage() {
     });
 
     return [...priorityGroups, ...categoryGroups];
-  }, [categories, filteredSessions, sessionRunStates]);
-  const activeBackgroundOption =
-    BACKGROUND_ANIMATION_OPTIONS.find((option) => option.value === backgroundAnimation) ??
-    BACKGROUND_ANIMATION_OPTIONS[0]!;
+  }, [categories, filteredSessions, normalizedDashboardSearch, sessionRunStates]);
   const selectedProviderInfo = cliProviders?.find(
     (provider) => provider.id === selectedCliProvider
   );
-  const configuredModelsForProvider = settings?.cliProviderModelLists?.[selectedCliProvider] || [];
+  const configuredModelsForProvider = useMemo(() => {
+    return settings?.cliProviderModelLists?.[selectedCliProvider] || [];
+  }, [selectedCliProvider, settings?.cliProviderModelLists]);
   const selectedProviderModelLabels = selectedProviderInfo?.modelLabels || {};
+  const providerDefaultModel =
+    selectedProviderInfo?.defaultModel || CLI_PROVIDER_DEFAULT_MODEL[selectedCliProvider];
   const resolvedDefaultModel =
-    selectedCliProvider === 'opencode'
-      ? configuredModelsForProvider[0] || CLI_PROVIDER_DEFAULT_MODEL.opencode
-      : CLI_PROVIDER_DEFAULT_MODEL[selectedCliProvider];
+    selectedCliProvider === 'opencode' || selectedCliProvider === 'pi'
+      ? configuredModelsForProvider[0] || providerDefaultModel
+      : providerDefaultModel;
   const modelOptions = useMemo(() => {
-    if (selectedCliProvider === 'opencode') {
-      return Array.from(new Set(configuredModelsForProvider));
+    if (selectedCliProvider === 'opencode' || selectedCliProvider === 'pi') {
+      return Array.from(
+        new Set(
+          configuredModelsForProvider.length > 0
+            ? configuredModelsForProvider
+            : selectedProviderInfo?.models || []
+        )
+      );
     }
     const options = new Set<string>();
     for (const model of selectedProviderInfo?.models || []) options.add(model);
     for (const model of configuredModelsForProvider) options.add(model);
     if (selectedModel) options.add(selectedModel);
-    if (resolvedDefaultModel) options.add(resolvedDefaultModel);
     return Array.from(options);
   }, [
     configuredModelsForProvider,
-    resolvedDefaultModel,
     selectedCliProvider,
     selectedModel,
     selectedProviderInfo?.models,
   ]);
   const showDefaultModelOption =
-    selectedCliProvider !== 'opencode' || configuredModelsForProvider.length > 0;
+    selectedCliProvider === 'pi' ||
+    selectedCliProvider !== 'opencode' ||
+    configuredModelsForProvider.length > 0;
   const reasoningOptions = useMemo(
     () => getDashboardReasoningOptions(selectedCliProvider),
     [selectedCliProvider]
@@ -1054,37 +1075,34 @@ export function DashboardPage() {
               Start a code workspace or a quieter task chat directly from here.
             </p>
           </div>
-
-          <div className="dashboard-hero-actions">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <Palette className="h-4 w-4" />
-                  <span className="hidden md:inline">{activeBackgroundOption.label}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="panel-dropdown w-56">
-                {BACKGROUND_ANIMATION_OPTIONS.map((option) => (
-                  <DropdownMenuItem
-                    key={option.value}
-                    className="flex items-center gap-2 cursor-pointer"
-                    onClick={() => backgroundMutation.mutate(option.value)}
-                  >
-                    <Palette className="h-4 w-4 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{option.label}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {option.description}
-                      </span>
-                    </span>
-                    {backgroundAnimation === option.value ? (
-                      <CheckCircle className="h-4 w-4 text-primary" />
-                    ) : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <label className="dashboard-search" aria-label="Search sessions">
+            <Search className="dashboard-search-icon" aria-hidden="true" />
+            <input
+              type="search"
+              value={dashboardSearchQuery}
+              onChange={(event) => setDashboardSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setDashboardSearchQuery('');
+                  event.currentTarget.blur();
+                }
+              }}
+              placeholder="Search sessions"
+            />
+            {dashboardSearchQuery && (
+              <button
+                type="button"
+                className="dashboard-search-clear"
+                onClick={() => setDashboardSearchQuery('')}
+                aria-label="Clear session search"
+              >
+                <X aria-hidden="true" />
+              </button>
+            )}
+            <span className="dashboard-search-count" aria-live="polite">
+              {normalizedDashboardSearch ? `${filteredSessions.length}/${sessions.length}` : ''}
+            </span>
+          </label>
         </div>
 
         <form
@@ -1226,12 +1244,14 @@ export function DashboardPage() {
                 }}
                 aria-label="Provider"
               >
-                {cliProviders?.map((provider) => (
-                  <option key={provider.id} value={provider.id} disabled={!provider.available}>
-                    {provider.name}
-                    {!provider.available ? ' (N/A)' : ''}
-                  </option>
-                ))}
+                {cliProviders
+                  ?.filter((provider) => provider.enabled !== false)
+                  .map((provider) => (
+                    <option key={provider.id} value={provider.id} disabled={!provider.available}>
+                      {provider.name}
+                      {!provider.available ? ' (N/A)' : ''}
+                    </option>
+                  ))}
               </select>
             </label>
 
@@ -1279,7 +1299,11 @@ export function DashboardPage() {
 
             <label className="dashboard-control dashboard-chatbar-chip">
               <Zap className="h-4 w-4" />
-              <span>{selectedCliProvider === 'claude' ? 'Effort' : 'Reasoning'}</span>
+              <span>
+                {selectedCliProvider === 'claude' || selectedCliProvider === 'zai'
+                  ? 'Effort'
+                  : 'Reasoning'}
+              </span>
               <select
                 value={selectedReasoning || '__default__'}
                 onChange={(event) =>
@@ -1287,7 +1311,11 @@ export function DashboardPage() {
                     event.target.value === '__default__' ? '' : event.target.value
                   )
                 }
-                aria-label={selectedCliProvider === 'claude' ? 'Effort' : 'Reasoning'}
+                aria-label={
+                  selectedCliProvider === 'claude' || selectedCliProvider === 'zai'
+                    ? 'Effort'
+                    : 'Reasoning'
+                }
               >
                 <option value="__default__">Default</option>
                 {reasoningOptions.map((option) => (
@@ -1455,8 +1483,22 @@ export function DashboardPage() {
       {/* Sessions */}
       <div className="dashboard-content-row">
         <div className="dashboard-session-sections">
+          {normalizedDashboardSearch && filteredSessions.length === 0 && (
+            <div className="dashboard-search-empty" role="status">
+              <Search aria-hidden="true" />
+              <div>
+                <strong>No sessions found</strong>
+                <span>Try a session name, project path, provider, model, or category.</span>
+              </div>
+              <button type="button" onClick={() => setDashboardSearchQuery('')}>
+                Clear search
+              </button>
+            </div>
+          )}
           {dashboardSessionGroups.map((group) => {
-            const groupCollapsed = collapsedDashboardGroupIds[group.id] ?? false;
+            const groupCollapsed = normalizedDashboardSearch
+              ? false
+              : (collapsedDashboardGroupIds[group.id] ?? false);
             const groupColor = group.color
               ? getDashboardCategoryColorValue(group.color)
               : undefined;

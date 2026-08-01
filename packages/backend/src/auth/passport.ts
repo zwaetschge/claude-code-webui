@@ -2,9 +2,10 @@ import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github2';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { nanoid } from 'nanoid';
-import { config } from '../config';
-import { getDatabase } from '../db';
+import { config } from '../config.js';
+import { getDatabase } from '../db/index.js';
 import type { User } from '@plum-code-webui/shared';
+import { ensureBootstrapAdmin } from '../utils/adminBootstrap.js';
 
 // Explicit column list excludes password_hash and api_key_encrypted so auth flows never
 // accidentally serialize sensitive columns into the session or OAuth profile responses.
@@ -92,6 +93,7 @@ function findOrCreateUser(provider: 'github' | 'google', profile: OAuthProfile):
       );
     }
 
+    ensureBootstrapAdmin(db, existingUser.id, email);
     return {
       ...existingUser,
       name: profile.displayName || existingUser.name,
@@ -138,6 +140,8 @@ function findOrCreateUser(provider: 'github' | 'google', profile: OAuthProfile):
     `INSERT INTO user_settings (user_id, theme, allowed_tools)
      VALUES (?, 'dark', '["Bash","Read","Write","Edit","Glob","Grep"]')`
   ).run(userId);
+
+  ensureBootstrapAdmin(db, userId, email);
 
   return {
     id: userId,

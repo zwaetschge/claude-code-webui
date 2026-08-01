@@ -14,7 +14,7 @@ out/
 *.sqlite3
 *.db-shm
 *.db-wal
-data/
+/data/
 packages/backend/data/
 
 # Environment variables

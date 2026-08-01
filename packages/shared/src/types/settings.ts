@@ -1,7 +1,7 @@
 import type { CLIProvider, CodexServiceTier } from './session.js';
 
-export type Theme = 'dark' | 'light' | 'system';
-export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
+export type Theme = 'dark' | 'light' | 'system' | 'eink';
+export type UiProvider = 'plum' | 'claude' | 'zai' | 'codex' | 'opencode' | 'pi';
 export type BackgroundAnimation = 'glass' | 'aurora' | 'ribbons' | 'still';
 export type CodexWebSearchMode = 'auto' | 'cached' | 'live' | 'disabled';
 export type OracleBrowserMode = 'profile' | 'manual' | 'remote';
@@ -9,6 +9,20 @@ export type OracleBrowserMode = 'profile' | 'manual' | 'remote';
 export interface LocalUsageBudget {
   dailyUsd?: number;
   weeklyUsd?: number;
+}
+
+export type AnalyticsLimitProvider = 'codex' | 'kimi' | 'claude' | 'zai';
+
+export const DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS: Partial<
+  Record<AnalyticsLimitProvider, string[]>
+> = {
+  codex: ['additional_gpt_5_3_codex_spark'],
+  kimi: ['additional_parallel_sessions'],
+  zai: ['additional_web_search'],
+};
+
+export interface AnalyticsSettings {
+  hiddenLimitMetrics?: Partial<Record<AnalyticsLimitProvider, string[]>>;
 }
 
 export interface OracleBrowserSettings {
@@ -29,6 +43,7 @@ export interface UserSettings {
   uiProvider?: UiProvider;
   backgroundAnimation?: BackgroundAnimation;
   defaultCliProvider?: CLIProvider;
+  enabledCliProviders?: CLIProvider[];
   cliProviderModels?: Partial<Record<CLIProvider, string>>;
   cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
   cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
@@ -36,6 +51,7 @@ export interface UserSettings {
   codexWebSearch?: CodexWebSearchMode;
   localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
   oracleBrowser?: OracleBrowserSettings;
+  analytics?: AnalyticsSettings;
 }
 
 export interface UpdateSettingsInput {
@@ -46,6 +62,7 @@ export interface UpdateSettingsInput {
   uiProvider?: UiProvider;
   backgroundAnimation?: BackgroundAnimation;
   defaultCliProvider?: CLIProvider;
+  enabledCliProviders?: CLIProvider[];
   cliProviderModels?: Partial<Record<CLIProvider, string>>;
   cliProviderModelLists?: Partial<Record<CLIProvider, string[]>>;
   cliProviderReasoning?: Partial<Record<CLIProvider, string>>;
@@ -53,6 +70,7 @@ export interface UpdateSettingsInput {
   codexWebSearch?: CodexWebSearchMode;
   localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
   oracleBrowser?: OracleBrowserSettings;
+  analytics?: AnalyticsSettings;
 }
 
 export interface ClaudeSettings {

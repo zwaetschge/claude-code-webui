@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -25,6 +25,7 @@ import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { LOGIN_WAVE_MOTIONS, startAmbientMotion } from '@/lib/ambientMotion';
 
 const errorMessages: Record<string, string> = {
   github: 'GitHub authentication failed. Please try again.',
@@ -36,8 +37,8 @@ const errorMessages: Record<string, string> = {
   codex_not_logged_in: 'Codex CLI not logged in. Run "codex login" first.',
   opencode: 'OpenCode authentication failed. Please try again.',
   opencode_not_logged_in: 'OpenCode CLI not logged in. Run "opencode auth login" first.',
-  vibe: 'Mistral Vibe authentication failed. Please try again.',
-  vibe_not_logged_in: 'Mistral Vibe CLI not logged in. Run "vibe login" first.',
+  pi: 'Pi authentication failed. Please try again.',
+  pi_not_available: 'Pi is not available. Configure an OpenCode API connection first.',
   unauthorized: 'You are not authorized. Please sign in.',
   expired: 'Your session has expired. Please sign in again.',
 };
@@ -48,7 +49,7 @@ interface AuthProviders {
   claude: boolean;
   codex?: boolean;
   opencode?: boolean;
-  vibe?: boolean;
+  pi?: boolean;
 }
 
 type CliLoginStatus = 'starting' | 'awaiting_code' | 'completed' | 'error';
@@ -65,7 +66,7 @@ interface CliLoginResponse {
 }
 
 // Provider brand configurations
-type ProviderStyleKey = 'claude' | 'codex' | 'opencode' | 'vibe';
+type ProviderStyleKey = 'claude' | 'codex' | 'opencode' | 'pi';
 const providerStyles: Record<
   ProviderStyleKey,
   {
@@ -89,8 +90,8 @@ const providerStyles: Record<
     hover: '',
     text: 'text-white',
   },
-  vibe: {
-    bg: 'provider-login-button provider-login-button-vibe',
+  pi: {
+    bg: 'provider-login-button provider-login-button-opencode',
     hover: '',
     text: 'text-white',
   },
@@ -111,6 +112,9 @@ export function LoginPage() {
   const [claudeLoginWorking, setClaudeLoginWorking] = useState(false);
   const [claudeLoginOpened, setClaudeLoginOpened] = useState(false);
   const [hoveredProvider, setHoveredProvider] = useState<string | null>(null);
+  const waveRefs = useRef<Array<HTMLDivElement | null>>([]);
+
+  useEffect(() => startAmbientMotion(waveRefs.current, LOGIN_WAVE_MOTIONS), []);
 
   // Fetch available auth providers
   const { data: providers } = useQuery({
@@ -181,7 +185,7 @@ export function LoginPage() {
     const routes: Record<string, string> = {
       codex: '/auth/codex',
       opencode: '/auth/opencode',
-      vibe: '/auth/vibe',
+      pi: '/auth/pi',
       claude: '/auth/claude',
     };
     window.location.href = routes[provider] || '/auth/codex';
@@ -236,7 +240,7 @@ export function LoginPage() {
   const availableProviders = [
     providers?.codex && 'codex',
     providers?.opencode && 'opencode',
-    providers?.vibe && 'vibe',
+    providers?.pi && 'pi',
     providers?.claude && 'claude',
   ].filter(Boolean);
   const loginGalaxyProvider = hoveredProvider || 'plum';
@@ -249,8 +253,18 @@ export function LoginPage() {
           `login-galaxy-${loginGalaxyProvider}`
         )}
       >
-        <div className="login-galaxy-band login-galaxy-band-main" />
-        <div className="login-galaxy-band login-galaxy-band-cross" />
+        <div
+          ref={(element) => {
+            waveRefs.current[0] = element;
+          }}
+          className="login-galaxy-band login-galaxy-band-main"
+        />
+        <div
+          ref={(element) => {
+            waveRefs.current[1] = element;
+          }}
+          className="login-galaxy-band login-galaxy-band-cross"
+        />
         <div className="login-galaxy-haze" />
       </div>
 
@@ -287,7 +301,7 @@ export function LoginPage() {
               Supported Providers
             </p>
             <div className="flex items-center gap-6">
-              {['codex', 'opencode', 'vibe', 'claude'].map((p, i) => (
+              {['codex', 'opencode', 'pi', 'claude'].map((p, i) => (
                 <div
                   key={p}
                   className="opacity-40 hover:opacity-100 transition-opacity duration-300"
@@ -377,26 +391,31 @@ export function LoginPage() {
                 </div>
               )}
 
-              {providers?.vibe && (
-                <button
-                  onClick={() => handleProviderLogin('vibe')}
-                  onMouseEnter={() => setHoveredProvider('vibe')}
-                  onMouseLeave={() => setHoveredProvider(null)}
-                  className={cn(
-                    'group relative w-full h-14 rounded-lg font-medium text-base transition-all duration-300',
-                    'flex items-center justify-between px-5',
-                    providerStyles.vibe.bg,
-                    providerStyles.vibe.hover,
-                    providerStyles.vibe.text,
-                    'hover:scale-[1.02] active:scale-[0.98]'
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <ProviderLogo provider="vibe" className="h-6 w-6" alt="" />
-                    <span>{UI_PROVIDER_META.vibe.loginCta}</span>
-                  </span>
-                  <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
-                </button>
+              {providers?.pi && (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleProviderLogin('pi')}
+                    onMouseEnter={() => setHoveredProvider('pi')}
+                    onMouseLeave={() => setHoveredProvider(null)}
+                    className={cn(
+                      'group relative w-full h-14 rounded-lg font-medium text-base transition-all duration-300',
+                      'flex items-center justify-between px-5',
+                      providerStyles.pi.bg,
+                      providerStyles.pi.hover,
+                      providerStyles.pi.text,
+                      'hover:scale-[1.02] active:scale-[0.98]'
+                    )}
+                  >
+                    <span className="flex items-center gap-3">
+                      <ProviderLogo provider="pi" className="h-6 w-6" alt="" />
+                      <span>{UI_PROVIDER_META.pi.loginCta}</span>
+                    </span>
+                    <ArrowRight className="h-5 w-5 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                  </button>
+                  <p className="px-1 text-xs text-muted-foreground/60">
+                    Uses the API connections configured for OpenCode.
+                  </p>
+                </div>
               )}
 
               {providers?.claude && (
@@ -622,7 +641,7 @@ export function LoginPage() {
             {/* No providers message */}
             {!providers?.codex &&
               !providers?.opencode &&
-              !providers?.vibe &&
+              !providers?.pi &&
               !providers?.claude &&
               !providers?.github &&
               !providers?.google && (

@@ -14,6 +14,7 @@ services:
     image: plum-code-webui:latest
     container_name: claude-code-webui
     restart: unless-stopped
+    init: true
     ports:
       - '127.0.0.1:${WEBUI_PORT:-4545}:3001'
     shm_size: '${WEBUI_SHM_SIZE:-1gb}'
@@ -25,6 +26,10 @@ services:
       - TZ=${TZ:-Europe/Zurich}
       - CODEX_WEBUI_SANDBOX_MODE=${CODEX_WEBUI_SANDBOX_MODE:-workspace-write}
       - CODEX_WEBUI_APPROVAL_POLICY=${CODEX_WEBUI_APPROVAL_POLICY:-on-request}
+      # Shared Unix/provider homes are not a multi-tenant security boundary.
+      # Keep execution admin-only unless specific trusted accounts are listed.
+      - CLI_RUNNER_ACCESS=${CLI_RUNNER_ACCESS:-admin-only}
+      - CLI_RUNNER_ALLOWED_EMAILS=${CLI_RUNNER_ALLOWED_EMAILS:-}
       - CHROME_BIN=${CHROME_BIN:-/usr/local/bin/plum-chromium}
       - CHROMIUM_BIN=${CHROMIUM_BIN:-/usr/local/bin/plum-chromium}
       - CHROMIUM_PATH=${CHROMIUM_PATH:-/usr/local/bin/plum-chromium}
@@ -51,9 +56,11 @@ services:
       - PROXY_AUTH_USER_HEADERS=${PROXY_AUTH_USER_HEADERS:-}
       - PROXY_AUTH_NAME_HEADERS=${PROXY_AUTH_NAME_HEADERS:-}
       - SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL:-}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      # Existing self-hosted installs already require a strong SESSION_SECRET.
+      # Use it as a stable encryption fallback unless a separate key is supplied.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${SESSION_SECRET}}
       # Optional CLI provider model overrides
-      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-opus,sonnet,haiku}
+      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-}
       - CLI_PROVIDER_CLAUDE_DEFAULT_MODEL=${CLI_PROVIDER_CLAUDE_DEFAULT_MODEL:-sonnet}
       - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
       - CLI_PROVIDER_CODEX_DEFAULT_MODEL=${CLI_PROVIDER_CODEX_DEFAULT_MODEL:-gpt-5.5}
@@ -61,16 +68,22 @@ services:
       - CLI_PROVIDER_OPENCODE_DEFAULT_MODEL=${CLI_PROVIDER_OPENCODE_DEFAULT_MODEL:-z-ai/glm-5.1}
       - CLI_PROVIDER_OPENCODE_DEFAULT_AGENT=${CLI_PROVIDER_OPENCODE_DEFAULT_AGENT:-build}
       - CLI_PROVIDER_OPENCODE_STYLE_PROMPT=${CLI_PROVIDER_OPENCODE_STYLE_PROMPT:-}
-      - CLI_PROVIDER_VIBE_MODELS=${CLI_PROVIDER_VIBE_MODELS:-}
-      - CLI_PROVIDER_VIBE_DEFAULT_MODEL=${CLI_PROVIDER_VIBE_DEFAULT_MODEL:-mistral-vibe-cli-latest}
-      # Mistral Vibe authenticates via MISTRAL_API_KEY. Leave empty to disable vibe.
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - CLI_PROVIDER_PI_MODELS=${CLI_PROVIDER_PI_MODELS:-}
+      - CLI_PROVIDER_PI_DEFAULT_MODEL=${CLI_PROVIDER_PI_DEFAULT_MODEL:-z-ai/glm-5.1}
+      - OPENCODE_NO_PROGRESS_TIMEOUT_MS=${OPENCODE_NO_PROGRESS_TIMEOUT_MS:-600000}
+      - OPENCODE_ZAI_VISION_MCP=${OPENCODE_ZAI_VISION_MCP:-auto}
+      - CLI_AUTO_UPDATE=${CLI_AUTO_UPDATE:-true}
+      - CLI_AUTO_UPDATE_PROVIDERS=${CLI_AUTO_UPDATE_PROVIDERS:-codex}
+      - CLI_AUTO_UPDATE_INTERVAL_HOURS=${CLI_AUTO_UPDATE_INTERVAL_HOURS:-24}
       - ADMIN_LLM_PROVIDER=${ADMIN_LLM_PROVIDER:-}
       - OPENCODE_DEBUG_EVENTS=${OPENCODE_DEBUG_EVENTS:-0}
+      - SUPERPOWERS_ENABLED=${SUPERPOWERS_ENABLED:-false}
       - CODEX_USAGE_URL=${CODEX_USAGE_URL:-}
       - CODEX_USER_AGENT=${CODEX_USER_AGENT:-}
       - COMFYUI_URL=${COMFYUI_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - HOME_ASSISTANT_URL=${HOME_ASSISTANT_URL:-}
+      - HOME_ASSISTANT_TOKEN=${HOME_ASSISTANT_TOKEN:-}
       - GODOT_BIN=${GODOT_BIN:-}
       - GODOT_TIMEOUT_MS=${GODOT_TIMEOUT_MS:-120000}
       - BLENDER_BIN=${BLENDER_BIN:-blender-headless}
@@ -92,16 +105,17 @@ services:
     volumes:
       # SQLite, generated images, attachments
       - ${DATA_DIR:-./data}:/app/packages/backend/data
-      # Per-CLI auth + state (claude /login, codex auth, opencode auth.json) — survive container rebuilds
+      # Per-CLI auth + state — survive container rebuilds
       - ${CONFIG_DIR:-./config}/claude:/home/node/.claude
       - ${CONFIG_DIR:-./config}/codex:/home/node/.codex
       - ${CONFIG_DIR:-./config}/opencode:/home/node/.opencode
-      - ${CONFIG_DIR:-./config}/vibe:/home/node/.vibe
+      - ${CONFIG_DIR:-./config}/pi:/home/node/.pi
+      - ${CONFIG_DIR:-./config}/kimi:/home/node/.kimi-code
       - ${CONFIG_DIR:-./config}/npm-global:/home/node/.npm-global
       # Workspace path the running CLI can read/write. Defaults to ./workspace; mount your project here.
       - ${WORKSPACE_DIR:-./workspace}:/workspace
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/health']
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/health/ready']
       interval: 30s
       timeout: 5s
       retries: 3

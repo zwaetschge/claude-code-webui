@@ -15,27 +15,49 @@ import type {
   DiscordAlertSeverity,
 } from '@plum-code-webui/shared';
 import { estimateModelCost } from '@plum-code-webui/shared';
-import { getDatabase } from '../../db';
+import {
+  getDatabase,
+  insertUsageHistoryTurn,
+  insertUsageSubagentTurns,
+  usageHistoryTurnExists,
+} from '../../db/index.js';
 import { nanoid } from 'nanoid';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { ChildProcess, spawn as cpSpawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import { Readable, Writable } from 'node:stream';
+import {
+  ClientSideConnection,
+  PROTOCOL_VERSION as ACP_PROTOCOL_VERSION,
+  ndJsonStream,
+  type Client as AcpClient,
+  type PromptResponse as AcpPromptResponse,
+  type RequestPermissionRequest as AcpRequestPermissionRequest,
+  type RequestPermissionResponse as AcpRequestPermissionResponse,
+  type SessionConfigOption as AcpSessionConfigOption,
+  type SessionNotification as AcpSessionNotification,
+  type SessionUpdate as AcpSessionUpdate,
+} from '@agentclientprotocol/sdk';
 import SQLiteDatabase from 'better-sqlite3';
-import { config } from '../../config';
+import { config } from '../../config.js';
 import {
   CLI_PROVIDERS,
   getCLIArgs,
   formatInputMessage,
-  getVibeModelAlias,
   resolveCliProviderSelectedModel,
   type CLIProvider,
 } from '../cli-providers.js';
 import type { CodexWebSearchMode } from '@plum-code-webui/shared';
-import { opencodeServer, type OpencodeEvent } from '../opencode/OpencodeServer.js';
+import {
+  opencodeServer,
+  subtractOpenCodeUsage,
+  type OpencodeEvent,
+  type OpenCodeUsageCounters,
+} from '../opencode/OpencodeServer.js';
 import { resolveConfigHome } from '../../utils/configPaths.js';
 import { listSkillLibrary, readSkillLibraryItem } from '../../utils/skillLibrary.js';
 import { scanProject, formatProjectContext } from '../../utils/projectScanner.js';
@@ -44,13 +66,70 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   resolveContextWindow as contextWindowFor,
 } from '../../utils/contextWindow.js';
-import { getMistralApiKeyForUser } from '../../routes/settings.js';
+import {
+  buildClaudeApiEnv,
+  getEnabledCliProvidersForUser,
+  getZaiApiConfigForUser,
+} from '../../routes/settings.js';
 import { buildIntegrationEnv } from '../../utils/integrationEnv.js';
-import { applyVibeProviderLinks, syncProviderLinks } from '../../utils/providerLinks.js';
+import { syncProviderLinks } from '../../utils/providerLinks.js';
+import { getPiModelsForUser, syncPiConfig } from '../../utils/piConfig.js';
+import {
+  CLAUDE_PROVIDER_OVERRIDE_ENV_KEYS,
+  sanitizeClaudeSettingsProviderEnv,
+} from '../../utils/mcpDefaults.js';
+import { sanitizeClaudeResumeTranscript } from '../../utils/claudeResumeTranscript.js';
+import { buildOpenCodeProviderCredentialEnv } from '../../utils/opencodeProviderKeys.js';
+import { assertRunnerAccess } from '../../utils/runnerAccess.js';
+import { buildSuperpowersBootstrapContext, syncSuperpowers } from '../../utils/superpowersSync.js';
+import { buildSessionExecutionPrompt } from '../sessionExecutionContext.js';
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
+import { persistMessageMedia, type PendingChatMedia } from '../chatMedia.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { getFallbackToolActionSummary } from '../tool-action-summarizer.js';
 import { discordIntegrationService, discordNotifier } from '../discord/index.js';
+import {
+  homeAssistantStatusForSessionEvent,
+  homeAssistantStatusLights,
+} from '../home-assistant/index.js';
+import {
+  signalManagedProcess,
+  spawnManagedProcess,
+  terminateManagedProcess,
+} from './processLifecycle.js';
+
+function isClaudeTransportProvider(provider: string): provider is 'claude' | 'zai' {
+  return provider === 'claude' || provider === 'zai';
+}
+
+export function buildClaudeTransportProcessEnv(
+  provider: 'claude' | 'zai',
+  configHome: string,
+  zaiConfig: Parameters<typeof buildClaudeApiEnv>[0],
+  inheritedEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...inheritedEnv };
+  for (const key of CLAUDE_PROVIDER_OVERRIDE_ENV_KEYS) {
+    delete env[key];
+  }
+  env.CLAUDE_CONFIG_HOME = configHome;
+  if (provider === 'zai') {
+    Object.assign(env, buildClaudeApiEnv(zaiConfig));
+  }
+  return env;
+}
+
+function buildClaudeTransportEnv(
+  provider: 'claude' | 'zai',
+  userId: string,
+  configHome: string
+): NodeJS.ProcessEnv {
+  return buildClaudeTransportProcessEnv(
+    provider,
+    configHome,
+    provider === 'zai' ? getZaiApiConfigForUser(userId) : null
+  );
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,6 +138,49 @@ const __dirname = path.dirname(__filename);
 const BUFFER_SIZE = 5000;
 const HANDOFF_CONTEXT_MAX_CHARS = 60000;
 const HANDOFF_CONTEXT_MAX_MESSAGES = 80;
+
+// Pi events that prove the turn is still moving. Used to cancel the scheduled
+// post-compaction nudge so we never inject a duplicate prompt.
+const PI_TURN_PROGRESS_EVENTS = new Set([
+  'agent_start',
+  'turn_start',
+  'message_start',
+  'message_update',
+  'message_end',
+  'tool_execution_start',
+  'tool_execution_end',
+  'turn_end',
+  'agent_end',
+]);
+// Grace period after `compaction_end` before we assume Pi stalled. Pi resumes on
+// its own in the overflow-retry path, so only a real stall should be nudged.
+const PI_COMPACT_RESUME_DELAY_MS = 6_000;
+// Bound the nudge so a compaction loop cannot spin forever on its own output.
+const PI_MAX_COMPACT_CONTINUATIONS = 3;
+/** One subagent's share of a turn, pending a turn id. */
+interface PendingSubagentUsage {
+  agentId: string;
+  parentAgentId: string | null;
+  agentType: string | null;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+type PiCompactionReason = 'manual' | 'threshold' | 'overflow';
+
+function piCompactionReason(value: unknown): PiCompactionReason {
+  return value === 'manual' || value === 'overflow' || value === 'threshold' ? value : 'threshold';
+}
+
+const PI_COMPACT_CONTINUE_PROMPT =
+  'Context was just compacted. Continue the task from the compaction summary ' +
+  'without repeating work that is already done. If the task is already ' +
+  'complete, say so briefly instead of starting new work.';
 const WEBUI_MANAGED_MARKER = '<!-- webui-managed: shared-config -->';
 const WEBUI_MANAGED_BLOCK_START = '<!-- webui-managed: shared-config:start -->';
 const WEBUI_MANAGED_BLOCK_END = '<!-- webui-managed: shared-config:end -->';
@@ -89,6 +211,150 @@ interface OpenCodePartStreamEntry {
   cleaned?: string;
   thoughtState?: ThoughtStripState;
   savedCleanedLength?: number;
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function piUsageNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function piMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => {
+      if (!isRecordValue(block)) return '';
+      return block.type === 'text' && typeof block.text === 'string' ? block.text : '';
+    })
+    .filter(Boolean)
+    .join('');
+}
+
+function piToolResultText(result: unknown): string {
+  if (typeof result === 'string') return result;
+  if (!isRecordValue(result)) return '';
+  const content = result.content;
+  const text = piMessageText(content);
+  if (text) return text;
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return String(result);
+  }
+}
+
+const EXPLICIT_LOCAL_IMAGE_EXTENSION = /\.(?:png|jpe?g|webp|gif)$/i;
+const MARKDOWN_IMAGE_OR_LINK = /(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^)\n]+)\s*\)/g;
+
+function isPathInside(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function pendingMediaFromAllowedFile(input: {
+  filePath: string;
+  allowedRoot: string;
+  filename?: string;
+  altText?: string;
+  source: 'provider' | 'workspace';
+  sourceId?: string;
+}): PendingChatMedia | null {
+  try {
+    const root = fsSync.realpathSync(input.allowedRoot);
+    const filePath = fsSync.realpathSync(input.filePath);
+    if (!isPathInside(root, filePath) || !fsSync.statSync(filePath).isFile()) return null;
+    return {
+      kind: 'file',
+      filePath,
+      allowedRoots: [root],
+      filename: input.filename || path.basename(filePath),
+      altText: input.altText,
+      source: input.source,
+      sourceId: input.sourceId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function markdownDestination(raw: string): string | null {
+  const trimmed = raw.trim();
+  let destination: string;
+  if (trimmed.startsWith('<') && trimmed.endsWith('>')) {
+    destination = trimmed.slice(1, -1).trim();
+  } else {
+    // An unescaped space starts Markdown's optional title. Paths containing
+    // spaces must use the standard `<...>` destination form.
+    destination = trimmed.split(/\s+["']/u, 1)[0]?.trim() || '';
+  }
+  if (!destination || !path.isAbsolute(destination)) return null;
+  try {
+    return decodeURIComponent(destination);
+  } catch {
+    return destination;
+  }
+}
+
+function visibleMediaLabel(label: string): string {
+  const cleaned = label
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `[Image attached${cleaned ? `: ${cleaned.slice(0, 160)}` : ''}]`;
+}
+
+/**
+ * Convert explicit local-image Markdown into managed pending media while
+ * removing the host path from user-visible/persisted assistant prose.
+ */
+export function extractExplicitWorkspaceChatMedia(
+  content: string,
+  workingDirectory: string
+): { content: string; media: PendingChatMedia[] } {
+  const media: PendingChatMedia[] = [];
+  const seenPaths = new Set<string>();
+  const sanitized = content.replace(
+    MARKDOWN_IMAGE_OR_LINK,
+    (full, _imageMarker: string, label: string, rawDestination: string) => {
+      const candidate = markdownDestination(rawDestination);
+      if (!candidate || !EXPLICIT_LOCAL_IMAGE_EXTENSION.test(candidate)) return full;
+
+      const pending = pendingMediaFromAllowedFile({
+        filePath: candidate,
+        allowedRoot: workingDirectory,
+        filename: path.basename(candidate),
+        altText: label || undefined,
+        source: 'workspace',
+      });
+      if (pending?.kind === 'file' && !seenPaths.has(pending.filePath)) {
+        seenPaths.add(pending.filePath);
+        media.push(pending);
+      }
+
+      // Strip every absolute local raster path, including rejected/out-of-root
+      // references, so host paths never reach the message DB or API.
+      return pending ? visibleMediaLabel(label) : '[Local image could not be attached]';
+    }
+  );
+  return { content: sanitized, media };
+}
+
+function appendPendingChatMedia(proc: ClaudeProcess, pending: PendingChatMedia): void {
+  const duplicate = proc.pendingChatMedia.some((existing) => {
+    if (pending.sourceId && existing.sourceId) {
+      return pending.source === existing.source && pending.sourceId === existing.sourceId;
+    }
+    return (
+      pending.kind === 'file' &&
+      existing.kind === 'file' &&
+      pending.source === existing.source &&
+      pending.filePath === existing.filePath
+    );
+  });
+  if (!duplicate) proc.pendingChatMedia.push(pending);
 }
 
 const THOUGHT_OPEN = '<|channel>thought';
@@ -197,20 +463,37 @@ async function getCliModelForSession(
     settingsJson.cliProviderModelLists && typeof settingsJson.cliProviderModelLists === 'object'
       ? (settingsJson.cliProviderModelLists as Record<string, unknown>)
       : {};
-  const configuredModels = Array.isArray(modelLists.opencode)
-    ? modelLists.opencode
+  const configuredModelList =
+    provider === 'pi' ? modelLists.pi : provider === 'opencode' ? modelLists.opencode : undefined;
+  let configuredModels = Array.isArray(configuredModelList)
+    ? configuredModelList
         .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
         .filter((entry) => entry.length > 0)
     : [];
+  if (provider === 'pi' && configuredModels.length === 0) {
+    configuredModels = getPiModelsForUser(userId);
+  }
 
   return resolveCliProviderSelectedModel(provider, null, configuredModels, sessionSelectedModel);
 }
 
 const REASONING_LEVELS_BY_PROVIDER: Record<CLIProvider, Set<string>> = {
   claude: new Set(['low', 'medium', 'high', 'max']),
-  codex: new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
+  zai: new Set(['low', 'medium', 'high', 'max']),
+  codex: new Set([
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'extra_high',
+    'max',
+    'ultra',
+  ]),
   opencode: new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
-  vibe: new Set(['off', 'low', 'medium', 'high', 'max']),
+  pi: new Set(['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max']),
+  kimi: new Set(['minimal', 'low', 'medium', 'high']),
 };
 
 function normalizeReasoningLevel(provider: CLIProvider, value: unknown): string | null {
@@ -302,6 +585,66 @@ export type CodexContextSnapshot = {
   threadId?: string;
   rolloutPath?: string;
 };
+
+// Rollout files may grow into the hundreds of megabytes. Context snapshots are
+// best-effort and the newest token_count is written near the end, so never load
+// an entire rollout just to find it. Sixteen MiB leaves ample room for large
+// tool events while keeping synchronous I/O and transient memory strictly
+// bounded.
+export const CODEX_ROLLOUT_TAIL_MAX_BYTES = 16 * 1024 * 1024;
+
+export type CodexRolloutTail = {
+  lines: string[];
+  bytesRead: number;
+  truncated: boolean;
+};
+
+export function readCodexRolloutTail(
+  rolloutPath: string,
+  maxBytes = CODEX_ROLLOUT_TAIL_MAX_BYTES
+): CodexRolloutTail | null {
+  let fd: number | null = null;
+  try {
+    const stat = fsSync.statSync(rolloutPath);
+    const boundedMaxBytes =
+      Number.isFinite(maxBytes) && maxBytes > 0
+        ? Math.max(1, Math.trunc(maxBytes))
+        : CODEX_ROLLOUT_TAIL_MAX_BYTES;
+    const start = Math.max(0, stat.size - boundedMaxBytes);
+    const requestedBytes = Math.min(stat.size, boundedMaxBytes);
+    const buffer = Buffer.allocUnsafe(requestedBytes);
+    fd = fsSync.openSync(rolloutPath, 'r');
+
+    let bytesRead = 0;
+    while (bytesRead < requestedBytes) {
+      const count = fsSync.readSync(
+        fd,
+        buffer,
+        bytesRead,
+        requestedBytes - bytesRead,
+        start + bytesRead
+      );
+      if (count <= 0) break;
+      bytesRead += count;
+    }
+
+    const lines = buffer.subarray(0, bytesRead).toString('utf8').split(/\n/);
+    // The first bytes of a bounded tail may be the middle of a JSON record.
+    // Discard that fragment rather than attempting to parse corrupted UTF-8.
+    if (start > 0) lines.shift();
+    return { lines, bytesRead, truncated: start > 0 };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // Ignore close failures on a best-effort context snapshot.
+      }
+    }
+  }
+}
 
 function normalizeCodexUsageCounters(value: unknown): CodexUsageCounters | undefined {
   if (!value || typeof value !== 'object') return undefined;
@@ -510,6 +853,369 @@ export function readCodexThreadState(
   }
 }
 
+function readLatestCodexRolloutTotalUsage(rolloutPath: string): CodexUsageCounters | null {
+  let fd: number | null = null;
+  try {
+    const stat = fsSync.statSync(rolloutPath);
+    fd = fsSync.openSync(rolloutPath, 'r');
+    const chunkSize = 1024 * 1024;
+    const maxBytes = 16 * chunkSize;
+    let position = stat.size;
+    let scanned = 0;
+    let carry = '';
+
+    while (position > 0 && scanned < maxBytes) {
+      const bytesToRead = Math.min(chunkSize, position, maxBytes - scanned);
+      position -= bytesToRead;
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      fsSync.readSync(fd, buffer, 0, bytesToRead, position);
+      scanned += bytesToRead;
+
+      const parts = `${buffer.toString('utf8')}${carry}`.split(/\n/);
+      carry = parts.shift() || '';
+      for (let index = parts.length - 1; index >= 0; index -= 1) {
+        const line = parts[index]?.trim();
+        if (!line) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const event = normalizeCodexRolloutEvent(parsed);
+        const eventType =
+          typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+        if (eventType !== 'token_count') continue;
+        const info =
+          event?.info && typeof event.info === 'object'
+            ? (event.info as Record<string, unknown>)
+            : null;
+        const usage = normalizeCodexTokenCountUsage(info?.total_token_usage);
+        if (usage) return usage;
+      }
+    }
+
+    if (position === 0 && carry.trim()) {
+      try {
+        const event = normalizeCodexRolloutEvent(JSON.parse(carry));
+        const eventType =
+          typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+        if (eventType === 'token_count') {
+          const info =
+            event?.info && typeof event.info === 'object'
+              ? (event.info as Record<string, unknown>)
+              : null;
+          const usage = normalizeCodexTokenCountUsage(info?.total_token_usage);
+          if (usage) return usage;
+        }
+      } catch {
+        // The file started before our scan window or the first line was incomplete.
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // Ignore close failures on a best-effort analytics snapshot.
+      }
+    }
+  }
+  return null;
+}
+
+export function readCodexThreadCumulativeUsage(
+  codexHome: string,
+  threadId: string | null | undefined
+): CodexUsageCounters | undefined {
+  if (!threadId) return undefined;
+  const thread = readCodexThreadState(codexHome, { threadId });
+  if (!thread?.rolloutPath) return undefined;
+  return readLatestCodexRolloutTotalUsage(thread.rolloutPath) || undefined;
+}
+
+const codexRolloutInheritedUsageCache = new Map<string, CodexUsageCounters | null>();
+
+function readCodexRolloutInheritedUsage(
+  rolloutPath: string,
+  threadCreatedAtMs: number | undefined
+): CodexUsageCounters | null {
+  if (!Number.isFinite(threadCreatedAtMs) || !threadCreatedAtMs || threadCreatedAtMs <= 0) {
+    return null;
+  }
+
+  const cacheKey = `${rolloutPath}:${threadCreatedAtMs}`;
+  if (codexRolloutInheritedUsageCache.has(cacheKey)) {
+    return codexRolloutInheritedUsageCache.get(cacheKey) ?? null;
+  }
+
+  let fd: number | null = null;
+  let inheritedUsage: CodexUsageCounters | null = null;
+  try {
+    const stat = fsSync.statSync(rolloutPath);
+    fd = fsSync.openSync(rolloutPath, 'r');
+    const chunkSize = 1024 * 1024;
+    const maxBytes = 64 * chunkSize;
+    const replayCutoffMs = threadCreatedAtMs + 1_000;
+    let position = 0;
+    let scanned = 0;
+    let carry = '';
+    let reachedLiveEvents = false;
+
+    while (position < stat.size && scanned < maxBytes && !reachedLiveEvents) {
+      const bytesToRead = Math.min(chunkSize, stat.size - position, maxBytes - scanned);
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      const bytesRead = fsSync.readSync(fd, buffer, 0, bytesToRead, position);
+      if (bytesRead <= 0) break;
+      position += bytesRead;
+      scanned += bytesRead;
+
+      const parts = `${carry}${buffer.subarray(0, bytesRead).toString('utf8')}`.split(/\n/);
+      carry = parts.pop() || '';
+      for (const rawLine of parts) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const envelope = parsed as Record<string, unknown>;
+        const event = normalizeCodexRolloutEvent(parsed);
+        const timestampRaw = envelope.timestamp ?? event?.timestamp;
+        const timestampMs =
+          typeof timestampRaw === 'string' || typeof timestampRaw === 'number'
+            ? new Date(timestampRaw).getTime()
+            : Number.NaN;
+        if (Number.isFinite(timestampMs) && timestampMs > replayCutoffMs) {
+          reachedLiveEvents = true;
+          break;
+        }
+
+        const eventType =
+          typeof event?.type === 'string' ? event.type.replace(/\//g, '.').toLowerCase() : '';
+        if (eventType !== 'token_count') continue;
+        const info =
+          event?.info && typeof event.info === 'object'
+            ? (event.info as Record<string, unknown>)
+            : null;
+        const usage = normalizeCodexTokenCountUsage(info?.total_token_usage);
+        if (usage) inheritedUsage = usage;
+      }
+    }
+  } catch {
+    inheritedUsage = null;
+  } finally {
+    if (fd !== null) {
+      try {
+        fsSync.closeSync(fd);
+      } catch {
+        // Ignore close failures on a best-effort analytics snapshot.
+      }
+    }
+  }
+
+  codexRolloutInheritedUsageCache.set(cacheKey, inheritedUsage);
+  return inheritedUsage;
+}
+
+function subtractCodexUsageCounters(
+  total: CodexUsageCounters,
+  baseline: CodexUsageCounters | null
+): CodexUsageCounters {
+  if (!baseline) return total;
+  return {
+    input: Math.max(total.input - baseline.input, 0),
+    cached: Math.max(total.cached - baseline.cached, 0),
+    output: Math.max(total.output - baseline.output, 0),
+  };
+}
+
+export interface CodexDescendantThreadUsage {
+  threadId: string;
+  parentThreadId: string | null;
+  /** Nickname/role/title Codex recorded for the spawned agent, if any. */
+  agentType: string | null;
+  model: string | null;
+  usage: CodexUsageCounters;
+}
+
+/**
+ * Per-thread usage for every subagent below `rootThreadId`.
+ *
+ * Codex replays the parent conversation into each spawned thread and lets the
+ * child's counter continue from the parent's value at fork time, so the raw
+ * rollout total is NOT the child's own spend. `readCodexRolloutInheritedUsage`
+ * strips that replayed prefix — without it a deep tree multiplies the parent's
+ * tokens by its number of children.
+ */
+export function readCodexDescendantUsageDetail(
+  codexHome: string,
+  rootThreadId: string
+): CodexDescendantThreadUsage[] {
+  const dbPath = findLatestCodexStateDatabase(codexHome);
+  if (!dbPath || !rootThreadId.trim()) return [];
+
+  let db: SQLiteDatabase.Database | null = null;
+  try {
+    db = new SQLiteDatabase(dbPath, { readonly: true, fileMustExist: true });
+    const rows = db
+      .prepare(
+        `SELECT id, source, rollout_path as rolloutPath,
+                created_at as createdAt, created_at_ms as createdAtMs,
+                model, title, agent_nickname as agentNickname, agent_role as agentRole
+         FROM threads`
+      )
+      .all() as Array<{
+      id: string;
+      source?: string | null;
+      rolloutPath?: string | null;
+      createdAt?: number | null;
+      createdAtMs?: number | null;
+      model?: string | null;
+      title?: string | null;
+      agentNickname?: string | null;
+      agentRole?: string | null;
+    }>;
+    const children = new Map<string, string[]>();
+    const parents = new Map<string, string>();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    for (const row of rows) {
+      // `source` is either a bare tag ('exec', 'cli', …) or a JSON blob; only
+      // the latter can name a spawn parent.
+      if (!row.source?.startsWith('{')) continue;
+      const source = safeJsonParse<Record<string, unknown>>(row.source, {});
+      const subagent = source.subagent as Record<string, unknown> | undefined;
+      const spawn = subagent?.thread_spawn as Record<string, unknown> | undefined;
+      const parentId = typeof spawn?.parent_thread_id === 'string' ? spawn.parent_thread_id : '';
+      if (!parentId) continue;
+      const existing = children.get(parentId) || [];
+      existing.push(row.id);
+      children.set(parentId, existing);
+      parents.set(row.id, parentId);
+    }
+
+    const result: CodexDescendantThreadUsage[] = [];
+    const pending = [...(children.get(rootThreadId) || [])];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const threadId = pending.pop() as string;
+      if (visited.has(threadId)) continue;
+      visited.add(threadId);
+      pending.push(...(children.get(threadId) || []));
+
+      const thread = byId.get(threadId);
+      const rolloutPath = thread?.rolloutPath;
+      if (!rolloutPath) continue;
+      const totalUsage = readLatestCodexRolloutTotalUsage(rolloutPath);
+      if (!totalUsage) continue;
+      const createdAtMs =
+        Number(thread?.createdAtMs) ||
+        (Number(thread?.createdAt) > 0 ? Number(thread?.createdAt) * 1000 : undefined);
+      const inheritedUsage = readCodexRolloutInheritedUsage(rolloutPath, createdAtMs);
+      result.push({
+        threadId,
+        parentThreadId: parents.get(threadId) ?? null,
+        agentType:
+          thread?.agentNickname?.trim() ||
+          thread?.agentRole?.trim() ||
+          thread?.title?.trim() ||
+          null,
+        model: thread?.model?.trim() || null,
+        usage: subtractCodexUsageCounters(totalUsage, inheritedUsage),
+      });
+    }
+    return result;
+  } catch (error) {
+    console.warn('[CODEX] Failed to read descendant usage:', error);
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close failures on a best-effort analytics snapshot.
+    }
+  }
+}
+
+export function readCodexDescendantUsage(
+  codexHome: string,
+  rootThreadId: string
+): CodexUsageCounters {
+  const totals = { input: 0, cached: 0, output: 0 };
+  for (const thread of readCodexDescendantUsageDetail(codexHome, rootThreadId)) {
+    totals.input += thread.usage.input;
+    totals.cached += thread.usage.cached;
+    totals.output += thread.usage.output;
+  }
+  return totals;
+}
+
+/**
+ * Newest Codex exec-root thread for a working directory.
+ *
+ * Descendant accounting has to anchor on the *root* of the spawn tree. Subagent
+ * threads share the parent's cwd, so a plain "newest thread in this cwd" lookup
+ * can land on a leaf and then find no children — which silently drops the entire
+ * subagent bill. Skip anything carrying a `thread_spawn.parent_thread_id`.
+ */
+export function findCodexExecRootThreadId(
+  codexHome: string,
+  opts: { cwd?: string | null; sinceMs?: number | null }
+): string | null {
+  const cwd = opts.cwd?.trim();
+  if (!cwd) return null;
+  const dbPath = findLatestCodexStateDatabase(codexHome);
+  if (!dbPath) return null;
+
+  let db: SQLiteDatabase.Database | null = null;
+  try {
+    db = new SQLiteDatabase(dbPath, { readonly: true, fileMustExist: true });
+    const sinceMs = Number(opts.sinceMs);
+    // 2s of slack absorbs second-granularity created_at rounding. Order ASC and
+    // take the FIRST root at or after the bound: that is the exec this turn
+    // spawned. Picking the newest instead would steal another WebUI session's
+    // exec whenever two sessions share a working directory.
+    const lowerBoundMs = Number.isFinite(sinceMs) && sinceMs > 0 ? sinceMs - 2_000 : 0;
+    const rows = db
+      .prepare(
+        `SELECT id, source
+           FROM threads
+          WHERE cwd = ?
+            AND COALESCE(created_at_ms, created_at * 1000, 0) >= ?
+          ORDER BY COALESCE(created_at_ms, created_at * 1000, 0) ASC
+          LIMIT 50`
+      )
+      .all(cwd, lowerBoundMs) as Array<{ id: string; source?: string | null }>;
+
+    for (const row of rows) {
+      if (!row.id) continue;
+      // `source` is either a bare tag ('exec', 'cli', …) or a JSON blob.
+      if (!row.source?.startsWith('{')) return row.id;
+      const parsed = safeJsonParse<Record<string, unknown>>(row.source, {});
+      const subagent = parsed.subagent as Record<string, unknown> | undefined;
+      const spawn = subagent?.thread_spawn as Record<string, unknown> | undefined;
+      const parentId = typeof spawn?.parent_thread_id === 'string' ? spawn.parent_thread_id : '';
+      if (parentId) continue;
+      return row.id;
+    }
+    return null;
+  } catch (error) {
+    console.warn('[CODEX] Failed to resolve exec root thread:', error);
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Ignore close failures on a best-effort analytics snapshot.
+    }
+  }
+}
+
 function normalizeCodexRolloutEvent(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') return null;
   const envelope = value as Record<string, unknown>;
@@ -551,17 +1257,14 @@ export function readLatestCodexContextSnapshot(
   const threadState = readCodexThreadState(codexHome, opts);
   if (!threadState?.rolloutPath) return null;
 
-  let raw = '';
-  try {
-    raw = fsSync.readFileSync(threadState.rolloutPath, 'utf8');
-  } catch {
-    return null;
-  }
+  const tail = readCodexRolloutTail(threadState.rolloutPath);
+  if (!tail) return null;
 
-  let latest: CodexContextSnapshot | null = null;
-  const lines = raw.trim().split(/\n/);
-  for (const line of lines) {
-    if (!line.trim()) continue;
+  // Scan newest-first and stop at the first valid token_count. This avoids
+  // parsing unrelated tool output in the rest of the bounded tail.
+  for (let index = tail.lines.length - 1; index >= 0; index -= 1) {
+    const line = tail.lines[index];
+    if (!line?.trim()) continue;
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -591,7 +1294,7 @@ export function readLatestCodexContextSnapshot(
           ? reportedWindow
           : DEFAULT_CONTEXT_WINDOW;
 
-    latest = {
+    return {
       counters,
       contextWindow,
       model: threadState.model,
@@ -602,7 +1305,7 @@ export function readLatestCodexContextSnapshot(
     };
   }
 
-  return latest;
+  return null;
 }
 
 export function getCodexUsageBaselineFromDatabase(
@@ -639,7 +1342,10 @@ export function getCodexUsageBaselineFromDatabase(
         COALESCE(SUM(output_tokens), 0) as output
       FROM usage_history
       WHERE session_id = ?
-        AND (model LIKE 'gpt-%' OR lower(model) LIKE '%codex%')
+        AND (
+          provider = 'codex'
+          OR (provider IN ('', 'unknown') AND (model LIKE 'gpt-%' OR lower(model) LIKE '%codex%'))
+        )
     `
     )
     .get(sessionId) as { input: number; cached: number; output: number } | undefined;
@@ -917,19 +1623,24 @@ async function readSharedPlugins(configHome: string): Promise<SharedPlugin[]> {
   return plugins;
 }
 
+type CodexSharedContextResource = { name: string };
+
 function formatCodexSharedContext(
-  agents: SharedAgent[],
-  skills: SharedSkill[],
-  plugins: SharedPlugin[]
+  agents: ReadonlyArray<CodexSharedContextResource>,
+  skills: ReadonlyArray<CodexSharedContextResource>,
+  plugins: ReadonlyArray<CodexSharedContextResource>
 ): string | null {
   if (!agents.length && !skills.length && !plugins.length) {
     return null;
   }
 
   const lines: string[] = [];
-  lines.push('[Shared Claude Config]');
+  lines.push('[Shared Plum Config]');
   lines.push(
-    'Registry of available skills, agents, and plugins. Load full instructions from their files only when needed.'
+    'Keep the default context lean. Active core skills are native; uncommon skills and agents stay searchable on demand.'
+  );
+  lines.push(
+    'Project-level persistent instructions and handoff notes belong in workspace `AGENTS.md`; `CLAUDE.md` is legacy compatibility only.'
   );
   lines.push('');
   lines.push('Runtime tools:');
@@ -942,47 +1653,38 @@ function formatCodexSharedContext(
 
   if (skills.length > 0) {
     lines.push('');
-    lines.push('Skills (~/.claude/skills/<name>/SKILL.md):');
-    for (const skill of skills) {
-      const desc = extractFrontmatterDescription(skill.content);
-      lines.push(desc ? `- ${skill.name} — ${desc}` : `- ${skill.name}`);
-    }
-  }
-
-  if (agents.length > 0) {
-    lines.push('');
-    lines.push('Agents (~/.claude/agents/<name>.md):');
-    for (const agent of agents) {
-      const desc = extractFrontmatterDescription(agent.prompt);
-      lines.push(desc ? `- ${agent.name} — ${desc}` : `- ${agent.name}`);
-    }
-  }
-
-  if (plugins.length > 0) {
-    lines.push('');
-    lines.push('Plugins:');
-    for (const plugin of plugins) {
-      const desc = plugin.description ? ` — ${plugin.description}` : '';
-      lines.push(`- ${plugin.name}${desc}`);
-    }
+    lines.push(
+      `Active core skills (${skills.length}): ${skills.map((skill) => skill.name).join(', ')}`
+    );
   }
 
   lines.push('');
-  lines.push('[End Shared Claude Config]');
+  lines.push(
+    '- Search on-demand skills and agents only when needed: `node /app/scripts/capability-catalog.mjs search "<task>"`.'
+  );
+  lines.push(
+    '- Load one result with `node /app/scripts/capability-catalog.mjs show <name>`; avoid overlapping workflow/style skills.'
+  );
+  lines.push(
+    '- MCP servers and plugins remain discoverable through Plum Settings and their authenticated APIs.'
+  );
+
+  lines.push('');
+  lines.push('[End Shared Plum Config]');
 
   return lines.join('\n');
 }
 
-function extractFrontmatterDescription(content: string): string | null {
-  const trimmed = content.trimStart();
-  if (!trimmed.startsWith('---')) return null;
-  const end = trimmed.indexOf('\n---', 3);
-  if (end === -1) return null;
-  const fm = trimmed.slice(3, end);
-  const match = fm.match(/^\s*description\s*:\s*(.+?)\s*$/m);
-  const raw = match?.[1];
-  if (!raw) return null;
-  return raw.replace(/^["']|["']$/g, '').trim() || null;
+export function formatCodexSharedContextForTest(resources: {
+  agents?: ReadonlyArray<CodexSharedContextResource>;
+  skills?: ReadonlyArray<CodexSharedContextResource>;
+  plugins?: ReadonlyArray<CodexSharedContextResource>;
+}): string | null {
+  return formatCodexSharedContext(
+    resources.agents || [],
+    resources.skills || [],
+    resources.plugins || []
+  );
 }
 
 function formatSharedInstructionFile(
@@ -994,68 +1696,29 @@ function formatSharedInstructionFile(
   lines.push(WEBUI_MANAGED_BLOCK_START);
   lines.push('# Shared Provider Context');
   lines.push(
-    'Registry of available skills and agents. Full instructions live in their own files — loaded on demand.'
+    'Plum keeps the automatic provider context small while retaining a searchable capability catalog.'
   );
   lines.push('');
-  lines.push('- Skills: `~/.claude/skills/<name>/SKILL.md`');
-  lines.push('- Agents: `~/.claude/agents/<name>.md`');
+  lines.push(
+    `- Active core skills: ${skills.length > 0 ? skills.map((skill) => `\`${skill.name}\``).join(', ') : 'none'}.`
+  );
+  lines.push(
+    '- Search additional skills and agents: `node /app/scripts/capability-catalog.mjs search "<task>"`.'
+  );
+  lines.push('- Load one match: `node /app/scripts/capability-catalog.mjs show <name>`.');
+  lines.push(
+    '- MCP servers and plugins remain discoverable through Plum Settings and their authenticated APIs.'
+  );
+  lines.push(
+    '- Project instructions: prefer workspace `AGENTS.md`; `CLAUDE.md` is legacy/provider compatibility only.'
+  );
   lines.push(
     '- System Chromium is available at `/usr/local/bin/plum-chromium`; browser env vars are preconfigured for Playwright/Puppeteer-style tests.'
   );
+  lines.push(
+    `- Catalog status: ${agents.length} agents and ${plugins.length} plugins remain indexed.`
+  );
   lines.push('- Remove this block to opt out of automatic updates.');
-
-  if (skills.length > 0) {
-    lines.push('');
-    lines.push('## Skills');
-    for (const skill of skills) {
-      const desc = extractFrontmatterDescription(skill.content);
-      const suffixParts: string[] = [];
-      if (skill.allowedTools && skill.allowedTools.length > 0) {
-        suffixParts.push(`tools: ${skill.allowedTools.join(', ')}`);
-      }
-      if (skill.model) {
-        suffixParts.push(`model: ${skill.model}`);
-      }
-      const suffix = suffixParts.length > 0 ? ` _(${suffixParts.join('; ')})_` : '';
-      lines.push(desc ? `- **${skill.name}** — ${desc}${suffix}` : `- **${skill.name}**${suffix}`);
-    }
-  }
-
-  if (agents.length > 0) {
-    lines.push('');
-    lines.push('## Agents');
-    for (const agent of agents) {
-      const desc = extractFrontmatterDescription(agent.prompt);
-      const suffixParts: string[] = [];
-      if (agent.tools && agent.tools.length > 0) {
-        suffixParts.push(`tools: ${agent.tools.join(', ')}`);
-      }
-      if (agent.model) {
-        suffixParts.push(`model: ${agent.model}`);
-      }
-      const suffix = suffixParts.length > 0 ? ` _(${suffixParts.join('; ')})_` : '';
-      lines.push(desc ? `- **${agent.name}** — ${desc}${suffix}` : `- **${agent.name}**${suffix}`);
-    }
-  }
-
-  if (plugins.length > 0) {
-    lines.push('');
-    lines.push('## Plugins');
-    for (const plugin of plugins) {
-      const metaParts: string[] = [];
-      if (plugin.version) metaParts.push(`v${plugin.version}`);
-      if (plugin.category) metaParts.push(plugin.category);
-      if (plugin.marketplace) metaParts.push(plugin.marketplace);
-      const meta = metaParts.length > 0 ? ` _(${metaParts.join('; ')})_` : '';
-      const desc = plugin.description ? ` — ${plugin.description}` : '';
-      lines.push(`- **${plugin.name}**${desc}${meta}`);
-    }
-  }
-
-  if (skills.length === 0 && agents.length === 0 && plugins.length === 0) {
-    lines.push('');
-    lines.push('_No shared skills, agents, or plugins were found._');
-  }
 
   lines.push(WEBUI_MANAGED_BLOCK_END);
   return lines.join('\n');
@@ -1080,7 +1743,7 @@ function escapeRegex(str: string): string {
 
 /**
  * Resolve parent dir via realpath and ensure the final file path stays inside it.
- * Blocks symlink-based escapes: /foo/bar/CLAUDE.md where bar -> /etc would otherwise land in /etc/CLAUDE.md.
+ * Blocks symlink-based escapes: /foo/bar/AGENTS.md where bar -> /etc would otherwise land in /etc/AGENTS.md.
  */
 async function resolveSafeFilePath(filePath: string): Promise<string> {
   const absolute = path.resolve(filePath);
@@ -1101,7 +1764,7 @@ async function resolveSafeFilePath(filePath: string): Promise<string> {
 
 /**
  * Write managed block to a file, handling create/replace/append.
- * Errors are logged but never thrown — writes to CLAUDE.md are best-effort and
+ * Errors are logged but never thrown — managed instruction writes are best-effort and
  * must not break session startup (e.g. read-only mounts, permission issues).
  */
 async function writeManagedBlock(
@@ -1165,13 +1828,17 @@ async function writeManagedBlock(
 }
 
 /**
- * Remove old shared-config block from a file (migration from old format).
+ * Remove a managed block from a file while preserving user-authored content.
  */
-async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
+async function removeManagedBlock(
+  filePath: string,
+  startMarker: string,
+  endMarker: string
+): Promise<void> {
   try {
     const existing = await fs.readFile(filePath, 'utf-8');
     const pattern = new RegExp(
-      `${escapeRegex(WEBUI_MANAGED_BLOCK_START)}[\\s\\S]*?${escapeRegex(WEBUI_MANAGED_BLOCK_END)}`,
+      `${escapeRegex(startMarker)}[\\s\\S]*?${escapeRegex(endMarker)}`,
       'm'
     );
     if (pattern.test(existing)) {
@@ -1184,6 +1851,13 @@ async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
   } catch {
     // File doesn't exist or can't be read — nothing to clean
   }
+}
+
+/**
+ * Remove old shared-config block from a file (migration from old format).
+ */
+async function removeOldSharedConfigBlock(filePath: string): Promise<void> {
+  await removeManagedBlock(filePath, WEBUI_MANAGED_BLOCK_START, WEBUI_MANAGED_BLOCK_END);
 }
 
 /**
@@ -1222,14 +1896,11 @@ async function ensureGlobalInstructions(configHome: string): Promise<void> {
  * Used for non-Claude providers that don't read ~/.claude/CLAUDE.md.
  */
 function formatSkillsSummary(skills: SharedSkill[], agents: SharedAgent[]): string {
-  const parts: string[] = [];
-  if (skills.length > 0) {
-    parts.push(`Available Skills: ${skills.map((s) => s.name).join(', ')}`);
-  }
-  if (agents.length > 0) {
-    parts.push(`Available Agents: ${agents.map((a) => a.name).join(', ')}`);
-  }
-  return parts.join('\n');
+  const active = skills.length > 0 ? skills.map((skill) => skill.name).join(', ') : 'none';
+  return [
+    `Active Core Skills: ${active}`,
+    `On-demand capabilities (${agents.length} agents plus the full skill catalog): node /app/scripts/capability-catalog.mjs search "<task>"`,
+  ].join('\n');
 }
 
 function truncateStyleTemplate(content: string): string {
@@ -1238,28 +1909,14 @@ function truncateStyleTemplate(content: string): string {
   return `${trimmed.slice(0, STYLE_TEMPLATE_MAX_CHARS).trimEnd()}\n\n[Template truncated by WebUI: continue following the visible guidance and load the skill file if more detail is needed.]`;
 }
 
-async function buildSessionStyleContext(
-  sessionId: string,
-  userId: string,
-  cliProvider: CLIProvider
+async function buildSessionStyleContextFromSelection(
+  selection: { designStyleSkill?: string | null; writingStyleSkill?: string | null },
+  configHome: string
 ): Promise<string | null> {
-  const db = getDatabase();
-  const selection = db
-    .prepare(
-      `SELECT design_style_skill as designStyleSkill,
-              writing_style_skill as writingStyleSkill
-       FROM sessions
-       WHERE id = ? AND user_id = ?`
-    )
-    .get(sessionId, userId) as
-    | { designStyleSkill: string | null; writingStyleSkill: string | null }
-    | undefined;
-
-  if (!selection?.designStyleSkill && !selection?.writingStyleSkill) {
+  if (!selection.designStyleSkill && !selection.writingStyleSkill) {
     return null;
   }
 
-  const configHome = resolveConfigHome(cliProvider);
   const lines: string[] = [];
   lines.push('<session-style-library>');
   lines.push(
@@ -1268,7 +1925,7 @@ async function buildSessionStyleContext(
 
   if (selection.designStyleSkill) {
     const style = await readSkillLibraryItem(configHome, selection.designStyleSkill);
-    if (style?.enabled && style.libraryKind === 'design') {
+    if (style?.libraryKind === 'design') {
       lines.push('');
       lines.push(`## Active UI Style Template: ${style.name}`);
       lines.push(`Source: ~/.claude/skills/${style.baseName}/SKILL.md`);
@@ -1278,12 +1935,25 @@ async function buildSessionStyleContext(
       );
       lines.push('');
       lines.push(truncateStyleTemplate(style.content));
+
+      if (style.designMd) {
+        lines.push('');
+        lines.push(`## Active DESIGN.md: ${style.designMd.name}`);
+        lines.push(`Source: ~/.claude/skills/${style.baseName}/DESIGN.md`);
+        lines.push(
+          'Treat this DESIGN.md as the structured source of truth for visual identity tokens and rationale. Use token values when they conflict with generic style preferences.'
+        );
+        lines.push('');
+        lines.push('```markdown');
+        lines.push(truncateStyleTemplate(style.designMd.raw));
+        lines.push('```');
+      }
     }
   }
 
   if (selection.writingStyleSkill) {
     const style = await readSkillLibraryItem(configHome, selection.writingStyleSkill);
-    if (style?.enabled && style.libraryKind === 'writing') {
+    if (style?.libraryKind === 'writing') {
       const styleType = style.writingStyleType || 'persona';
       lines.push('');
       lines.push(
@@ -1319,12 +1989,44 @@ async function buildSessionStyleContext(
   return lines.length > 3 ? lines.join('\n') : null;
 }
 
+export async function buildSessionStyleContextForTest(
+  selection: { designStyleSkill?: string | null; writingStyleSkill?: string | null },
+  configHome: string
+): Promise<string | null> {
+  return buildSessionStyleContextFromSelection(selection, configHome);
+}
+
+async function buildSessionStyleContext(
+  sessionId: string,
+  userId: string,
+  cliProvider: CLIProvider
+): Promise<string | null> {
+  const db = getDatabase();
+  const selection = db
+    .prepare(
+      `SELECT design_style_skill as designStyleSkill,
+              writing_style_skill as writingStyleSkill
+       FROM sessions
+       WHERE id = ? AND user_id = ?`
+    )
+    .get(sessionId, userId) as
+    | { designStyleSkill: string | null; writingStyleSkill: string | null }
+    | undefined;
+
+  if (!selection?.designStyleSkill && !selection?.writingStyleSkill) {
+    return null;
+  }
+
+  const configHome = resolveConfigHome(cliProvider);
+  return buildSessionStyleContextFromSelection(selection, configHome);
+}
+
 /**
- * Write lightweight project context to the project's CLAUDE.md.
+ * Write lightweight project context to the project's AGENTS.md.
  * For Claude provider: just project info (skills are in global CLAUDE.md).
  * For other providers: project info + skills summary (names only).
  */
-async function ensureProjectInstructions(
+export async function ensureProjectInstructions(
   workingDir: string,
   configHome: string,
   cliProvider: string
@@ -1342,7 +2044,7 @@ async function ensureProjectInstructions(
   lines.push(projectContext);
 
   // For non-Claude providers, include skills/agents names as a reference
-  if (cliProvider !== 'claude') {
+  if (!isClaudeTransportProvider(cliProvider)) {
     const [agents, skills] = await Promise.all([
       readSharedAgents(configHome),
       readSharedSkills(configHome),
@@ -1357,164 +2059,23 @@ async function ensureProjectInstructions(
   lines.push(PROJECT_CONTEXT_BLOCK_END);
   const content = lines.join('\n');
 
+  const agentsMdPath = path.join(workingDir, 'AGENTS.md');
   const claudeMdPath = path.join(workingDir, 'CLAUDE.md');
 
   // First: remove old shared-config block if it exists (migration)
-  await removeOldSharedConfigBlock(claudeMdPath);
+  await removeOldSharedConfigBlock(agentsMdPath);
 
   // Then: write/update the new project-context block
   await writeManagedBlock(
-    claudeMdPath,
+    agentsMdPath,
     content,
     PROJECT_CONTEXT_BLOCK_START,
     PROJECT_CONTEXT_BLOCK_END
   );
 
-  // Also clean up old AGENTS.md managed block (no longer generated)
-  const agentsMdPath = path.join(workingDir, 'AGENTS.md');
-  await removeOldSharedConfigBlock(agentsMdPath);
-}
-
-// Walk every vibe session log under VIBE_HOME and collect the message_ids vibe
-// already persisted. Used at WebUI session start to prime the dedupe set so
-// `--continue`'s history replay doesn't re-emit prior turns to the frontend.
-async function loadVibeSeenMessageIds(vibeSessionHome: string): Promise<Set<string>> {
-  const seen = new Set<string>();
-  const sessionsDir = path.join(vibeSessionHome, 'logs', 'session');
-  let entries: import('fs').Dirent[];
-  try {
-    entries = await fs.readdir(sessionsDir, { withFileTypes: true });
-  } catch {
-    return seen;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const messagesPath = path.join(sessionsDir, entry.name, 'messages.jsonl');
-    let raw: string;
-    try {
-      raw = await fs.readFile(messagesPath, 'utf-8');
-    } catch {
-      continue;
-    }
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const id = (JSON.parse(line) as { message_id?: string }).message_id;
-        if (id) seen.add(id);
-      } catch {
-        // Skip malformed lines.
-      }
-    }
-  }
-  return seen;
-}
-
-function tomlString(value: string): string {
-  return JSON.stringify(value);
-}
-
-function normalizeVibeThinkingLevel(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
-  if (!normalized) return null;
-  if (normalized === 'extra_high' || normalized === 'xhigh') return 'max';
-  if (normalized === 'minimal' || normalized === 'none') return 'off';
-  if (['off', 'low', 'medium', 'high', 'max'].includes(normalized)) return normalized;
-  return null;
-}
-
-function rewriteVibeSessionConfig(
-  raw: string,
-  opts: { sessionLogDir: string; activeAlias?: string | null; thinking?: string | null }
-): string {
-  let next = raw;
-  const saveDirLine = `save_dir = ${tomlString(opts.sessionLogDir)}`;
-  if (/^\s*save_dir\s*=\s*"[^"]*"/m.test(next)) {
-    next = next.replace(/^\s*save_dir\s*=\s*"[^"]*"/m, saveDirLine);
-  } else if (/^\s*\[session_logging\]\s*$/m.test(next)) {
-    next = next.replace(/^\s*\[session_logging\]\s*$/m, (line) => `${line}\n${saveDirLine}`);
-  } else {
-    next = `${next.trimEnd()}\n\n[session_logging]\n${saveDirLine}\n`;
-  }
-
-  if (opts.activeAlias) {
-    const activeLine = `active_model = ${tomlString(opts.activeAlias)}`;
-    if (/^\s*active_model\s*=\s*"[^"]*"/m.test(next)) {
-      next = next.replace(/^\s*active_model\s*=\s*"[^"]*"/m, activeLine);
-    } else {
-      next = `${activeLine}\n${next}`;
-    }
-  }
-
-  if (opts.activeAlias && opts.thinking) {
-    const blockRe = /^\s*\[\[models\]\]\s*$/gm;
-    const starts: number[] = [];
-    let match: RegExpExecArray | null;
-    while ((match = blockRe.exec(next)) !== null) {
-      starts.push(match.index);
-    }
-    for (let i = 0; i < starts.length; i += 1) {
-      const start = starts[i]!;
-      const end = starts[i + 1] ?? next.length;
-      const block = next.slice(start, end);
-      const alias = block.match(/^\s*alias\s*=\s*"([^"]+)"/m)?.[1];
-      const name = block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
-      if (alias !== opts.activeAlias && name !== opts.activeAlias) continue;
-      const thinkingLine = `thinking = ${tomlString(opts.thinking)}`;
-      const rewrittenBlock = /^\s*thinking\s*=\s*"[^"]*"/m.test(block)
-        ? block.replace(/^\s*thinking\s*=\s*"[^"]*"/m, thinkingLine)
-        : block.replace(/^\s*alias\s*=\s*"[^"]*"/m, (line) => `${line}\n${thinkingLine}`);
-      next = next.slice(0, start) + rewrittenBlock + next.slice(end);
-      break;
-    }
-  }
-
-  return next;
-}
-
-type VibeSessionStats = {
-  session_prompt_tokens?: number;
-  session_completion_tokens?: number;
-  last_turn_prompt_tokens?: number;
-  last_turn_completion_tokens?: number;
-  context_tokens?: number;
-  input_price_per_million?: number;
-  output_price_per_million?: number;
-  session_cost?: number;
-};
-
-function resolveWebuiScript(scriptName: string): string | null {
-  const candidates = [
-    path.resolve(__dirname, '../../../../../scripts', scriptName),
-    path.resolve(process.cwd(), 'scripts', scriptName),
-    path.join('/app/scripts', scriptName),
-  ];
-  for (const candidate of candidates) {
-    try {
-      if (fsSync.existsSync(candidate)) return candidate;
-    } catch {
-      // try next
-    }
-  }
-  return null;
-}
-
-function resolveVibeRunnerInvocation(): { command: string; argsPrefix: string[] } | null {
-  const runner = resolveWebuiScript('vibe-webui-runner.py');
-  if (!runner) return null;
-  const pythonCandidates = [
-    '/home/node/.local/pipx/venvs/mistral-vibe/bin/python',
-    process.env.PYTHON || '',
-    'python3',
-  ].filter(Boolean);
-  for (const command of pythonCandidates) {
-    if (command.includes('/') && !fsSync.existsSync(command)) continue;
-    return { command, argsPrefix: [runner] };
-  }
-  return null;
+  // Migrate stale generated context out of legacy CLAUDE.md without deleting human notes.
+  await removeManagedBlock(claudeMdPath, PROJECT_CONTEXT_BLOCK_START, PROJECT_CONTEXT_BLOCK_END);
+  await removeOldSharedConfigBlock(claudeMdPath);
 }
 
 function extractCodexText(output: string): string {
@@ -1634,6 +2195,24 @@ export function extractCodexSessionId(event: CodexSessionIdentityEvent): string 
   return null;
 }
 
+/**
+ * A native Codex thread retains its initial messages across `exec resume` and
+ * backend restarts. Repeating the static Plum bootstrap in that same thread
+ * needlessly grows the context and is then inherited by every child thread.
+ */
+export function shouldInjectCodexStaticBootstrap(
+  nativeThreadId: string | null | undefined
+): boolean {
+  return !nativeThreadId?.trim();
+}
+
+export function shouldInjectSessionStyleContext(
+  previousContext: string | null | undefined,
+  nextContext: string | null
+): boolean {
+  return previousContext !== nextContext;
+}
+
 async function describeImagesWithCodex(opts: {
   imagePaths: string[];
   userPrompt: string;
@@ -1666,7 +2245,7 @@ async function describeImagesWithCodex(opts: {
   ];
 
   return await new Promise<string | null>((resolve) => {
-    const child = cpSpawn(providerConfig.command, args, {
+    const child = spawnManagedProcess(providerConfig.command, args, {
       cwd: opts.cwd,
       env: {
         ...process.env,
@@ -1684,7 +2263,7 @@ async function describeImagesWithCodex(opts: {
     let stderr = '';
     const timer = setTimeout(() => {
       try {
-        child.kill('SIGTERM');
+        terminateManagedProcess(child);
       } catch {
         // ignore
       }
@@ -1701,7 +2280,7 @@ async function describeImagesWithCodex(opts: {
     });
     child.on('error', (err) => {
       clearTimeout(timer);
-      console.error(`[VIBE] Codex image bridge failed to spawn [${opts.sessionId}]:`, err);
+      console.error(`[IMAGE-BRIDGE] Codex failed to spawn [${opts.sessionId}]:`, err);
       resolve(null);
     });
     child.on('close', (code) => {
@@ -1709,10 +2288,7 @@ async function describeImagesWithCodex(opts: {
       const text = extractCodexText(stdout).trim();
       if (code !== 0 && !text) {
         console.warn(
-          `[VIBE] Codex image bridge failed [${opts.sessionId}] code=${code}: ${stderr.slice(
-            0,
-            500
-          )}`
+          `[IMAGE-BRIDGE] Codex failed [${opts.sessionId}] code=${code}: ${stderr.slice(0, 500)}`
         );
         resolve(null);
         return;
@@ -1720,82 +2296,6 @@ async function describeImagesWithCodex(opts: {
       resolve(text || null);
     });
   });
-}
-
-// Copy the user's global ~/.vibe/config.toml into a per-session VIBE_HOME and
-// rewrite session_logging.save_dir to point at the per-session logs dir. Vibe
-// will otherwise write a fresh default config inside the empty VIBE_HOME on
-// first run, which would drop skill_paths / user customizations.
-async function seedVibeSessionConfig(
-  vibeBaseHome: string,
-  vibeSessionHome: string,
-  selectedModel?: string | null,
-  selectedReasoning?: string | null
-): Promise<{ activeAlias: string | null; thinking: string | null }> {
-  const sessionConfig = path.join(vibeSessionHome, 'config.toml');
-  const globalConfig = path.join(vibeBaseHome, 'config.toml');
-  let raw: string;
-  try {
-    raw = await fs.readFile(globalConfig, 'utf-8');
-  } catch {
-    return { activeAlias: null, thinking: null }; // No global config to copy.
-  }
-  const sessionLogDir = path.join(vibeSessionHome, 'logs', 'session');
-  const activeAlias = getVibeModelAlias(selectedModel, raw);
-  const thinking = normalizeVibeThinkingLevel(selectedReasoning);
-  const sessionRewritten = rewriteVibeSessionConfig(raw, { sessionLogDir, activeAlias, thinking });
-  const rewritten = applyVibeProviderLinks(sessionRewritten).content;
-  try {
-    await fs.writeFile(sessionConfig, rewritten, 'utf-8');
-  } catch (err) {
-    console.error(`[VIBE] Failed to seed config.toml at ${sessionConfig}:`, err);
-  }
-  return { activeAlias, thinking };
-}
-
-async function readLatestVibeSessionMeta(vibeSessionHome: string): Promise<{
-  sessionId: string | null;
-  stats: VibeSessionStats | null;
-} | null> {
-  const sessionsDir = path.join(vibeSessionHome, 'logs', 'session');
-  let entries: Array<{ path: string; mtimeMs: number }> = [];
-  try {
-    const dirs = await fs.readdir(sessionsDir, { withFileTypes: true });
-    entries = await Promise.all(
-      dirs
-        .filter((entry) => entry.isDirectory())
-        .map(async (entry) => {
-          const metaPath = path.join(sessionsDir, entry.name, 'meta.json');
-          try {
-            const stat = await fs.stat(metaPath);
-            return { path: metaPath, mtimeMs: stat.mtimeMs };
-          } catch {
-            return { path: metaPath, mtimeMs: 0 };
-          }
-        })
-    );
-  } catch {
-    return null;
-  }
-
-  const latest = entries
-    .filter((entry) => entry.mtimeMs > 0)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
-  if (!latest) return null;
-
-  try {
-    const raw = await fs.readFile(latest.path, 'utf-8');
-    const parsed = JSON.parse(raw) as {
-      session_id?: string;
-      stats?: Record<string, unknown>;
-    };
-    return {
-      sessionId: typeof parsed.session_id === 'string' ? parsed.session_id : null,
-      stats: (parsed.stats as VibeSessionStats | undefined) ?? null,
-    };
-  } catch {
-    return null;
-  }
 }
 
 interface CodexReviewCommand {
@@ -1852,8 +2352,102 @@ function parseCodexReviewCommand(message: string): CodexReviewCommand | null {
   return prompt ? { args, prompt } : { args };
 }
 
-function isCodexNativeSlashCommand(message: string): boolean {
-  return /^\/(?:goal|compact)(?:\s|$)/i.test(message.trim());
+export function isCodexNativeSlashCommand(message: string): boolean {
+  return /^(?:\/(?:goal|compact)|\$imagegen)(?:\s|$)/i.test(message.trim());
+}
+
+function isSilentCodexNativeSlashCommand(message: string): boolean {
+  return /^\/goal(?:\s|$)/i.test(message.trim());
+}
+
+export function shouldRecordProviderUserMessage(provider: CLIProvider, message: string): boolean {
+  return !(provider === 'codex' && isSilentCodexNativeSlashCommand(message));
+}
+
+export function appliesModeOnNextTurnWithoutRestart(provider: CLIProvider): boolean {
+  return provider === 'codex' || provider === 'kimi';
+}
+
+export function kimiAcpModeForSessionMode(mode: SessionMode): string {
+  if (mode === 'planning') return 'plan';
+  if (mode === 'danger') return 'yolo';
+  if (mode === 'manual') return 'default';
+  return 'auto';
+}
+
+export function resolveSessionStartMode(
+  explicitMode?: SessionMode,
+  pendingMode?: SessionMode,
+  persistedMode?: SessionMode | null
+): SessionMode {
+  return explicitMode ?? pendingMode ?? persistedMode ?? 'auto-accept';
+}
+
+export function shouldRecoverInterruptedKimiTurn(
+  provider: CLIProvider | null,
+  status: string | null,
+  latestRole?: string
+): boolean {
+  return provider === 'kimi' && status === 'stopped' && latestRole === 'user';
+}
+
+function kimiAcpConfigSupports(
+  options: AcpSessionConfigOption[] | null | undefined,
+  configId: string,
+  value: string
+): boolean {
+  const option = options?.find((candidate) => candidate.id === configId);
+  if (!option || option.type !== 'select') return false;
+  return option.options.some((candidate) => {
+    if ('value' in candidate) return candidate.value === value;
+    return candidate.options.some((nested) => nested.value === value);
+  });
+}
+
+function kimiAcpToolResultText(
+  update: Extract<AcpSessionUpdate, { sessionUpdate: 'tool_call_update' }>
+): string {
+  if (typeof update.rawOutput === 'string') return update.rawOutput;
+  if (update.rawOutput !== undefined && update.rawOutput !== null) {
+    try {
+      return JSON.stringify(update.rawOutput);
+    } catch {
+      return String(update.rawOutput);
+    }
+  }
+  return (update.content || [])
+    .map((entry) => {
+      if (entry.type !== 'content' || entry.content.type !== 'text') return '';
+      return entry.content.text;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function isKimiSessionNotFoundError(stderr: string): boolean {
+  return (
+    /session\s+["'][^"']+["']\s+not found/i.test(stderr) ||
+    /session[^\r\n]{0,200}(?:not found|does not exist|unknown)/i.test(stderr)
+  );
+}
+
+export function formatKimiExitMessage(exitCode: number | null, stderr: string): string {
+  const detail = stderr
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+  const needsLogin =
+    /not logged in|unauthenticated|authentication|credentials?|login required/i.test(detail);
+
+  if (needsLogin) {
+    return `\n⚠️ Kimi authentication failed. Reconnect via Settings → Kimi → Connect.\n`;
+  }
+  if (detail) {
+    return `\n⚠️ Kimi exited (code ${exitCode ?? 'unknown'}): ${detail}\n`;
+  }
+  return `\n⚠️ Kimi exited (code ${exitCode ?? 'unknown'}). Check the server logs for details.\n`;
 }
 
 type OpenCodeSlashCommand =
@@ -1917,6 +2511,7 @@ interface UsageInfo {
 interface StreamEventMessage {
   type: string;
   message?: {
+    id?: string;
     model?: string;
     usage?: UsageInfo;
   };
@@ -2017,6 +2612,11 @@ interface ClaudeProcess {
   turnCacheReadTokens: number;
   turnCacheCreationTokens: number;
   turnOutputTokens: number;
+  // Stable WebUI turn/message id used as the usage ledger idempotency key.
+  currentUsageTurnId?: string;
+  // Attribute analytics to when the user submitted the turn, not when a long
+  // provider/tool loop happened to finish across a day or week boundary.
+  currentUsageTurnStartedAt?: string;
   // Current model-call context usage. Some providers, notably Codex, report
   // both per-call context usage and summed turn billing usage; keep those
   // separate so the context bar does not display cumulative/cache-billing totals.
@@ -2073,7 +2673,10 @@ interface ClaudeProcess {
   lastUserMessage: string | null;
   lastAttachments: FileAttachmentData[] | null;
   pendingPermissionDenials: PermissionDenial[] | null;
+  pendingChatMedia: PendingChatMedia[];
   sharedContextInjected: boolean;
+  superpowersContextInjected: boolean;
+  sessionStyleContextInjected?: string | null;
   modePromptInjected: SessionMode | null;
   androidDeviceSerialInjected?: string | null;
   discordGatewayContextInjected?: string | null;
@@ -2098,6 +2701,17 @@ interface ClaudeProcess {
   codexSteerDraining?: boolean;
   codexPreemptingForSteer?: boolean;
   codexPreemptKillTimer?: ReturnType<typeof setTimeout>;
+  // Pi runs a persistent JSONL RPC, so a turn is "in flight" from the moment we
+  // write a prompt until `turn_end`. Compaction can land in that window.
+  piTurnInFlight?: boolean;
+  piCompactContinuations?: number;
+  piCompactResumeTimer?: ReturnType<typeof setTimeout>;
+  // Per-subagent-thread cumulative snapshot, so a resumed exec books only the
+  // delta each spawned agent added during the current turn.
+  codexSubagentBaseline?: Map<string, CodexUsageCounters>;
+  // Subagent split staged by applyCodexTurnUsage, flushed once the turn id is
+  // final in saveUsageToDatabase.
+  pendingSubagentUsage?: PendingSubagentUsage[];
   // Track tool callIDs we've already emitted 'started' for during a codex turn, mirroring
   // the opencode emittedTools pattern. Reset at the start of each turn.
   codexEmittedTools?: Set<string>;
@@ -2118,25 +2732,27 @@ interface ClaudeProcess {
   codexLastObservedContextUsage?: CodexUsageCounters;
   codexLastObservedContextWindow?: number;
   codexTotalTokenUsage?: CodexUsageCounters;
-  // Mistral Vibe is per-turn like Codex, but prompt is delivered via argv (-p TEXT)
-  // not stdin. We always start `idle` and spawn a fresh child for each message.
-  vibeIdle?: boolean;
-  // Isolated VIBE_HOME so each WebUI chat is its own vibe session (enables --continue
-  // without cross-session bleed). Path is created at startSession.
-  vibeHome?: string;
-  // Track tool_call_id → tool name across vibe streaming chunks so the matching
-  // tool result message can be paired with the originating call.
-  vibeToolNames?: Map<string, string>;
-  // Track vibe message_ids we've already forwarded so `--continue` replays
-  // (which restream the whole conversation history) don't duplicate prior
-  // assistant/tool messages on every turn.
-  vibeSeenMessageIds?: Set<string>;
+  codexDescendantUsageBaseline?: CodexUsageCounters;
+  // Kimi runs as a persistent ACP agent. Unlike `kimi -p`, ACP emits token
+  // chunks and tool lifecycle updates while keeping one native chat session
+  // alive across WebUI turns.
+  kimiAcpConnection?: ClientSideConnection;
+  kimiAcpSessionId?: string;
+  kimiAcpConfigOptions?: AcpSessionConfigOption[];
+  kimiIdle?: boolean;
+  kimiQueuedTurns?: CodexPreparedTurn[];
+  kimiQueueDraining?: boolean;
+  kimiCompletedTools?: Set<string>;
+  kimiThinkingText?: string;
   // Server-backed providers (opencode in HTTP/SSE mode) have no child process.
   // `process` is a no-op stub; all lifecycle goes through HTTP + SSE subscription.
   serverBacked?: boolean;
   opencodeIdle?: boolean;
   opencodeQueuedTurns?: OpenCodePreparedTurn[];
   opencodeQueueDraining?: boolean;
+  claudeIdle?: boolean;
+  claudeQueuedTurns?: ClaudePreparedTurn[];
+  claudeQueueDraining?: boolean;
   // Accumulates content per opencode part.id so we can emit streaming deltas
   // and flush each opencode assistant message as a separate WebUI message.
   partStreams?: Map<string, OpenCodePartStreamEntry>;
@@ -2144,11 +2760,100 @@ interface ClaudeProcess {
   opencodeMessageOrder?: string[];
   opencodeLastManualCompactAt?: number;
   opencodeCompactionText?: string;
+  opencodeUsageBaseline?: OpenCodeUsageCounters | null;
+  opencodeUsageFinalizing?: boolean;
+  claudeCurrentResponseId?: string;
+  claudeCurrentResponseOutputTokens?: number;
   // Track tool callIDs we've already emitted 'started' for, so we don't
   // re-emit on every status transition (pending → running → completed).
   emittedTools?: Set<string>;
   lastSavedAssistantContent?: string;
   lastSavedAssistantAt?: number;
+}
+
+type ClaudeResponseUsageTarget = Pick<
+  ClaudeProcess,
+  | 'turnInputTokens'
+  | 'turnOutputTokens'
+  | 'turnCacheReadTokens'
+  | 'turnCacheCreationTokens'
+  | 'contextInputTokens'
+  | 'contextOutputTokens'
+  | 'contextCacheReadTokens'
+  | 'contextCacheCreationTokens'
+  | 'claudeCurrentResponseId'
+  | 'claudeCurrentResponseOutputTokens'
+>;
+
+export function accumulateClaudeMessageStartUsage(
+  target: ClaudeResponseUsageTarget,
+  responseId: string,
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  }
+): void {
+  if (target.claudeCurrentResponseId === responseId) return;
+  const input = usage.input_tokens || 0;
+  const output = usage.output_tokens || 0;
+  const cacheRead = usage.cache_read_input_tokens || 0;
+  const cacheWrite = usage.cache_creation_input_tokens || 0;
+  target.turnInputTokens += input;
+  target.turnOutputTokens += output;
+  target.turnCacheReadTokens += cacheRead;
+  target.turnCacheCreationTokens += cacheWrite;
+  target.contextInputTokens = input;
+  target.contextOutputTokens = output;
+  target.contextCacheReadTokens = cacheRead;
+  target.contextCacheCreationTokens = cacheWrite;
+  target.claudeCurrentResponseId = responseId;
+  target.claudeCurrentResponseOutputTokens = output;
+}
+
+export function accumulateClaudeMessageDeltaUsage(
+  target: ClaudeResponseUsageTarget,
+  usage: { output_tokens?: number }
+): void {
+  const output = usage.output_tokens || 0;
+  const previousOutput = target.claudeCurrentResponseOutputTokens || 0;
+  target.turnOutputTokens += Math.max(output - previousOutput, 0);
+  target.claudeCurrentResponseOutputTokens = output;
+  target.contextOutputTokens = output;
+}
+
+type ClaudeTurnUsageTarget = Pick<
+  ClaudeProcess,
+  'turnInputTokens' | 'turnOutputTokens' | 'turnCacheReadTokens' | 'turnCacheCreationTokens'
+>;
+
+/**
+ * Claude Code's final result event is the authoritative aggregate for the
+ * completed user turn. Some Anthropic-compatible endpoints (notably Z.AI)
+ * omit input/cache counters from partial message_start events while still
+ * returning them here. Keep any richer streamed aggregate, but fill or raise
+ * each billed bucket to the final value before persisting the ledger row.
+ */
+export function applyClaudeResultUsage(
+  target: ClaudeTurnUsageTarget,
+  usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  }
+): void {
+  target.turnInputTokens = Math.max(target.turnInputTokens, usage.input_tokens || 0);
+  target.turnOutputTokens = Math.max(target.turnOutputTokens, usage.output_tokens || 0);
+  target.turnCacheReadTokens = Math.max(
+    target.turnCacheReadTokens,
+    usage.cache_read_input_tokens || 0
+  );
+  target.turnCacheCreationTokens = Math.max(
+    target.turnCacheCreationTokens,
+    usage.cache_creation_input_tokens || 0
+  );
 }
 
 interface CodexPreparedTurn {
@@ -2171,6 +2876,15 @@ interface OpenCodePreparedTurn {
   attachments?: FileAttachmentData[];
   updateLastMessage: boolean;
   opencodeSlashCommand: OpenCodeSlashCommand | null;
+}
+
+interface ClaudePreparedTurn {
+  queueId: string;
+  queuedAt: string;
+  originalMessage: string;
+  messageForClaude: string;
+  attachments?: FileAttachmentData[];
+  updateLastMessage: boolean;
 }
 
 export interface SessionRuntimeSnapshot {
@@ -2324,10 +3038,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   }
 
   private getModePrompt(mode: SessionMode): string | null {
-    if (mode === 'planning') {
-      return this.getPlanningPrompt();
-    }
-    return null;
+    return buildSessionExecutionPrompt(mode);
   }
 
   // Helper method to buffer a message
@@ -2652,6 +3363,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   ): void {
     const proc = this.processes.get(sessionId);
     if (!proc?.userId) return;
+    const homeAssistantStatus = homeAssistantStatusForSessionEvent(input.eventType, input.severity);
+    if (homeAssistantStatus)
+      homeAssistantStatusLights.notifySession(sessionId, homeAssistantStatus);
     try {
       const session = getDatabase()
         .prepare('SELECT name FROM sessions WHERE id = ? AND user_id = ?')
@@ -2674,10 +3388,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     }
   }
 
-  private buildDiscordGatewayContext(
-    sessionId: string,
-    proc: ClaudeProcess
-  ): string | null {
+  private buildDiscordGatewayContext(sessionId: string, proc: ClaudeProcess): string | null {
     const settings = discordIntegrationService.getSettings();
     if (!settings.enabled || !settings.configured) return null;
 
@@ -2696,7 +3407,8 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     const inboundLabel = settings.inboundJobsEnabled
       ? 'Discord-originated jobs may be accepted through the automation gateway when authorized.'
       : 'Discord-originated jobs are not accepted automatically yet; treat Discord as supervision/coordination only.';
-    const channelLabel = settings.channelLabel || settings.channelId || 'configured Discord channel';
+    const channelLabel =
+      settings.channelLabel || settings.channelId || 'configured Discord channel';
 
     return `<system-reminder>
 Discord Main Gateway:
@@ -2975,6 +3687,230 @@ Discord Main Gateway:
       : resolvedWindow;
   }
 
+  private readCodexDescendantUsage(rootThreadId: string | null | undefined): CodexUsageCounters {
+    if (!rootThreadId) return { input: 0, cached: 0, output: 0 };
+    const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+    return readCodexDescendantUsage(codexHome, rootThreadId);
+  }
+
+  /**
+   * Stage the per-subagent split of the turn that is about to be booked.
+   *
+   * The tokens are already inside the turn's usage_history row; this only
+   * records which spawned agent spent which share. Flushed in
+   * saveUsageToDatabase once the turn id is final.
+   */
+  private captureCodexSubagentBreakdown(
+    proc: ClaudeProcess,
+    rootThreadId: string | null | undefined
+  ): void {
+    proc.pendingSubagentUsage = undefined;
+    if (!rootThreadId) return;
+    const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+    const detail = readCodexDescendantUsageDetail(codexHome, rootThreadId);
+    if (detail.length === 0) {
+      proc.codexSubagentBaseline = new Map();
+      return;
+    }
+
+    const baseline = proc.codexSubagentBaseline;
+    const nextBaseline = new Map<string, CodexUsageCounters>();
+    const rows: PendingSubagentUsage[] = [];
+    for (const thread of detail) {
+      nextBaseline.set(thread.threadId, thread.usage);
+      const previous = baseline?.get(thread.threadId) ?? null;
+      const delta = subtractCodexUsageCounters(thread.usage, previous);
+      if (delta.input <= 0 && delta.output <= 0) continue;
+      const nonCachedInput = Math.max(delta.input - delta.cached, 0);
+      const model = thread.model || proc.model;
+      rows.push({
+        agentId: thread.threadId,
+        parentAgentId: thread.parentThreadId,
+        agentType: thread.agentType,
+        model,
+        inputTokens: nonCachedInput,
+        outputTokens: delta.output,
+        cacheReadTokens: delta.cached,
+        cacheCreationTokens: 0,
+        totalTokens: nonCachedInput + delta.output + delta.cached,
+        costUsd: estimateModelCost(
+          model,
+          {
+            inputTokens: nonCachedInput,
+            outputTokens: delta.output,
+            cacheReadTokens: delta.cached,
+            cacheCreationTokens: 0,
+          },
+          null
+        ).cost,
+      });
+    }
+    proc.codexSubagentBaseline = nextBaseline;
+    if (rows.length > 0) proc.pendingSubagentUsage = rows;
+  }
+
+  /**
+   * Thread id of the Codex exec this turn is running in.
+   *
+   * Must be resolved BEFORE descendant usage is read: `session_meta`/`thread.started`
+   * does not always carry an id, and the late fallback used to run after the
+   * descendant lookup — so subagent tokens were charged against `null` and dropped.
+   * A plain `codex exec` starts a fresh root per turn, so only resume mode may
+   * keep the previously captured id.
+   */
+  private resolveCodexRootThreadId(sessionId: string, proc: ClaudeProcess): string | null {
+    const existing = proc.codexSessionId || proc.claudeSessionId || null;
+    if (proc.codexCurrentExecUsedResume && existing) return existing;
+
+    const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+    const resolved = findCodexExecRootThreadId(codexHome, {
+      cwd: proc.workingDirectory,
+      sinceMs: proc.codexExecStartedAtMs,
+    });
+    if (!resolved) return existing;
+
+    if (proc.codexSessionId !== resolved) {
+      proc.codexSessionId = resolved;
+      proc.claudeSessionId = resolved;
+      try {
+        getDatabase()
+          .prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?')
+          .run(resolved, sessionId);
+        console.log(`[CODEX] Resolved exec root thread ${resolved} for ${sessionId}`);
+      } catch (error) {
+        console.warn('[CODEX] Failed to persist resolved exec root thread:', error);
+      }
+    }
+    return resolved;
+  }
+
+  /**
+   * Cumulative billing counters for a Codex thread, read from its rollout.
+   *
+   * Used when no `usage` payload reaches us — `turn.failed` omits it, and an
+   * interrupted exec never emits a turn event at all. Semantics match
+   * `turn.completed.usage`, so the same delta machinery applies.
+   */
+  private readCodexUsageFromThreadState(
+    rootThreadId: string | null | undefined
+  ): CodexUsageCounters | null {
+    if (!rootThreadId) return null;
+    const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+    const usage = readCodexThreadCumulativeUsage(codexHome, rootThreadId);
+    if (!usage) return null;
+    if (usage.input <= 0 && usage.output <= 0) return null;
+    return usage;
+  }
+
+  /**
+   * Fold a turn's Codex billing counters (root + subagent threads) into the
+   * process's per-turn token fields. Returns the disjoint Claude-shaped split.
+   */
+  private applyCodexTurnUsage(
+    sessionId: string,
+    proc: ClaudeProcess,
+    counters: CodexUsageCounters
+  ): { nonCachedInput: number; cached: number; output: number } {
+    // Codex's cumulative counters grow across turns in resume mode (each respawn
+    // reloads the full session JSONL). Sending raw values to usage_history
+    // multiplied analytics tokens 10-100x, so compute per-turn deltas there.
+    // Plain `codex exec` starts a fresh Codex session — its usage is already
+    // scoped to this exec turn and must not be delta-adjusted.
+    const prev = proc.codexLastReportedTokens;
+    const useResumeDelta = !!proc.codexCurrentExecUsedResume;
+    let deltaInput: number;
+    let deltaCached: number;
+    let deltaOutput: number;
+    if (
+      !useResumeDelta ||
+      !prev ||
+      counters.input < prev.input ||
+      counters.cached < prev.cached ||
+      counters.output < prev.output
+    ) {
+      // Fresh exec, first call, or a counter reset → take the values as-is
+      // rather than writing a negative delta.
+      deltaInput = counters.input;
+      deltaCached = counters.cached;
+      deltaOutput = counters.output;
+    } else {
+      deltaInput = counters.input - prev.input;
+      deltaCached = counters.cached - prev.cached;
+      deltaOutput = counters.output - prev.output;
+    }
+    proc.codexLastReportedTokens = {
+      input: counters.input,
+      cached: counters.cached,
+      output: counters.output,
+    };
+
+    const rootThreadId = this.resolveCodexRootThreadId(sessionId, proc);
+    this.captureCodexSubagentBreakdown(proc, rootThreadId);
+    const descendantUsage = this.readCodexDescendantUsage(rootThreadId);
+    const descendantBaseline = proc.codexDescendantUsageBaseline;
+    if (descendantBaseline) {
+      const countersReset =
+        descendantUsage.input < descendantBaseline.input ||
+        descendantUsage.cached < descendantBaseline.cached ||
+        descendantUsage.output < descendantBaseline.output;
+      deltaInput += countersReset
+        ? descendantUsage.input
+        : descendantUsage.input - descendantBaseline.input;
+      deltaCached += countersReset
+        ? descendantUsage.cached
+        : descendantUsage.cached - descendantBaseline.cached;
+      deltaOutput += countersReset
+        ? descendantUsage.output
+        : descendantUsage.output - descendantBaseline.output;
+    } else {
+      deltaInput += descendantUsage.input;
+      deltaCached += descendantUsage.cached;
+      deltaOutput += descendantUsage.output;
+    }
+    proc.codexDescendantUsageBaseline = descendantUsage;
+
+    // Schema difference vs Claude:
+    //   Codex:  input_tokens INCLUDES cached_input_tokens (overlapping)
+    //   Claude: input_tokens and cache_read_input_tokens are disjoint
+    const nonCachedInput = Math.max(deltaInput - deltaCached, 0);
+
+    proc.turnInputTokens = nonCachedInput;
+    proc.turnOutputTokens = deltaOutput;
+    proc.turnCacheReadTokens = deltaCached;
+    proc.turnCacheCreationTokens = 0; // Codex doesn't surface cache writes.
+
+    return { nonCachedInput, cached: deltaCached, output: deltaOutput };
+  }
+
+  /**
+   * Last-resort usage flush for a Codex exec that died without a turn event
+   * (SIGINT steer, crash, rate-limit abort). `saveUsageToDatabase` is keyed by
+   * turn id, so a turn already booked by `turn.completed` is a no-op here.
+   */
+  private flushCodexUsageOnExit(sessionId: string, proc: ClaudeProcess): void {
+    if (proc.cliProvider !== 'codex') return;
+    try {
+      // Bail before touching the delta baselines: re-applying them for an
+      // already-booked turn would double-count proc.totalCostUsd even though the
+      // INSERT itself is a no-op.
+      const turnId = proc.currentUsageTurnId;
+      if (turnId && usageHistoryTurnExists(getDatabase(), sessionId, proc.cliProvider, turnId)) {
+        return;
+      }
+      const rootThreadId = this.resolveCodexRootThreadId(sessionId, proc);
+      const counters = this.readCodexUsageFromThreadState(rootThreadId);
+      if (!counters) return;
+      this.applyCodexTurnUsage(sessionId, proc, counters);
+      const turnCostUsd = this.calculateTurnCost(proc);
+      proc.previousTotalCostUsd = proc.totalCostUsd;
+      proc.totalCostUsd += turnCostUsd;
+      this.emitUsage(sessionId, proc);
+      this.saveUsageToDatabase(sessionId, proc);
+    } catch (error) {
+      console.warn('[CODEX] Failed to flush usage after process exit:', error);
+    }
+  }
+
   // Get buffered messages since a timestamp for reconnection
   getSessionBuffer(sessionId: string, sinceTimestamp?: number): BufferedMessage[] {
     return this.getSessionBufferStatus(sessionId, sinceTimestamp).items;
@@ -3027,6 +3963,58 @@ Discord Main Gateway:
     }
   }
 
+  /**
+   * A container restart cannot keep the in-flight ACP request alive. When a Kimi
+   * chat is opened again and its persisted transcript ends with a user turn,
+   * resume the native ACP session and continue that interrupted turn once. The
+   * recovery hint is transport-only and must not create a duplicate chat row.
+   */
+  async recoverInterruptedKimiTurn(sessionId: string, userId: string): Promise<boolean> {
+    if (this.processes.has(sessionId)) return false;
+
+    const db = getDatabase();
+    const session = db
+      .prepare(
+        `SELECT cli_provider, status
+           FROM sessions
+          WHERE id = ? AND user_id = ?`
+      )
+      .get(sessionId, userId) as
+      | { cli_provider: CLIProvider | null; status: string | null }
+      | undefined;
+    if (!session) return false;
+
+    const latest = db
+      .prepare(
+        `SELECT role
+           FROM messages
+          WHERE session_id = ?
+          ORDER BY created_at DESC, rowid DESC
+          LIMIT 1`
+      )
+      .get(sessionId) as { role: string } | undefined;
+    if (!shouldRecoverInterruptedKimiTurn(session.cli_provider, session.status, latest?.role)) {
+      return false;
+    }
+
+    await this.startSession(sessionId, userId);
+    console.log(`[KIMI ACP] Recovering interrupted user turn [${sessionId}]`);
+    void this.sendMessage(
+      sessionId,
+      userId,
+      'Continue the interrupted previous user request. Complete it and respond normally in the chat.',
+      undefined,
+      { recordMessage: false, updateLastMessage: false }
+    ).catch((error) => {
+      console.error(`[KIMI ACP] Interrupted-turn recovery failed [${sessionId}]:`, error);
+      this.io.to(`session:${sessionId}`).emit('session:error', {
+        sessionId,
+        error: `Kimi recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    });
+    return true;
+  }
+
   async startSession(sessionId: string, userId: string, mode?: SessionMode): Promise<void> {
     const db = getDatabase();
 
@@ -3038,24 +4026,42 @@ Discord Main Gateway:
           claude_session_id: string | null;
           allowed_directories: string | null;
           cli_provider: CLIProvider | null;
+          mode: SessionMode | null;
         }
       | undefined;
 
     if (!session) {
       throw new Error('Session not found');
     }
+    assertRunnerAccess(userId);
 
     if (this.processes.has(sessionId)) {
       return;
     }
 
-    // Use provided mode, or pending mode, or default to 'auto-accept'
-    const effectiveMode = mode ?? this.pendingModes.get(sessionId) ?? 'auto-accept';
+    // Preserve the session's persisted permission mode across process/container
+    // restarts. A pending live UI change still takes precedence.
+    const effectiveMode = resolveSessionStartMode(
+      mode,
+      this.pendingModes.get(sessionId),
+      session.mode
+    );
     this.pendingModes.delete(sessionId); // Clear pending mode once used
     // Codex is the primary provider. Only very old rows can have NULL here.
     const cliProvider: CLIProvider = session.cli_provider || 'codex';
     const providerConfig = CLI_PROVIDERS[cliProvider];
+    if (!getEnabledCliProvidersForUser(userId).includes(cliProvider)) {
+      throw new Error(`${providerConfig.name} is disabled in Settings`);
+    }
+    if (cliProvider === 'zai' && !getZaiApiConfigForUser(userId)) {
+      throw new Error('Configure Z.AI in Settings before starting this session');
+    }
     const configHome = resolveConfigHome(cliProvider);
+    if (isClaudeTransportProvider(cliProvider)) {
+      await sanitizeClaudeSettingsProviderEnv({
+        settingsPath: path.join(configHome, 'settings.json'),
+      });
+    }
     const selectedModel = await getCliModelForSession(userId, cliProvider, sessionId);
     const selectedReasoning = await getCliReasoningForSession(userId, cliProvider, sessionId);
     const selectedServiceTier = await getCliServiceTierForSession(userId, cliProvider, sessionId);
@@ -3070,21 +4076,59 @@ Discord Main Gateway:
       : [];
 
     const isResuming = !!session.claude_session_id;
+    if (cliProvider === 'claude' && session.claude_session_id) {
+      const transcript = await sanitizeClaudeResumeTranscript(
+        configHome,
+        session.working_directory,
+        session.claude_session_id
+      );
+      if (transcript.updated) {
+        console.log(
+          `[provider-isolation] Replaced ${transcript.replacements} incompatible Z.AI server tool block(s) before Claude resume`
+        );
+      }
+    }
     let args: string[] = [];
+    let piAgentDir: string | null = null;
 
-    // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project context
+    // Make managed Superpowers skills available before the shared provider registry is written.
+    try {
+      await syncSuperpowers(configHome, { quiet: true });
+    } catch (err) {
+      console.warn('[superpowers] session sync skipped:', err);
+    }
+
+    // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project AGENTS.md context
     await ensureGlobalInstructions(configHome);
     await ensureProjectInstructions(session.working_directory, configHome, cliProvider);
+    // Shared links are provider-neutral. OpenCode's user-specific provider
+    // blocks are written later into that user's isolated tenant config.
     syncProviderLinks({ quiet: true });
+    if (cliProvider === 'pi') {
+      const piSync = syncPiConfig(userId);
+      if (piSync.providerCount === 0 || piSync.modelCount === 0) {
+        throw new Error(
+          'Pi requires at least one enabled OpenCode API connection with available models. Configure it under Settings → General → OpenCode.'
+        );
+      }
+      if (piSync.extensions.length < 3) {
+        throw new Error('Pi shared MCP/subagent extensions are not installed in this container.');
+      }
+      piAgentDir = piSync.agentDir;
+      console.log(
+        `[PI] Synced ${piSync.providerCount} providers, ${piSync.modelCount} models, ` +
+          `${piSync.mcpCount} MCP servers, ${piSync.agentCount} agents`
+      );
+    }
 
     if (cliProvider === 'opencode') {
-      // Server-backed path: opencode HTTP/SSE via the singleton `opencode serve`.
+      // Server-backed path: OpenCode HTTP/SSE via one isolated server per WebUI user.
       // Unlike claude/codex, there is no per-session child process to own; events
       // arrive over the shared SSE subscription and are demultiplexed by sessionID.
       await opencodeServer.ensureStarted(userId);
 
       let remoteId = isResuming && session.claude_session_id ? session.claude_session_id : null;
-      if (remoteId && !(await opencodeServer.sessionExists(remoteId))) {
+      if (remoteId && !(await opencodeServer.sessionExists(remoteId, userId))) {
         console.log(`[OPENCODE-SERVER] Prior session ${remoteId} not found on server; recreating`);
         remoteId = null;
       }
@@ -3151,7 +4195,9 @@ Discord Main Gateway:
         lastUserMessage: null,
         lastAttachments: null,
         pendingPermissionDenials: null,
+        pendingChatMedia: [],
         sharedContextInjected: false,
+        superpowersContextInjected: false,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         serverBacked: true,
@@ -3165,9 +4211,13 @@ Discord Main Gateway:
       this.pendingContextReminders.delete(sessionId);
       this.processes.set(sessionId, claudeProcess);
 
-      opencodeServer.subscribe(remoteId, (evt) => {
-        this.translateOpencodeServerEvent(sessionId, evt);
-      });
+      opencodeServer.subscribe(
+        remoteId,
+        (evt) => {
+          this.translateOpencodeServerEvent(sessionId, evt);
+        },
+        userId
+      );
 
       db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
         'running',
@@ -3177,37 +4227,34 @@ Discord Main Gateway:
       return;
     }
 
-    if (cliProvider === 'vibe') {
-      // Mistral Vibe takes its prompt via argv (-p TEXT) and exits after the turn.
-      // There is no useful child process to spawn until the first user message
-      // arrives — so we register a virtual process and respawn on every sendMessage.
-      const vibeBaseHome = providerConfig.credentialsPath.replace('~', os.homedir());
-      const vibeSessionHome = path.join(vibeBaseHome, 'webui-sessions', sessionId);
-      try {
-        await fs.mkdir(vibeSessionHome, { recursive: true });
-      } catch (err) {
-        console.error(`[VIBE] Failed to create VIBE_HOME ${vibeSessionHome}:`, err);
+    if (cliProvider === 'kimi') {
+      const providerConfig = CLI_PROVIDERS.kimi;
+      const persistedSessionId = session.claude_session_id || undefined;
+      const shouldInjectStaticBootstrap = shouldInjectCodexStaticBootstrap(persistedSessionId);
+      const extraEnv: Record<string, string> = {
+        ...buildIntegrationEnv(),
+        ...buildAndroidDeviceEnvForSession(sessionId, userId),
+      };
+      const child = spawnManagedProcess(providerConfig.command, ['acp'], {
+        cwd: session.working_directory,
+        env: {
+          ...process.env,
+          ...extraEnv,
+          WEBUI_SESSION_ID: sessionId,
+          WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+          WEBUI_PROJECT_PATH: session.working_directory,
+          WEBUI_HOOK_SECRET: config.hookSecret,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      if (!child.stdin || !child.stdout) {
+        terminateManagedProcess(child);
+        throw new Error('Kimi ACP process did not expose stdin/stdout');
       }
-      // Seed per-session config.toml from the global one so skill_paths and any
-      // user customization carry over. Vibe writes its own copy on first run
-      // otherwise — and that fresh copy loses our skill_paths override.
-      await seedVibeSessionConfig(vibeBaseHome, vibeSessionHome, selectedModel, selectedReasoning);
-      // On resume (or after a server restart), prime the dedupe set with every
-      // message_id vibe has already persisted on disk so `--continue`-driven
-      // history replays don't re-emit prior turns to the frontend.
-      const seenIds = await loadVibeSeenMessageIds(vibeSessionHome);
 
-      console.log(`[SESSION] ========== Starting Session (vibe) ==========`);
-      console.log(`[SESSION] Session ID: ${sessionId}`);
-      console.log(`[SESSION] VIBE_HOME: ${vibeSessionHome}`);
-      console.log(`[SESSION] Working directory: ${session.working_directory}`);
-      console.log(`[SESSION] Model: ${selectedModel ?? '(default)'}`);
-      console.log(`[SESSION] Resuming: ${isResuming}`);
-      console.log(`[SESSION] ==============================================`);
-
-      const virtualProc = createVirtualChildProcess();
       const claudeProcess: ClaudeProcess = {
-        process: virtualProc,
+        process: child,
         sessionId,
         cliProvider,
         userId,
@@ -3225,8 +4272,8 @@ Discord Main Gateway:
         currentAgentType: null,
         currentAgentDescription: null,
         subagentRuns: new Map(),
-        model: selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel || 'unknown',
-        contextWindow: contextWindowFor(selectedModel || CLI_PROVIDERS[cliProvider]?.defaultModel),
+        model: selectedModel || providerConfig.defaultModel || 'unknown',
+        contextWindow: contextWindowFor(selectedModel || providerConfig.defaultModel),
         turnInputTokens: 0,
         turnCacheReadTokens: 0,
         turnCacheCreationTokens: 0,
@@ -3245,35 +4292,144 @@ Discord Main Gateway:
         lastUserMessage: null,
         lastAttachments: null,
         pendingPermissionDenials: null,
-        sharedContextInjected: false,
+        pendingChatMedia: [],
+        sharedContextInjected: !shouldInjectStaticBootstrap,
+        superpowersContextInjected: !shouldInjectStaticBootstrap,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
-        vibeIdle: true,
-        vibeHome: vibeSessionHome,
-        vibeToolNames: new Map(),
-        vibeSeenMessageIds: seenIds,
+        kimiIdle: true,
+        kimiQueuedTurns: [],
+        kimiQueueDraining: false,
+        kimiCompletedTools: new Set(),
+        emittedTools: new Set(),
       };
 
       this.pendingContextReminders.delete(sessionId);
       this.processes.set(sessionId, claudeProcess);
 
-      db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-        'running',
-        sessionId
+      child.stderr?.on('data', (data: Buffer) => {
+        console.error(`Kimi ACP stderr [${sessionId}]:`, data.toString());
+      });
+      child.on('exit', (exitCode) => {
+        console.log(`[KIMI ACP] Process for session ${sessionId} exited with code ${exitCode}`);
+        const managedProc = this.processes.get(sessionId);
+        if (managedProc !== claudeProcess) return;
+        if (managedProc.streamingText.trim()) {
+          this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
+          managedProc.streamingText = '';
+        }
+        this.io.to(`session:${sessionId}`).emit('session:thinking', {
+          sessionId,
+          isThinking: false,
+        });
+        if (exitCode !== 0 && exitCode !== null) {
+          this.io.to(`session:${sessionId}`).emit('session:error', {
+            sessionId,
+            error: `Kimi ACP exited unexpectedly (code ${exitCode}).`,
+          });
+        }
+        this.cleanupProcess(sessionId, claudeProcess);
+      });
+      child.on('error', (error) => {
+        console.error(`[KIMI ACP] Process error [${sessionId}]:`, error);
+        if (this.processes.get(sessionId) !== claudeProcess) return;
+        this.io.to(`session:${sessionId}`).emit('session:error', {
+          sessionId,
+          error: `Kimi ACP failed: ${error.message}`,
+        });
+        this.cleanupProcess(sessionId, claudeProcess);
+      });
+
+      const acpClient: AcpClient = {
+        requestPermission: (params) => this.handleKimiAcpPermission(claudeProcess, params),
+        sessionUpdate: (params) => this.handleKimiAcpUpdate(sessionId, claudeProcess, params),
+      };
+      const connection = new ClientSideConnection(
+        () => acpClient,
+        ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout))
       );
-      this.emitStatus(sessionId, { sessionId, status: 'running' });
-      return;
+      claudeProcess.kimiAcpConnection = connection;
+
+      try {
+        const initialized = await connection.initialize({
+          protocolVersion: ACP_PROTOCOL_VERSION,
+          clientInfo: { name: 'Plum Code WebUI', version: '1' },
+          clientCapabilities: {},
+        });
+        console.log(
+          `[KIMI ACP] Connected [${sessionId}] agent=${initialized.agentInfo?.name || 'Kimi'} version=${initialized.agentInfo?.version || 'unknown'}`
+        );
+
+        let nativeSessionId = persistedSessionId;
+        let configOptions: AcpSessionConfigOption[] | null | undefined;
+        if (nativeSessionId) {
+          try {
+            const resumed = await connection.resumeSession({
+              sessionId: nativeSessionId,
+              cwd: session.working_directory,
+              additionalDirectories: allowedDirs,
+              mcpServers: [],
+            });
+            configOptions = resumed.configOptions;
+          } catch (error) {
+            if (!isKimiSessionNotFoundError(String(error))) throw error;
+            console.warn(
+              `[KIMI ACP] Native session ${nativeSessionId} is missing; creating a fresh session [${sessionId}]`
+            );
+            nativeSessionId = undefined;
+          }
+        }
+
+        if (!nativeSessionId) {
+          const created = await connection.newSession({
+            cwd: session.working_directory,
+            additionalDirectories: allowedDirs,
+            mcpServers: [],
+          });
+          nativeSessionId = created.sessionId;
+          configOptions = created.configOptions;
+        }
+
+        claudeProcess.kimiAcpSessionId = nativeSessionId;
+        claudeProcess.claudeSessionId = nativeSessionId;
+        claudeProcess.kimiAcpConfigOptions = configOptions || [];
+        await this.configureKimiAcpSession(claudeProcess);
+
+        db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(
+          nativeSessionId,
+          sessionId
+        );
+        db.prepare(
+          'UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).run('running', sessionId);
+        this.emitStatus(sessionId, { sessionId, status: 'running' });
+
+        console.log(`[SESSION] ========== Starting Session (kimi ACP) ==========`);
+        console.log(`[SESSION] Session ID: ${sessionId}`);
+        console.log(`[SESSION] Kimi session ID: ${nativeSessionId}`);
+        console.log(`[SESSION] Working directory: ${session.working_directory}`);
+        console.log(`[SESSION] Mode: ${effectiveMode}`);
+        console.log(`[SESSION] Model: ${claudeProcess.model}`);
+        console.log(`[SESSION] Resuming: ${Boolean(persistedSessionId)}`);
+        console.log(`[SESSION] ==============================================`);
+        return;
+      } catch (error) {
+        terminateManagedProcess(child);
+        this.cleanupProcess(sessionId, claudeProcess);
+        throw error;
+      }
     }
 
     if (cliProvider === 'codex') {
-      // Codex `exec` is single-shot and important launch parameters such as
-      // `--image` can only be supplied at process spawn time. Register the WebUI
-      // session as running, but delay the actual child process until sendMessage()
-      // has the user prompt and attachments. This gives first-turn image input
-      // the same behavior as later turns.
+      // Codex `exec` is single-shot per turn. Register the WebUI session as
+      // running, but delay the actual child process until sendMessage() has the
+      // user prompt.
       const persistedCodexSessionId = session.claude_session_id || undefined;
+      const shouldInjectStaticBootstrap = shouldInjectCodexStaticBootstrap(persistedCodexSessionId);
+      const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
       const codexTokenBaseline = persistedCodexSessionId
-        ? getCodexUsageBaselineFromDatabase(sessionId)
+        ? readCodexThreadCumulativeUsage(codexHome, persistedCodexSessionId) ||
+          getCodexUsageBaselineFromDatabase(sessionId)
         : undefined;
 
       console.log(`[SESSION] ========== Starting Session (codex idle) ==========`);
@@ -3325,7 +4481,9 @@ Discord Main Gateway:
         lastUserMessage: null,
         lastAttachments: null,
         pendingPermissionDenials: null,
-        sharedContextInjected: false,
+        pendingChatMedia: [],
+        sharedContextInjected: !shouldInjectStaticBootstrap,
+        superpowersContextInjected: !shouldInjectStaticBootstrap,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         codexIdle: true,
@@ -3347,7 +4505,7 @@ Discord Main Gateway:
       return;
     }
 
-    if (cliProvider === 'claude') {
+    if (isClaudeTransportProvider(cliProvider)) {
       // Build command args for stream-json mode (hooks-based permissions)
       // IMPORTANT: Always use --dangerously-skip-permissions so our hook is the ONLY permission layer
       // Without this, Claude's internal permission system would still prompt after our hook approves
@@ -3433,18 +4591,23 @@ Discord Main Gateway:
     console.log(`[SESSION] ==============================================`);
 
     const extraEnv: Record<string, string> = {};
-    if (cliProvider === 'claude') {
-      extraEnv.CLAUDE_CONFIG_HOME = configHome;
+    if (cliProvider === 'pi' && piAgentDir) {
+      extraEnv.PI_CODING_AGENT_DIR = piAgentDir;
+      extraEnv.PI_TELEMETRY = '0';
+      extraEnv.PI_SKIP_VERSION_CHECK = '1';
+      Object.assign(extraEnv, buildOpenCodeProviderCredentialEnv(userId));
     }
     extraEnv.WEBUI_SESSION_MODE = effectiveMode;
     extraEnv.WEBUI_CONFIG_HOME = configHome;
     Object.assign(extraEnv, buildIntegrationEnv());
     Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, userId));
     // Use regular spawn for CLI providers
-    const proc: ChildProcess = cpSpawn(providerConfig.command, args, {
+    const proc: ChildProcess = spawnManagedProcess(providerConfig.command, args, {
       cwd: session.working_directory,
       env: {
-        ...process.env,
+        ...(isClaudeTransportProvider(cliProvider)
+          ? buildClaudeTransportEnv(cliProvider, userId, configHome)
+          : process.env),
         ...extraEnv,
         // Pass session ID so provider integrations can attribute image generation and permissions.
         WEBUI_SESSION_ID: sessionId,
@@ -3507,7 +4670,9 @@ Discord Main Gateway:
       lastUserMessage: null,
       lastAttachments: null,
       pendingPermissionDenials: null,
+      pendingChatMedia: [],
       sharedContextInjected: false,
+      superpowersContextInjected: false,
       modePromptInjected: null,
       lastContextLimitAt: undefined,
     };
@@ -3531,15 +4696,33 @@ Discord Main Gateway:
       this.handleJsonOutput(sessionId, data.toString());
     });
 
+    if (cliProvider === 'pi') {
+      // Capture Pi's native session id/model after RPC initialization. The
+      // response is handled by translatePiMessage and persisted for resume.
+      setTimeout(() => {
+        const managed = this.processes.get(sessionId);
+        if (managed === claudeProcess && managed.process.stdin?.writable) {
+          managed.process.stdin.write(
+            `${JSON.stringify({ id: 'webui-init', type: 'get_state' })}\n`
+          );
+        }
+      }, 150);
+    }
+
     // Handle stderr
     proc.stderr?.on('data', (data: Buffer) => {
-      console.error(`Claude stderr [${sessionId}]:`, data.toString());
+      console.error(`${providerConfig.name} stderr [${sessionId}]:`, data.toString());
     });
 
     proc.on('exit', (exitCode) => {
-      console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
+      console.log(
+        `${providerConfig.name} process for session ${sessionId} exited with code ${exitCode}`
+      );
       const managedProc = this.processes.get(sessionId);
       if (managedProc) {
+        // A Codex exec killed mid-turn never emits turn.completed, so book what
+        // it already spent before the process state is torn down.
+        this.flushCodexUsageOnExit(sessionId, managedProc);
         // For providers that don't send a result message,
         // save any remaining streaming text and stop thinking indicator
         if (managedProc.streamingText?.trim().length) {
@@ -3552,11 +4735,11 @@ Discord Main Gateway:
           isThinking: false,
         });
       }
-      this.cleanupProcess(sessionId);
+      this.cleanupProcess(sessionId, claudeProcess);
     });
 
     proc.on('error', (err) => {
-      console.error(`Claude process error [${sessionId}]:`, err);
+      console.error(`${providerConfig.name} process error [${sessionId}]:`, err);
       this.notifyDiscordSessionEvent(sessionId, {
         eventType: 'session.error',
         severity: 'error',
@@ -3564,7 +4747,7 @@ Discord Main Gateway:
         summary: err.message,
       });
 
-      this.cleanupProcess(sessionId);
+      this.cleanupProcess(sessionId, claudeProcess);
     });
   }
 
@@ -3583,6 +4766,15 @@ Discord Main Gateway:
 
       try {
         const raw = JSON.parse(line) as unknown;
+        if (proc.cliProvider === 'pi') {
+          const translated = this.translatePiMessage(sessionId, raw);
+          if (Array.isArray(translated)) {
+            for (const msg of translated) this.processStreamMessage(sessionId, msg);
+          } else if (translated) {
+            this.processStreamMessage(sessionId, translated);
+          }
+          continue;
+        }
         if (proc.cliProvider === 'codex') {
           const translated = this.translateCodexMessage(sessionId, raw);
           if (Array.isArray(translated)) {
@@ -3594,25 +4786,19 @@ Discord Main Gateway:
           }
           continue;
         }
-        if (proc.cliProvider === 'vibe') {
-          const translated = this.translateVibeMessage(sessionId, raw);
-          if (Array.isArray(translated)) {
-            for (const msg of translated) {
-              this.processStreamMessage(sessionId, msg);
-            }
-          } else if (translated) {
-            this.processStreamMessage(sessionId, translated);
-          }
+        if (proc.cliProvider === 'kimi') {
+          this.processKimiLine(sessionId, proc, raw);
           continue;
         }
         this.processStreamMessage(sessionId, raw as StreamJsonMessage);
       } catch (e) {
-        // Not valid JSON, emit as raw output for debugging (skip noisy codex/opencode/vibe prompts)
+        // Not valid JSON, emit as raw output for debugging (skip noisy Codex/OpenCode output)
         console.log(`Non-JSON output [${sessionId}]:`, line);
         if (
           proc.cliProvider !== 'codex' &&
           proc.cliProvider !== 'opencode' &&
-          proc.cliProvider !== 'vibe'
+          proc.cliProvider !== 'pi' &&
+          proc.cliProvider !== 'kimi'
         ) {
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
@@ -3622,6 +4808,311 @@ Discord Main Gateway:
         }
       }
     }
+  }
+
+  /** Translate Pi RPC events into the WebUI's existing streaming vocabulary. */
+  private translatePiMessage(
+    sessionId: string,
+    raw: unknown
+  ): StreamJsonMessage | StreamJsonMessage[] | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const event = raw as Record<string, unknown>;
+    const proc = this.processes.get(sessionId);
+    if (!proc || proc.cliProvider !== 'pi') return null;
+
+    const type = typeof event.type === 'string' ? event.type : '';
+    const message = isRecordValue(event.message) ? event.message : null;
+
+    // Any turn-progress event means Pi picked the work back up on its own, so a
+    // pending post-compaction nudge would only duplicate work.
+    if (PI_TURN_PROGRESS_EVENTS.has(type)) this.clearPiCompactResumeTimer(proc);
+
+    if (type === 'response') {
+      const success = event.success !== false;
+      const command = typeof event.command === 'string' ? event.command : '';
+      const data = isRecordValue(event.data) ? event.data : null;
+      if (!success) {
+        const error =
+          typeof event.error === 'string'
+            ? event.error
+            : isRecordValue(event.error) && typeof event.error.message === 'string'
+              ? event.error.message
+              : `Pi RPC command ${command || 'unknown'} failed`;
+        this.io.to(`session:${sessionId}`).emit('session:error', { sessionId, error });
+        return null;
+      }
+      if (command === 'get_state' && data) {
+        const nativeSessionId =
+          typeof data.sessionId === 'string'
+            ? data.sessionId
+            : typeof data.sessionFile === 'string'
+              ? path.basename(data.sessionFile, path.extname(data.sessionFile))
+              : null;
+        if (nativeSessionId && nativeSessionId !== proc.claudeSessionId) {
+          proc.claudeSessionId = nativeSessionId;
+          getDatabase()
+            .prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?')
+            .run(nativeSessionId, sessionId);
+        }
+        const stateModel = isRecordValue(data.model) ? data.model : null;
+        if (stateModel) {
+          const provider = typeof stateModel.provider === 'string' ? stateModel.provider : '';
+          const modelId = typeof stateModel.id === 'string' ? stateModel.id : '';
+          const fullModel = provider && modelId ? `${provider}/${modelId}` : modelId;
+          if (fullModel) proc.model = fullModel;
+          if (typeof stateModel.contextWindow === 'number' && stateModel.contextWindow > 0) {
+            proc.contextWindow = stateModel.contextWindow;
+          }
+        }
+      }
+      return null;
+    }
+
+    if (type === 'agent_start') {
+      proc.isStreaming = true;
+      proc.currentActivitySummary = 'Agent working';
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: true,
+      });
+      return null;
+    }
+
+    if (type === 'message_start' && message?.role === 'assistant') {
+      proc.isStreaming = true;
+      proc.streamingText = '';
+      proc.currentActivitySummary = 'Writing response';
+      return { type: 'content_block_start' };
+    }
+
+    if (type === 'message_update') {
+      const update = isRecordValue(event.assistantMessageEvent)
+        ? event.assistantMessageEvent
+        : null;
+      if (update?.type === 'text_delta' && typeof update.delta === 'string' && update.delta) {
+        return { type: 'content_block_delta', delta: { type: 'text_delta', text: update.delta } };
+      }
+      return null;
+    }
+
+    if (type === 'message_end' && message?.role === 'assistant') {
+      this.capturePiUsage(proc, message);
+      if (proc.streamingText.trim()) return { type: 'content_block_stop' };
+      const content = piMessageText(message.content);
+      return content
+        ? {
+            type: 'assistant',
+            message: { role: 'assistant', content },
+          }
+        : null;
+    }
+
+    if (type === 'tool_execution_start') {
+      const toolCallId =
+        typeof event.toolCallId === 'string' ? event.toolCallId : `pi-tool-${nanoid()}`;
+      const toolName = typeof event.toolName === 'string' ? event.toolName : 'unknown';
+      const args = event.args;
+      proc.currentToolId = toolCallId;
+      proc.currentToolName = toolName;
+      proc.pendingToolResults.set(toolCallId, { toolName, input: args });
+
+      if (toolName.toLowerCase() === 'subagent' && isRecordValue(args)) {
+        const firstTask =
+          Array.isArray(args.tasks) && isRecordValue(args.tasks[0]) ? args.tasks[0] : null;
+        const agentType =
+          typeof args.agent === 'string'
+            ? args.agent
+            : firstTask && typeof firstTask.agent === 'string'
+              ? firstTask.agent
+              : 'subagent';
+        const description =
+          typeof args.task === 'string'
+            ? args.task
+            : firstTask && typeof firstTask.task === 'string'
+              ? firstTask.task
+              : undefined;
+        this.startSubagentRun(sessionId, proc, {
+          agentId: toolCallId,
+          agentType,
+          description,
+          toolId: toolCallId,
+        });
+      }
+
+      return { type: 'tool_use', tool_use: { id: toolCallId, name: toolName } };
+    }
+
+    if (type === 'tool_execution_end') {
+      const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : '';
+      const pending = toolCallId ? proc.pendingToolResults.get(toolCallId) : undefined;
+      const result = piToolResultText(event.result);
+      const isError = event.isError === true;
+      this.emitToolUse(sessionId, {
+        sessionId,
+        toolId: toolCallId || undefined,
+        toolName:
+          pending?.toolName || (typeof event.toolName === 'string' ? event.toolName : 'unknown'),
+        status: isError ? 'error' : 'completed',
+        input: pending?.input,
+        result: result || undefined,
+      });
+      if (pending?.toolName.toLowerCase() === 'subagent') {
+        this.completeSubagentRun(
+          sessionId,
+          proc,
+          { toolId: toolCallId },
+          isError ? { error: result || 'Pi subagent failed' } : { result }
+        );
+      }
+      if (toolCallId) proc.pendingToolResults.delete(toolCallId);
+      proc.currentToolId = null;
+      proc.currentToolName = null;
+      return null;
+    }
+
+    if (type === 'turn_end') {
+      if (message) this.capturePiUsage(proc, message);
+      proc.totalInputTokens += proc.turnInputTokens;
+      proc.totalOutputTokens += proc.turnOutputTokens;
+      proc.cacheReadTokens += proc.turnCacheReadTokens;
+      proc.cacheCreationTokens += proc.turnCacheCreationTokens;
+      const usage = message && isRecordValue(message.usage) ? message.usage : null;
+      const cost = usage && isRecordValue(usage.cost) ? usage.cost : null;
+      if (cost && typeof cost.total === 'number' && Number.isFinite(cost.total)) {
+        proc.totalCostUsd += Math.max(0, cost.total);
+      }
+      proc.isStreaming = false;
+      proc.piTurnInFlight = false;
+      proc.piCompactContinuations = 0;
+      return { type: 'result' };
+    }
+
+    if (type === 'compaction_start') {
+      const reason = piCompactionReason(event.reason);
+      this.emitCompact(sessionId, {
+        sessionId,
+        message:
+          reason === 'manual'
+            ? 'Pi is compacting session context.'
+            : `Pi is compacting session context (${reason}).`,
+        reason: reason === 'overflow' ? 'context-limit' : 'auto-compact',
+      });
+      return null;
+    }
+
+    if (type === 'compaction_end') {
+      return this.handlePiCompactionEnd(sessionId, proc, event);
+    }
+
+    if (type === 'agent_end') {
+      proc.isStreaming = false;
+      return null;
+    }
+
+    return null;
+  }
+
+  private clearPiCompactResumeTimer(proc: ClaudeProcess): void {
+    if (!proc.piCompactResumeTimer) return;
+    clearTimeout(proc.piCompactResumeTimer);
+    proc.piCompactResumeTimer = undefined;
+  }
+
+  /**
+   * Decide whether Pi needs a nudge after compaction.
+   *
+   * Pi resumes by itself in the overflow-recovery path (`willRetry`), and a
+   * manual `/compact` has no turn to resume. Everything else used to leave the
+   * turn dead with the thinking indicator stuck on: the compaction consumed the
+   * turn, and the user's actual request was never finished. Schedule a nudge and
+   * cancel it the moment Pi shows any sign of progress on its own.
+   */
+  private handlePiCompactionEnd(
+    sessionId: string,
+    proc: ClaudeProcess,
+    event: Record<string, unknown>
+  ): StreamJsonMessage | null {
+    const reason = piCompactionReason(event.reason);
+    const emitReason = reason === 'overflow' ? 'context-limit' : 'auto-compact';
+    const stopThinking = () =>
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+
+    if (event.aborted === true) {
+      this.clearPiCompactResumeTimer(proc);
+      proc.piTurnInFlight = false;
+      proc.piCompactContinuations = 0;
+      proc.isStreaming = false;
+      this.emitCompact(sessionId, {
+        sessionId,
+        message: 'Pi compaction was aborted; the turn did not continue.',
+        reason: emitReason,
+        error: typeof event.errorMessage === 'string' ? event.errorMessage : undefined,
+      });
+      stopThinking();
+      return null;
+    }
+
+    this.resetCurrentContextUsage(proc);
+
+    // Overflow recovery: Pi retries the aborted turn itself.
+    if (event.willRetry === true) return null;
+
+    if (!proc.piTurnInFlight) {
+      // Manual `/compact` between turns. Nothing to resume, but the thinking
+      // indicator was switched on when the command was written to stdin.
+      stopThinking();
+      return null;
+    }
+
+    const attempted = proc.piCompactContinuations ?? 0;
+    if (attempted >= PI_MAX_COMPACT_CONTINUATIONS) {
+      console.warn(
+        `[PI] Compaction continue limit reached after ${attempted} attempts [${sessionId}]`
+      );
+      proc.piTurnInFlight = false;
+      proc.isStreaming = false;
+      this.emitCompact(sessionId, {
+        sessionId,
+        message: `Pi compacted ${attempted} times without finishing the turn. Stopped auto-continuing — send a follow-up to resume.`,
+        reason: emitReason,
+      });
+      stopThinking();
+      return null;
+    }
+
+    this.clearPiCompactResumeTimer(proc);
+    proc.piCompactResumeTimer = setTimeout(() => {
+      const current = this.processes.get(sessionId);
+      if (!current || current !== proc || current.cliProvider !== 'pi') return;
+      current.piCompactResumeTimer = undefined;
+      if (!current.piTurnInFlight) return;
+      current.piCompactContinuations = (current.piCompactContinuations ?? 0) + 1;
+      console.log(
+        `[PI] Resuming turn after ${reason} compaction (attempt ${current.piCompactContinuations}) [${sessionId}]`
+      );
+      current.process.stdin?.write(formatInputMessage('pi', PI_COMPACT_CONTINUE_PROMPT));
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: true,
+      });
+    }, PI_COMPACT_RESUME_DELAY_MS);
+
+    return null;
+  }
+
+  private capturePiUsage(proc: ClaudeProcess, message: Record<string, unknown>): void {
+    const usage = isRecordValue(message.usage) ? message.usage : null;
+    if (!usage) return;
+    proc.turnInputTokens = piUsageNumber(usage.input);
+    proc.turnOutputTokens = piUsageNumber(usage.output);
+    proc.turnCacheReadTokens = piUsageNumber(usage.cacheRead);
+    proc.turnCacheCreationTokens = piUsageNumber(usage.cacheWrite);
+    const provider = typeof message.provider === 'string' ? message.provider : '';
+    const modelId = typeof message.model === 'string' ? message.model : '';
+    if (modelId) proc.model = provider ? `${provider}/${modelId}` : modelId;
   }
 
   /**
@@ -3670,6 +5161,10 @@ Discord Main Gateway:
       agentType?: string;
       subagentType?: string;
       description?: string;
+      call_id?: string;
+      status?: string;
+      saved_path?: string;
+      revised_prompt?: string;
       result?: unknown;
       error?: unknown;
       // item payloads
@@ -3754,6 +5249,30 @@ Discord Main Gateway:
     const eventType = (data.type || '').replace(/\//g, '.').toLowerCase();
 
     switch (eventType) {
+      // ── Generated image output ─────────────────────────────────────────
+      // Codex imagegen writes the final raster under its managed
+      // generated_images root and reports that path in this structured event.
+      // Do not infer output media from imageView/custom tool output: imageView
+      // represents an input the model inspected, not an artifact for the user.
+      case 'image_generation_end':
+      case 'image.generation.end':
+      case 'imagegenerationend': {
+        if (data.status !== 'completed' || !data.saved_path) return null;
+        const codexProc = this.processes.get(sessionId);
+        if (!codexProc || codexProc.cliProvider !== 'codex') return null;
+        const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+        const pending = pendingMediaFromAllowedFile({
+          filePath: data.saved_path,
+          allowedRoot: path.join(codexHome, 'generated_images'),
+          filename: path.basename(data.saved_path),
+          altText: data.revised_prompt?.slice(0, 1000),
+          source: 'provider',
+          sourceId: data.call_id,
+        });
+        if (pending) appendPendingChatMedia(codexProc, pending);
+        return null;
+      }
+
       // ── Thread lifecycle ────────────────────────────────────────────────
       case 'session_meta':
       case 'thread.started': {
@@ -3930,88 +5449,36 @@ Discord Main Gateway:
           codexProc.currentAgentDescription = null;
           codexProc.currentActivitySummary = null;
         }
-        if (data.usage && codexProc) {
-          // Codex's `turn.completed.usage` reports CUMULATIVE counts in resume
-          // mode (each respawn loads the full session JSONL — totals grow across
-          // turns). Sending the raw values to usage_history multiplied analytics
-          // tokens 10-100x and produced single rows with 5M+ cached_input_tokens
-          // (impossible for a single 256k-context API call).
-          //
-          // Solution in native resume mode: track the last-reported totals for
-          // the same Codex session and compute per-turn deltas. Plain `codex exec`
-          // starts a fresh Codex session, so its usage is already per exec turn
-          // and must not be delta-adjusted against the previous WebUI turn.
-          // Edge cases:
-          //   - First call (no snapshot): use raw values
-          //   - Any counter decrease (counter reset / fresh codex spawn after
-          //     session detach): use raw values (don't write a negative delta)
-          //   - Monotonic increase: write delta
-          //
-          // Schema difference vs Claude:
-          //   Codex:  input_tokens INCLUDES cached_input_tokens (overlapping)
-          //   Claude: input_tokens and cache_read_input_tokens are disjoint
-          //
-          // After computing deltas we split into the disjoint pair Claude-style
-          // so contextWindow math + usage_history rows stay consistent.
-          //
-          // Reasoning output tokens are billed like regular output upstream, so
-          // we fold them into output_tokens for cost calculation.
-          const totalInput = data.usage.input_tokens ?? 0;
-          const totalCached = data.usage.cached_input_tokens ?? 0;
-          const totalOutput =
-            (data.usage.output_tokens ?? 0) + (data.usage.reasoning_output_tokens ?? 0);
+        // `turn.failed` carries no usage payload, so an aborted turn used to
+        // book nothing at all while still costing the full context. Recover the
+        // counters from Codex's own thread state and record them without
+        // synthesizing a `result` — the turn did not succeed.
+        if (!data.usage && codexProc) {
+          this.flushCodexUsageOnExit(sessionId, codexProc);
+          return null;
+        }
 
-          const prev = codexProc.codexLastReportedTokens;
-          const useResumeDelta = !!codexProc.codexCurrentExecUsedResume;
-          let deltaInput: number;
-          let deltaCached: number;
-          let deltaOutput: number;
-          if (!useResumeDelta) {
-            // Plain `codex exec` starts a fresh Codex CLI session. Its usage is
-            // already scoped to this exec turn, so subtracting the prior WebUI
-            // turn corrupts analytics. Only native `exec resume <id>` reports
-            // monotonically cumulative counters for the same Codex session.
-            deltaInput = totalInput;
-            deltaCached = totalCached;
-            deltaOutput = totalOutput;
-          } else if (
-            !prev ||
-            totalInput < prev.input ||
-            totalCached < prev.cached ||
-            totalOutput < prev.output
-          ) {
-            // First call OR counter reset → take values as-is. The reset case
-            // includes the very first turn after a fresh `codex exec` (no resume).
-            deltaInput = totalInput;
-            deltaCached = totalCached;
-            deltaOutput = totalOutput;
-          } else {
-            deltaInput = totalInput - prev.input;
-            deltaCached = totalCached - prev.cached;
-            deltaOutput = totalOutput - prev.output;
-          }
-          codexProc.codexLastReportedTokens = {
-            input: totalInput,
-            cached: totalCached,
-            output: totalOutput,
-          };
+        // Reasoning output tokens are billed like regular output upstream, so
+        // fold them into output_tokens for cost calculation.
+        const turnUsage: CodexUsageCounters | null =
+          data.usage && codexProc
+            ? {
+                input: data.usage.input_tokens ?? 0,
+                cached: data.usage.cached_input_tokens ?? 0,
+                output: (data.usage.output_tokens ?? 0) + (data.usage.reasoning_output_tokens ?? 0),
+              }
+            : null;
 
-          // Sanity cap: even cumulative-delta values shouldn't exceed roughly 4x
-          // the context window in a single turn. If they do, clamp to keep
-          // analytics sane. Caps are generous (1M each) so legitimate large turns
-          // still pass through.
-          const PER_TURN_CAP = 1_000_000;
-          deltaInput = Math.min(deltaInput, PER_TURN_CAP);
-          deltaCached = Math.min(deltaCached, PER_TURN_CAP);
-          deltaOutput = Math.min(deltaOutput, PER_TURN_CAP);
-
-          // Split into disjoint non-cached + cached for Claude-shape compatibility.
-          const nonCachedInput = Math.max(deltaInput - deltaCached, 0);
-
-          codexProc.turnInputTokens = nonCachedInput;
-          codexProc.turnOutputTokens = deltaOutput;
-          codexProc.turnCacheReadTokens = deltaCached;
-          codexProc.turnCacheCreationTokens = 0; // Codex doesn't surface cache writes.
+        if (turnUsage && codexProc) {
+          // Delta math, subagent-thread rollup and the Codex→Claude token-shape
+          // split all live in applyCodexTurnUsage so the exit-time flush below
+          // books an interrupted turn exactly the same way.
+          const {
+            nonCachedInput,
+            cached: deltaCached,
+            output: deltaOutput,
+          } = this.applyCodexTurnUsage(sessionId, codexProc, turnUsage);
+          const deltaInput = nonCachedInput + deltaCached;
 
           // If this Codex version did not emit token_count.last_token_usage, use
           // Codex's own persisted thread meter before falling back to billing
@@ -4540,141 +6007,6 @@ Discord Main Gateway:
   }
 
   /**
-   * Translate a Mistral Vibe streaming JSON message (one LLMMessage per line).
-   *
-   * Schema (from mistral-vibe/core/output_formatters.py StreamingJsonOutputFormatter):
-   *   { role: 'assistant' | 'tool' | 'user' | 'system',
-   *     content: string | null,
-   *     reasoning_content?: string | null,
-   *     tool_calls?: [{ id, function: { name, arguments }, type }] | null,
-   *     name?: string | null,       // tool name on tool-result messages
-   *     tool_call_id?: string,      // tool result correlation id
-   *     message_id?: string,
-   *     usage?: { input_tokens, output_tokens, ... } }
-   */
-  private translateVibeMessage(
-    sessionId: string,
-    raw: unknown
-  ): StreamJsonMessage | StreamJsonMessage[] | null {
-    if (!raw || typeof raw !== 'object') return null;
-    const proc = this.processes.get(sessionId);
-    if (!proc) return null;
-    const data = raw as {
-      role?: string;
-      content?: string | null;
-      reasoning_content?: string | null;
-      tool_calls?: Array<{
-        id?: string;
-        function?: { name?: string; arguments?: string };
-        type?: string;
-      }> | null;
-      name?: string | null;
-      tool_call_id?: string;
-      message_id?: string;
-      usage?: {
-        input_tokens?: number;
-        output_tokens?: number;
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        cached_tokens?: number;
-      };
-    };
-
-    const emissions: StreamJsonMessage[] = [];
-    proc.vibeToolNames ??= new Map();
-    proc.vibeSeenMessageIds ??= new Set();
-
-    // Dedup: `vibe --continue` replays the entire prior conversation on stdout
-    // before emitting the new turn. Skip any message we've already forwarded.
-    // System/user echoes have no actionable side-effect for us regardless, but
-    // we still mark them as seen so the set tracks vibe's monotonic id history.
-    if (data.message_id) {
-      if (proc.vibeSeenMessageIds.has(data.message_id)) {
-        return null;
-      }
-      proc.vibeSeenMessageIds.add(data.message_id);
-    }
-
-    // Reasoning content → thinking indicator with summary
-    if (typeof data.reasoning_content === 'string' && data.reasoning_content.trim()) {
-      const summary = this.formatCodexReasoning(data.reasoning_content);
-      proc.currentActivitySummary = summary || 'Thinking';
-      this.io.to(`session:${sessionId}`).emit('session:thinking', {
-        sessionId,
-        isThinking: true,
-        message: summary || undefined,
-      });
-    }
-
-    // Assistant text → emit as assistant content
-    if (data.role === 'assistant' && typeof data.content === 'string' && data.content) {
-      proc.currentActivitySummary = 'Writing response';
-      emissions.push({
-        type: 'assistant',
-        message: {
-          role: 'assistant',
-          content: data.content,
-        },
-      });
-    }
-
-    // Tool calls fired by the model
-    if (data.role === 'assistant' && Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
-      for (const call of data.tool_calls) {
-        const toolName = call.function?.name || 'unknown';
-        const callId = call.id || `vibe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        let parsedArgs: unknown = call.function?.arguments;
-        try {
-          if (typeof call.function?.arguments === 'string') {
-            parsedArgs = JSON.parse(call.function.arguments);
-          }
-        } catch {
-          // Keep raw string if not JSON
-        }
-        proc.vibeToolNames.set(callId, toolName);
-        this.emitToolUse(sessionId, {
-          sessionId,
-          toolName,
-          status: 'started',
-          toolId: callId,
-          input: parsedArgs,
-        });
-      }
-    }
-
-    // Tool result message (role='tool')
-    if (data.role === 'tool' && data.tool_call_id) {
-      const toolName = data.name || proc.vibeToolNames.get(data.tool_call_id) || 'unknown';
-      const output =
-        typeof data.content === 'string' ? data.content : JSON.stringify(data.content ?? '');
-      this.emitToolUse(sessionId, {
-        sessionId,
-        toolName,
-        status: 'completed',
-        toolId: data.tool_call_id,
-        result: output,
-      });
-    }
-
-    // Usage stats (vibe may include them on the final assistant message)
-    if (data.usage) {
-      const inputTokens = data.usage.input_tokens ?? data.usage.prompt_tokens ?? 0;
-      const outputTokens = data.usage.output_tokens ?? data.usage.completion_tokens ?? 0;
-      emissions.push({
-        type: 'result',
-        usage: {
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          cache_read_input_tokens: data.usage.cached_tokens ?? 0,
-          cache_creation_input_tokens: 0,
-        },
-      });
-    }
-
-    return emissions.length === 0 ? null : emissions.length === 1 ? emissions[0]! : emissions;
-  }
-
-  /**
    * Translate a single opencode SSE event into our Socket.IO event stream.
    *
    * The OpenCode server emits `message.part.updated` many times per turn — once
@@ -4833,28 +6165,7 @@ Discord Main Gateway:
       }
 
       case 'session.idle': {
-        // Turn complete: flush every unsaved OpenCode assistant message
-        // separately, then drop partial streams so the next turn starts clean.
-        const streams = proc.partStreams;
-        if (streams && streams.size > 0) {
-          this.flushAllOpenCodeAssistantMessages(sessionId, proc);
-          streams.clear();
-        }
-        proc.opencodeActiveMessageId = null;
-        proc.opencodeMessageOrder = [];
-        this.saveUsageToDatabase(sessionId, proc);
-        proc.streamingText = '';
-        proc.isStreaming = false;
-        proc.emittedTools?.clear();
-        proc.opencodeIdle = true;
-        proc.currentToolName = null;
-        proc.currentToolId = null;
-        proc.currentActivitySummary = null;
-        this.io
-          .to(`session:${sessionId}`)
-          .emit('session:thinking', { sessionId, isThinking: false });
-        this.emitQueueState(sessionId, proc);
-        void this.drainOpenCodeQueuedTurns(sessionId, proc);
+        void this.finalizeOpenCodeTurn(sessionId, proc);
         return;
       }
 
@@ -5215,13 +6526,19 @@ Discord Main Gateway:
           const cost = typeof part.cost === 'number' ? (part.cost as number) : 0;
           if (tokens) {
             proc.turnInputTokens += tokens.input ?? 0;
-            proc.turnOutputTokens += tokens.output ?? 0;
+            proc.turnOutputTokens += (tokens.output ?? 0) + (tokens.reasoning ?? 0);
             proc.turnCacheReadTokens += tokens.cache?.read ?? 0;
             proc.turnCacheCreationTokens += tokens.cache?.write ?? 0;
             proc.totalInputTokens += tokens.input ?? 0;
-            proc.totalOutputTokens += tokens.output ?? 0;
+            proc.totalOutputTokens += (tokens.output ?? 0) + (tokens.reasoning ?? 0);
             proc.cacheReadTokens += tokens.cache?.read ?? 0;
             proc.cacheCreationTokens += tokens.cache?.write ?? 0;
+            // Context is the latest model request, while turn* is billed usage
+            // summed across every tool/subagent step.
+            proc.contextInputTokens = tokens.input ?? 0;
+            proc.contextOutputTokens = (tokens.output ?? 0) + (tokens.reasoning ?? 0);
+            proc.contextCacheReadTokens = tokens.cache?.read ?? 0;
+            proc.contextCacheCreationTokens = tokens.cache?.write ?? 0;
           }
           if (cost > 0) {
             proc.previousTotalCostUsd = proc.totalCostUsd;
@@ -5262,6 +6579,67 @@ Discord Main Gateway:
 
       default:
         return;
+    }
+  }
+
+  private async finalizeOpenCodeTurn(sessionId: string, proc: ClaudeProcess): Promise<void> {
+    if (proc.opencodeUsageFinalizing) return;
+    proc.opencodeUsageFinalizing = true;
+
+    try {
+      if (proc.claudeSessionId && proc.opencodeUsageBaseline) {
+        const finalSnapshot = await opencodeServer.getUsageSnapshot(
+          proc.claudeSessionId,
+          proc.userId
+        );
+        if (finalSnapshot) {
+          const delta = subtractOpenCodeUsage(finalSnapshot, proc.opencodeUsageBaseline);
+          if (delta) {
+            const prior = {
+              input: proc.turnInputTokens,
+              output: proc.turnOutputTokens,
+              cacheRead: proc.turnCacheReadTokens,
+              cacheWrite: proc.turnCacheCreationTokens,
+            };
+            proc.turnInputTokens = delta.input;
+            proc.turnOutputTokens = delta.output + delta.reasoning;
+            proc.turnCacheReadTokens = delta.cacheRead;
+            proc.turnCacheCreationTokens = delta.cacheWrite;
+            proc.totalInputTokens += proc.turnInputTokens - prior.input;
+            proc.totalOutputTokens += proc.turnOutputTokens - prior.output;
+            proc.cacheReadTokens += proc.turnCacheReadTokens - prior.cacheRead;
+            proc.cacheCreationTokens += proc.turnCacheCreationTokens - prior.cacheWrite;
+            // Streamed cost covers only the subscribed root. Recalculate from
+            // the complete root + child usage snapshot at save time.
+            proc.turnCostUsd = undefined;
+          }
+        }
+      }
+
+      // Turn complete: flush every unsaved OpenCode assistant message
+      // separately, then drop partial streams so the next turn starts clean.
+      const streams = proc.partStreams;
+      if (streams && streams.size > 0) {
+        this.flushAllOpenCodeAssistantMessages(sessionId, proc);
+        streams.clear();
+      }
+      proc.opencodeActiveMessageId = null;
+      proc.opencodeMessageOrder = [];
+      this.emitUsage(sessionId, proc);
+      this.saveUsageToDatabase(sessionId, proc);
+    } finally {
+      proc.opencodeUsageBaseline = null;
+      proc.opencodeUsageFinalizing = false;
+      proc.streamingText = '';
+      proc.isStreaming = false;
+      proc.emittedTools?.clear();
+      proc.opencodeIdle = true;
+      proc.currentToolName = null;
+      proc.currentToolId = null;
+      proc.currentActivitySummary = null;
+      this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
+      this.emitQueueState(sessionId, proc);
+      void this.drainOpenCodeQueuedTurns(sessionId, proc);
     }
   }
 
@@ -5333,8 +6711,19 @@ Discord Main Gateway:
     Object.assign(extraEnv, buildIntegrationEnv());
     Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, proc.userId));
 
+    proc.codexDescendantUsageBaseline = this.readCodexDescendantUsage(resumeSessionId);
+    // Keep the per-thread baseline in step with the aggregate one, otherwise a
+    // resumed exec would re-book every subagent's full lifetime each turn.
+    proc.codexSubagentBaseline = new Map(
+      resumeSessionId
+        ? readCodexDescendantUsageDetail(
+            CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir()),
+            resumeSessionId
+          ).map((thread) => [thread.threadId, thread.usage] as const)
+        : []
+    );
     const execStartedAtMs = Date.now();
-    const newChildProc = cpSpawn(providerConfig.command, args, {
+    const newChildProc = spawnManagedProcess(providerConfig.command, args, {
       cwd: session.working_directory,
       env: {
         ...process.env,
@@ -5385,6 +6774,11 @@ Discord Main Gateway:
           managedProc.codexPreemptKillTimer = undefined;
         }
 
+        // Steering kills the exec with SIGINT, so turn.completed never arrives
+        // and the turn's tokens (root + subagents) would go unbilled. Runs
+        // before the steered follow-up starts and rotates currentUsageTurnId.
+        this.flushCodexUsageOnExit(sessionId, managedProc);
+
         const hasPendingSteerTurn = !!managedProc.codexPendingSteerTurn;
 
         // Clean exit, or an intentional follow-up steering interruption, means
@@ -5424,7 +6818,7 @@ Discord Main Gateway:
         }
       }
       this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
-      this.cleanupProcess(sessionId);
+      this.cleanupProcess(sessionId, proc);
     });
     newChildProc.on('error', (err) => {
       console.error(`Claude process error [${sessionId}]:`, err);
@@ -5435,252 +6829,10 @@ Discord Main Gateway:
         summary: err.message,
       });
 
-      this.cleanupProcess(sessionId);
+      this.cleanupProcess(sessionId, proc);
     });
 
     console.log(`[CODEX] Respawned process [${sessionId}], args: ${args.join(' ')}`);
-  }
-
-  /**
-   * Spawn a fresh Mistral Vibe process for the upcoming turn.
-   * Vibe receives the prompt via argv `-p TEXT` and exits when done — there is
-   * no stdin handoff. Each user message therefore spawns a new child. VIBE_HOME
-   * is set per-WebUI-session so `--continue` resumes the right vibe session.
-   */
-  private async respawnVibeProcess(
-    sessionId: string,
-    proc: ClaudeProcess,
-    prompt: string
-  ): Promise<void> {
-    const providerConfig = CLI_PROVIDERS.vibe;
-    const selectedModel = proc.model || providerConfig.defaultModel;
-    const selectedReasoning = await getCliReasoningForSession(proc.userId, 'vibe', sessionId);
-
-    const db = getDatabase();
-    const session = db
-      .prepare('SELECT working_directory, allowed_directories FROM sessions WHERE id = ?')
-      .get(sessionId) as
-      | { working_directory: string; allowed_directories: string | null }
-      | undefined;
-
-    if (!session) throw new Error('Session not found for vibe respawn');
-
-    const allowedDirs: string[] = session.allowed_directories
-      ? JSON.parse(session.allowed_directories)
-      : [];
-
-    // We use --continue when a vibe session already exists in this VIBE_HOME.
-    // First spawn (no prior session) ⇒ omit --continue. We mark that the first
-    // call has happened by checking proc.claudeSessionId / a session marker file.
-    const vibeHome = proc.vibeHome || providerConfig.credentialsPath.replace('~', os.homedir());
-    const sessionMarker = path.join(vibeHome, '.webui-session-started');
-    let hasPriorSession = false;
-    try {
-      await fs.access(sessionMarker);
-      hasPriorSession = true;
-    } catch {
-      // First turn: no marker yet.
-    }
-
-    const args = getCLIArgs('vibe', {
-      mode: proc.mode,
-      resumeSessionId: hasPriorSession ? 'continue' : undefined,
-      allowedDirectories: allowedDirs,
-      workingDirectory: session.working_directory,
-      model: selectedModel || undefined,
-      reasoningLevel: selectedReasoning ?? undefined,
-    });
-
-    // Prompt must be the last argv pair, separated so vibe interprets it correctly.
-    args.push('-p', prompt);
-
-    const vibeConfig = await seedVibeSessionConfig(
-      providerConfig.credentialsPath.replace('~', os.homedir()),
-      vibeHome,
-      selectedModel,
-      selectedReasoning
-    );
-    this.resetCurrentContextUsage(proc);
-
-    const extraEnv: Record<string, string> = {};
-    extraEnv.VIBE_HOME = vibeHome;
-    if (vibeConfig.activeAlias) {
-      extraEnv.VIBE_ACTIVE_MODEL = vibeConfig.activeAlias;
-    }
-    // Vibe authenticates via MISTRAL_API_KEY. Source priority:
-    //   1. per-user setting stored encrypted in SQLite (Settings → API Keys → Mistral)
-    //   2. parent process env (set via docker-compose MISTRAL_API_KEY)
-    //   3. ~/.vibe/.env (created by interactive `vibe --setup`)
-    // Per-user setting wins so the WebUI can override an outdated .env key without a restart.
-    const userKey = proc.userId ? getMistralApiKeyForUser(proc.userId) : null;
-    if (userKey) {
-      extraEnv.MISTRAL_API_KEY = userKey;
-    } else if (!process.env.MISTRAL_API_KEY) {
-      try {
-        const globalEnvPath = path.join(os.homedir(), '.vibe', '.env');
-        const raw = await fs.readFile(globalEnvPath, 'utf-8');
-        const match = raw.match(/^MISTRAL_API_KEY=(.+)$/m);
-        if (match?.[1]) extraEnv.MISTRAL_API_KEY = match[1].trim();
-      } catch {
-        // No fallback found; fail-fast below.
-      }
-    }
-    // Fail fast: vibe hangs silently on missing auth — surface the problem to the user.
-    if (!process.env.MISTRAL_API_KEY && !extraEnv.MISTRAL_API_KEY) {
-      const errMsg =
-        'Mistral Vibe konnte nicht starten: MISTRAL_API_KEY ist nicht gesetzt. ' +
-        'Trage den Schlüssel unter Settings → API Keys → Mistral Vibe ein.';
-      console.error(`[VIBE] ${errMsg} [${sessionId}]`);
-      this.saveAssistantMessage(sessionId, errMsg);
-      this.io.to(`session:${sessionId}`).emit('session:thinking', { sessionId, isThinking: false });
-      proc.vibeIdle = true;
-      proc.process = createVirtualChildProcess();
-      return;
-    }
-    Object.assign(extraEnv, buildIntegrationEnv());
-    Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, proc.userId));
-    extraEnv.WEBUI_SESSION_MODE = proc.mode;
-    extraEnv.WEBUI_CONFIG_HOME = resolveConfigHome(proc.cliProvider);
-
-    const vibeRunner = resolveVibeRunnerInvocation();
-    const spawnCommand = vibeRunner?.command || providerConfig.command;
-    const spawnArgs = vibeRunner ? [...vibeRunner.argsPrefix, ...args] : args;
-    if (!vibeRunner) {
-      console.warn(
-        `[VIBE] WebUI runner not found; falling back to raw vibe CLI without approval callback [${sessionId}]`
-      );
-    }
-
-    const newChildProc = cpSpawn(spawnCommand, spawnArgs, {
-      cwd: session.working_directory,
-      env: {
-        ...process.env,
-        ...extraEnv,
-        WEBUI_SESSION_ID: sessionId,
-        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
-        WEBUI_PROJECT_PATH: session.working_directory,
-        WEBUI_HOOK_SECRET: config.hookSecret,
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    proc.process = newChildProc;
-    proc.vibeIdle = false;
-    proc.buffer = '';
-    proc.streamingText = '';
-    proc.isStreaming = false;
-
-    // Vibe waits on stdin even with -p set; if we leave the pipe open it hangs and
-    // exits 0 without ever calling the LLM. Close stdin right after spawn so vibe
-    // proceeds to the single-shot completion path.
-    newChildProc.stdin?.end();
-
-    // Drop a marker so the next turn uses --continue — but only after the child
-    // exits successfully (code 0). A premature marker write would lock subsequent
-    // turns into --continue even though no real vibe session was ever created.
-
-    newChildProc.stdout?.on('data', (data: Buffer) => {
-      this.handleJsonOutput(sessionId, data.toString());
-    });
-    newChildProc.stderr?.on('data', (data: Buffer) => {
-      console.error(`Vibe stderr [${sessionId}]:`, data.toString());
-    });
-    newChildProc.on('exit', (exitCode) => {
-      console.log(`[VIBE] Process for session ${sessionId} exited with code ${exitCode}`);
-      void (async () => {
-        const managedProc = this.processes.get(sessionId);
-        if (managedProc && managedProc.cliProvider === 'vibe') {
-          if (managedProc.streamingText?.trim().length) {
-            this.saveAssistantMessage(sessionId, managedProc.streamingText.trim());
-          }
-          if (exitCode === 0) {
-            const latest = await readLatestVibeSessionMeta(vibeHome);
-            if (latest?.stats) {
-              const stats = latest.stats;
-              const input = Number(stats.last_turn_prompt_tokens ?? 0);
-              const output = Number(stats.last_turn_completion_tokens ?? 0);
-              managedProc.turnInputTokens = Number.isFinite(input) ? input : 0;
-              managedProc.turnOutputTokens = Number.isFinite(output) ? output : 0;
-              managedProc.contextInputTokens =
-                typeof stats.context_tokens === 'number'
-                  ? stats.context_tokens
-                  : managedProc.turnInputTokens;
-              managedProc.totalInputTokens =
-                typeof stats.session_prompt_tokens === 'number'
-                  ? stats.session_prompt_tokens
-                  : managedProc.totalInputTokens + managedProc.turnInputTokens;
-              managedProc.totalOutputTokens =
-                typeof stats.session_completion_tokens === 'number'
-                  ? stats.session_completion_tokens
-                  : managedProc.totalOutputTokens + managedProc.turnOutputTokens;
-              const inputPrice =
-                typeof stats.input_price_per_million === 'number'
-                  ? stats.input_price_per_million
-                  : 0;
-              const outputPrice =
-                typeof stats.output_price_per_million === 'number'
-                  ? stats.output_price_per_million
-                  : 0;
-              managedProc.turnCostUsd =
-                (managedProc.turnInputTokens / 1_000_000) * inputPrice +
-                (managedProc.turnOutputTokens / 1_000_000) * outputPrice;
-              if (typeof stats.session_cost === 'number') {
-                managedProc.totalCostUsd = stats.session_cost;
-              }
-              this.emitUsage(sessionId, managedProc);
-              this.saveUsageToDatabase(sessionId, managedProc);
-            }
-            if (latest?.sessionId) {
-              managedProc.claudeSessionId = latest.sessionId;
-              try {
-                getDatabase()
-                  .prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?')
-                  .run(latest.sessionId, sessionId);
-              } catch {
-                // Non-critical: --continue uses VIBE_HOME, not the DB id.
-              }
-            }
-          }
-          managedProc.streamingText = '';
-          managedProc.isStreaming = false;
-          managedProc.buffer = '';
-          managedProc.vibeIdle = true;
-          // Only mark the session continuable if vibe exited cleanly. Otherwise
-          // a transient crash (missing model, missing API key) would falsely
-          // arm --continue and keep failing forever.
-          if (exitCode === 0 && !hasPriorSession) {
-            fs.writeFile(sessionMarker, new Date().toISOString(), 'utf-8').catch(() => undefined);
-          }
-          // Replace live child with a virtual stub so the manager keeps the session alive
-          // for the next message without a dangling exited process.
-          managedProc.process = createVirtualChildProcess();
-          this.io
-            .to(`session:${sessionId}`)
-            .emit('session:thinking', { sessionId, isThinking: false });
-        }
-      })().catch((err) => {
-        console.error(`[VIBE] Failed to finalize session ${sessionId}:`, err);
-        this.io
-          .to(`session:${sessionId}`)
-          .emit('session:thinking', { sessionId, isThinking: false });
-      });
-    });
-    newChildProc.on('error', (err) => {
-      console.error(`Vibe process error [${sessionId}]:`, err);
-      this.notifyDiscordSessionEvent(sessionId, {
-        eventType: 'session.error',
-        severity: 'error',
-        title: 'Vibe process error',
-        summary: err.message,
-      });
-      this.cleanupProcess(sessionId);
-    });
-
-    console.log(
-      `[VIBE] Spawned process [${sessionId}], command=${spawnCommand}, args: ${spawnArgs
-        .slice(0, -2)
-        .join(' ')} -p <prompt:${prompt.length} chars>`
-    );
   }
 
   private normalizeCodexCompactSummary(value: string): string | undefined {
@@ -5882,6 +7034,33 @@ Discord Main Gateway:
     return estimate.cost;
   }
 
+  private flushSubagentUsage(sessionId: string, proc: ClaudeProcess, turnId: string): void {
+    const pending = proc.pendingSubagentUsage;
+    proc.pendingSubagentUsage = undefined;
+    if (!pending || pending.length === 0) return;
+    try {
+      const written = insertUsageSubagentTurns(
+        getDatabase(),
+        pending.map((row) => ({
+          userId: proc.userId,
+          sessionId,
+          provider: proc.cliProvider,
+          turnId,
+          ...row,
+        }))
+      );
+      if (written > 0) {
+        const totalTokens = pending.reduce((sum, row) => sum + row.totalTokens, 0);
+        console.log(
+          `[USAGE] Saved ${written} subagent split rows for turn ${turnId} (${totalTokens} tokens)`
+        );
+      }
+    } catch (error) {
+      // The turn total is already booked; a missing breakdown must not fail it.
+      console.warn('[USAGE] Failed to save subagent usage breakdown:', error);
+    }
+  }
+
   // Save usage to database - called ONCE per turn when result is received
   private saveUsageToDatabase(sessionId: string, proc: ClaudeProcess): void {
     const turnTotalTokens =
@@ -5894,28 +7073,36 @@ Discord Main Gateway:
 
     // Calculate cost from tokens (not from CLI cumulative value)
     const turnCostUsd = proc.turnCostUsd ?? this.calculateTurnCost(proc);
+    const turnId = (proc.currentUsageTurnId ??= nanoid());
 
     try {
       const db = getDatabase();
-      db.prepare(
-        `
-        INSERT INTO usage_history (user_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-      ).run(
-        proc.userId,
+      const inserted = insertUsageHistoryTurn(db, {
+        userId: proc.userId,
         sessionId,
-        proc.turnInputTokens,
-        proc.turnOutputTokens,
-        proc.turnCacheReadTokens,
-        proc.turnCacheCreationTokens,
-        turnTotalTokens,
-        turnCostUsd,
-        proc.model
-      );
-      console.log(
-        `[USAGE] Saved turn usage: ${turnTotalTokens} tokens, $${turnCostUsd.toFixed(4)}`
-      );
+        provider: proc.cliProvider,
+        turnId,
+        inputTokens: proc.turnInputTokens,
+        outputTokens: proc.turnOutputTokens,
+        cacheReadTokens: proc.turnCacheReadTokens,
+        cacheCreationTokens: proc.turnCacheCreationTokens,
+        totalTokens: turnTotalTokens,
+        costUsd: turnCostUsd,
+        model: proc.model,
+        // Book the turn when it finished, not when it was queued. A long agentic
+        // turn can run for hours; stamping it with the queue time buried the
+        // spend in an earlier bucket and made the analytics timeline look idle
+        // exactly while the rate limit was being consumed.
+        createdAt: undefined,
+      });
+      if (inserted) {
+        console.log(
+          `[USAGE] Saved ${proc.cliProvider} turn ${turnId}: ${turnTotalTokens} tokens, $${turnCostUsd.toFixed(4)}`
+        );
+      } else {
+        console.log(`[USAGE] Skipped duplicate ${proc.cliProvider} turn ${turnId}`);
+      }
+      this.flushSubagentUsage(sessionId, proc, turnId);
       proc.turnCostUsd = undefined;
     } catch (error) {
       console.error('[USAGE] Failed to save usage to database:', error);
@@ -6045,11 +7232,9 @@ Discord Main Gateway:
             proc.contextWindow = contextWindowFor(event.message.model);
           }
           if (event.message.usage) {
-            // Set per-turn usage (this is the actual context used for this turn)
-            proc.turnInputTokens = event.message.usage.input_tokens || 0;
-            proc.turnOutputTokens = event.message.usage.output_tokens || 0;
-            proc.turnCacheReadTokens = event.message.usage.cache_read_input_tokens || 0;
-            proc.turnCacheCreationTokens = event.message.usage.cache_creation_input_tokens || 0;
+            const responseId =
+              typeof event.message.id === 'string' ? event.message.id : `response-${Date.now()}`;
+            accumulateClaudeMessageStartUsage(proc, responseId, event.message.usage);
             this.emitUsage(sessionId, proc);
           }
         }
@@ -6058,13 +7243,9 @@ Discord Main Gateway:
       // message_delta contains updated usage and stop_reason
       if (event.type === 'message_delta') {
         if (event.usage) {
-          // Update per-turn usage with delta values
-          proc.turnInputTokens = event.usage.input_tokens || proc.turnInputTokens;
-          proc.turnOutputTokens = event.usage.output_tokens || proc.turnOutputTokens;
-          proc.turnCacheReadTokens =
-            event.usage.cache_read_input_tokens || proc.turnCacheReadTokens;
-          proc.turnCacheCreationTokens =
-            event.usage.cache_creation_input_tokens || proc.turnCacheCreationTokens;
+          // message_delta output usage is cumulative for the current model
+          // response. Add only its growth to billed turn usage.
+          accumulateClaudeMessageDeltaUsage(proc, event.usage);
           this.emitUsage(sessionId, proc);
         }
         // If stop_reason is tool_use, Claude is about to use a tool - show thinking
@@ -6089,7 +7270,7 @@ Discord Main Gateway:
         const contentBlock = (
           event as { content_block?: { type: string; name?: string; id?: string } }
         ).content_block;
-        if (contentBlock?.type === 'tool_use') {
+        if (contentBlock?.type === 'tool_use' || contentBlock?.type === 'server_tool_use') {
           // Tool is being called - track it and show indicator
           proc.currentToolName = contentBlock.name || null;
           proc.currentToolId = contentBlock.id || nanoid();
@@ -6334,8 +7515,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
         proc.totalCostUsd = msg.total_cost_usd;
       }
       if (msg.usage) {
-        // Store cumulative session usage (for total cost calculation)
-        // Don't update turn values here - result contains cumulative session totals
+        // Z.AI can omit input/cache counters from streaming message_start
+        // events. The final result retains the complete turn aggregate, so use
+        // it as a non-decreasing fallback before writing usage_history.
+        applyClaudeResultUsage(proc, msg.usage);
+        // Keep the latest provider totals for the live session readout.
         proc.totalInputTokens = msg.usage.input_tokens || proc.totalInputTokens;
         proc.totalOutputTokens = msg.usage.output_tokens || proc.totalOutputTokens;
         proc.cacheReadTokens = msg.usage.cache_read_input_tokens || proc.cacheReadTokens;
@@ -6553,15 +7737,31 @@ The planning phase is complete. You are now in Auto-Accept mode.
         outputTokens: proc.turnOutputTokens,
         totalCostUsd: proc.totalCostUsd,
       });
+      if (msg.type === 'result' && isClaudeTransportProvider(proc.cliProvider)) {
+        proc.claudeIdle = true;
+        this.emitQueueState(sessionId, proc);
+        queueMicrotask(() => this.drainClaudeQueuedTurns(sessionId, proc));
+      }
     }
   }
 
   private saveAssistantMessage(sessionId: string, content: string): void {
     const proc = this.processes.get(sessionId);
+    const explicitWorkspaceMedia = proc
+      ? extractExplicitWorkspaceChatMedia(content, proc.workingDirectory)
+      : { content, media: [] as PendingChatMedia[] };
+    const deliveredContent = explicitWorkspaceMedia.content;
+    if (proc) {
+      for (const pending of explicitWorkspaceMedia.media) {
+        appendPendingChatMedia(proc, pending);
+      }
+    }
+    const hasPendingMedia = (proc?.pendingChatMedia.length ?? 0) > 0;
     const now = Date.now();
     if (
       proc &&
-      proc.lastSavedAssistantContent === content &&
+      !hasPendingMedia &&
+      proc.lastSavedAssistantContent === deliveredContent &&
       proc.lastSavedAssistantAt !== undefined &&
       now - proc.lastSavedAssistantAt < 2000
     ) {
@@ -6577,29 +7777,62 @@ The planning phase is complete. You are now in Auto-Accept mode.
       messageId,
       sessionId,
       'assistant',
-      content
+      deliveredContent
     );
     db.prepare(
       'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(content.substring(0, 200), sessionId);
+    ).run(deliveredContent.substring(0, 200), sessionId);
 
     if (proc) {
-      proc.lastSavedAssistantContent = content;
+      proc.lastSavedAssistantContent = deliveredContent;
       proc.lastSavedAssistantAt = now;
     }
 
-    // Emit for external consumers
-    this.events.emit('assistantMessage', sessionId, content);
+    // Claim the complete queue synchronously before starting async persistence.
+    // A second save during the await must not attach the same provider artifact
+    // to another message or collide on its source id.
+    const pendingMedia = proc ? proc.pendingChatMedia.splice(0) : [];
 
-    this.io.to(`session:${sessionId}`).emit('session:message', {
-      id: messageId,
-      sessionId,
-      role: 'assistant',
-      content,
-      createdAt,
-    });
+    const emitMessage = (media: Awaited<ReturnType<typeof persistMessageMedia>> = []): void => {
+      // Keep the existing session/content arguments stable for external consumers;
+      // persisted, path-free media is appended as the optional third argument.
+      this.events.emit('assistantMessage', sessionId, deliveredContent, media);
+      this.io.to(`session:${sessionId}`).emit('session:message', {
+        id: messageId,
+        sessionId,
+        role: 'assistant',
+        content: deliveredContent,
+        createdAt,
+        ...(media.length > 0 ? { media } : {}),
+      });
+    };
 
-    console.log(`Saved assistant message [${sessionId}]: ${content.substring(0, 100)}...`);
+    if (proc && pendingMedia.length > 0) {
+      // Persist directly after the message row. Validation/copying is async, so
+      // a failed artifact must never suppress the text response. Provider
+      // events arriving meanwhile remain queued for the next message.
+      void (async () => {
+        let media: Awaited<ReturnType<typeof persistMessageMedia>> = [];
+        try {
+          media = await persistMessageMedia({
+            messageId,
+            sessionId,
+            userId: proc.userId,
+            media: pendingMedia,
+          });
+        } catch (error) {
+          console.warn(
+            `[MEDIA] Failed to persist assistant media [${sessionId}]:`,
+            error instanceof Error ? error.message : error
+          );
+        }
+        emitMessage(media);
+      })();
+    } else {
+      emitMessage();
+    }
+
+    console.log(`Saved assistant message [${sessionId}]: ${deliveredContent.substring(0, 100)}...`);
   }
 
   private steerCodexTurn(sessionId: string, proc: ClaudeProcess, turn: CodexPreparedTurn): void {
@@ -6626,12 +7859,29 @@ The planning phase is complete. You are now in Auto-Accept mode.
     this.emitQueueState(sessionId, proc);
   }
 
-  private getQueuedTurnItems(proc: ClaudeProcess): Array<CodexPreparedTurn | OpenCodePreparedTurn> {
+  private queueClaudeTurn(sessionId: string, proc: ClaudeProcess, turn: ClaudePreparedTurn): void {
+    proc.claudeQueuedTurns ??= [];
+    proc.claudeQueuedTurns.push(turn);
+    console.log(
+      `[CLAUDE] Queued user turn while current turn is running [${sessionId}], depth=${proc.claudeQueuedTurns.length}`
+    );
+    this.emitQueueState(sessionId, proc);
+  }
+
+  private getQueuedTurnItems(
+    proc: ClaudeProcess
+  ): Array<CodexPreparedTurn | OpenCodePreparedTurn | ClaudePreparedTurn> {
     if (proc.cliProvider === 'codex') {
       return proc.codexPendingSteerTurn ? [proc.codexPendingSteerTurn] : [];
     }
     if (proc.cliProvider === 'opencode') {
       return proc.opencodeQueuedTurns ?? [];
+    }
+    if (proc.cliProvider === 'kimi') {
+      return proc.kimiQueuedTurns ?? [];
+    }
+    if (isClaudeTransportProvider(proc.cliProvider)) {
+      return proc.claudeQueuedTurns ?? [];
     }
     return [];
   }
@@ -6654,11 +7904,62 @@ The planning phase is complete. You are now in Auto-Accept mode.
           ? !proc.codexIdle || hasPendingCodexSteer
           : proc.cliProvider === 'opencode'
             ? !proc.opencodeIdle || items.length > 0
-            : proc.cliProvider === 'vibe'
-              ? !proc.vibeIdle
-              : proc.isStreaming || !!proc.currentToolName,
+            : isClaudeTransportProvider(proc.cliProvider)
+              ? proc.claudeIdle === false || items.length > 0
+              : proc.cliProvider === 'kimi'
+                ? proc.kimiIdle === false || items.length > 0
+                : proc.isStreaming || !!proc.currentToolName,
       preempting: !!proc.codexPreemptingForSteer,
     });
+  }
+
+  private dispatchClaudeTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: ClaudePreparedTurn
+  ): void {
+    proc.claudeIdle = false;
+    if (turn.updateLastMessage) {
+      proc.lastUserMessage = turn.originalMessage;
+      proc.lastAttachments = turn.attachments || null;
+    }
+    proc.pendingPermissionDenials = null;
+    proc.currentUsageTurnId = turn.queueId;
+    proc.currentUsageTurnStartedAt = turn.queuedAt;
+    this.resetCurrentContextUsage(proc);
+    proc.claudeCurrentResponseId = undefined;
+    proc.claudeCurrentResponseOutputTokens = undefined;
+    this.io.to(`session:${sessionId}`).emit('session:thinking', {
+      sessionId,
+      isThinking: true,
+    });
+    proc.process.stdin?.write(formatInputMessage(proc.cliProvider, turn.messageForClaude));
+    console.log(
+      `Sent message [${sessionId}] via ${proc.cliProvider}: ${turn.messageForClaude.substring(0, 100)}...`
+    );
+    this.emitQueueState(sessionId, proc);
+  }
+
+  private drainClaudeQueuedTurns(sessionId: string, proc: ClaudeProcess): void {
+    if (
+      !isClaudeTransportProvider(proc.cliProvider) ||
+      !proc.claudeIdle ||
+      proc.claudeQueueDraining
+    ) {
+      return;
+    }
+    const nextTurn = proc.claudeQueuedTurns?.shift();
+    if (!nextTurn) {
+      this.emitQueueState(sessionId, proc);
+      return;
+    }
+
+    proc.claudeQueueDraining = true;
+    try {
+      this.dispatchClaudeTurn(sessionId, proc, nextTurn);
+    } finally {
+      proc.claudeQueueDraining = false;
+    }
   }
 
   private requestCodexSteeringPreemption(sessionId: string, proc: ClaudeProcess): void {
@@ -6684,7 +7985,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.isStreaming = false;
     }
 
-    child.kill('SIGINT');
+    signalManagedProcess(child, 'SIGINT');
 
     proc.codexPreemptKillTimer = setTimeout(() => {
       const latest = this.processes.get(sessionId);
@@ -6693,7 +7994,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       }
 
       console.warn(`[CODEX] Steering interrupt did not exit; sending SIGTERM [${sessionId}]`);
-      child.kill('SIGTERM');
+      signalManagedProcess(child, 'SIGTERM');
 
       latest.codexPreemptKillTimer = setTimeout(() => {
         const stillLatest = this.processes.get(sessionId);
@@ -6706,9 +8007,542 @@ The planning phase is complete. You are now in Auto-Accept mode.
         }
 
         console.warn(`[CODEX] Steering SIGTERM did not exit; sending SIGKILL [${sessionId}]`);
-        child.kill('SIGKILL');
+        signalManagedProcess(child, 'SIGKILL');
       }, 5000);
     }, 5000);
+  }
+
+  private async configureKimiAcpSession(proc: ClaudeProcess): Promise<void> {
+    const connection = proc.kimiAcpConnection;
+    const nativeSessionId = proc.kimiAcpSessionId;
+    if (!connection || !nativeSessionId) return;
+
+    const options = proc.kimiAcpConfigOptions;
+    if (proc.model && kimiAcpConfigSupports(options, 'model', proc.model)) {
+      const result = await connection.setSessionConfigOption({
+        sessionId: nativeSessionId,
+        configId: 'model',
+        value: proc.model,
+      });
+      proc.kimiAcpConfigOptions = result.configOptions;
+    }
+
+    const mode = kimiAcpModeForSessionMode(proc.mode);
+    if (kimiAcpConfigSupports(proc.kimiAcpConfigOptions || options, 'mode', mode)) {
+      const result = await connection.setSessionConfigOption({
+        sessionId: nativeSessionId,
+        configId: 'mode',
+        value: mode,
+      });
+      proc.kimiAcpConfigOptions = result.configOptions;
+    }
+  }
+
+  private async handleKimiAcpPermission(
+    proc: ClaudeProcess,
+    params: AcpRequestPermissionRequest
+  ): Promise<AcpRequestPermissionResponse> {
+    const preferredKinds =
+      proc.mode === 'planning'
+        ? ['reject_once', 'reject_always']
+        : proc.mode === 'manual'
+          ? ['allow_once', 'allow_always']
+          : ['allow_always', 'allow_once'];
+    const selected = preferredKinds
+      .map((kind) => params.options.find((option) => option.kind === kind))
+      .find(Boolean);
+    if (!selected) return { outcome: { outcome: 'cancelled' } };
+    return {
+      outcome: {
+        outcome: 'selected',
+        optionId: selected.optionId,
+      },
+    };
+  }
+
+  private async handleKimiAcpUpdate(
+    sessionId: string,
+    proc: ClaudeProcess,
+    notification: AcpSessionNotification
+  ): Promise<void> {
+    if (this.processes.get(sessionId) !== proc) return;
+    proc.lastActivityAt = Date.now();
+    const update = notification.update;
+
+    if (update.sessionUpdate === 'agent_message_chunk') {
+      if (update.content.type !== 'text' || !update.content.text) return;
+      proc.streamingText += update.content.text;
+      proc.isStreaming = true;
+      this.io.to(`session:${sessionId}`).emit('session:output', {
+        sessionId,
+        content: update.content.text,
+        isComplete: false,
+      });
+      return;
+    }
+
+    if (update.sessionUpdate === 'agent_thought_chunk') {
+      if (update.content.type === 'text' && update.content.text) {
+        // ACP sends reasoning as small token chunks. Keep a bounded rolling
+        // window so the activity line shows meaningful live progress instead
+        // of looking frozen during long K3 tool-planning steps.
+        proc.kimiThinkingText = `${proc.kimiThinkingText || ''}${update.content.text}`.slice(-600);
+        proc.currentActivitySummary = proc.kimiThinkingText.replace(/\s+/g, ' ').trim();
+      }
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: true,
+        message: proc.currentActivitySummary || 'Kimi is reasoning…',
+      });
+      return;
+    }
+
+    if (update.sessionUpdate === 'tool_call') {
+      proc.pendingToolResults.set(update.toolCallId, {
+        toolName: update.title,
+        input: update.rawInput,
+      });
+      if (!proc.emittedTools?.has(update.toolCallId)) {
+        proc.emittedTools?.add(update.toolCallId);
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName: update.title,
+          toolId: update.toolCallId,
+          status: 'started',
+          input: update.rawInput,
+        });
+      }
+      return;
+    }
+
+    if (update.sessionUpdate === 'tool_call_update') {
+      const pending = proc.pendingToolResults.get(update.toolCallId);
+      const toolName = update.title || pending?.toolName || 'Kimi tool';
+      const input = update.rawInput ?? pending?.input;
+      if (!proc.emittedTools?.has(update.toolCallId)) {
+        proc.emittedTools?.add(update.toolCallId);
+        proc.pendingToolResults.set(update.toolCallId, { toolName, input });
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName,
+          toolId: update.toolCallId,
+          status: 'started',
+          input,
+        });
+      }
+
+      if (
+        (update.status === 'completed' || update.status === 'failed') &&
+        !proc.kimiCompletedTools?.has(update.toolCallId)
+      ) {
+        proc.kimiCompletedTools?.add(update.toolCallId);
+        const result = kimiAcpToolResultText(update).slice(0, 20_000);
+        this.emitToolUse(sessionId, {
+          sessionId,
+          toolName,
+          toolId: update.toolCallId,
+          status: update.status === 'failed' ? 'error' : 'completed',
+          input,
+          ...(update.status === 'failed'
+            ? { error: result || `${toolName} failed` }
+            : { result: result || undefined }),
+        });
+        proc.pendingToolResults.delete(update.toolCallId);
+      }
+      return;
+    }
+
+    if (update.sessionUpdate === 'usage_update') {
+      proc.contextWindow = update.size;
+      proc.contextInputTokens = update.used;
+      proc.contextOutputTokens = 0;
+      proc.contextCacheReadTokens = 0;
+      proc.contextCacheCreationTokens = 0;
+      this.emitUsage(sessionId, proc);
+      return;
+    }
+
+    if (update.sessionUpdate === 'config_option_update') {
+      proc.kimiAcpConfigOptions = update.configOptions;
+    }
+  }
+
+  private queueKimiTurn(sessionId: string, proc: ClaudeProcess, turn: CodexPreparedTurn): void {
+    proc.kimiQueuedTurns ??= [];
+    proc.kimiQueuedTurns.push(turn);
+    console.log(
+      `[KIMI ACP] Queued user turn while current turn is running [${sessionId}], depth=${proc.kimiQueuedTurns.length}`
+    );
+    this.emitQueueState(sessionId, proc);
+  }
+
+  private async dispatchKimiAcpTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: CodexPreparedTurn
+  ): Promise<void> {
+    const connection = proc.kimiAcpConnection;
+    const nativeSessionId = proc.kimiAcpSessionId;
+    if (!connection || !nativeSessionId) {
+      throw new Error('Kimi ACP session is not ready');
+    }
+
+    proc.kimiIdle = false;
+    proc.currentUsageTurnId = turn.queueId;
+    proc.currentUsageTurnStartedAt = turn.queuedAt;
+    if (turn.updateLastMessage) {
+      proc.lastUserMessage = turn.originalMessage;
+      proc.lastAttachments = turn.attachments || null;
+    }
+    proc.streamingText = '';
+    proc.isStreaming = false;
+    proc.currentToolName = null;
+    proc.currentToolId = null;
+    proc.currentActivitySummary = null;
+    proc.kimiThinkingText = '';
+    proc.pendingToolResults.clear();
+    proc.emittedTools = new Set();
+    proc.kimiCompletedTools = new Set();
+    this.resetCurrentContextUsage(proc);
+    this.io.to(`session:${sessionId}`).emit('session:thinking', {
+      sessionId,
+      isThinking: true,
+      message: 'Kimi is working…',
+    });
+    this.emitQueueState(sessionId, proc);
+
+    let response: AcpPromptResponse | null = null;
+    try {
+      response = await connection.prompt({
+        sessionId: nativeSessionId,
+        prompt: [{ type: 'text', text: turn.messageForClaude }],
+      });
+      if (response.usage) {
+        const cacheRead = Math.max(0, response.usage.cachedReadTokens || 0);
+        proc.turnInputTokens = Math.max(0, response.usage.inputTokens - cacheRead);
+        proc.turnCacheReadTokens = cacheRead;
+        proc.turnCacheCreationTokens = Math.max(0, response.usage.cachedWriteTokens || 0);
+        proc.turnOutputTokens = Math.max(0, response.usage.outputTokens);
+      }
+      const text = proc.streamingText.trim();
+      if (text) this.saveAssistantMessage(sessionId, text);
+      this.saveUsageToDatabase(sessionId, proc);
+      console.log(`[KIMI ACP] Turn completed [${sessionId}] reason=${response.stopReason}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[KIMI ACP] Prompt failed [${sessionId}]:`, error);
+      const partial = proc.streamingText.trim();
+      if (partial) this.saveAssistantMessage(sessionId, `${partial}\n\n[Interrupted]`);
+      this.io.to(`session:${sessionId}`).emit('session:error', {
+        sessionId,
+        error: `Kimi failed: ${message}`,
+      });
+    } finally {
+      proc.streamingText = '';
+      proc.isStreaming = false;
+      proc.kimiIdle = true;
+      proc.currentToolName = null;
+      proc.currentToolId = null;
+      proc.currentActivitySummary = null;
+      proc.kimiThinkingText = '';
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+      this.emitStatus(sessionId, { sessionId, status: 'running' });
+      this.emitQueueState(sessionId, proc);
+      queueMicrotask(() => void this.drainKimiQueuedTurns(sessionId, proc));
+    }
+  }
+
+  private async drainKimiQueuedTurns(sessionId: string, proc: ClaudeProcess): Promise<void> {
+    if (proc.cliProvider !== 'kimi' || !proc.kimiIdle || proc.kimiQueueDraining) return;
+    const nextTurn = proc.kimiQueuedTurns?.shift();
+    if (!nextTurn) {
+      this.emitQueueState(sessionId, proc);
+      return;
+    }
+    proc.kimiQueueDraining = true;
+    try {
+      await this.dispatchKimiAcpTurn(sessionId, proc, nextTurn);
+    } finally {
+      proc.kimiQueueDraining = false;
+    }
+  }
+
+  /** Legacy `kimi -p` translator retained for old captured output fixtures. */
+  private async dispatchKimiTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: CodexPreparedTurn,
+    retriedWithoutResume = false
+  ): Promise<void> {
+    if (proc.codexIdle === false) {
+      throw new Error('Kimi process is still running');
+    }
+    proc.codexIdle = false;
+    proc.currentUsageTurnId = turn.queueId;
+    proc.currentUsageTurnStartedAt = turn.queuedAt;
+    if (turn.updateLastMessage) {
+      proc.lastUserMessage = turn.originalMessage;
+      proc.lastAttachments = turn.attachments || null;
+    }
+    proc.pendingPermissionDenials = null;
+    proc.streamingText = '';
+    proc.isStreaming = false;
+    proc.buffer = '';
+    proc.turnInputTokens = 0;
+    proc.turnOutputTokens = 0;
+
+    const providerConfig = CLI_PROVIDERS.kimi;
+    const session = getDatabase()
+      .prepare('SELECT working_directory, allowed_directories FROM sessions WHERE id = ?')
+      .get(sessionId) as
+      | { working_directory: string; allowed_directories: string | null }
+      | undefined;
+    const workingDirectory = session?.working_directory || proc.workingDirectory || os.homedir();
+    let allowedDirectories: string[] = [];
+    try {
+      allowedDirectories = session?.allowed_directories
+        ? JSON.parse(session.allowed_directories)
+        : [];
+    } catch {
+      allowedDirectories = [];
+    }
+
+    const attemptedResumeId = proc.codexSessionId || proc.claudeSessionId || undefined;
+    const args = getCLIArgs('kimi', {
+      mode: proc.mode,
+      model: proc.model && proc.model !== 'unknown' ? proc.model : undefined,
+      // First turn must omit --session so Kimi creates its own native session.
+      // processKimiLine captures and persists the emitted session.resume_hint id.
+      resumeSessionId: attemptedResumeId,
+      allowedDirectories,
+      workingDirectory,
+    });
+    // kimi reads the prompt from the -p argument, never stdin.
+    args.push('-p', turn.messageForClaude);
+
+    const extraEnv: Record<string, string> = {};
+    Object.assign(extraEnv, buildIntegrationEnv());
+    Object.assign(extraEnv, buildAndroidDeviceEnvForSession(sessionId, proc.userId));
+
+    console.log(
+      `[KIMI] Respawning process for next message [${sessionId}] args=${args
+        .filter((a) => a.length < 200)
+        .join(' ')} -p <prompt>`
+    );
+
+    const child = spawnManagedProcess(providerConfig.command, args, {
+      cwd: workingDirectory,
+      env: {
+        ...process.env,
+        ...extraEnv,
+        WEBUI_SESSION_ID: sessionId,
+        WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
+        WEBUI_PROJECT_PATH: workingDirectory,
+        WEBUI_HOOK_SECRET: config.hookSecret,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    proc.process = child;
+    let receivedStructuredOutput = false;
+    let stderr = '';
+    const quietProgressTimer = setTimeout(() => {
+      const managedProc = this.processes.get(sessionId);
+      if (managedProc?.process !== child || receivedStructuredOutput) return;
+      this.io.to(`session:${sessionId}`).emit('session:output', {
+        sessionId,
+        content:
+          '🌙 Kimi is working on the request. Complex first steps can stay quiet for a few minutes.\n\n',
+        isComplete: false,
+      });
+    }, 8000);
+
+    this.io.to(`session:${sessionId}`).emit('session:thinking', {
+      sessionId,
+      isThinking: true,
+    });
+
+    child.stdout?.on('data', (data: Buffer) => {
+      receivedStructuredOutput = true;
+      clearTimeout(quietProgressTimer);
+      this.handleJsonOutput(sessionId, data.toString());
+    });
+    child.stderr?.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      stderr = `${stderr}${chunk}`.slice(-8_000);
+      console.error(`Kimi stderr [${sessionId}]:`, chunk);
+    });
+    child.on('exit', (exitCode) => {
+      clearTimeout(quietProgressTimer);
+      console.log(`[KIMI] Process for session ${sessionId} exited with code ${exitCode}`);
+      const managedProc = this.processes.get(sessionId);
+      if (!managedProc || managedProc.process !== child) return;
+
+      if (
+        exitCode !== 0 &&
+        attemptedResumeId &&
+        !retriedWithoutResume &&
+        isKimiSessionNotFoundError(stderr)
+      ) {
+        console.warn(
+          `[KIMI] Native session ${attemptedResumeId} is missing; retrying once without resume [${sessionId}]`
+        );
+        managedProc.codexSessionId = undefined;
+        managedProc.claudeSessionId = null;
+        managedProc.codexIdle = true;
+        managedProc.streamingText = '';
+        managedProc.isStreaming = false;
+        getDatabase()
+          .prepare('UPDATE sessions SET claude_session_id = NULL WHERE id = ?')
+          .run(sessionId);
+        void this.dispatchKimiTurn(sessionId, managedProc, turn, true).catch((error) => {
+          console.error(`[KIMI] Fresh-session retry failed [${sessionId}]:`, error);
+          managedProc.codexIdle = true;
+          this.io.to(`session:${sessionId}`).emit('session:thinking', {
+            sessionId,
+            isThinking: false,
+          });
+          this.io.to(`session:${sessionId}`).emit('session:error', {
+            sessionId,
+            error: `Kimi failed to restart: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        });
+        return;
+      }
+
+      const text = managedProc.streamingText.trim();
+      if (text) {
+        this.saveAssistantMessage(sessionId, text);
+      } else if (exitCode !== 0) {
+        this.io.to(`session:${sessionId}`).emit('session:output', {
+          sessionId,
+          content: formatKimiExitMessage(exitCode, stderr),
+          isComplete: false,
+        });
+      }
+      managedProc.streamingText = '';
+      managedProc.isStreaming = false;
+      managedProc.codexIdle = true;
+      this.saveUsageToDatabase(sessionId, managedProc);
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+      this.emitStatus(sessionId, { sessionId, status: 'running' });
+    });
+    child.on('error', (error) => {
+      clearTimeout(quietProgressTimer);
+      console.error(`Kimi process error [${sessionId}]:`, error);
+      const managedProc = this.processes.get(sessionId);
+      if (managedProc?.process === child) {
+        managedProc.codexIdle = true;
+        managedProc.streamingText = '';
+        managedProc.isStreaming = false;
+      }
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: false,
+      });
+      this.io.to(`session:${sessionId}`).emit('session:error', {
+        sessionId,
+        error: `Kimi failed to start: ${error.message}`,
+      });
+    });
+  }
+
+  /**
+   * Translate one Kimi stream-json NDJSON object into socket events. Kimi emits
+   * OpenAI-style chat messages (assistant text / tool_calls, then tool results).
+   * Defensive: any text found is streamed; unknown shapes are ignored rather
+   * than crashing the turn. Refined against real output post-login.
+   */
+  private processKimiLine(sessionId: string, proc: ClaudeProcess, raw: unknown): void {
+    if (!raw || typeof raw !== 'object') return;
+    const obj = raw as Record<string, unknown>;
+    const role = typeof obj.role === 'string' ? obj.role : '';
+
+    const usage = (obj.usage ?? obj.token_usage ?? obj.tokens) as
+      | Record<string, unknown>
+      | undefined;
+    if (usage && typeof usage === 'object') {
+      const num = (value: unknown) =>
+        typeof value === 'number' && Number.isFinite(value) ? value : 0;
+      if (proc.turnInputTokens === 0) {
+        proc.turnInputTokens = num(usage.input_tokens ?? usage.prompt_tokens);
+      }
+      proc.turnOutputTokens = num(
+        usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens
+      );
+    }
+
+    const sid = obj.session_id ?? obj.sessionId ?? obj.id;
+    if (typeof sid === 'string' && sid && !proc.codexSessionId) {
+      proc.codexSessionId = sid;
+      proc.claudeSessionId = sid;
+      try {
+        getDatabase()
+          .prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?')
+          .run(sid, sessionId);
+        console.log(`[KIMI] Captured native session id ${sid} for ${sessionId}`);
+      } catch (error) {
+        console.warn('[KIMI] Failed to persist native session id:', error);
+      }
+    }
+
+    let text: string | null = null;
+    if (role === 'assistant') {
+      const content = obj.content;
+      if (typeof content === 'string') {
+        text = content;
+      } else if (Array.isArray(content)) {
+        text = content
+          .map((block) => {
+            if (typeof block === 'string') return block;
+            if (block && typeof block === 'object') {
+              const b = block as Record<string, unknown>;
+              if (typeof b.text === 'string') return b.text;
+              if (typeof b.content === 'string') return b.content;
+            }
+            return '';
+          })
+          .join('');
+      }
+    } else if (!role && typeof obj.text === 'string') {
+      text = obj.text;
+    } else if (!role && typeof obj.content === 'string') {
+      text = obj.content;
+    }
+
+    if (text && text.length > 0) {
+      proc.streamingText += text;
+      proc.isStreaming = true;
+      this.io.to(`session:${sessionId}`).emit('session:output', {
+        sessionId,
+        content: text,
+        isComplete: false,
+      });
+    }
+
+    const toolCalls = obj.tool_calls;
+    if (Array.isArray(toolCalls)) {
+      for (const call of toolCalls) {
+        if (call && typeof call === 'object') {
+          const c = call as Record<string, unknown>;
+          const fn = c.function as Record<string, unknown> | undefined;
+          const name = (fn?.name ?? c.name) as string | undefined;
+          if (name) {
+            this.io.to(`session:${sessionId}`).emit('session:output', {
+              sessionId,
+              content: `\n🔧 ${name}\n`,
+              isComplete: false,
+            });
+          }
+        }
+      }
+    }
   }
 
   private async dispatchCodexTurn(
@@ -6722,6 +8556,8 @@ The planning phase is complete. You are now in Auto-Accept mode.
     if (!proc.codexIdle) {
       throw new Error('Codex process is still running');
     }
+    proc.currentUsageTurnId = turn.queueId;
+    proc.currentUsageTurnStartedAt = turn.queuedAt;
     proc.codexIdle = false;
 
     if (turn.updateLastMessage) {
@@ -6821,6 +8657,9 @@ The planning phase is complete. You are now in Auto-Accept mode.
       throw new Error('OpenCode session is not ready');
     }
 
+    proc.currentUsageTurnId = turn.queueId;
+    proc.currentUsageTurnStartedAt = turn.queuedAt;
+
     if (turn.updateLastMessage) {
       proc.lastUserMessage = turn.originalMessage;
       proc.lastAttachments = turn.attachments || null;
@@ -6836,6 +8675,10 @@ The planning phase is complete. You are now in Auto-Accept mode.
     try {
       const selectedReasoning = await getCliReasoningForSession(proc.userId, 'opencode', sessionId);
       this.resetCurrentContextUsage(proc);
+      proc.opencodeUsageBaseline = await opencodeServer.getUsageSnapshot(
+        proc.claudeSessionId,
+        proc.userId
+      );
 
       if (turn.opencodeSlashCommand?.type === 'compact') {
         const compacted = await opencodeServer.compactSession(proc.claudeSessionId, {
@@ -6873,6 +8716,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
       if (turn.opencodeSlashCommand?.type === 'command') {
         await opencodeServer.sendCommand(proc.claudeSessionId, {
+          turnId: turn.queueId,
           command: turn.opencodeSlashCommand.command,
           arguments: turn.opencodeSlashCommand.args,
           model: proc.model,
@@ -6890,6 +8734,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
 
       if (turn.opencodeSlashCommand?.type === 'plan') {
         await opencodeServer.sendPrompt(proc.claudeSessionId, {
+          turnId: turn.queueId,
           text:
             turn.opencodeSlashCommand.args ||
             'Create a plan for the next work in this session. Do not edit files until the plan is accepted.',
@@ -6906,6 +8751,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       }
 
       await opencodeServer.sendPrompt(proc.claudeSessionId, {
+        turnId: turn.queueId,
         text: turn.messageForClaude,
         model: proc.model,
         mode: proc.mode,
@@ -6988,6 +8834,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       activeFollowupMode?: ActiveFollowupMode;
     }
   ): Promise<void> {
+    assertRunnerAccess(userId);
     let proc = this.processes.get(sessionId);
 
     if (!proc) {
@@ -7019,7 +8866,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.cliProvider === 'codex' && !codexReviewCommand && isCodexNativeSlashCommand(message);
     const opencodeSlashCommand =
       proc.cliProvider === 'opencode' ? parseOpenCodeSlashCommand(message) : null;
-    const providerNativeSlashCommand = codexNativeSlashCommand || Boolean(opencodeSlashCommand);
+    const piNativeSlashCommand = proc.cliProvider === 'pi' && message.trimStart().startsWith('/');
+    const piCompactCommand =
+      proc.cliProvider === 'pi' && /^\/compact(?:\s|$)/i.test(message.trim());
+    const providerNativeSlashCommand =
+      codexNativeSlashCommand || Boolean(opencodeSlashCommand) || piNativeSlashCommand;
     let codexExecCommandForTurn: CodexPreparedTurn['codexExecCommand'];
     const codexImagePathsForTurn: string[] = [];
     if (codexReviewCommand) {
@@ -7066,13 +8917,21 @@ ${proc.contextReminder.summary}
 
     if (!codexReviewCommand && !providerNativeSlashCommand) {
       const discordGatewayContext = this.buildDiscordGatewayContext(sessionId, proc);
-      if (
-        discordGatewayContext &&
-        proc.discordGatewayContextInjected !== discordGatewayContext
-      ) {
+      if (discordGatewayContext && proc.discordGatewayContextInjected !== discordGatewayContext) {
         messageForClaude = `${discordGatewayContext}\n\n${messageForClaude}`;
         proc.discordGatewayContextInjected = discordGatewayContext;
       }
+    }
+
+    if (!codexReviewCommand && !providerNativeSlashCommand && !proc.superpowersContextInjected) {
+      const superpowersContext = await buildSuperpowersBootstrapContext(
+        proc.cliProvider,
+        resolveConfigHome(proc.cliProvider)
+      );
+      if (superpowersContext) {
+        messageForClaude = `${superpowersContext}\n\n${messageForClaude}`;
+      }
+      proc.superpowersContextInjected = true;
     }
 
     if (
@@ -7097,7 +8956,7 @@ ${proc.contextReminder.summary}
     if (
       !codexReviewCommand &&
       !providerNativeSlashCommand &&
-      (proc.cliProvider === 'codex' || proc.cliProvider === 'opencode') &&
+      proc.cliProvider !== 'opencode' &&
       proc.modePromptInjected !== proc.mode
     ) {
       const modePrompt = this.getModePrompt(proc.mode);
@@ -7127,8 +8986,18 @@ ${proc.contextReminder.summary}
         userId,
         proc.cliProvider
       );
-      if (sessionStyleContext) {
-        messageForClaude = `${sessionStyleContext}\n\n${messageForClaude}`;
+      if (shouldInjectSessionStyleContext(proc.sessionStyleContextInjected, sessionStyleContext)) {
+        if (sessionStyleContext) {
+          messageForClaude = `${sessionStyleContext}\n\n${messageForClaude}`;
+        } else if (proc.sessionStyleContextInjected) {
+          const styleClearedContext = [
+            '<session-style-library>',
+            'The active style-library selection was cleared for this session. Do not continue applying its prior style instructions unless the user asks for them.',
+            '</session-style-library>',
+          ].join('\n');
+          messageForClaude = `${styleClearedContext}\n\n${messageForClaude}`;
+        }
+        proc.sessionStyleContextInjected = sessionStyleContext;
       }
     }
 
@@ -7157,7 +9026,7 @@ ${proc.contextReminder.summary}
 
       if (imageFiles.length > 0) {
         const refs = imageFiles.map((f) => `- ${f.path}`).join('\n');
-        if (proc.cliProvider === 'vibe' || proc.cliProvider === 'opencode') {
+        if (proc.cliProvider === 'opencode') {
           const names = imageFiles.map((f) => f.filename).join(', ');
           const bridgeDescription = await describeImagesWithCodex({
             imagePaths: imageFiles.map((f) => f.path),
@@ -7166,18 +9035,16 @@ ${proc.contextReminder.summary}
             sessionId,
           });
           if (bridgeDescription) {
-            const providerLabel = proc.cliProvider === 'vibe' ? 'Vibe' : 'OpenCode';
             instructions.push(
               `The user attached ${imageFiles.length} image file(s) (${names}), saved at:\n${refs}\n\n` +
-                `${providerLabel} is receiving these image attachments through Plum Code WebUI's Codex vision bridge, so Codex pre-read the image(s) and produced these visual notes:\n` +
+                `OpenCode is receiving these image attachments through Plum Code WebUI's Codex vision bridge, so Codex pre-read the image(s) and produced these visual notes:\n` +
                 `<image-vision-notes provider="codex">\n${bridgeDescription}\n</image-vision-notes>\n\n` +
                 `Use these notes as the image content. If you need exact pixels or OCR beyond these notes, say what is missing.`
             );
           } else {
-            const providerLabel = proc.cliProvider === 'vibe' ? 'Vibe' : 'OpenCode';
             instructions.push(
               `The user attached ${imageFiles.length} image file(s) (${names}), saved at:\n${refs}\n` +
-                `${providerLabel} did not receive native vision content and the Codex vision bridge failed. Do not pretend to see the image; ` +
+                `OpenCode did not receive native vision content and the Codex vision bridge failed. Do not pretend to see the image; ` +
                 `ask the user for a text description or switch to Codex/Claude for this image-specific turn.`
             );
           }
@@ -7236,8 +9103,9 @@ ${proc.contextReminder.summary}
       })),
     ];
 
-    const recordMessage = options?.recordMessage !== false;
-    const updateLastMessage = options?.updateLastMessage !== false;
+    const defaultRecordMessage = shouldRecordProviderUserMessage(proc.cliProvider, message);
+    const recordMessage = options?.recordMessage ?? defaultRecordMessage;
+    const updateLastMessage = options?.updateLastMessage ?? defaultRecordMessage;
     const recordedMessageId = nanoid();
     const recordedCreatedAt = new Date().toISOString();
 
@@ -7320,6 +9188,45 @@ ${proc.contextReminder.summary}
       return;
     }
 
+    if (isClaudeTransportProvider(proc.cliProvider)) {
+      const claudeTurn: ClaudePreparedTurn = {
+        queueId: recordedMessageId,
+        queuedAt: recordedCreatedAt,
+        originalMessage: message,
+        messageForClaude,
+        attachments,
+        updateLastMessage,
+      };
+
+      if (proc.claudeIdle === false || proc.claudeQueueDraining) {
+        this.queueClaudeTurn(sessionId, proc, claudeTurn);
+        return;
+      }
+
+      this.dispatchClaudeTurn(sessionId, proc, claudeTurn);
+      return;
+    }
+
+    if (proc.cliProvider === 'kimi') {
+      const kimiTurn: CodexPreparedTurn = {
+        queueId: recordedMessageId,
+        queuedAt: recordedCreatedAt,
+        originalMessage: message,
+        messageForClaude,
+        attachments,
+        updateLastMessage,
+        codexImagePaths: [],
+        codexExecCommand: undefined,
+        codexNativeSlashCommand: false,
+      };
+      if (proc.kimiIdle === false || proc.kimiQueueDraining) {
+        this.queueKimiTurn(sessionId, proc, kimiTurn);
+        return;
+      }
+      await this.dispatchKimiAcpTurn(sessionId, proc, kimiTurn);
+      return;
+    }
+
     if (updateLastMessage) {
       // Track last message for permission approval resend
       proc.lastUserMessage = message;
@@ -7327,22 +9234,31 @@ ${proc.contextReminder.summary}
     }
     proc.pendingPermissionDenials = null; // Clear any previous denials
 
+    if (piCompactCommand) {
+      // Manual compaction is not a turn — leave piTurnInFlight alone so an
+      // in-flight turn still gets resumed once compaction finishes.
+      proc.process.stdin?.write(`${JSON.stringify({ type: 'compact' })}\n`);
+      this.io.to(`session:${sessionId}`).emit('session:thinking', {
+        sessionId,
+        isThinking: true,
+      });
+      return;
+    }
+
+    if (proc.cliProvider === 'pi') {
+      this.clearPiCompactResumeTimer(proc);
+      proc.piTurnInFlight = true;
+      proc.piCompactContinuations = 0;
+    }
+
+    proc.currentUsageTurnId = recordedMessageId;
+    proc.currentUsageTurnStartedAt = recordedCreatedAt;
+
     // Emit thinking indicator
     this.io.to(`session:${sessionId}`).emit('session:thinking', {
       sessionId,
       isThinking: true,
     });
-
-    // Vibe: prompt is delivered via argv (-p TEXT) so every turn requires a new spawn.
-    // We branch out of the normal stdin dispatch entirely here.
-    if (proc.cliProvider === 'vibe') {
-      console.log(`[VIBE] Spawning fresh process for next message [${sessionId}]`);
-      await this.respawnVibeProcess(sessionId, proc, messageForClaude);
-      console.log(
-        `Sent message [${sessionId}] via vibe (argv): ${messageForClaude.substring(0, 100)}...`
-      );
-      return;
-    }
 
     const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
     proc.process.stdin?.write(formattedMessage);
@@ -7363,6 +9279,11 @@ ${proc.contextReminder.summary}
 
     console.log(`Interrupting session [${sessionId}]`);
 
+    // An explicit interrupt ends the turn — drop any pending compaction nudge.
+    this.clearPiCompactResumeTimer(proc);
+    proc.piTurnInFlight = false;
+    proc.piCompactContinuations = 0;
+
     // Clear any pending streaming content
     if (proc.streamingText.trim().length > 0) {
       // Save partial response before interrupt
@@ -7379,12 +9300,27 @@ ${proc.contextReminder.summary}
 
     // Server-backed opencode: abort the in-flight prompt via HTTP.
     if (proc.serverBacked && proc.cliProvider === 'opencode' && proc.claudeSessionId) {
-      void opencodeServer.abort(proc.claudeSessionId);
+      void opencodeServer.abort(proc.claudeSessionId, proc.userId);
+      return;
+    }
+
+    if (proc.cliProvider === 'pi' && proc.process.stdin?.writable) {
+      proc.process.stdin.write(`${JSON.stringify({ type: 'abort' })}\n`);
+      proc.isStreaming = false;
+      proc.currentToolName = null;
+      proc.currentToolId = null;
+      return;
+    }
+
+    if (proc.cliProvider === 'kimi' && proc.kimiAcpConnection && proc.kimiAcpSessionId) {
+      void proc.kimiAcpConnection
+        .cancel({ sessionId: proc.kimiAcpSessionId })
+        .catch((error) => console.error(`[KIMI ACP] Cancel failed [${sessionId}]:`, error));
       return;
     }
 
     // Send interrupt signal
-    proc.process.kill('SIGINT');
+    signalManagedProcess(proc.process, 'SIGINT');
   }
 
   async sendRawInput(sessionId: string, userId: string, input: string): Promise<void> {
@@ -7402,15 +9338,31 @@ ${proc.contextReminder.summary}
       throw new Error('Unauthorized');
     }
 
+    if (proc.serverBacked && proc.cliProvider === 'opencode') {
+      this.detachProcessForRestart(proc);
+      this.cleanupProcess(sessionId, proc);
+      return;
+    }
+
     // Close stdin to signal end
     proc.process.stdin?.end();
 
     setTimeout(() => {
-      if (this.processes.has(sessionId)) {
-        proc.process.kill();
-        this.cleanupProcess(sessionId);
+      if (this.processes.get(sessionId) === proc) {
+        terminateManagedProcess(proc.process);
+        this.cleanupProcess(sessionId, proc);
       }
     }, 2000);
+  }
+
+  private detachProcessForRestart(proc: ClaudeProcess): void {
+    if (proc.serverBacked && proc.cliProvider === 'opencode' && proc.claudeSessionId) {
+      void opencodeServer.abort(proc.claudeSessionId, proc.userId);
+      opencodeServer.unsubscribe(proc.claudeSessionId, proc.userId);
+      return;
+    }
+
+    terminateManagedProcess(proc.process);
   }
 
   // Restart a session (stop and start fresh)
@@ -7448,9 +9400,16 @@ ${proc.contextReminder.summary}
       proc.opencodeQueuedTurns = [];
       proc.opencodeQueueDraining = false;
       proc.opencodeIdle = true;
+      proc.claudeQueuedTurns = [];
+      proc.claudeQueueDraining = false;
+      proc.claudeIdle = true;
+      proc.kimiQueuedTurns = [];
+      proc.kimiQueueDraining = false;
+      proc.kimiIdle = true;
       this.emitQueueState(sessionId, proc);
-      // Kill the process immediately
-      proc.process.kill('SIGTERM');
+      // Stop the provider transport immediately. Server-backed OpenCode sessions
+      // need an HTTP abort plus handler cleanup; their virtual child kill is a no-op.
+      this.detachProcessForRestart(proc);
       this.processes.delete(sessionId);
     }
 
@@ -7585,6 +9544,44 @@ ${proc.contextReminder.summary}
     // Store the new mode
     const previousMode = proc.mode;
     proc.mode = mode;
+    this.emitModeChange(sessionId, mode);
+
+    if (proc.cliProvider === 'kimi' && proc.kimiAcpConnection && proc.kimiAcpSessionId) {
+      const acpMode = kimiAcpModeForSessionMode(mode);
+      void proc.kimiAcpConnection
+        .setSessionConfigOption({
+          sessionId: proc.kimiAcpSessionId,
+          configId: 'mode',
+          value: acpMode,
+        })
+        .then((result) => {
+          proc.kimiAcpConfigOptions = result.configOptions;
+          console.log(`[MODE] Applied ${mode} through Kimi ACP [${sessionId}]`);
+        })
+        .catch((error) => {
+          console.error(`[MODE] Failed to apply Kimi ACP mode [${sessionId}]:`, error);
+          proc.mode = previousMode;
+          this.emitModeChange(sessionId, previousMode);
+          this.io.to(`session:${sessionId}`).emit('session:error', {
+            sessionId,
+            error: `Kimi mode change failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        });
+      return;
+    }
+
+    // Codex reads the permission mode when the next child is spawned.
+    // Restarting their virtual session here can race with a simultaneous send:
+    // the old child keeps running after the process slot is replaced and its
+    // output is then discarded. Apply the mode in place instead; an active turn
+    // finishes normally and the new mode takes effect on the following turn.
+    if (appliesModeOnNextTurnWithoutRestart(proc.cliProvider)) {
+      console.log(
+        `[MODE] Applied ${mode} in place for per-turn provider ${proc.cliProvider} [${sessionId}]`
+      );
+      return;
+    }
+
     // For mode changes on running sessions, we need to restart the process
     // Save any pending streaming content first
     if (proc.streamingText.trim().length > 0) {
@@ -7593,8 +9590,8 @@ ${proc.contextReminder.summary}
       proc.isStreaming = false;
     }
 
-    // Kill the current process and restart with new mode
-    proc.process.kill('SIGTERM');
+    // Stop the current provider transport and restart with the new mode.
+    this.detachProcessForRestart(proc);
 
     // Wait a bit for the process to terminate, then restart
     setTimeout(async () => {
@@ -7613,15 +9610,22 @@ ${proc.contextReminder.summary}
     }, 1000);
   }
 
-  private cleanupProcess(sessionId: string): void {
+  private cleanupProcess(sessionId: string, expected?: ClaudeProcess): void {
     const proc = this.processes.get(sessionId);
     if (!proc) return;
+    // An older child's delayed exit/error must never remove a replacement
+    // process that already owns the same WebUI session.
+    if (expected && proc !== expected) return;
+
+    // Never let a scheduled post-compaction nudge fire into a dead stdin.
+    this.clearPiCompactResumeTimer(proc);
+    proc.piTurnInFlight = false;
 
     // Server-backed opencode: drop the SSE handler so events for this session
     // stop routing anywhere. The opencode session itself stays alive on the
     // server (it can be resumed on next startSession).
     if (proc.serverBacked && proc.cliProvider === 'opencode' && proc.claudeSessionId) {
-      opencodeServer.unsubscribe(proc.claudeSessionId);
+      opencodeServer.unsubscribe(proc.claudeSessionId, proc.userId);
     }
 
     this.processes.delete(sessionId);
@@ -7682,8 +9686,8 @@ ${proc.contextReminder.summary}
         ? !proc.codexIdle || hasPendingCodexSteer || hasActiveSubagents
         : proc.cliProvider === 'opencode'
           ? !proc.opencodeIdle || queueItems.length > 0 || hasActiveSubagents
-          : proc.cliProvider === 'vibe'
-            ? !proc.vibeIdle || hasActiveSubagents
+          : isClaudeTransportProvider(proc.cliProvider)
+            ? proc.claudeIdle === false || queueItems.length > 0 || hasActiveSubagents
             : proc.isStreaming || !!proc.currentToolName || hasActiveSubagents;
     const activitySummary = this.getActivitySummary(proc, busy, queueItems.length);
 
@@ -7717,7 +9721,10 @@ ${proc.contextReminder.summary}
    */
   async shutdownAll(timeoutMs = 3000): Promise<void> {
     const sessionIds = Array.from(this.processes.keys());
-    if (sessionIds.length === 0) return;
+    if (sessionIds.length === 0) {
+      await opencodeServer.shutdownAll();
+      return;
+    }
 
     console.log(`[SHUTDOWN] Terminating ${sessionIds.length} Claude process(es)`);
     const db = getDatabase();
@@ -7726,8 +9733,12 @@ ${proc.contextReminder.summary}
       const proc = this.processes.get(sessionId);
       if (!proc) continue;
       try {
-        proc.process.stdin?.end();
-        proc.process.kill('SIGTERM');
+        if (proc.serverBacked && proc.cliProvider === 'opencode') {
+          this.detachProcessForRestart(proc);
+        } else {
+          proc.process.stdin?.end();
+          signalManagedProcess(proc.process, 'SIGTERM');
+        }
       } catch (err) {
         console.error(`[SHUTDOWN] SIGTERM failed for ${sessionId}:`, err);
       }
@@ -7747,12 +9758,13 @@ ${proc.contextReminder.summary}
       const proc = this.processes.get(sessionId);
       if (!proc) continue;
       try {
-        proc.process.kill('SIGKILL');
+        signalManagedProcess(proc.process, 'SIGKILL');
       } catch {
         // Process may already have exited.
       }
       this.processes.delete(sessionId);
     }
+    await opencodeServer.shutdownAll();
   }
 
   // Handle permission approval - restart session with allowed tools and resend message
@@ -7790,7 +9802,7 @@ ${proc.contextReminder.summary}
     const providerConfig = CLI_PROVIDERS[cliProvider];
 
     // Kill current process
-    proc.process.kill('SIGTERM');
+    terminateManagedProcess(proc.process);
     this.processes.delete(sessionId);
 
     // Wait for process to terminate
@@ -7826,7 +9838,7 @@ ${proc.contextReminder.summary}
           : await getCliModelForSession(userId, cliProvider, sessionId);
     const requestedReasoning = await getCliReasoningForSession(userId, cliProvider, sessionId);
     const requestedServiceTier = await getCliServiceTierForSession(userId, cliProvider, sessionId);
-    if (cliProvider === 'claude') {
+    if (isClaudeTransportProvider(cliProvider)) {
       args = [
         '--print',
         '--verbose',
@@ -7874,12 +9886,31 @@ ${proc.contextReminder.summary}
     console.log(`[PERMISSION] Restarting ${providerConfig.name} with args: ${args.join(' ')}`);
 
     const configHome = resolveConfigHome(cliProvider);
+    if (isClaudeTransportProvider(cliProvider)) {
+      await sanitizeClaudeSettingsProviderEnv({
+        settingsPath: path.join(configHome, 'settings.json'),
+      });
+    }
+    if (cliProvider === 'claude' && claudeSessionId) {
+      const transcript = await sanitizeClaudeResumeTranscript(
+        configHome,
+        workingDirectory,
+        claudeSessionId
+      );
+      if (transcript.updated) {
+        console.log(
+          `[provider-isolation] Replaced ${transcript.replacements} incompatible Z.AI server tool block(s) before Claude permission resume`
+        );
+      }
+    }
 
     // Spawn new process
-    const newProc = cpSpawn(providerConfig.command, args, {
+    const newProc = spawnManagedProcess(providerConfig.command, args, {
       cwd: workingDirectory,
       env: {
-        ...process.env,
+        ...(isClaudeTransportProvider(cliProvider)
+          ? buildClaudeTransportEnv(cliProvider, userId, configHome)
+          : process.env),
         ...buildAndroidDeviceEnvForSession(sessionId, userId),
         WEBUI_SESSION_ID: sessionId,
         WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
@@ -7916,6 +9947,8 @@ ${proc.contextReminder.summary}
       turnCacheReadTokens: 0,
       turnCacheCreationTokens: 0,
       turnOutputTokens: 0,
+      currentUsageTurnId: proc.currentUsageTurnId,
+      currentUsageTurnStartedAt: proc.currentUsageTurnStartedAt,
       totalInputTokens: proc.totalInputTokens,
       totalOutputTokens: proc.totalOutputTokens,
       cacheReadTokens: proc.cacheReadTokens,
@@ -7930,7 +9963,9 @@ ${proc.contextReminder.summary}
       lastUserMessage: null,
       lastAttachments: null,
       pendingPermissionDenials: null,
+      pendingChatMedia: proc.pendingChatMedia,
       sharedContextInjected: false,
+      superpowersContextInjected: false,
       modePromptInjected: null,
       lastContextLimitAt: proc.lastContextLimitAt,
     };
@@ -7948,7 +9983,7 @@ ${proc.contextReminder.summary}
 
     newProc.on('exit', (exitCode) => {
       console.log(`Claude process for session ${sessionId} exited with code ${exitCode}`);
-      this.cleanupProcess(sessionId);
+      this.cleanupProcess(sessionId, claudeProcess);
     });
 
     newProc.on('error', (err) => {
@@ -7960,7 +9995,7 @@ ${proc.contextReminder.summary}
         summary: err.message,
       });
 
-      this.cleanupProcess(sessionId);
+      this.cleanupProcess(sessionId, claudeProcess);
     });
 
     // Wait for initialization

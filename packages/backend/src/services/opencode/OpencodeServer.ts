@@ -5,6 +5,7 @@ import http from 'http';
 import os from 'os';
 import path from 'path';
 import { URL } from 'url';
+import { nanoid } from 'nanoid';
 import type { SessionMode } from '@plum-code-webui/shared';
 import { buildOpenCodePermissionRules, CLI_PROVIDERS } from '../cli-providers.js';
 import { config } from '../../config.js';
@@ -14,8 +15,13 @@ import {
   buildOpenCodeProviderCredentialEnv,
   getOpenCodeProviderCredentialFingerprint,
 } from '../../utils/opencodeProviderKeys.js';
-import { syncOpenCodeConfig } from '../../utils/providerLinks.js';
+import { syncProviderLinks } from '../../utils/providerLinks.js';
 import { buildOpenCodePromptText, getOpenCodePrimaryAgent } from './sessionContext.js';
+import {
+  ensureOpenCodeTenantDirectories,
+  resolveOpenCodeTenantPaths,
+  type OpenCodeTenantPaths,
+} from './tenantPaths.js';
 
 const DEBUG_LOG = '/app/packages/backend/data/oc-debug.log';
 function ocDbg(line: string): void {
@@ -26,20 +32,47 @@ function ocDbg(line: string): void {
   }
 }
 
-// The OpenCode SSE `GET /event` stream delivers every event for every session
-// on one connection. We spawn a single `opencode serve` process, hold one
-// long-lived SSE subscription, and demultiplex events back to per-session
-// handlers keyed by the opencode sessionID.
-//
-// Why singleton (not per-session): `opencode serve` already multiplexes
-// sessions internally. Spawning one process per webui session would burn
-// resources and fragment the TUI-visible session list in opencode's own
-// storage.
+export function shouldDetachOpenCodeServer(platform: NodeJS.Platform): boolean {
+  return platform !== 'win32';
+}
+
+function signalOpenCodeProcess(child: ChildProcess, signal: NodeJS.Signals): boolean {
+  if (shouldDetachOpenCodeServer(process.platform) && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ESRCH') return false;
+      console.warn(
+        `[OPENCODE-SERVER] failed to signal process group ${child.pid} with ${signal}:`,
+        error
+      );
+    }
+  }
+
+  try {
+    return child.kill(signal);
+  } catch {
+    return false;
+  }
+}
+
+// One OpencodeServer instance owns one WebUI user's OpenCode process, config,
+// credentials, data store and SSE stream. It multiplexes that user's sessions
+// internally, but never shares mutable process state with another user.
 
 export type OpencodeEvent = Record<string, unknown> & {
   type: string;
   properties?: Record<string, unknown>;
 };
+
+export function permissionRequestBelongsToSession(
+  boundSessionId: string | undefined,
+  expectedSessionId: string | undefined
+): boolean {
+  return Boolean(boundSessionId && expectedSessionId && boundSessionId === expectedSessionId);
+}
 
 type Handler = (event: OpencodeEvent) => void;
 
@@ -48,14 +81,163 @@ type OpenCodeMessageSnapshot = {
   parts?: Array<Record<string, unknown>>;
 };
 
+export type OpenCodeUsageCounters = {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+};
+
+export const EMPTY_OPENCODE_USAGE: OpenCodeUsageCounters = {
+  input: 0,
+  output: 0,
+  reasoning: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+
+export function collectOpenCodeMessageUsage(
+  messages: OpenCodeMessageSnapshot[],
+  seenMessageIds: Set<string> = new Set()
+): OpenCodeUsageCounters {
+  const total = { ...EMPTY_OPENCODE_USAGE };
+  for (const message of messages) {
+    const info = message.info;
+    if (!info || info.role !== 'assistant') continue;
+    const messageId = typeof info.id === 'string' ? info.id : '';
+    if (!messageId || seenMessageIds.has(messageId)) continue;
+    seenMessageIds.add(messageId);
+
+    const tokens = info.tokens as Record<string, unknown> | undefined;
+    const cache = tokens?.cache as Record<string, unknown> | undefined;
+    total.input += Number(tokens?.input) || 0;
+    total.output += Number(tokens?.output) || 0;
+    total.reasoning += Number(tokens?.reasoning) || 0;
+    total.cacheRead += Number(cache?.read) || 0;
+    total.cacheWrite += Number(cache?.write) || 0;
+  }
+  return total;
+}
+
+export function subtractOpenCodeUsage(
+  total: OpenCodeUsageCounters,
+  baseline: OpenCodeUsageCounters
+): OpenCodeUsageCounters | null {
+  const keys = Object.keys(total) as Array<keyof OpenCodeUsageCounters>;
+  if (keys.some((key) => total[key] < baseline[key])) return null;
+  return {
+    input: total.input - baseline.input,
+    output: total.output - baseline.output,
+    reasoning: total.reasoning - baseline.reasoning,
+    cacheRead: total.cacheRead - baseline.cacheRead,
+    cacheWrite: total.cacheWrite - baseline.cacheWrite,
+  };
+}
+
+function addOpenCodeUsage(target: OpenCodeUsageCounters, addition: OpenCodeUsageCounters): void {
+  target.input += addition.input;
+  target.output += addition.output;
+  target.reasoning += addition.reasoning;
+  target.cacheRead += addition.cacheRead;
+  target.cacheWrite += addition.cacheWrite;
+}
+
+type OpenCodePollState = {
+  // OpenCode assigns every assistant step in a turn the initiating user
+  // message as parentID. Filtering on this ID keeps polling scoped to one turn.
+  turnMessageId: string;
+  // partID → length of text/output already surfaced, so we only re-emit growth
+  textLens: Map<string, number>;
+  // partID → last observed tool state.status, so we don't re-emit unchanged states
+  toolStatus: Map<string, string>;
+  // Last observed tool part from the current turn, used for actionable stall diagnostics.
+  lastToolActivity: OpenCodeToolActivitySummary | null;
+  // messageIDs we've already flushed as finished
+  finishedMessages: Set<string>;
+  // idle flag: once we emit session.idle we stop polling
+  idled: boolean;
+  observedChange: boolean;
+  // Last time polling observed assistant text, reasoning, tool state, or step progress.
+  lastObservedAt: number | null;
+  // Timestamp when the last assistant message landed in a terminal state.
+  idleCandidateAt: number | null;
+  // When polling started — safety cap so a stuck session doesn't poll forever.
+  startedAt: number;
+  // Soft cap for no first observable assistant output. 0 disables this cap.
+  noProgressTimeoutMs: number;
+};
+
+export type OpenCodeToolActivitySummary = {
+  messageId?: string;
+  partId: string;
+  callId?: string;
+  tool: string;
+  status: string;
+  preview?: string;
+};
+
+const DIAGNOSTIC_PREVIEW_MAX = 180;
+const SENSITIVE_ASSIGNMENT_RE =
+  /\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|COOKIE|AUTH)[A-Z0-9_]*)=(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
+const SENSITIVE_HEADER_RE =
+  /\b(authorization|cookie|x-[a-z0-9-]*(?:token|key|secret|auth)[a-z0-9-]*):\s*(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
+const SENSITIVE_BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
+
+function diagnosticPreview(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value
+    .replace(SENSITIVE_ASSIGNMENT_RE, '$1=<redacted>')
+    .replace(SENSITIVE_BEARER_RE, 'Bearer <redacted>')
+    .replace(SENSITIVE_HEADER_RE, '$1: <redacted>')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return undefined;
+  return normalized.length > DIAGNOSTIC_PREVIEW_MAX
+    ? `${normalized.slice(0, DIAGNOSTIC_PREVIEW_MAX - 1)}…`
+    : normalized;
+}
+
+function summarizeOpenCodeToolPart(
+  part: Record<string, unknown>,
+  messageId?: string
+): OpenCodeToolActivitySummary | null {
+  const partId = typeof part.id === 'string' ? part.id : undefined;
+  if (!partId) return null;
+  const stateField = part.state as Record<string, unknown> | undefined;
+  const tool =
+    (typeof part.tool === 'string' && part.tool) ||
+    (typeof stateField?.tool === 'string' && stateField.tool) ||
+    (typeof stateField?.name === 'string' && stateField.name) ||
+    'tool';
+  const status =
+    (typeof stateField?.status === 'string' && stateField.status) ||
+    (typeof part.status === 'string' && part.status) ||
+    'unknown';
+  const input = stateField?.input as Record<string, unknown> | undefined;
+  const preview =
+    diagnosticPreview(stateField?.title) ||
+    diagnosticPreview(input?.command) ||
+    diagnosticPreview(stateField?.command) ||
+    diagnosticPreview(part.title);
+  const callId =
+    (typeof part.callID === 'string' && part.callID) ||
+    (typeof part.callId === 'string' && part.callId) ||
+    undefined;
+
+  return { messageId, partId, callId, tool, status, preview };
+}
+
 export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
   textLens: Map<string, number>;
   toolStatus: Map<string, string>;
   finishedMessages: Set<string>;
+  lastToolActivity: OpenCodeToolActivitySummary | null;
 } {
   const textLens = new Map<string, number>();
   const toolStatus = new Map<string, string>();
   const finishedMessages = new Set<string>();
+  let lastToolActivity: OpenCodeToolActivitySummary | null = null;
 
   for (const msg of data) {
     const info = msg.info as Record<string, unknown> | undefined;
@@ -76,6 +258,7 @@ export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
       if (partType === 'tool') {
         const stateField = part.state as { status?: string } | undefined;
         toolStatus.set(partId, stateField?.status ?? '');
+        lastToolActivity = summarizeOpenCodeToolPart(part, messageId);
         continue;
       }
 
@@ -89,11 +272,13 @@ export function collectOpenCodePollCursor(data: OpenCodeMessageSnapshot[]): {
     }
   }
 
-  return { textLens, toolStatus, finishedMessages };
+  return { textLens, toolStatus, finishedMessages, lastToolActivity };
 }
 
 interface PromptOptions {
   text: string;
+  /** Stable WebUI turn id used to scope the polling fallback to this prompt. */
+  turnId?: string;
   /** `providerID/modelID` slash-form, as stored in cli-providers. */
   model?: string | null;
   agent?: string | null;
@@ -125,8 +310,239 @@ interface CreateSessionOptions {
 
 const READY_LINE_RE = /opencode server listening on (http:\/\/[^\s]+)/i;
 const WEBUI_SESSION_CONTEXT_FILE = path.join(os.tmpdir(), 'plum-opencode-webui-session.json');
+const DEFAULT_OPENCODE_NO_PROGRESS_TIMEOUT_MS = 10 * 60 * 1000;
+const MIN_OPENCODE_NO_PROGRESS_TIMEOUT_MS = 30_000;
+const OPENCODE_HARD_SAFETY_TIMEOUT_MS = 30 * 60 * 1000;
+export const OPENCODE_POLL_MESSAGE_LIMIT = 64;
+const OPENCODE_POLL_INTERVAL_MS = 500;
+const OPENCODE_POLL_REQUEST_TIMEOUT_MS = 10_000;
 
-class OpencodeServer {
+const OPENCODE_PROCESS_ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'TMPDIR',
+  'NPM_CONFIG_PREFIX',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'GODOT_BIN',
+  'BLENDER_BIN',
+] as const;
+
+export function buildOpenCodeServerProcessEnv(
+  source: NodeJS.ProcessEnv = buildOpenCodeCommandEnv()
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of OPENCODE_PROCESS_ENV_ALLOWLIST) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+export function buildOpenCodeTurnMessageId(turnId?: string): string {
+  const safeTurnId = turnId?.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+  return `msg_plum_${safeTurnId || nanoid()}`;
+}
+
+export function buildOpenCodePollMessagesUrl(
+  baseUrl: string,
+  opencodeSessionId: string,
+  limit = OPENCODE_POLL_MESSAGE_LIMIT
+): string {
+  const url = new URL(
+    `/session/${encodeURIComponent(opencodeSessionId)}/message`,
+    baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`
+  );
+  url.searchParams.set('limit', String(Math.max(1, Math.trunc(limit))));
+  return url.toString();
+}
+
+export function selectOpenCodeTurnMessages(
+  data: OpenCodeMessageSnapshot[],
+  turnMessageId: string
+): OpenCodeMessageSnapshot[] {
+  return data.filter((message) => {
+    const info = message.info;
+    if (!info) return false;
+    if (info.id === turnMessageId && info.role === 'user') return true;
+    return info.role === 'assistant' && info.parentID === turnMessageId;
+  });
+}
+
+export function resolveOpenCodeNoProgressTimeoutMs(
+  value: string | null | undefined = process.env.OPENCODE_NO_PROGRESS_TIMEOUT_MS
+): number {
+  if (value === null || value === undefined || value.trim() === '') {
+    return DEFAULT_OPENCODE_NO_PROGRESS_TIMEOUT_MS;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_OPENCODE_NO_PROGRESS_TIMEOUT_MS;
+  }
+  if (parsed <= 0) {
+    return 0;
+  }
+
+  return Math.max(Math.trunc(parsed), MIN_OPENCODE_NO_PROGRESS_TIMEOUT_MS);
+}
+
+export function hasOpenCodeHardSafetyTimeoutElapsed(now: number, startedAt: number): boolean {
+  return now - startedAt > OPENCODE_HARD_SAFETY_TIMEOUT_MS;
+}
+
+export type OpenCodeStallTimeoutReason = 'no-progress' | 'stalled';
+
+export function resolveOpenCodeStallTimeout(opts: {
+  now: number;
+  startedAt: number;
+  lastObservedAt: number | null;
+  observedChange: boolean;
+  timeoutMs: number;
+}): OpenCodeStallTimeoutReason | null {
+  if (opts.timeoutMs <= 0) return null;
+
+  if (!opts.observedChange) {
+    return opts.now - opts.startedAt > opts.timeoutMs ? 'no-progress' : null;
+  }
+
+  const lastObservedAt = opts.lastObservedAt ?? opts.startedAt;
+  return opts.now - lastObservedAt > opts.timeoutMs ? 'stalled' : null;
+}
+
+export function formatOpenCodeStallErrorMessage(
+  reason: OpenCodeStallTimeoutReason,
+  timeoutSeconds: number,
+  lastToolActivity?: OpenCodeToolActivitySummary | null
+): string {
+  const base =
+    reason === 'no-progress'
+      ? `OpenCode did not produce any output within ${timeoutSeconds}s. Slow first-token models can exceed this; check the selected provider/model or raise OPENCODE_NO_PROGRESS_TIMEOUT_MS.`
+      : `OpenCode produced output but then had no further activity for ${timeoutSeconds}s, so Plum aborted the turn. This usually means a tool call or provider stream stalled; raise OPENCODE_NO_PROGRESS_TIMEOUT_MS if this workload legitimately runs longer without output.`;
+
+  if (!lastToolActivity) return base;
+
+  const details = [
+    `Last observed tool: ${lastToolActivity.tool}`,
+    `status: ${lastToolActivity.status}`,
+  ];
+  if (lastToolActivity.preview) details.push(`preview: ${lastToolActivity.preview}`);
+  return `${base} ${details.join('; ')}.`;
+}
+
+export function resolveOpenCodeProviderTurnGateKey(
+  model: string | null | undefined
+): string | null {
+  if (!model) return null;
+  const parsed = splitModel(model);
+  const providerId = parsed?.providerID.trim().toLowerCase();
+  return providerId === 'z-ai' || providerId === 'zai' ? 'z-ai' : null;
+}
+
+export class OpenCodeProviderTurnGate {
+  private active = new Map<string, string>();
+  private queued = new Map<
+    string,
+    Array<{
+      sessionId: string;
+      resolve: (release: () => void) => void;
+      reject: (reason: Error) => void;
+    }>
+  >();
+
+  async acquire(key: string | null, sessionId: string): Promise<() => void> {
+    if (!key) return () => undefined;
+
+    if (!this.active.has(key)) {
+      this.active.set(key, sessionId);
+      return this.releaseOnce(key, sessionId);
+    }
+
+    return new Promise<() => void>((resolve, reject) => {
+      const queue = this.queued.get(key) ?? [];
+      queue.push({ sessionId, resolve, reject });
+      this.queued.set(key, queue);
+    });
+  }
+
+  releaseForSession(sessionId: string): void {
+    for (const [key, queue] of this.queued.entries()) {
+      const cancelled = queue.filter((item) => item.sessionId === sessionId);
+      const nextQueue = queue.filter((item) => item.sessionId !== sessionId);
+      if (nextQueue.length === 0) {
+        this.queued.delete(key);
+      } else {
+        this.queued.set(key, nextQueue);
+      }
+      for (const item of cancelled) {
+        item.reject(new Error(`OpenCode provider turn cancelled for ${sessionId}`));
+      }
+    }
+
+    for (const [key, activeSessionId] of this.active.entries()) {
+      if (activeSessionId === sessionId) {
+        this.release(key, sessionId);
+      }
+    }
+  }
+
+  cancelAll(reason = 'OpenCode provider turn gate cancelled'): void {
+    const error = new Error(reason);
+    for (const queue of this.queued.values()) {
+      for (const item of queue) {
+        item.reject(error);
+      }
+    }
+    this.queued.clear();
+    this.active.clear();
+  }
+
+  private releaseOnce(key: string, sessionId: string): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.release(key, sessionId);
+    };
+  }
+
+  private release(key: string, sessionId: string): void {
+    if (this.active.get(key) !== sessionId) return;
+
+    const queue = this.queued.get(key) ?? [];
+    const next = queue.shift();
+    if (queue.length === 0) {
+      this.queued.delete(key);
+    } else {
+      this.queued.set(key, queue);
+    }
+
+    if (!next) {
+      this.active.delete(key);
+      return;
+    }
+
+    this.active.set(key, next.sessionId);
+    next.resolve(this.releaseOnce(key, next.sessionId));
+  }
+}
+
+export class OpencodeServer {
   private proc: ChildProcess | null = null;
   private baseUrl: string | null = null;
   private startPromise: Promise<string> | null = null;
@@ -149,6 +565,10 @@ class OpencodeServer {
   // Fallback handler for events that arrive before we know the sessionID
   // mapping (e.g. provider errors at connect time). Rarely used.
   private globalHandlers = new Set<Handler>();
+  private timeoutAbortedSessions = new Set<string>();
+  private providerTurnGate = new OpenCodeProviderTurnGate();
+  private providerGateReleases = new Map<string, () => void>();
+  private permissionRequestSessions = new Map<string, { sessionId: string; createdAt: number }>();
 
   // Per-session polling fallback. opencode 1.4.x/1.14.x publishes events to
   // its internal bus but the /event SSE stream only forwards heartbeats —
@@ -156,49 +576,55 @@ class OpencodeServer {
   // compensate by polling /session/{id}/message after each prompt and
   // synthesising the events the dispatcher would have seen.
   private pollTimers = new Map<string, NodeJS.Timeout>();
-  private pollState = new Map<
-    string,
-    {
-      // partID → length of text/output already surfaced, so we only re-emit growth
-      textLens: Map<string, number>;
-      // partID → last observed tool state.status, so we don't re-emit unchanged states
-      toolStatus: Map<string, string>;
-      // messageIDs we've already flushed as finished
-      finishedMessages: Set<string>;
-      // idle flag: once we emit session.idle we stop polling
-      idled: boolean;
-      observedChange: boolean;
-      // Timestamp when the last assistant message landed in a terminal state
-      // (finish=stop). We wait 2s of no further activity before firing idle —
-      // opencode's multi-step loop creates a fresh assistant message per step
-      // with finish=tool-calls/length between steps, so we can only be sure
-      // the run is over when finish=stop stays put.
-      idleCandidateAt: number | null;
-      // When polling started — safety cap so a stuck session doesn't poll forever.
-      startedAt: number;
-    }
-  >();
+  private pollControllers = new Map<string, AbortController>();
+  private pollState = new Map<string, OpenCodePollState>();
 
   private events = new EventEmitter();
+  private readonly tenantUserId: string | null;
+  private readonly tenantPaths: OpenCodeTenantPaths | null;
+
+  constructor(opts: { userId?: string; paths?: OpenCodeTenantPaths } = {}) {
+    this.tenantUserId = opts.userId || null;
+    this.tenantPaths = opts.paths || (opts.userId ? resolveOpenCodeTenantPaths(opts.userId) : null);
+  }
+
+  private resolveUserId(userId?: string): string | undefined {
+    const effectiveUserId = userId || this.tenantUserId || undefined;
+    if (this.tenantUserId && effectiveUserId !== this.tenantUserId) {
+      throw new Error('OpenCode tenant user mismatch');
+    }
+    return effectiveUserId;
+  }
 
   /**
    * Ensure the `opencode serve` process is running and the SSE subscription
    * is live. Returns the base URL once ready. Idempotent.
    */
   async ensureStarted(userId?: string): Promise<string> {
-    const configSync = userId ? syncOpenCodeConfig({ quiet: true, userId }) : null;
+    const effectiveUserId = this.resolveUserId(userId);
+    if (this.tenantPaths) ensureOpenCodeTenantDirectories(this.tenantPaths);
+    const configSync = syncProviderLinks({
+      quiet: true,
+      userId: effectiveUserId,
+      opencodeConfigPath: this.tenantPaths
+        ? path.join(this.tenantPaths.configDir, 'opencode.json')
+        : undefined,
+      opencodeAgentsDir: this.tenantPaths
+        ? path.join(this.tenantPaths.configDir, 'agents')
+        : undefined,
+    }).opencodeConfig;
     if (this.baseUrl && this.proc && !this.proc.killed) {
-      if (configSync?.updated && userId) {
-        await this.restart(userId);
+      if (configSync.updated && effectiveUserId) {
+        await this.restart(effectiveUserId);
         if (this.baseUrl) return this.baseUrl;
       }
-      if (userId) {
-        const nextFingerprint = getOpenCodeProviderCredentialFingerprint(userId);
+      if (effectiveUserId) {
+        const nextFingerprint = getOpenCodeProviderCredentialFingerprint(effectiveUserId);
         if (
-          this.credentialOwnerUserId !== userId ||
+          this.credentialOwnerUserId !== effectiveUserId ||
           this.credentialFingerprint !== nextFingerprint
         ) {
-          await this.restart(userId);
+          await this.restart(effectiveUserId);
           if (this.baseUrl) return this.baseUrl;
         }
       }
@@ -206,7 +632,7 @@ class OpencodeServer {
     }
     if (this.startPromise) return this.startPromise;
 
-    this.startPromise = this.startInternal(userId).catch((err) => {
+    this.startPromise = this.startInternal(effectiveUserId).catch((err) => {
       this.startPromise = null;
       throw err;
     });
@@ -221,13 +647,18 @@ class OpencodeServer {
       this.credentialOwnerUserId = userId || null;
       this.credentialFingerprint = getOpenCodeProviderCredentialFingerprint(userId);
 
+      if (this.tenantPaths) ensureOpenCodeTenantDirectories(this.tenantPaths);
+      const commandEnv = buildOpenCodeCommandEnv();
       const env = {
-        ...buildOpenCodeCommandEnv(),
+        ...buildOpenCodeServerProcessEnv(commandEnv),
         ...buildIntegrationEnv(),
         ...buildOpenCodeProviderCredentialEnv(userId),
+        OPENCODE_CONFIG_DIR: this.tenantPaths?.configDir || commandEnv.OPENCODE_CONFIG_DIR || '',
+        OPENCODE_DATA_DIR: this.tenantPaths?.dataDir || commandEnv.OPENCODE_DATA_DIR || '',
         WEBUI_BACKEND_URL: `http://localhost:${config.port}`,
         WEBUI_HOOK_SECRET: config.hookSecret,
-        WEBUI_SESSION_CONTEXT_FILE,
+        WEBUI_SESSION_CONTEXT_FILE:
+          this.tenantPaths?.sessionContextFile || WEBUI_SESSION_CONTEXT_FILE,
       };
 
       const proc = cpSpawn(
@@ -236,6 +667,9 @@ class OpencodeServer {
         {
           env,
           stdio: ['ignore', 'pipe', 'pipe'],
+          // Give opencode serve and every tool/MCP child one process group so
+          // timeout and shutdown can reap the complete tree.
+          detached: shouldDetachOpenCodeServer(process.platform),
         }
       );
 
@@ -281,11 +715,7 @@ class OpencodeServer {
       // the first session attempt forever.
       setTimeout(() => {
         if (!ready) {
-          try {
-            proc.kill('SIGKILL');
-          } catch {
-            /* noop */
-          }
+          signalOpenCodeProcess(proc, 'SIGKILL');
           reject(new Error('opencode serve did not announce readiness within 15s'));
         }
       }, 15_000);
@@ -443,6 +873,26 @@ class OpencodeServer {
 
   private dispatch(evt: OpencodeEvent): void {
     const sid = extractSessionId(evt);
+    if (sid && (evt.type === 'permission.asked' || evt.type === 'permission.v2.asked')) {
+      const requestId =
+        typeof evt.properties?.id === 'string' ? (evt.properties.id as string) : undefined;
+      if (requestId) {
+        const cutoff = Date.now() - 5 * 60 * 1000;
+        for (const [id, binding] of this.permissionRequestSessions) {
+          if (binding.createdAt < cutoff) this.permissionRequestSessions.delete(id);
+        }
+        this.permissionRequestSessions.set(requestId, { sessionId: sid, createdAt: Date.now() });
+      }
+    }
+    if (
+      sid &&
+      this.timeoutAbortedSessions.has(sid) &&
+      evt.type === 'session.error' &&
+      extractEventErrorMessage(evt) === 'Aborted'
+    ) {
+      ocDbg(`[OC-DISPATCH] suppress timeout abort sid=${sid}`);
+      return;
+    }
     if (evt.type !== 'server.heartbeat') {
       const routed = sid && this.handlers.has(sid);
       ocDbg(
@@ -459,6 +909,9 @@ class OpencodeServer {
       console.log(
         `[OPENCODE-SSE] type=${evt.type} sid=${sid ?? 'NONE'} routed=${routed} ${preview}`
       );
+    }
+    if (sid && (evt.type === 'session.idle' || evt.type === 'session.error')) {
+      this.releaseProviderTurnGate(sid);
     }
     if (sid && this.handlers.has(sid)) {
       try {
@@ -487,8 +940,23 @@ class OpencodeServer {
 
   unsubscribe(opencodeSessionId: string): void {
     this.handlers.delete(opencodeSessionId);
+    this.releaseProviderTurnGate(opencodeSessionId);
+    this.providerTurnGate.releaseForSession(opencodeSessionId);
     this.stopPolling(opencodeSessionId);
     this.pollState.delete(opencodeSessionId);
+    for (const [requestId, binding] of this.permissionRequestSessions) {
+      if (binding.sessionId === opencodeSessionId) {
+        this.permissionRequestSessions.delete(requestId);
+      }
+    }
+  }
+
+  private releaseProviderTurnGate(opencodeSessionId: string): void {
+    const release = this.providerGateReleases.get(opencodeSessionId);
+    if (!release) return;
+    this.providerGateReleases.delete(opencodeSessionId);
+    release();
+    ocDbg(`[OC-GATE] released sid=${opencodeSessionId}`);
   }
 
   /** Create a new opencode session, returns the session ID. */
@@ -535,9 +1003,16 @@ class OpencodeServer {
     // or replayed by opencode — they're just dropped. Block here until the
     // stream is open so the model's output doesn't land in a dead window.
     await this.waitForSseReady();
-    await this.primePollingState(opencodeSessionId);
     this.writeWebuiSessionContext(opencodeSessionId, opts);
+    const gateKey = resolveOpenCodeProviderTurnGateKey(opts.model);
+    const releaseGate = await this.providerTurnGate.acquire(gateKey, opencodeSessionId);
+    if (gateKey) {
+      this.providerGateReleases.set(opencodeSessionId, releaseGate);
+      ocDbg(`[OC-GATE] acquired key=${gateKey} sid=${opencodeSessionId}`);
+    }
+    const turnMessageId = buildOpenCodeTurnMessageId(opts.turnId);
     const body: Record<string, unknown> = {
+      messageID: turnMessageId,
       parts: [
         {
           type: 'text',
@@ -567,16 +1042,22 @@ class OpencodeServer {
     ocDbg(
       `[OC-SEND] sid=${opencodeSessionId} subscribed=${this.handlers.has(opencodeSessionId)} handlerCount=${this.handlers.size} sseConnected=${this.sseConnected} body=${JSON.stringify(body).slice(0, 200)}`
     );
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    ocDbg(`[OC-SEND] response status=${res.status}`);
-    if (!res.ok) {
-      throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      ocDbg(`[OC-SEND] response status=${res.status}`);
+      if (!res.ok) {
+        this.releaseProviderTurnGate(opencodeSessionId);
+        throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
+      }
+    } catch (err) {
+      this.releaseProviderTurnGate(opencodeSessionId);
+      throw err;
     }
-    this.startPolling(opencodeSessionId);
+    this.startPolling(opencodeSessionId, turnMessageId);
   }
 
   /**
@@ -587,10 +1068,17 @@ class OpencodeServer {
   async sendCommand(opencodeSessionId: string, opts: CommandOptions): Promise<void> {
     await this.ensureStarted(opts.userId);
     await this.waitForSseReady();
-    await this.primePollingState(opencodeSessionId);
     this.writeWebuiSessionContext(opencodeSessionId, opts);
+    const gateKey = resolveOpenCodeProviderTurnGateKey(opts.model);
+    const releaseGate = await this.providerTurnGate.acquire(gateKey, opencodeSessionId);
+    if (gateKey) {
+      this.providerGateReleases.set(opencodeSessionId, releaseGate);
+      ocDbg(`[OC-GATE] acquired key=${gateKey} sid=${opencodeSessionId}`);
+    }
 
+    const turnMessageId = buildOpenCodeTurnMessageId(opts.turnId);
     const body: Record<string, unknown> = {
+      messageID: turnMessageId,
       command: opts.command,
       arguments: opts.arguments ?? '',
     };
@@ -604,16 +1092,22 @@ class OpencodeServer {
     ocDbg(
       `[OC-COMMAND] sid=${opencodeSessionId} command=${opts.command} args=${JSON.stringify(opts.arguments ?? '').slice(0, 120)}`
     );
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    ocDbg(`[OC-COMMAND] response status=${res.status}`);
-    if (!res.ok) {
-      throw new Error(`sendCommand failed: ${res.status} ${await res.text()}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      ocDbg(`[OC-COMMAND] response status=${res.status}`);
+      if (!res.ok) {
+        this.releaseProviderTurnGate(opencodeSessionId);
+        throw new Error(`sendCommand failed: ${res.status} ${await res.text()}`);
+      }
+    } catch (err) {
+      this.releaseProviderTurnGate(opencodeSessionId);
+      throw err;
     }
-    this.startPolling(opencodeSessionId);
+    this.startPolling(opencodeSessionId, turnMessageId);
   }
 
   async compactSession(opencodeSessionId: string, opts: OpenCodeRunOptions = {}): Promise<boolean> {
@@ -626,6 +1120,55 @@ class OpencodeServer {
       throw new Error(`compactSession failed: ${res.status} ${await res.text()}`);
     }
     return true;
+  }
+
+  /**
+   * Read cumulative billed usage for a root OpenCode session and every nested
+   * child session. OpenCode runs subagents as separate sessions, so listening
+   * only to the root session's step-finish events silently misses their usage.
+   */
+  async getUsageSnapshot(
+    opencodeSessionId: string,
+    userId?: string
+  ): Promise<OpenCodeUsageCounters | null> {
+    await this.ensureStarted(userId);
+    if (!this.baseUrl) return null;
+
+    const total = { ...EMPTY_OPENCODE_USAGE };
+    const seenSessions = new Set<string>();
+    const seenMessages = new Set<string>();
+    const pending = [opencodeSessionId];
+
+    try {
+      while (pending.length > 0) {
+        const sessionId = pending.pop() as string;
+        if (seenSessions.has(sessionId)) continue;
+        seenSessions.add(sessionId);
+
+        const encodedId = encodeURIComponent(sessionId);
+        const [messagesResponse, childrenResponse] = await Promise.all([
+          fetch(`${this.baseUrl}/session/${encodedId}/message?limit=100000`),
+          fetch(`${this.baseUrl}/session/${encodedId}/children`),
+        ]);
+        if (!messagesResponse.ok || !childrenResponse.ok) {
+          throw new Error(
+            `usage snapshot failed for ${sessionId}: messages=${messagesResponse.status}, children=${childrenResponse.status}`
+          );
+        }
+
+        const messages = (await messagesResponse.json()) as OpenCodeMessageSnapshot[];
+        addOpenCodeUsage(total, collectOpenCodeMessageUsage(messages, seenMessages));
+
+        const children = (await childrenResponse.json()) as Array<{ id?: unknown }>;
+        for (const child of children) {
+          if (typeof child?.id === 'string') pending.push(child.id);
+        }
+      }
+      return total;
+    } catch (error) {
+      console.warn('[OPENCODE-SERVER] Failed to read usage snapshot:', error);
+      return null;
+    }
   }
 
   async replyQuestion(
@@ -688,62 +1231,26 @@ class OpencodeServer {
     return true;
   }
 
-  private async primePollingState(opencodeSessionId: string): Promise<void> {
-    if (!this.baseUrl) return;
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/message`
-      );
-      if (!res.ok) return;
-      const data = (await res.json()) as OpenCodeMessageSnapshot[];
-      const snapshot = collectOpenCodePollCursor(data);
-      const prior = this.pollState.get(opencodeSessionId);
-      const textLens = prior?.textLens ?? new Map<string, number>();
-      const toolStatus = prior?.toolStatus ?? new Map<string, string>();
-      const finishedMessages = prior?.finishedMessages ?? new Set<string>();
-
-      for (const [partId, length] of snapshot.textLens) {
-        textLens.set(partId, length);
-      }
-      for (const [partId, status] of snapshot.toolStatus) {
-        toolStatus.set(partId, status);
-      }
-      for (const messageId of snapshot.finishedMessages) {
-        finishedMessages.add(messageId);
-      }
-
-      this.pollState.set(opencodeSessionId, {
-        textLens,
-        toolStatus,
-        finishedMessages,
-        idled: false,
-        observedChange: false,
-        idleCandidateAt: null,
-        startedAt: Date.now(),
-      });
-      ocDbg(
-        `[OC-POLL] primed sid=${opencodeSessionId} text=${textLens.size} tools=${toolStatus.size} finished=${finishedMessages.size}`
-      );
-    } catch (err) {
-      ocDbg(`[OC-POLL] prime failed sid=${opencodeSessionId} ${String(err).slice(0, 200)}`);
-    }
-  }
-
   private writeWebuiSessionContext(
     opencodeSessionId: string,
     opts: Pick<PromptOptions, 'webuiSessionId' | 'directory'>
   ): void {
     if (!opts.webuiSessionId) return;
     try {
+      const contextFile = this.tenantPaths?.sessionContextFile || WEBUI_SESSION_CONTEXT_FILE;
+      fs.mkdirSync(path.dirname(contextFile), { recursive: true, mode: 0o700 });
+      const temporaryFile = `${contextFile}.${process.pid}.tmp`;
       fs.writeFileSync(
-        WEBUI_SESSION_CONTEXT_FILE,
+        temporaryFile,
         JSON.stringify({
           webuiSessionId: opts.webuiSessionId,
           opencodeSessionId,
           directory: opts.directory || null,
           updatedAt: Date.now(),
-        })
+        }),
+        { mode: 0o600 }
       );
+      fs.renameSync(temporaryFile, contextFile);
     } catch (err) {
       console.warn('[OPENCODE-SERVER] failed to write WebUI session context:', err);
     }
@@ -755,67 +1262,87 @@ class OpencodeServer {
    * dispatcher path (→ ClaudeProcessManager.translateOpencodeServerEvent)
    * delivers streaming output to the UI.
    */
-  private startPolling(opencodeSessionId: string): void {
-    if (this.pollTimers.has(opencodeSessionId)) return;
-    // Preserve state across turns: finishedMessages keeps prior turns' IDs so
-    // we don't re-fire session.idle for them, and textLens keeps partID cursors
-    // (partIDs are unique per message so this is safe and useful if opencode
-    // ever re-sends old parts). Only reset the `idled` latch.
-    const prior = this.pollState.get(opencodeSessionId);
-    this.pollState.set(opencodeSessionId, {
-      textLens: prior?.textLens ?? new Map(),
-      toolStatus: prior?.toolStatus ?? new Map(),
-      finishedMessages: prior?.finishedMessages ?? new Set(),
+  private startPolling(opencodeSessionId: string, turnMessageId: string): void {
+    // A session can have only one active OpenCode turn. Abort any stale request
+    // before installing the new turn state so late responses cannot leak into it.
+    this.stopPolling(opencodeSessionId);
+    const state: OpenCodePollState = {
+      turnMessageId,
+      textLens: new Map(),
+      toolStatus: new Map(),
+      lastToolActivity: null,
+      finishedMessages: new Set(),
       idled: false,
       observedChange: false,
+      lastObservedAt: null,
       idleCandidateAt: null,
       startedAt: Date.now(),
-    });
-    const tick = () => {
-      this.pollOnce(opencodeSessionId).catch((err) => {
-        ocDbg(`[OC-POLL] error sid=${opencodeSessionId} ${String(err).slice(0, 200)}`);
-      });
+      noProgressTimeoutMs: resolveOpenCodeNoProgressTimeoutMs(),
     };
-    const timer = setInterval(tick, 500);
-    this.pollTimers.set(opencodeSessionId, timer);
-    ocDbg(`[OC-POLL] started sid=${opencodeSessionId}`);
-    tick();
+    this.pollState.set(opencodeSessionId, state);
+
+    // Recursive timeout, rather than setInterval: the next poll is scheduled
+    // only after the current HTTP request settles, guaranteeing one in-flight
+    // history request per session.
+    const tick = async () => {
+      if (this.pollState.get(opencodeSessionId) !== state || state.idled) return;
+      try {
+        await this.pollOnce(opencodeSessionId, state);
+      } catch (err) {
+        const wasAborted = err instanceof Error && err.name === 'AbortError';
+        if (this.pollState.get(opencodeSessionId) === state && !state.idled) {
+          ocDbg(
+            `[OC-POLL] ${wasAborted ? 'request timeout' : 'error'} sid=${opencodeSessionId} ${String(err).slice(0, 200)}`
+          );
+        }
+      }
+
+      if (this.pollState.get(opencodeSessionId) !== state || state.idled) return;
+      const timer = setTimeout(() => {
+        if (this.pollTimers.get(opencodeSessionId) === timer) {
+          this.pollTimers.delete(opencodeSessionId);
+        }
+        void tick();
+      }, OPENCODE_POLL_INTERVAL_MS);
+      this.pollTimers.set(opencodeSessionId, timer);
+    };
+    ocDbg(`[OC-POLL] started sid=${opencodeSessionId} turn=${turnMessageId}`);
+    void tick();
   }
 
   private stopPolling(opencodeSessionId: string): void {
     const t = this.pollTimers.get(opencodeSessionId);
-    if (t) clearInterval(t);
+    if (t) clearTimeout(t);
     this.pollTimers.delete(opencodeSessionId);
-    // Intentionally keep pollState so the next turn doesn't re-fire idle for
-    // prior turns. State is cleared in unsubscribe() / shutdown().
+    const controller = this.pollControllers.get(opencodeSessionId);
+    if (controller) controller.abort();
+    this.pollControllers.delete(opencodeSessionId);
+    this.pollState.delete(opencodeSessionId);
     ocDbg(`[OC-POLL] stopped sid=${opencodeSessionId}`);
   }
 
-  private async pollOnce(opencodeSessionId: string): Promise<void> {
+  private async pollOnce(opencodeSessionId: string, state: OpenCodePollState): Promise<void> {
     if (!this.baseUrl) return;
-    const state = this.pollState.get(opencodeSessionId);
-    if (!state || state.idled) return;
+    if (this.pollState.get(opencodeSessionId) !== state || state.idled) return;
 
     // Safety cap: 30 minutes. opencode turns can run long (tool loops, large
     // generations), but something is wrong if we've been polling half an hour.
-    if (Date.now() - state.startedAt > 30 * 60 * 1000) {
+    if (hasOpenCodeHardSafetyTimeoutElapsed(Date.now(), state.startedAt)) {
       ocDbg(`[OC-POLL] safety-cap sid=${opencodeSessionId}`);
       state.idled = true;
-      this.dispatch({ type: 'session.idle', properties: { sessionID: opencodeSessionId } });
-      this.stopPolling(opencodeSessionId);
-      return;
-    }
-
-    if (!state.observedChange && Date.now() - state.startedAt > 120 * 1000) {
-      ocDbg(`[OC-POLL] no-progress sid=${opencodeSessionId}`);
-      state.idled = true;
+      this.timeoutAbortedSessions.add(opencodeSessionId);
+      const clearAbortSuppressor = setTimeout(() => {
+        this.timeoutAbortedSessions.delete(opencodeSessionId);
+      }, 30_000);
+      clearAbortSuppressor.unref?.();
+      void this.abort(opencodeSessionId);
       this.dispatch({
         type: 'session.error',
         properties: {
           sessionID: opencodeSessionId,
           error: {
             message:
-              'OpenCode did not produce any output within 120s. Check that the selected provider/model is configured and present in `opencode models`.',
+              'OpenCode exceeded the 30-minute safety limit, so Plum aborted the turn. Check for a stalled provider or tool call before retrying.',
           },
         },
       });
@@ -824,14 +1351,67 @@ class OpencodeServer {
       return;
     }
 
-    const res = await fetch(
-      `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/message`
-    );
-    if (!res.ok) return;
-    const data = (await res.json()) as Array<{
-      info?: Record<string, unknown>;
-      parts?: Array<Record<string, unknown>>;
-    }>;
+    const now = Date.now();
+    const stallTimeout = resolveOpenCodeStallTimeout({
+      now,
+      startedAt: state.startedAt,
+      lastObservedAt: state.lastObservedAt,
+      observedChange: state.observedChange,
+      timeoutMs: state.noProgressTimeoutMs,
+    });
+    if (stallTimeout) {
+      const timeoutSeconds = Math.round(state.noProgressTimeoutMs / 1000);
+      ocDbg(
+        `[OC-POLL] ${stallTimeout} sid=${opencodeSessionId} timeoutMs=${state.noProgressTimeoutMs}`
+      );
+      state.idled = true;
+      this.timeoutAbortedSessions.add(opencodeSessionId);
+      const clearAbortSuppressor = setTimeout(() => {
+        this.timeoutAbortedSessions.delete(opencodeSessionId);
+      }, 30_000);
+      clearAbortSuppressor.unref?.();
+      void this.abort(opencodeSessionId);
+      this.dispatch({
+        type: 'session.error',
+        properties: {
+          sessionID: opencodeSessionId,
+          error: {
+            message: formatOpenCodeStallErrorMessage(
+              stallTimeout,
+              timeoutSeconds,
+              state.lastToolActivity
+            ),
+          },
+        },
+      });
+      this.dispatch({ type: 'session.idle', properties: { sessionID: opencodeSessionId } });
+      this.stopPolling(opencodeSessionId);
+      return;
+    }
+
+    const controller = new AbortController();
+    this.pollControllers.set(opencodeSessionId, controller);
+    const requestTimeout = setTimeout(() => controller.abort(), OPENCODE_POLL_REQUEST_TIMEOUT_MS);
+    requestTimeout.unref?.();
+
+    let response: Response;
+    let history: OpenCodeMessageSnapshot[];
+    try {
+      response = await fetch(buildOpenCodePollMessagesUrl(this.baseUrl, opencodeSessionId), {
+        signal: controller.signal,
+      });
+      if (!response.ok) return;
+      history = (await response.json()) as OpenCodeMessageSnapshot[];
+    } finally {
+      clearTimeout(requestTimeout);
+      if (this.pollControllers.get(opencodeSessionId) === controller) {
+        this.pollControllers.delete(opencodeSessionId);
+      }
+    }
+
+    // Ignore a response that settled after a new turn replaced this state.
+    if (this.pollState.get(opencodeSessionId) !== state || state.idled) return;
+    const data = selectOpenCodeTurnMessages(history, state.turnMessageId);
 
     let sawChange = false;
 
@@ -888,6 +1468,7 @@ class OpencodeServer {
           const prev = state.toolStatus.get(partId) ?? '';
           if (status !== prev) {
             state.toolStatus.set(partId, status);
+            state.lastToolActivity = summarizeOpenCodeToolPart(part, messageId);
             sawChange = true;
             state.observedChange = true;
             this.dispatch({
@@ -922,12 +1503,14 @@ class OpencodeServer {
     // assistant message per step, so only the final one carries the terminal
     // finish reason. finish=stop (or error) = the loop exited; finish=
     // tool-calls/length = step ended, loop will continue with another message.
-    const last = data[data.length - 1];
+    const assistantMessages = data.filter((message) => message.info?.role === 'assistant');
+    const last = assistantMessages[assistantMessages.length - 1];
     const isTerminal = isTerminalOpenCodeAssistantMessage(last);
 
     if (sawChange) {
       // Any observable progress resets the idle grace period.
       state.idleCandidateAt = null;
+      state.lastObservedAt = Date.now();
     }
 
     if (isTerminal && !sawChange) {
@@ -952,6 +1535,9 @@ class OpencodeServer {
 
   async abort(opencodeSessionId: string): Promise<void> {
     if (!this.baseUrl) return;
+    // Cancel a potentially hung history request immediately. The serialized
+    // loop may poll once more after the provider abort to observe final state.
+    this.pollControllers.get(opencodeSessionId)?.abort();
     const url = `${this.baseUrl}/session/${encodeURIComponent(opencodeSessionId)}/abort`;
     try {
       await fetch(url, { method: 'POST' });
@@ -963,25 +1549,30 @@ class OpencodeServer {
   async replyPermission(
     requestId: string,
     reply: 'once' | 'always' | 'reject',
-    message?: string,
-    opencodeSessionId?: string
+    message: string | undefined,
+    opencodeSessionId: string
   ): Promise<boolean> {
     await this.ensureStarted();
-    if (opencodeSessionId) {
-      const sessionUrl = `${this.baseUrl}/api/session/${encodeURIComponent(
-        opencodeSessionId
-      )}/permission/request/${encodeURIComponent(requestId)}/reply`;
-      const sessionRes = await fetch(sessionUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
-      });
-      if (sessionRes.ok) return true;
-      if (sessionRes.status !== 404) {
-        throw new Error(
-          `permission v2 reply failed: ${sessionRes.status} ${await sessionRes.text()}`
-        );
-      }
+    const binding = this.permissionRequestSessions.get(requestId);
+    if (!permissionRequestBelongsToSession(binding?.sessionId, opencodeSessionId)) {
+      return false;
+    }
+    const sessionUrl = `${this.baseUrl}/api/session/${encodeURIComponent(
+      opencodeSessionId
+    )}/permission/request/${encodeURIComponent(requestId)}/reply`;
+    const sessionRes = await fetch(sessionUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reply, ...(message ? { message } : {}) }),
+    });
+    if (sessionRes.ok) {
+      this.permissionRequestSessions.delete(requestId);
+      return true;
+    }
+    if (sessionRes.status !== 404) {
+      throw new Error(
+        `permission v2 reply failed: ${sessionRes.status} ${await sessionRes.text()}`
+      );
     }
 
     const url = `${this.baseUrl}/permission/${encodeURIComponent(requestId)}/reply`;
@@ -994,6 +1585,7 @@ class OpencodeServer {
     if (!res.ok) {
       throw new Error(`permission reply failed: ${res.status} ${await res.text()}`);
     }
+    this.permissionRequestSessions.delete(requestId);
     return true;
   }
 
@@ -1010,10 +1602,16 @@ class OpencodeServer {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.providerTurnGate.cancelAll('OpenCode server restarted');
+    this.providerGateReleases.clear();
+    this.timeoutAbortedSessions.clear();
     this.handlers.clear();
     this.globalHandlers.clear();
-    for (const t of this.pollTimers.values()) clearInterval(t);
+    this.permissionRequestSessions.clear();
+    for (const t of this.pollTimers.values()) clearTimeout(t);
     this.pollTimers.clear();
+    for (const controller of this.pollControllers.values()) controller.abort();
+    this.pollControllers.clear();
     this.pollState.clear();
     try {
       this.sseController?.abort();
@@ -1022,14 +1620,10 @@ class OpencodeServer {
     }
     const proc = this.proc;
     if (proc && !proc.killed) {
-      proc.kill('SIGTERM');
+      signalOpenCodeProcess(proc, 'SIGTERM');
       await new Promise<void>((r) => {
         const t = setTimeout(() => {
-          try {
-            proc.kill('SIGKILL');
-          } catch {
-            /* noop */
-          }
+          signalOpenCodeProcess(proc, 'SIGKILL');
           r();
         }, 2000);
         proc.once('exit', () => {
@@ -1046,13 +1640,25 @@ class OpencodeServer {
     this.sseReadyWaiters.splice(0);
     this.credentialOwnerUserId = null;
     this.credentialFingerprint = null;
+    if (this.tenantPaths) {
+      try {
+        fs.rmSync(this.tenantPaths.sessionContextFile, { force: true });
+      } catch {
+        // Best effort; the runtime directory is not a credential store.
+      }
+    }
   }
 
   async restart(userId?: string): Promise<string | null> {
     const shouldRestart = Boolean(this.proc || this.baseUrl || this.startPromise);
+    const handlers = [...this.handlers.entries()];
+    const globalHandlers = [...this.globalHandlers];
     await this.shutdown();
     this.shuttingDown = false;
-    return shouldRestart ? this.ensureStarted(userId) : null;
+    if (!shouldRestart) return null;
+    for (const [sessionId, handler] of handlers) this.handlers.set(sessionId, handler);
+    for (const handler of globalHandlers) this.globalHandlers.add(handler);
+    return this.ensureStarted(userId);
   }
 }
 
@@ -1071,6 +1677,16 @@ function extractSessionId(evt: OpencodeEvent): string | null {
     // `session.updated.properties.info` has `id` (the session ID itself).
     return info.id;
   }
+  return null;
+}
+
+function extractEventErrorMessage(evt: OpencodeEvent): string | null {
+  const p = evt.properties as Record<string, unknown> | undefined;
+  const error = p?.error as Record<string, unknown> | undefined;
+  if (!error) return null;
+  const data = error.data as Record<string, unknown> | undefined;
+  if (typeof data?.message === 'string') return data.message;
+  if (typeof error.message === 'string') return error.message;
   return null;
 }
 
@@ -1096,8 +1712,199 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Singleton — import this directly rather than instantiating.
-export const opencodeServer = new OpencodeServer();
+export class OpencodeServerRegistry {
+  private readonly servers = new Map<string, OpencodeServer>();
+  private readonly sessionOwners = new Map<string, Set<string>>();
+
+  constructor(
+    private readonly serverFactory: (userId: string) => OpencodeServer = (userId) =>
+      new OpencodeServer({ userId })
+  ) {}
+
+  forUser(userId: string): OpencodeServer {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) throw new Error('OpenCode requires a WebUI user id');
+    const existing = this.servers.get(normalizedUserId);
+    if (existing) return existing;
+    const server = this.serverFactory(normalizedUserId);
+    this.servers.set(normalizedUserId, server);
+    return server;
+  }
+
+  get tenantCount(): number {
+    return this.servers.size;
+  }
+
+  private bindSession(userId: string, opencodeSessionId: string): void {
+    const owners = this.sessionOwners.get(opencodeSessionId) ?? new Set<string>();
+    owners.add(userId);
+    this.sessionOwners.set(opencodeSessionId, owners);
+  }
+
+  private unbindSession(userId: string, opencodeSessionId: string): void {
+    const owners = this.sessionOwners.get(opencodeSessionId);
+    if (!owners) return;
+    owners.delete(userId);
+    if (owners.size === 0) this.sessionOwners.delete(opencodeSessionId);
+  }
+
+  private resolveSessionTenant(
+    opencodeSessionId: string,
+    userId?: string
+  ): { userId: string; server: OpencodeServer } | null {
+    if (userId) {
+      const server = this.servers.get(userId);
+      return server ? { userId, server } : null;
+    }
+
+    const owners = this.sessionOwners.get(opencodeSessionId);
+    if (!owners || owners.size !== 1) return null;
+    const owner = owners.values().next().value as string | undefined;
+    if (!owner) return null;
+    const server = this.servers.get(owner);
+    return server ? { userId: owner, server } : null;
+  }
+
+  async ensureStarted(userId?: string): Promise<string> {
+    if (!userId) throw new Error('OpenCode server startup requires a WebUI user id');
+    return this.forUser(userId).ensureStarted(userId);
+  }
+
+  async sessionExists(opencodeSessionId: string, userId?: string): Promise<boolean> {
+    if (!userId) return false;
+    const exists = await this.forUser(userId).sessionExists(opencodeSessionId);
+    if (exists) this.bindSession(userId, opencodeSessionId);
+    return exists;
+  }
+
+  async createSession(cwd: string, opts: CreateSessionOptions = {}): Promise<string> {
+    if (!opts.userId) throw new Error('OpenCode session creation requires a WebUI user id');
+    const opencodeSessionId = await this.forUser(opts.userId).createSession(cwd, opts);
+    this.bindSession(opts.userId, opencodeSessionId);
+    return opencodeSessionId;
+  }
+
+  subscribe(opencodeSessionId: string, handler: Handler, userId?: string): void {
+    if (!userId) throw new Error('OpenCode subscription requires a WebUI user id');
+    this.bindSession(userId, opencodeSessionId);
+    this.forUser(userId).subscribe(opencodeSessionId, handler);
+  }
+
+  unsubscribe(opencodeSessionId: string, userId?: string): void {
+    const tenant = this.resolveSessionTenant(opencodeSessionId, userId);
+    if (!tenant) return;
+    tenant.server.unsubscribe(opencodeSessionId);
+    this.unbindSession(tenant.userId, opencodeSessionId);
+  }
+
+  async sendPrompt(opencodeSessionId: string, opts: PromptOptions): Promise<void> {
+    if (!opts.userId) throw new Error('OpenCode prompt requires a WebUI user id');
+    this.bindSession(opts.userId, opencodeSessionId);
+    await this.forUser(opts.userId).sendPrompt(opencodeSessionId, opts);
+  }
+
+  async sendCommand(opencodeSessionId: string, opts: CommandOptions): Promise<void> {
+    if (!opts.userId) throw new Error('OpenCode command requires a WebUI user id');
+    this.bindSession(opts.userId, opencodeSessionId);
+    await this.forUser(opts.userId).sendCommand(opencodeSessionId, opts);
+  }
+
+  async compactSession(opencodeSessionId: string, opts: OpenCodeRunOptions = {}): Promise<boolean> {
+    if (!opts.userId) throw new Error('OpenCode compact requires a WebUI user id');
+    this.bindSession(opts.userId, opencodeSessionId);
+    return this.forUser(opts.userId).compactSession(opencodeSessionId, opts);
+  }
+
+  async getUsageSnapshot(
+    opencodeSessionId: string,
+    userId?: string
+  ): Promise<OpenCodeUsageCounters | null> {
+    const tenant = this.resolveSessionTenant(opencodeSessionId, userId);
+    if (!tenant) return null;
+    return tenant.server.getUsageSnapshot(opencodeSessionId, tenant.userId);
+  }
+
+  async abort(opencodeSessionId: string, userId?: string): Promise<void> {
+    const tenant = this.resolveSessionTenant(opencodeSessionId, userId);
+    if (!tenant) return;
+    await tenant.server.abort(opencodeSessionId);
+  }
+
+  async replyPermission(
+    requestId: string,
+    reply: 'once' | 'always' | 'reject',
+    message: string | undefined,
+    opencodeSessionId: string,
+    userId?: string
+  ): Promise<boolean> {
+    const tenant = this.resolveSessionTenant(opencodeSessionId, userId);
+    if (!tenant) return false;
+    return tenant.server.replyPermission(requestId, reply, message, opencodeSessionId);
+  }
+
+  async replyQuestion(
+    requestId: string,
+    answers: unknown,
+    opencodeSessionId?: string,
+    userId?: string
+  ): Promise<boolean> {
+    if (!opencodeSessionId) return false;
+    const tenant = this.resolveSessionTenant(opencodeSessionId, userId);
+    if (!tenant) return false;
+    return tenant.server.replyQuestion(requestId, answers, opencodeSessionId);
+  }
+
+  async rejectQuestion(
+    requestId: string,
+    opencodeSessionId?: string,
+    userId?: string
+  ): Promise<boolean> {
+    if (!opencodeSessionId) return false;
+    const tenant = this.resolveSessionTenant(opencodeSessionId, userId);
+    if (!tenant) return false;
+    return tenant.server.rejectQuestion(requestId, opencodeSessionId);
+  }
+
+  async restart(userId?: string): Promise<string | null> {
+    if (!userId) {
+      await this.shutdownAll();
+      return null;
+    }
+    const server = this.servers.get(userId);
+    return server ? server.restart(userId) : null;
+  }
+
+  async shutdown(userId?: string): Promise<void> {
+    if (!userId) {
+      await this.shutdownAll();
+      return;
+    }
+    const server = this.servers.get(userId);
+    if (!server) return;
+    await server.shutdown();
+    this.servers.delete(userId);
+    for (const [sessionId, owners] of this.sessionOwners) {
+      owners.delete(userId);
+      if (owners.size === 0) this.sessionOwners.delete(sessionId);
+    }
+  }
+
+  async shutdownAll(): Promise<void> {
+    const servers = [...this.servers.values()];
+    this.servers.clear();
+    this.sessionOwners.clear();
+    const results = await Promise.allSettled(servers.map((server) => server.shutdown()));
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.warn('[OPENCODE-SERVER] tenant shutdown failed:', result.reason);
+      }
+    }
+  }
+}
+
+// Stable facade used by routes and ClaudeProcessManager. Internally it owns
+// one isolated OpencodeServer instance per WebUI user.
+export const opencodeServer = new OpencodeServerRegistry();
 
 export function isTerminalOpenCodeAssistantMessage(
   message:

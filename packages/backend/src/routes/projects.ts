@@ -2,8 +2,8 @@ import { Router } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { requireAuth } from '../middleware/auth';
-import { asyncHandler, AppError } from '../middleware/errorHandler';
+import { requireAuth } from '../middleware/auth.js';
+import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import type { DiscoveredProject } from '@plum-code-webui/shared';
 
 const router = Router();

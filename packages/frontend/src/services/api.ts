@@ -52,6 +52,30 @@ class ApiClient {
     return { data };
   }
 
+  async download(endpoint: string, config: RequestConfig = {}): Promise<Response> {
+    const headers: Record<string, string> = {
+      ...this.getAuthHeader(),
+      ...config.headers,
+    };
+
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...config,
+      method: config.method || 'GET',
+      headers,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Request failed' }));
+      throw new ApiError(
+        error.error?.message || error.message || 'Request failed',
+        response.status
+      );
+    }
+
+    return response;
+  }
+
   get<T>(endpoint: string, config?: RequestConfig) {
     return this.request<T>(endpoint, { ...config, method: 'GET' });
   }

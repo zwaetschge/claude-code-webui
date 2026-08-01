@@ -1,24 +1,33 @@
 import { Router } from 'express';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { getDatabase } from '../db';
-import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
+import { getDatabase } from '../db/index.js';
+import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers.js';
 import {
   getOpenCodeCredentialEnvVars,
   readOpenCodeProvidersForUser,
-} from '../utils/opencodeProviderKeys';
-import { getOpenCodeProviderCatalog } from '../utils/opencodeCatalog';
+} from '../utils/opencodeProviderKeys.js';
+import { getOpenCodeProviderCatalog } from '../utils/opencodeCatalog.js';
 import {
   fetchCodexUsage,
   getCodexAuth,
   isCodexUsageAuthError,
   mapCodexUsage,
   refreshCodexToken,
-} from '../utils/codexUsage';
-import { safeDecrypt } from '../utils/encryption';
-import { safeJsonParse } from '../utils/json';
+} from '../utils/codexUsage.js';
+import { safeDecrypt } from '../utils/encryption.js';
+import { safeJsonParse } from '../utils/json.js';
+import { requestClaudeOAuthTokenRefresh } from '../utils/claudeOauth.js';
+import { fetchKimiUsage } from '../utils/kimiUsage.js';
+import { getZaiApiConfigForUser } from './settings.js';
+import {
+  normalizeUsageLimitHistoryRange,
+  queryUsageLimitHistory,
+  recordUsageLimitSnapshots,
+  type TrackedUsageLimitProvider,
+} from '../services/usage-limit-history.js';
 
 const router = Router();
 const claudeCredentialsRoot = CLI_PROVIDERS.claude.credentialsPath;
@@ -31,6 +40,7 @@ interface ClaudeCredentials {
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
+    refreshTokenExpiresAt?: number;
     scopes: string[];
     subscriptionType: string;
     rateLimitTier: string;
@@ -88,6 +98,15 @@ interface UsageLimitPayload {
     dailyRequests: number;
     weeklyRequests: number;
   };
+  accountUsage?: {
+    periodDays: number;
+    totalTokens: number;
+    totalRequests: number;
+    startsAt: string | null;
+    endsAt: string | null;
+    timezone: 'Asia/Shanghai';
+    models: Array<{ model: string; tokens: number }>;
+  };
   source?: 'upstream' | 'local-budget' | 'local-estimate';
 }
 
@@ -97,6 +116,34 @@ interface UsageLimitResult {
   provider: UsageProviderId;
   data: UsageLimitPayload | null;
   error?: { code: string; message: string };
+}
+
+const TRACKED_USAGE_LIMIT_PROVIDERS: TrackedUsageLimitProvider[] = [
+  'codex',
+  'claude',
+  'zai',
+  'kimi',
+];
+
+function persistUsageLimitResult(userId: string, result: UsageLimitResult): UsageLimitResult {
+  if (!result.success || !result.supported || !result.data) return result;
+  const provider = result.provider === 'z-ai' ? 'zai' : result.provider;
+  if (!TRACKED_USAGE_LIMIT_PROVIDERS.includes(provider as TrackedUsageLimitProvider)) {
+    return result;
+  }
+
+  try {
+    recordUsageLimitSnapshots(
+      getDatabase(),
+      userId,
+      provider as TrackedUsageLimitProvider,
+      result.data
+    );
+  } catch (error) {
+    // Quota history must never break the live provider-limit cards.
+    console.error(`[USAGE LIMITS] Failed to persist ${provider} snapshot:`, error);
+  }
+  return result;
 }
 
 interface ZaiApiEnvelope {
@@ -129,6 +176,21 @@ interface ZaiQuotaLimit {
 
 interface ZaiQuotaPayload {
   limits?: ZaiQuotaLimit[];
+}
+
+interface ZaiModelUsageSummary {
+  modelName?: string;
+  totalTokens?: number;
+}
+
+interface ZaiModelUsagePayload {
+  x_time?: string[];
+  totalUsage?: {
+    totalModelCallCount?: number;
+    totalTokensUsage?: number;
+    modelSummaryList?: ZaiModelUsageSummary[];
+  };
+  modelSummaryList?: ZaiModelUsageSummary[];
 }
 
 interface OpenCodeConfigProvider {
@@ -224,6 +286,140 @@ function getLocalUsageBudget(userId: string, provider: CLIProvider): LocalUsageB
   };
 }
 
+// ── Alibaba Token Plan ──────────────────────────────────────────────────────
+// Alibaba's Token Plan is a prepaid token allotment. Model Studio does not
+// expose the remaining balance through the inference API key (the token-plan
+// host only answers the inference router; quota lives behind Alibaba Cloud
+// OpenAPI AccessKey signing). So the plan size and period are configured here
+// and consumption is derived from usage_history, which already records every
+// alibaba-token-plan turn routed through OpenCode or Pi.
+
+const ALIBABA_TOKEN_PLAN_MODEL_PREFIX = 'alibaba-token-plan/';
+
+export interface TokenPlanConfig {
+  totalTokens: number;
+  periodStart: string;
+  periodDays: number;
+}
+
+function normalizePositiveInt(value: unknown): number | undefined {
+  const parsed = typeof value === 'string' ? Number(value) : value;
+  if (typeof parsed !== 'number' || !Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.floor(parsed);
+}
+
+function normalizeDateOnly(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return undefined;
+  return Number.isFinite(Date.parse(`${trimmed}T00:00:00Z`)) ? trimmed : undefined;
+}
+
+export function getTokenPlanConfig(userId: string, planId: string): TokenPlanConfig | null {
+  const row = getDatabase()
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json?: string | null } | undefined;
+  const settings = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
+  const plans = asRecord(settings.tokenPlans) || {};
+  const plan = asRecord(plans[planId]) || {};
+
+  const totalTokens =
+    normalizePositiveInt(plan.totalTokens) ??
+    normalizePositiveInt(process.env.ALIBABA_TOKEN_PLAN_TOTAL_TOKENS);
+  const periodStart =
+    normalizeDateOnly(plan.periodStart) ??
+    normalizeDateOnly(process.env.ALIBABA_TOKEN_PLAN_PERIOD_START);
+  if (!totalTokens || !periodStart) return null;
+
+  const periodDays =
+    normalizePositiveInt(plan.periodDays) ??
+    normalizePositiveInt(process.env.ALIBABA_TOKEN_PLAN_PERIOD_DAYS) ??
+    30;
+  return { totalTokens, periodStart, periodDays };
+}
+
+/**
+ * Roll `periodStart` forward by whole periods until it covers `now`, so a
+ * monthly plan keeps reporting against the current cycle without reconfiguring.
+ */
+function resolveTokenPlanWindow(config: TokenPlanConfig, now: Date) {
+  const periodMs = config.periodDays * 24 * 60 * 60 * 1000;
+  const firstStart = Date.parse(`${config.periodStart}T00:00:00Z`);
+  const elapsed = now.getTime() - firstStart;
+  const cycles = elapsed > 0 ? Math.floor(elapsed / periodMs) : 0;
+  const start = new Date(firstStart + cycles * periodMs);
+  const end = new Date(start.getTime() + periodMs);
+  return { start, end, cycles };
+}
+
+function readTokenPlanConsumption(userId: string, startIso: string): number {
+  const row = getDatabase()
+    .prepare(
+      `SELECT COALESCE(SUM(total_tokens), 0) as tokens
+         FROM usage_history
+        WHERE user_id = ?
+          AND model LIKE ?
+          AND created_at >= ?`
+    )
+    .get(userId, `${ALIBABA_TOKEN_PLAN_MODEL_PREFIX}%`, startIso) as { tokens: number };
+  return row?.tokens ?? 0;
+}
+
+function buildAlibabaLimitResponse(userId: string) {
+  const config = getTokenPlanConfig(userId, 'alibaba-token-plan');
+  if (!config) {
+    return {
+      success: true,
+      supported: false,
+      provider: 'alibaba' as const,
+      data: null,
+      error: {
+        code: 'TOKEN_PLAN_NOT_CONFIGURED',
+        message:
+          'Alibaba Token Plan size and period are not configured. Set them via PUT /api/usage/token-plan or ALIBABA_TOKEN_PLAN_TOTAL_TOKENS + ALIBABA_TOKEN_PLAN_PERIOD_START.',
+      },
+    };
+  }
+
+  const now = new Date();
+  const { start, end } = resolveTokenPlanWindow(config, now);
+  const startSql = start.toISOString().slice(0, 19).replace('T', ' ');
+  const used = readTokenPlanConsumption(userId, startSql);
+  const utilization = config.totalTokens > 0 ? (used / config.totalTokens) * 100 : 0;
+  const windowSeconds = config.periodDays * 24 * 60 * 60;
+
+  return {
+    success: true,
+    supported: true,
+    provider: 'alibaba' as const,
+    data: {
+      subscriptionType: 'alibaba-token-plan',
+      rateLimitTier: 'token-plan',
+      // The plan period is the only window Alibaba enforces; expose it as the
+      // long window so the existing limits card renders it unchanged.
+      fiveHour: null,
+      sevenDay: {
+        utilization: Math.min(Math.round(utilization * 10) / 10, 100),
+        resetsAt: end.toISOString(),
+        windowSeconds,
+      },
+      sevenDaySonnet: null,
+      additional: [],
+      // Locally derived, so make the provenance explicit rather than letting it
+      // look like an upstream reading.
+      source: 'local-usage-history',
+      tokenPlan: {
+        totalTokens: config.totalTokens,
+        usedTokens: used,
+        remainingTokens: Math.max(config.totalTokens - used, 0),
+        periodStart: start.toISOString(),
+        periodEnd: end.toISOString(),
+        periodDays: config.periodDays,
+      },
+    },
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -310,7 +506,7 @@ function readOpenCodeStoredProviderKey(userId: string, providerIds: string[]): s
   return null;
 }
 
-async function getZaiApiKey(userId: string): Promise<string | null> {
+export async function getZaiApiKey(userId: string): Promise<string | null> {
   return (
     configuredEnvKey(['ZAI_API_KEY', 'GLM_API_KEY', 'ZHIPU_API_KEY', 'Z_AI_API_KEY']) ||
     readOpenCodeStoredProviderKey(userId, ['z-ai', 'zai']) ||
@@ -350,13 +546,17 @@ async function hasConfiguredOpenCodeProvider(
 function providerSqlPredicate(provider: CLIProvider): string {
   switch (provider) {
     case 'codex':
-      return "(lower(model) LIKE 'gpt-%' OR lower(model) LIKE '%codex%')";
+      return "(lower(provider) = 'codex' OR (lower(provider) IN ('', 'unknown') AND (lower(model) LIKE 'gpt-%' OR lower(model) LIKE '%codex%')))";
     case 'claude':
-      return "(lower(model) LIKE 'claude%' OR lower(model) IN ('opus', 'sonnet', 'haiku'))";
-    case 'vibe':
-      return "(lower(model) LIKE 'mistral-%' OR lower(model) LIKE 'devstral-%')";
+      return "(lower(provider) = 'claude' OR (lower(provider) IN ('', 'unknown') AND (lower(model) LIKE 'claude%' OR lower(model) IN ('opus', 'sonnet', 'haiku'))))";
+    case 'zai':
+      return "lower(provider) IN ('zai', 'z-ai')";
     case 'opencode':
-      return "(instr(model, '/') > 0 OR lower(model) LIKE '%opencode%')";
+      return "(lower(provider) = 'opencode' OR (lower(provider) IN ('', 'unknown') AND (instr(model, '/') > 0 OR lower(model) LIKE '%opencode%')))";
+    case 'pi':
+      return "lower(provider) = 'pi'";
+    case 'kimi':
+      return "lower(provider) = 'kimi'";
   }
 }
 
@@ -527,7 +727,7 @@ function unwrapZaiEnvelope<T>(body: unknown): T {
   return body as T;
 }
 
-async function fetchZaiJson<T>(apiKey: string, pathname: string): Promise<T> {
+export async function fetchZaiJson<T>(apiKey: string, pathname: string): Promise<T> {
   const baseUrl = (process.env.ZAI_USAGE_BASE_URL || 'https://api.z.ai').replace(/\/+$/, '');
   const authHeaders = [...new Set([apiKey, `Bearer ${apiKey}`])];
   let authError: (Error & { status?: number }) | null = null;
@@ -606,7 +806,7 @@ function formatZaiDateTime(date: Date): string {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-function zaiModelUsagePath(days: number): string {
+export function zaiModelUsagePath(days: number): string {
   const now = new Date();
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 0, 0, 0, 0);
@@ -617,33 +817,64 @@ function zaiModelUsagePath(days: number): string {
   return `/api/monitor/usage/model-usage?${params.toString()}`;
 }
 
-async function fetchZaiUsageLimits(userId: string): Promise<UsageLimitResult> {
-  const apiKey = await getZaiApiKey(userId);
+export function mapZaiAccountUsage(
+  usage: ZaiModelUsagePayload | null,
+  periodDays: number
+): NonNullable<UsageLimitPayload['accountUsage']> | undefined {
+  const totalTokens = finiteNumber(usage?.totalUsage?.totalTokensUsage);
+  const totalRequests = finiteNumber(usage?.totalUsage?.totalModelCallCount);
+  if (totalTokens === null || totalRequests === null) return undefined;
+
+  const dates = Array.isArray(usage?.x_time) ? usage.x_time : [];
+  const summaries = usage?.totalUsage?.modelSummaryList || usage?.modelSummaryList || [];
+  return {
+    periodDays,
+    totalTokens,
+    totalRequests,
+    startsAt: dates[0] || null,
+    endsAt: dates.at(-1) || null,
+    timezone: 'Asia/Shanghai',
+    models: summaries
+      .map((item) => ({
+        model: typeof item.modelName === 'string' ? item.modelName : '',
+        tokens: finiteNumber(item.totalTokens) ?? 0,
+      }))
+      .filter((item) => item.model && item.tokens > 0),
+  };
+}
+
+async function fetchZaiUsageLimits(
+  userId: string,
+  apiKeyOverride?: string,
+  providerId: 'zai' | 'z-ai' = 'z-ai'
+): Promise<UsageLimitResult> {
+  const apiKey = normalizeApiKey(apiKeyOverride) || (await getZaiApiKey(userId));
   if (!apiKey) {
     const configured = await hasConfiguredOpenCodeProvider(['z-ai', 'zai'], userId);
     return {
       success: configured,
       supported: configured,
-      provider: 'z-ai',
+      provider: providerId,
       data: configured ? unavailableUsageData('Z.ai Coding Plan', 'No API key') : null,
       error: { code: 'NO_CREDENTIALS', message: 'Z.ai API key not found' },
     };
   }
 
   try {
-    const [quota, subscription] = await Promise.all([
+    const accountUsageDays = 30;
+    const [quota, subscription, modelUsage] = await Promise.all([
       fetchZaiJson<ZaiQuotaPayload>(apiKey, '/api/monitor/usage/quota/limit'),
       fetchZaiJson<ZaiSubscriptionItem[]>(apiKey, '/api/biz/subscription/list').catch(() => null),
-      // Warm the same official monitor endpoint used by zai-usage-tracker. The
-      // quota card is still driven by quota/limit because model-usage has totals
-      // but no upstream quota denominator.
-      fetchZaiJson(apiKey, zaiModelUsagePath(7)).catch(() => null),
+      fetchZaiJson<ZaiModelUsagePayload>(apiKey, zaiModelUsagePath(accountUsageDays - 1)).catch(
+        () => null
+      ),
     ]);
     const mapped = mapZaiUsage(quota, subscription);
+    if (mapped) mapped.accountUsage = mapZaiAccountUsage(modelUsage, accountUsageDays);
     return {
       success: Boolean(mapped),
       supported: Boolean(mapped),
-      provider: 'z-ai',
+      provider: providerId,
       data: mapped,
       error: mapped
         ? undefined
@@ -655,7 +886,7 @@ async function fetchZaiUsageLimits(userId: string): Promise<UsageLimitResult> {
       return {
         success: true,
         supported: true,
-        provider: 'z-ai',
+        provider: providerId,
         data: unavailableUsageData('Z.ai Coding Plan', 'Credentials need refresh'),
         error: { code: 'NO_CREDENTIALS', message: 'Z.ai API key is missing or expired' },
       };
@@ -664,7 +895,7 @@ async function fetchZaiUsageLimits(userId: string): Promise<UsageLimitResult> {
     return {
       success: false,
       supported: false,
-      provider: 'z-ai',
+      provider: providerId,
       data: null,
       error: { code: 'ZAI_USAGE_ERROR', message: 'Failed to fetch Z.ai usage limits' },
     };
@@ -997,7 +1228,7 @@ function envUsd(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-async function fetchOpenCodeGoUsage(userId: string): Promise<UsageLimitResult> {
+export async function fetchOpenCodeGoUsage(userId: string): Promise<UsageLimitResult> {
   const credentials = await getOpenCodeGoCredentials(userId);
   let liveQuotaError: { code: string; message: string } | undefined;
   if (credentials) {
@@ -1089,7 +1320,7 @@ async function fetchOpenCodeGoUsage(userId: string): Promise<UsageLimitResult> {
   };
 }
 
-function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
+export function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
   const budget = getLocalUsageBudget(userId, provider);
   if (!budget.dailyUsd && !budget.weeklyUsd) {
     return null;
@@ -1146,53 +1377,27 @@ function fetchLocalBudgetUsage(userId: string, provider: CLIProvider) {
 // Refresh Claude OAuth token
 async function refreshClaudeToken(refreshToken: string): Promise<ClaudeCredentials | null> {
   try {
-    const endpoints = [
-      'https://api.anthropic.com/oauth/token',
-      'https://console.anthropic.com/api/oauth/token',
-    ];
+    const tokens = await requestClaudeOAuthTokenRefresh(refreshToken);
+    const existing = await getClaudeCredentials();
+    const now = Date.now();
+    const updated: ClaudeCredentials = {
+      claudeAiOauth: {
+        ...existing?.claudeAiOauth,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || refreshToken,
+        expiresAt: now + tokens.expiresIn * 1000,
+        refreshTokenExpiresAt: tokens.refreshTokenExpiresIn
+          ? now + tokens.refreshTokenExpiresIn * 1000
+          : existing?.claudeAiOauth?.refreshTokenExpiresAt,
+        scopes: existing?.claudeAiOauth?.scopes || [],
+        subscriptionType: existing?.claudeAiOauth?.subscriptionType || 'unknown',
+        rateLimitTier: existing?.claudeAiOauth?.rateLimitTier || 'unknown',
+      },
+    };
 
-    for (const endpoint of endpoints) {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-          client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(`Token refresh failed (${endpoint}):`, await response.text());
-        continue;
-      }
-
-      const tokens = (await response.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
-
-      // Read existing credentials to preserve other fields
-      const existing = await getClaudeCredentials();
-      const updated: ClaudeCredentials = {
-        claudeAiOauth: {
-          ...existing?.claudeAiOauth,
-          accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
-          expiresAt: Date.now() + tokens.expires_in * 1000,
-          scopes: existing?.claudeAiOauth?.scopes || [],
-          subscriptionType: existing?.claudeAiOauth?.subscriptionType || 'unknown',
-          rateLimitTier: existing?.claudeAiOauth?.rateLimitTier || 'unknown',
-        },
-      };
-
-      await fs.writeFile(credentialsPath, JSON.stringify(updated, null, 2));
-      console.log('Claude token refreshed successfully');
-      return updated;
-    }
-
-    return null;
+    await fs.writeFile(credentialsPath, JSON.stringify(updated, null, 2));
+    console.log('Claude token refreshed successfully');
+    return updated;
   } catch (err) {
     console.error('Token refresh error:', err);
     return null;
@@ -1228,29 +1433,137 @@ async function fetchUsage(
   }
 }
 
+router.get('/limit-history', requireAuth, (req, res) => {
+  try {
+    const userId = (req as AuthenticatedRequest).userId;
+    const requestedProviders = String(req.query.providers || '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter((value): value is TrackedUsageLimitProvider =>
+        TRACKED_USAGE_LIMIT_PROVIDERS.includes(value as TrackedUsageLimitProvider)
+      );
+    const providers =
+      requestedProviders.length > 0
+        ? [...new Set(requestedProviders)]
+        : TRACKED_USAGE_LIMIT_PROVIDERS;
+    const range = normalizeUsageLimitHistoryRange(req.query.range);
+
+    return res.json({
+      success: true,
+      data: queryUsageLimitHistory(getDatabase(), userId, providers, range),
+    });
+  } catch (error) {
+    console.error('[USAGE LIMITS] Failed to read quota history:', error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'LIMIT_HISTORY_ERROR', message: 'Failed to read provider limit history' },
+    });
+  }
+});
+
+// Read/write the locally configured prepaid token plan (Alibaba Token Plan).
+router.get('/token-plan', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  return res.json({
+    success: true,
+    data: getTokenPlanConfig(userId, 'alibaba-token-plan'),
+  });
+});
+
+router.put('/token-plan', requireAuth, (req, res) => {
+  try {
+    const userId = (req as AuthenticatedRequest).userId;
+    const body = asRecord(req.body) || {};
+    const totalTokens = normalizePositiveInt(body.totalTokens);
+    const periodStart = normalizeDateOnly(body.periodStart);
+    const periodDays = normalizePositiveInt(body.periodDays) ?? 30;
+
+    if (!totalTokens || !periodStart) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_TOKEN_PLAN',
+          message: 'totalTokens (> 0) and periodStart (YYYY-MM-DD) are required.',
+        },
+      });
+    }
+
+    const db = getDatabase();
+    const row = db
+      .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+      .get(userId) as { settings_json?: string | null } | undefined;
+    const settings = safeJsonParse<Record<string, unknown>>(row?.settings_json, {});
+    const plans = asRecord(settings.tokenPlans) || {};
+    settings.tokenPlans = {
+      ...plans,
+      'alibaba-token-plan': { totalTokens, periodStart, periodDays },
+    };
+
+    db.prepare(
+      `INSERT INTO user_settings (user_id, settings_json)
+       VALUES (?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET settings_json = excluded.settings_json`
+    ).run(userId, JSON.stringify(settings));
+
+    return res.json({ success: true, data: { totalTokens, periodStart, periodDays } });
+  } catch (error) {
+    console.error('[USAGE LIMITS] Failed to save token plan:', error);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'TOKEN_PLAN_SAVE_FAILED', message: 'Failed to save token plan' },
+    });
+  }
+});
+
 // Fetch usage limits for the selected provider.
 router.get('/limits', requireAuth, async (req, res) => {
   try {
     const providerParam = String(req.query.provider || 'codex').toLowerCase();
-    const allowedProviders: UsageProviderId[] = [
-      'claude',
-      'codex',
-      'opencode',
-      'opencode-go',
-      'vibe',
-      'z-ai',
-    ];
-    const provider = allowedProviders.includes(providerParam as UsageProviderId)
-      ? (providerParam as UsageProviderId)
-      : 'codex';
-    const userId = (req as AuthenticatedRequest).userId;
-
-    if (provider === 'z-ai') {
-      return res.json(await fetchZaiUsageLimits(userId));
+    const harnessProviders: UsageProviderId[] = ['opencode', 'pi', 'opencode-go'];
+    if (harnessProviders.includes(providerParam as UsageProviderId)) {
+      return res.json({
+        success: true,
+        supported: false,
+        provider: providerParam,
+        data: null,
+        error: {
+          code: 'HARNESS_HAS_NO_ACCOUNT_LIMITS',
+          message:
+            'OpenCode and Pi are execution harnesses. Account limits are available for Codex, Claude, and Z.AI.',
+        },
+      });
     }
 
-    if (provider === 'opencode-go') {
-      return res.json(await fetchOpenCodeGoUsage(userId));
+    if (providerParam === 'alibaba' || providerParam === 'alibaba-token-plan') {
+      return res.json(buildAlibabaLimitResponse((req as AuthenticatedRequest).userId));
+    }
+
+    const accountProviders: UsageProviderId[] = ['claude', 'zai', 'codex', 'kimi', 'z-ai'];
+    if (!accountProviders.includes(providerParam as UsageProviderId)) {
+      return res.status(400).json({
+        success: false,
+        supported: false,
+        provider: providerParam,
+        data: null,
+        error: {
+          code: 'UNKNOWN_LIMIT_PROVIDER',
+          message:
+            'Account limits are available for Codex, Claude, Kimi, Z.AI, and the Alibaba Token Plan.',
+        },
+      });
+    }
+    const provider = providerParam as UsageProviderId;
+    const userId = (req as AuthenticatedRequest).userId;
+
+    if (provider === 'zai') {
+      const zaiApi = getZaiApiConfigForUser(userId);
+      const result = await fetchZaiUsageLimits(userId, zaiApi?.authToken, 'zai');
+      return res.json(persistUsageLimitResult(userId, result));
+    }
+
+    if (provider === 'z-ai') {
+      const result = await fetchZaiUsageLimits(userId);
+      return res.json(persistUsageLimitResult(userId, result));
     }
 
     if (provider === 'codex') {
@@ -1291,7 +1604,7 @@ router.get('/limits', requireAuth, async (req, res) => {
         if (!usage) {
           return res.json({ success: true, supported: false, provider: 'codex', data: null });
         }
-        return res.json(buildCodexResponse(mapCodexUsage(usage)));
+        return res.json(persistUsageLimitResult(userId, buildCodexResponse(mapCodexUsage(usage))));
       } catch (err) {
         const errorText = String(err);
         const isAuthError = isCodexUsageAuthError(err);
@@ -1300,7 +1613,9 @@ router.get('/limits', requireAuth, async (req, res) => {
           if (refreshed?.tokens?.access_token) {
             try {
               const usage = await fetchCodexUsage(refreshed);
-              return res.json(buildCodexResponse(mapCodexUsage(usage)));
+              return res.json(
+                persistUsageLimitResult(userId, buildCodexResponse(mapCodexUsage(usage)))
+              );
             } catch (retryErr) {
               console.error('Codex usage retry error:', retryErr);
             }
@@ -1325,28 +1640,25 @@ router.get('/limits', requireAuth, async (req, res) => {
       }
     }
 
-    if (provider === 'opencode' || provider === 'vibe') {
-      const localUsage = fetchLocalBudgetUsage(userId, provider);
-      if (localUsage) {
-        return res.json({
-          success: true,
-          supported: true,
-          provider,
-          data: localUsage,
+    if (provider === 'kimi') {
+      const result = await fetchKimiUsage();
+      if (!result.ok) {
+        return res.status(result.status >= 500 ? 502 : 200).json({
+          success: false,
+          supported: false,
+          provider: 'kimi',
+          data: null,
+          error: { code: result.code, message: result.message },
         });
       }
-
-      return res.json({
-        success: true,
-        supported: false,
-        provider,
-        data: null,
-        error: {
-          code: 'LOCAL_BUDGET_NOT_CONFIGURED',
-          message:
-            'No local usage budget is configured. Set localUsageBudgets in user settings or LOCAL_USAGE_BUDGET_*_USD env vars.',
-        },
-      });
+      return res.json(
+        persistUsageLimitResult(userId, {
+          success: true,
+          supported: true,
+          provider: 'kimi',
+          data: result.data,
+        })
+      );
     }
 
     let credentials = await getClaudeCredentials();
@@ -1401,7 +1713,7 @@ router.get('/limits', requireAuth, async (req, res) => {
     const usageData = result.data!;
 
     // Transform to frontend-friendly format
-    res.json({
+    const response: UsageLimitResult = {
       success: true,
       supported: true,
       provider: 'claude',
@@ -1427,7 +1739,8 @@ router.get('/limits', requireAuth, async (req, res) => {
             }
           : null,
       },
-    });
+    };
+    res.json(persistUsageLimitResult(userId, response));
   } catch (err) {
     console.error('Failed to fetch usage limits:', err);
     res.status(500).json({

@@ -1,5 +1,5 @@
 import path from 'path';
-import { isAllowedBasePath, isPathInside } from './allowedPaths';
+import { isAllowedBasePath, isPathInside } from './allowedPaths.js';
 
 export const STATIC_INIT_PATH = '/__preview-static-init';
 export const STATIC_ROOT_COOKIE = 'preview_static_root';

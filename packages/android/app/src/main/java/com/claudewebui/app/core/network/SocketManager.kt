@@ -33,7 +33,6 @@ enum class ConnectionState {
  * - Connection lifecycle management (connect, disconnect, auto-reconnect)
  * - Per-session SharedFlow channels for all event types
  * - Methods for sending messages, input, interrupts, and mode changes
- * - Orchestration and Ralph event flows and control methods
  *
  * Usage:
  * 1. Call [connect] with the server URL
@@ -103,17 +102,6 @@ class SocketManager {
     private val _errors = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 16)
     val errors: SharedFlow<Pair<String, String>> = _errors.asSharedFlow()
 
-    // --- Orchestration event flows ---
-    private val _orchestrationState = MutableSharedFlow<OrchestrationState>(extraBufferCapacity = 8)
-    val orchestrationState: SharedFlow<OrchestrationState> = _orchestrationState.asSharedFlow()
-
-    private val _orchestrationEvents = MutableSharedFlow<OrchestrationEvent>(extraBufferCapacity = 32)
-    val orchestrationEvents: SharedFlow<OrchestrationEvent> = _orchestrationEvents.asSharedFlow()
-
-    // --- Ralph event flows ---
-    private val _ralphEvents = MutableSharedFlow<RalphEvent>(extraBufferCapacity = 32)
-    val ralphEvents: SharedFlow<RalphEvent> = _ralphEvents.asSharedFlow()
-
     // ========================================================================
     // Connection Lifecycle
     // ========================================================================
@@ -160,24 +148,6 @@ class SocketManager {
                 on("session:permission_request", onPermission)
                 on("session:compact", onCompact)
                 on("session:mode", onMode)
-
-                // Orchestration events
-                on("orchestration:state", onOrchestrationState)
-                on("orchestration:task_delegated", onOrchestrationTaskDelegated)
-                on("orchestration:task_progress", onOrchestrationTaskProgress)
-                on("orchestration:task_completed", onOrchestrationTaskCompleted)
-                on("orchestration:worker_status", onOrchestrationWorkerStatus)
-                on("orchestration:worker_output", onOrchestrationWorkerOutput)
-                on("orchestration:phase", onOrchestrationPhase)
-                on("orchestration:error", onOrchestrationError)
-
-                // Ralph events
-                on("ralph:state", onRalphState)
-                on("ralph:progress", onRalphProgress)
-                on("ralph:iteration", onRalphIteration)
-                on("ralph:plan", onRalphPlan)
-                on("ralph:completed", onRalphCompleted)
-                on("ralph:error", onRalphError)
 
                 connect()
             }
@@ -352,90 +322,6 @@ class SocketManager {
     }
 
     // ========================================================================
-    // Orchestration Actions
-    // ========================================================================
-
-    fun orchestrationConfigure(sessionId: String, config: JSONObject) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
-            put("config", config)
-        }
-        socket?.emit("orchestration:configure", data)
-    }
-
-    fun orchestrationStart(sessionId: String) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
-        }
-        socket?.emit("orchestration:start", data)
-    }
-
-    fun orchestrationStop(sessionId: String) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
-        }
-        socket?.emit("orchestration:stop", data)
-    }
-
-    fun orchestrationInterruptWorker(sessionId: String, workerId: String) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
-            put("workerId", workerId)
-        }
-        socket?.emit("orchestration:interrupt_worker", data)
-    }
-
-    fun orchestrationCancelTask(sessionId: String, taskId: String) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
-            put("taskId", taskId)
-        }
-        socket?.emit("orchestration:cancel_task", data)
-    }
-
-    fun orchestrationRetryTask(sessionId: String, taskId: String) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
-            put("taskId", taskId)
-        }
-        socket?.emit("orchestration:retry_task", data)
-    }
-
-    // ========================================================================
-    // Ralph Actions
-    // ========================================================================
-
-    fun ralphStart(idea: String, sessionId: String? = null, config: JSONObject? = null) {
-        val data = JSONObject().apply {
-            put("idea", idea)
-            sessionId?.let { put("sessionId", it) }
-            config?.let { put("config", it) }
-        }
-        socket?.emit("ralph:start", data)
-    }
-
-    fun ralphPause(runId: String) {
-        val data = JSONObject().apply {
-            put("runId", runId)
-        }
-        socket?.emit("ralph:pause", data)
-    }
-
-    fun ralphResume(runId: String) {
-        val data = JSONObject().apply {
-            put("runId", runId)
-        }
-        socket?.emit("ralph:resume", data)
-    }
-
-    fun ralphStop(runId: String) {
-        val data = JSONObject().apply {
-            put("runId", runId)
-        }
-        socket?.emit("ralph:stop", data)
-    }
-
-    // ========================================================================
     // Private: Connection Callbacks
     // ========================================================================
 
@@ -541,70 +427,6 @@ class SocketManager {
             json.decodeFromString<SessionMode>("\"$modeStr\"")
         } catch (_: Exception) { return@Listener }
         _mode.tryEmit(sessionId to sessionMode)
-    }
-
-    // ========================================================================
-    // Private: Orchestration Event Handlers
-    // ========================================================================
-
-    private val onOrchestrationState = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationState>(args) { _orchestrationState.tryEmit(it) }
-    }
-
-    private val onOrchestrationTaskDelegated = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.TaskDelegated>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    private val onOrchestrationTaskProgress = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.TaskProgress>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    private val onOrchestrationTaskCompleted = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.TaskCompleted>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    private val onOrchestrationWorkerStatus = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.WorkerStatusUpdate>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    private val onOrchestrationWorkerOutput = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.WorkerOutput>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    private val onOrchestrationPhase = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.Phase>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    private val onOrchestrationError = Emitter.Listener { args ->
-        parseAndEmit<OrchestrationEvent.Error>(args) { _orchestrationEvents.tryEmit(it) }
-    }
-
-    // ========================================================================
-    // Private: Ralph Event Handlers
-    // ========================================================================
-
-    private val onRalphState = Emitter.Listener { args ->
-        parseAndEmit<RalphEvent.State>(args) { _ralphEvents.tryEmit(it) }
-    }
-
-    private val onRalphProgress = Emitter.Listener { args ->
-        parseAndEmit<RalphEvent.Progress>(args) { _ralphEvents.tryEmit(it) }
-    }
-
-    private val onRalphIteration = Emitter.Listener { args ->
-        parseAndEmit<RalphEvent.Iteration>(args) { _ralphEvents.tryEmit(it) }
-    }
-
-    private val onRalphPlan = Emitter.Listener { args ->
-        parseAndEmit<RalphEvent.Plan>(args) { _ralphEvents.tryEmit(it) }
-    }
-
-    private val onRalphCompleted = Emitter.Listener { args ->
-        parseAndEmit<RalphEvent.Completed>(args) { _ralphEvents.tryEmit(it) }
-    }
-
-    private val onRalphError = Emitter.Listener { args ->
-        parseAndEmit<RalphEvent.Error>(args) { _ralphEvents.tryEmit(it) }
     }
 
     // ========================================================================

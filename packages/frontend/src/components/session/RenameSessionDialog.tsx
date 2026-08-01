@@ -72,7 +72,9 @@ export function RenameSessionDialog({ session, open, onOpenChange }: RenameSessi
         <form onSubmit={handleSubmit} className="space-y-4">
           <DialogHeader>
             <DialogTitle>Rename Session</DialogTitle>
-            <DialogDescription>Update the session name shown in the header and lists.</DialogDescription>
+            <DialogDescription>
+              Update the session name shown in the header and lists.
+            </DialogDescription>
           </DialogHeader>
           <Input
             value={name}

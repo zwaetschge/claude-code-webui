@@ -1,7 +1,8 @@
 import { nanoid } from 'nanoid';
 import type Database from 'better-sqlite3';
 import type { User } from '@plum-code-webui/shared';
-import { getDatabase } from '../db';
+import { getDatabase } from '../db/index.js';
+import { ensureBootstrapAdmin } from './adminBootstrap.js';
 
 const USER_SELECT = `
   id,
@@ -22,17 +23,6 @@ function ensureUserSettings(db: Database.Database, userId: string): void {
     `INSERT OR IGNORE INTO user_settings (user_id, theme, allowed_tools)
      VALUES (?, 'dark', '["Bash","Read","Write","Edit","Glob","Grep"]')`
   ).run(userId);
-}
-
-function promoteFirstUserIfNeeded(db: Database.Database, userId: string): void {
-  const row = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'admin'`).get() as {
-    count: number;
-  };
-  if (row.count === 0) {
-    db.prepare(`UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
-      userId
-    );
-  }
 }
 
 export function upsertProxyUserInDatabase(
@@ -57,6 +47,7 @@ export function upsertProxyUserInDatabase(
        WHERE id = ?`
     ).run(normalizedEmail, displayName, existingProxyUser.id);
     ensureUserSettings(db, existingProxyUser.id);
+    ensureBootstrapAdmin(db, existingProxyUser.id, normalizedEmail);
     return {
       ...existingProxyUser,
       email: normalizedEmail,
@@ -75,7 +66,7 @@ export function upsertProxyUserInDatabase(
        WHERE id = ?`
     ).run(displayName, existingEmailUser.id);
     ensureUserSettings(db, existingEmailUser.id);
-    promoteFirstUserIfNeeded(db, existingEmailUser.id);
+    ensureBootstrapAdmin(db, existingEmailUser.id, normalizedEmail);
     return {
       ...existingEmailUser,
       name: displayName || existingEmailUser.name,
@@ -95,7 +86,7 @@ export function upsertProxyUserInDatabase(
        WHERE id = ?`
     ).run(normalizedEmail, displayName, providerId, legacySharedCliUser.id);
     ensureUserSettings(db, legacySharedCliUser.id);
-    promoteFirstUserIfNeeded(db, legacySharedCliUser.id);
+    ensureBootstrapAdmin(db, legacySharedCliUser.id, normalizedEmail);
     return {
       ...legacySharedCliUser,
       email: normalizedEmail,
@@ -111,7 +102,7 @@ export function upsertProxyUserInDatabase(
      VALUES (?, ?, ?, NULL, 'proxy', ?)`
   ).run(userId, normalizedEmail, displayName, providerId);
   ensureUserSettings(db, userId);
-  promoteFirstUserIfNeeded(db, userId);
+  ensureBootstrapAdmin(db, userId, normalizedEmail);
 
   const createdUser = db.prepare(`SELECT ${USER_SELECT} FROM users WHERE id = ?`).get(userId) as
     | User

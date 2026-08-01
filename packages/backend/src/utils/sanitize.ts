@@ -139,14 +139,8 @@ export function redactSensitiveText(value: string): string {
     .replace(/\bgh[pousr]_[A-Za-z0-9_]{30,}\b/g, '[REDACTED_GITHUB_TOKEN]')
     .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, '[REDACTED_GOOGLE_KEY]')
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED_AWS_ACCESS_KEY]')
-    .replace(
-      /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
-      '[REDACTED_JWT]'
-    )
-    .replace(
-      /\b(Authorization\s*[:=]\s*Bearer\s+)[^\s'"]+/gi,
-      '$1[REDACTED_TOKEN]'
-    )
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
+    .replace(/\b(Authorization\s*[:=]\s*Bearer\s+)[^\s'"]+/gi, '$1[REDACTED_TOKEN]')
     .replace(
       /\b([A-Z0-9_]*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|REFRESH[_-]?TOKEN|ID[_-]?TOKEN|CLIENT[_-]?SECRET|SESSION[_-]?SECRET|JWT[_-]?SECRET|PASSWORD|COOKIE|CREDENTIAL|PRIVATE[_-]?KEY|SECRET)[A-Z0-9_]*\s*=\s*)([^\s'"]+)/gi,
       '$1[REDACTED]'

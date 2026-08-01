@@ -1,16 +1,16 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { getDatabase } from '../db';
-import { config } from '../config';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { getOracleBrowserManager } from '../services/oracleBrowser';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { getDatabase } from '../db/index.js';
+import { config } from '../config.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { getOracleBrowserManager } from '../services/oracleBrowser.js';
 import {
   buildOracleRuntimeConfig,
   getOracleBrowserSettingsForUser,
   getOracleRuntimeConfigForSession,
-} from '../utils/oracleSettings';
+} from '../utils/oracleSettings.js';
 
 const router = Router();
 

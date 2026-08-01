@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireAdmin } from '../middleware/auth';
-import { asyncHandler } from '../middleware/errorHandler';
-import { getCodexStatus, listCodexFeatures, setCodexFeature } from '../utils/codexCli';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import { getCodexStatus, listCodexFeatures, setCodexFeature } from '../utils/codexCli.js';
 import {
   installCodexPlugin,
   listCodexMarketplaces,
   listCodexPlugins,
   refreshCodexMarketplace,
   setCodexPluginEnabled,
-} from '../utils/codexPlugins';
+} from '../utils/codexPlugins.js';
 
 const router = Router();
 

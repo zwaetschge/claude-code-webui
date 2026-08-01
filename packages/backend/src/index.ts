@@ -9,68 +9,80 @@ import passport from 'passport';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { config } from './config';
+import { config } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import { initDatabase } from './db';
-import { setupPassport } from './auth/passport';
-import { setupWebSocket } from './websocket';
-import { errorHandler, requestIdMiddleware } from './middleware/errorHandler';
+import { initDatabase } from './db/index.js';
+import { setupPassport } from './auth/passport.js';
+import { setupWebSocket } from './websocket/index.js';
+import { errorHandler, requestIdMiddleware } from './middleware/errorHandler.js';
 import {
   previewVhostMiddleware,
   handlePreviewUpgrade,
   previewVhostEnabled,
-} from './middleware/preview-vhost';
-import { ensureCliPath } from './utils/cliPaths';
-import { ensureDefaultClaudeMcpServers } from './utils/mcpDefaults';
-import { syncProviderLinks } from './utils/providerLinks';
+} from './middleware/preview-vhost.js';
+import { ensureCliPath } from './utils/cliPaths.js';
+import {
+  ensureDefaultClaudeMcpServers,
+  sanitizeClaudeSettingsProviderEnv,
+} from './utils/mcpDefaults.js';
+import { syncProviderLinks } from './utils/providerLinks.js';
+import { syncSuperpowers } from './utils/superpowersSync.js';
+import { resolveConfigHome } from './utils/configPaths.js';
+import { listSkillLibrary } from './utils/skillLibrary.js';
+import { buildSessionCookieOptions } from './utils/sessionCookie.js';
 import type { CLIProvider } from '@plum-code-webui/shared';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from './services/cli-updates.js';
+import { resetDiscovery } from './services/cli-providers.js';
 
 // Routes
-import authRoutes from './routes/auth';
-import basicAuthRoutes from './routes/basic-auth';
-import sessionRoutes from './routes/sessions';
-import filesRoutes from './routes/files';
-import gitRoutes from './routes/git';
-import settingsRoutes from './routes/settings';
-import mcpRoutes from './routes/mcp';
-import claudeRoutes from './routes/claude';
-import claudeConfigRoutes from './routes/claude-config';
-import claudeSettingsRoutes from './routes/claude-settings';
-import permissionsRoutes from './routes/permissions';
-import usageRoutes from './routes/usage';
-import cliToolsRoutes from './routes/cli-tools';
-import projectsRoutes from './routes/projects';
-import githubRoutes from './routes/github';
-import commandsRoutes from './routes/commands';
-import analyticsRoutes from './routes/analytics';
-import checkpointsRoutes from './routes/checkpoints';
-import agentsRoutes from './routes/agents';
-import notesRoutes from './routes/notes';
-import categoriesRoutes from './routes/categories';
-import providersRoutes from './routes/providers';
-import providerOAuthRoutes from './routes/provider-oauth';
-import cliProvidersRoutes from './routes/cli-providers';
-import cliLoginRoutes from './routes/cli-login';
-import codexRoutes from './routes/codex';
-import opencodeRoutes from './routes/opencode';
-import memoriesRoutes from './routes/memories';
-import taskRoutes from './routes/tasks';
-import devicesRoutes from './routes/devices';
-import androidRoutes from './routes/android';
-import previewRoutes from './routes/preview';
-import adminRoutes from './routes/admin';
-import comfyuiRoutes from './routes/comfyui';
-import automationRoutes from './routes/automation';
-import oracleRoutes from './routes/oracle';
-import dockerRoutes from './routes/docker';
-import watchdogRoutes from './routes/watchdogs';
-import sessionMeshRoutes from './routes/session-mesh';
-import { initTaskManager } from './services/tasks';
-import discordRoutes from './routes/discord';
-import { initDiscordOutboxWorker } from './services/discord';
+import authRoutes from './routes/auth.js';
+import basicAuthRoutes from './routes/basic-auth.js';
+import sessionRoutes from './routes/sessions.js';
+import filesRoutes from './routes/files.js';
+import gitRoutes from './routes/git.js';
+import settingsRoutes from './routes/settings.js';
+import mcpRoutes from './routes/mcp.js';
+import claudeRoutes from './routes/claude.js';
+import claudeConfigRoutes from './routes/claude-config.js';
+import claudeSettingsRoutes from './routes/claude-settings.js';
+import permissionsRoutes from './routes/permissions.js';
+import usageRoutes from './routes/usage.js';
+import cliToolsRoutes from './routes/cli-tools.js';
+import projectsRoutes from './routes/projects.js';
+import githubRoutes from './routes/github.js';
+import commandsRoutes from './routes/commands.js';
+import analyticsRoutes from './routes/analytics.js';
+import checkpointsRoutes from './routes/checkpoints.js';
+import agentsRoutes from './routes/agents.js';
+import notesRoutes from './routes/notes.js';
+import categoriesRoutes from './routes/categories.js';
+import providersRoutes from './routes/providers.js';
+import providerOAuthRoutes from './routes/provider-oauth.js';
+import cliProvidersRoutes from './routes/cli-providers.js';
+import cliLoginRoutes from './routes/cli-login.js';
+import codexRoutes from './routes/codex.js';
+import opencodeRoutes from './routes/opencode.js';
+import memoriesRoutes from './routes/memories.js';
+import taskRoutes from './routes/tasks.js';
+import devicesRoutes from './routes/devices.js';
+import androidRoutes from './routes/android.js';
+import previewRoutes from './routes/preview.js';
+import adminRoutes from './routes/admin.js';
+import comfyuiRoutes from './routes/comfyui.js';
+import automationRoutes from './routes/automation.js';
+import oracleRoutes from './routes/oracle.js';
+import dockerRoutes from './routes/docker.js';
+import watchdogRoutes from './routes/watchdogs.js';
+import sessionMeshRoutes from './routes/session-mesh.js';
+import { initTaskManager } from './services/tasks/index.js';
+import discordRoutes from './routes/discord.js';
+import homeAssistantRoutes from './routes/home-assistant.js';
+import { initDiscordOutboxWorker } from './services/discord/index.js';
+import { buildReadinessReport } from './services/readiness.js';
+import { SqliteSessionStore } from './services/SqliteSessionStore.js';
+import { initUsageLimitHistoryCollector } from './services/usage-limit-history-collector.js';
 
 function parseBooleanEnv(value?: string): boolean {
   if (!value) return false;
@@ -79,7 +91,7 @@ function parseBooleanEnv(value?: string): boolean {
 
 function parseCliUpdateProviders(value?: string): CLIProvider[] | undefined {
   if (!value) return undefined;
-  const allowed = new Set(CLI_UPDATE_PROVIDERS);
+  const allowed = new Set<CLIProvider>(CLI_UPDATE_PROVIDERS);
   const providers = value
     .split(',')
     .map((provider) => provider.trim())
@@ -143,7 +155,7 @@ function registerGracefulShutdown(
       // Disconnect all WebSocket clients so they reconnect to the new instance.
       io.disconnectSockets(true);
       // Dynamically import to avoid circular load if shutdown fires before setup.
-      const { getProcessManager } = await import('./websocket');
+      const { getProcessManager } = await import('./websocket/index.js');
       try {
         await getProcessManager().shutdownAll();
       } catch (err) {
@@ -166,6 +178,12 @@ async function main() {
   initDatabase();
   ensureCliPath();
   try {
+    const providerEnv = await sanitizeClaudeSettingsProviderEnv();
+    if (providerEnv.updated) {
+      console.log(
+        `[provider-isolation] Removed shared Claude endpoint overrides: ${providerEnv.removed.join(', ')}`
+      );
+    }
     const mcpDefaults = await ensureDefaultClaudeMcpServers();
     if (mcpDefaults.updated) {
       console.log(
@@ -174,6 +192,19 @@ async function main() {
     }
   } catch (err) {
     console.warn('[mcp-defaults] sync skipped:', err);
+  }
+  try {
+    await syncSuperpowers();
+  } catch (err) {
+    console.warn('[superpowers] sync skipped:', err);
+  }
+  try {
+    const skills = await listSkillLibrary(resolveConfigHome());
+    const active = skills.filter((skill) => skill.entryType === 'skill' && skill.enabled).length;
+    const onDemand = skills.filter((skill) => skill.entryType === 'skill' && !skill.enabled).length;
+    console.log(`[skills] Catalog reconciled (${active} active, ${onDemand} on demand)`);
+  } catch (err) {
+    console.warn('[skills] startup reconciliation skipped:', err);
   }
   syncProviderLinks();
 
@@ -268,14 +299,11 @@ async function main() {
   app.use(cookieParser());
   app.use(
     session({
+      store: new SqliteSessionStore(),
       secret: config.sessionSecret,
       resave: false,
       saveUninitialized: false,
-      cookie: {
-        secure: config.isProduction,
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      },
+      cookie: buildSessionCookieOptions(config.isProduction),
     })
   );
 
@@ -287,9 +315,21 @@ async function main() {
   // Make io available in routes
   app.set('io', io);
 
-  // Health check
+  const frontendPath = config.isProduction
+    ? path.join(__dirname, '../../frontend/dist')
+    : undefined;
+
+  // Liveness only proves that the event loop can answer. Readiness additionally
+  // verifies the local state required to accept user traffic.
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+  app.get('/health/live', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+  app.get('/health/ready', (_req, res) => {
+    const report = buildReadinessReport(frontendPath);
+    res.status(report.status === 'ready' ? 200 : 503).json(report);
   });
 
   // Routes
@@ -332,6 +372,7 @@ async function main() {
   app.use('/api/docker', dockerRoutes);
   app.use('/api/watchdogs', watchdogRoutes);
   app.use('/api/discord', discordRoutes);
+  app.use('/api/home-assistant', homeAssistantRoutes);
   app.use('/api', sessionMeshRoutes);
 
   const logosDir = process.env.LOGOS_DIR || path.join(process.cwd(), 'logos');
@@ -364,8 +405,8 @@ async function main() {
 
   // Serve frontend static files in production
   if (config.isProduction) {
-    const frontendPath = path.join(__dirname, '../../frontend/dist');
-    const designPreviewPath = path.join(frontendPath, 'design-previews');
+    const productionFrontendPath = frontendPath as string;
+    const designPreviewPath = path.join(productionFrontendPath, 'design-previews');
     app.use(
       '/design-previews',
       (_req, res, next) => {
@@ -395,7 +436,17 @@ async function main() {
       })
     );
 
-    app.use(express.static(frontendPath));
+    app.use(
+      express.static(productionFrontendPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.startsWith(path.join(productionFrontendPath, 'assets') + path.sep)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          } else if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      })
+    );
 
     // Backend auth routes that should NOT be handled by SPA
     const backendAuthRoutes = [
@@ -403,6 +454,7 @@ async function main() {
       '/auth/google',
       '/auth/claude',
       '/auth/codex',
+      '/auth/pi',
       '/auth/dev',
       '/auth/dev-login',
       '/auth/me',
@@ -430,7 +482,8 @@ async function main() {
       ) {
         return next();
       }
-      res.sendFile(path.join(frontendPath, 'index.html'));
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(path.join(productionFrontendPath, 'index.html'));
     });
   }
 
@@ -441,6 +494,7 @@ async function main() {
   httpServer.listen(config.port, config.host, () => {
     console.log(`Server running on http://${config.host}:${config.port}`);
     console.log(`Frontend URL: ${config.frontendUrl}`);
+    initUsageLimitHistoryCollector();
   });
 
   registerGracefulShutdown(httpServer, io);
@@ -448,7 +502,7 @@ async function main() {
   // Bootstrap Codex CLI config — generates ~/.codex/config.toml with WebUI defaults
   // and mirrors MCP servers from ~/.claude/settings.json so Codex sessions get the
   // same tool surface. Idempotent; runs once per boot. Best-effort, errors logged.
-  void import('./utils/codexConfigSync')
+  void import('./utils/codexConfigSync.js')
     .then(({ syncCodexConfig }) => syncCodexConfig())
     .then((status) => console.log(`[codex-config] ${status}`))
     .catch((err) => console.warn('[codex-config] sync skipped:', err));
@@ -460,7 +514,12 @@ async function main() {
   if (autoUpdateEnabled) {
     const runUpdate = () => {
       runCliUpdates(providers)
-        .then((data) => logUpdateSummary(data.results))
+        .then((data) => {
+          logUpdateSummary(data.results);
+          if (data.results.some((result) => result.status === 'updated')) {
+            resetDiscovery();
+          }
+        })
         .catch((error) => console.error('[CLI UPDATE] Failed:', error));
     };
 

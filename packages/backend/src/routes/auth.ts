@@ -4,19 +4,49 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { nanoid } from 'nanoid';
-import { config } from '../config';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { getDatabase } from '../db';
+import { config } from '../config.js';
+import {
+  requireAuth,
+  resolveAuthenticatedUserId,
+  type AuthenticatedRequest,
+} from '../middleware/auth.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { getDatabase } from '../db/index.js';
 import type { User } from '@plum-code-webui/shared';
-import { isProviderAvailable } from '../services/cli-providers';
-import { generateUserToken } from '../utils/authTokens';
-import { upsertSharedCliUser } from '../utils/cliUser';
-import { upsertProxyUser } from '../utils/proxyUser';
-import { stampLogin } from '../utils/auditLog';
-import { EmailNotAllowedError, OAuthEmailCollisionError, isEmailAllowed } from '../auth/passport';
+import { isProviderAvailable } from '../services/cli-providers.js';
+import { generateUserToken } from '../utils/authTokens.js';
+import { upsertProxyUser } from '../utils/proxyUser.js';
+import { stampLogin } from '../utils/auditLog.js';
+import { requestClaudeOAuthTokenRefresh } from '../utils/claudeOauth.js';
+import {
+  EmailNotAllowedError,
+  OAuthEmailCollisionError,
+  isEmailAllowed,
+} from '../auth/passport.js';
 
 const router = Router();
+
+function getAuthenticatedCliLinkUser(req: Request): User | null {
+  const userId = resolveAuthenticatedUserId(req);
+  if (!userId) return null;
+
+  const user = getDatabase()
+    .prepare(
+      `SELECT id, email, name, avatar_url as avatarUrl, provider,
+              provider_id as providerId,
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
+       FROM users WHERE id = ?`
+    )
+    .get(userId) as User | undefined;
+
+  if (!user || !isEmailAllowed(user.email)) return null;
+  return user;
+}
+
+function redirectCliIdentityRequired(res: Response): void {
+  res.redirect(`${config.frontendUrl}/connect?error=identity_required`);
+}
 
 // Wraps passport.authenticate so we can map OAuthEmailCollisionError to a user-friendly
 // redirect instead of returning a 500.
@@ -152,6 +182,7 @@ interface ClaudeCredentials {
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
+    refreshTokenExpiresAt?: number;
     scopes: string[];
     subscriptionType: string;
     rateLimitTier: string;
@@ -171,54 +202,27 @@ async function getClaudeCredentials(): Promise<ClaudeCredentials | null> {
 
 async function refreshClaudeToken(refreshToken: string): Promise<ClaudeCredentials | null> {
   try {
-    const endpoints = [
-      'https://api.anthropic.com/oauth/token',
-      'https://console.anthropic.com/api/oauth/token',
-    ];
+    const tokens = await requestClaudeOAuthTokenRefresh(refreshToken);
+    const existing = await getClaudeCredentials();
+    const now = Date.now();
+    const updated: ClaudeCredentials = {
+      claudeAiOauth: {
+        ...existing?.claudeAiOauth,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || refreshToken,
+        expiresAt: now + tokens.expiresIn * 1000,
+        refreshTokenExpiresAt: tokens.refreshTokenExpiresIn
+          ? now + tokens.refreshTokenExpiresIn * 1000
+          : existing?.claudeAiOauth?.refreshTokenExpiresAt,
+        scopes: existing?.claudeAiOauth?.scopes || [],
+        subscriptionType: existing?.claudeAiOauth?.subscriptionType || 'unknown',
+        rateLimitTier: existing?.claudeAiOauth?.rateLimitTier || 'unknown',
+      },
+    };
 
-    for (const endpoint of endpoints) {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-          client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code client ID
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(`Token refresh failed (${endpoint}):`, await response.text());
-        continue;
-      }
-
-      const tokens = (await response.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
-
-      // Read existing credentials to preserve other fields
-      const existing = await getClaudeCredentials();
-      const updated: ClaudeCredentials = {
-        claudeAiOauth: {
-          ...existing?.claudeAiOauth,
-          accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
-          expiresAt: Date.now() + tokens.expires_in * 1000,
-          scopes: existing?.claudeAiOauth?.scopes || [],
-          subscriptionType: existing?.claudeAiOauth?.subscriptionType || 'unknown',
-          rateLimitTier: existing?.claudeAiOauth?.rateLimitTier || 'unknown',
-        },
-      };
-
-      // Save updated credentials
-      await fs.writeFile(credentialsPath, JSON.stringify(updated, null, 2));
-      console.log('Claude token refreshed successfully');
-      return updated;
-    }
-
-    return null;
+    await fs.writeFile(credentialsPath, JSON.stringify(updated, null, 2));
+    console.log('Claude token refreshed successfully');
+    return updated;
   } catch (err) {
     console.error('Token refresh error:', err);
     return null;
@@ -229,6 +233,9 @@ if (config.claude.oauthEnabled) {
   // Login using existing Claude CLI credentials
   router.get('/claude', async (req, res) => {
     try {
+      const user = getAuthenticatedCliLinkUser(req);
+      if (!user) return redirectCliIdentityRequired(res);
+
       let credentials = await getClaudeCredentials();
 
       if (!credentials?.claudeAiOauth?.accessToken) {
@@ -246,32 +253,6 @@ if (config.claude.oauthEnabled) {
         }
       }
 
-      const { accessToken, subscriptionType } = credentials.claudeAiOauth!;
-
-      // Try to get user profile - use env var if set, otherwise try API
-      let email = config.claude.userEmail || 'claude-user@local';
-      let name = `Claude ${subscriptionType || 'User'}`;
-
-      try {
-        const userResponse = await fetch('https://api.anthropic.com/api/oauth/profile', {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'anthropic-beta': 'oauth-2025-04-20',
-          },
-        });
-
-        if (userResponse.ok) {
-          const userData = (await userResponse.json()) as { email?: string; name?: string };
-          email = userData.email || email;
-          name = userData.name || name;
-        } else {
-          console.log('Profile fetch failed:', userResponse.status, await userResponse.text());
-        }
-      } catch (err) {
-        console.log('Profile fetch error:', err);
-      }
-
-      const user = upsertSharedCliUser(email, name);
       stampLogin(user.id, 'claude', req);
       const token = generateUserToken(user.id);
       res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
@@ -289,12 +270,14 @@ if (config.claude.oauthEnabled) {
 // Codex CLI credentials login (uses ~/.codex presence)
 router.get('/codex', async (req, res) => {
   try {
+    const user = getAuthenticatedCliLinkUser(req);
+    if (!user) return redirectCliIdentityRequired(res);
+
     const available = await isProviderAvailable('codex');
     if (!available) {
       return res.redirect(`${config.frontendUrl}/connect?error=codex_not_logged_in`);
     }
 
-    const user = upsertSharedCliUser('codex-user@local', 'Codex User');
     stampLogin(user.id, 'codex', req);
     const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
@@ -307,12 +290,14 @@ router.get('/codex', async (req, res) => {
 // OpenCode CLI credentials login (uses ~/.config/opencode presence)
 router.get('/opencode', async (req, res) => {
   try {
+    const user = getAuthenticatedCliLinkUser(req);
+    if (!user) return redirectCliIdentityRequired(res);
+
     const available = await isProviderAvailable('opencode');
     if (!available) {
       return res.redirect(`${config.frontendUrl}/connect?error=opencode_not_logged_in`);
     }
 
-    const user = upsertSharedCliUser('opencode-user@local', 'OpenCode User');
     stampLogin(user.id, 'opencode', req);
     const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
@@ -322,21 +307,43 @@ router.get('/opencode', async (req, res) => {
   }
 });
 
-// Mistral Vibe CLI credentials login (uses ~/.vibe presence)
-router.get('/vibe', async (req, res) => {
+// Pi shares the OpenCode API connections and therefore the same local login.
+router.get('/pi', async (req, res) => {
   try {
-    const available = await isProviderAvailable('vibe');
+    const user = getAuthenticatedCliLinkUser(req);
+    if (!user) return redirectCliIdentityRequired(res);
+
+    const available = await isProviderAvailable('pi');
     if (!available) {
-      return res.redirect(`${config.frontendUrl}/connect?error=vibe_not_logged_in`);
+      return res.redirect(`${config.frontendUrl}/connect?error=pi_not_available`);
     }
 
-    const user = upsertSharedCliUser('vibe-user@local', 'Mistral Vibe User');
-    stampLogin(user.id, 'vibe', req);
+    stampLogin(user.id, 'pi', req);
     const token = generateUserToken(user.id);
     res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
   } catch (error) {
-    console.error('Vibe CLI auth error:', error);
-    res.redirect(`${config.frontendUrl}/connect?error=vibe`);
+    console.error('Pi auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=pi`);
+  }
+});
+
+// Kimi Code CLI credentials login (uses ~/.kimi-code OAuth presence).
+router.get('/kimi', async (req, res) => {
+  try {
+    const user = getAuthenticatedCliLinkUser(req);
+    if (!user) return redirectCliIdentityRequired(res);
+
+    const available = await isProviderAvailable('kimi');
+    if (!available) {
+      return res.redirect(`${config.frontendUrl}/connect?error=kimi_not_logged_in`);
+    }
+
+    stampLogin(user.id, 'kimi', req);
+    const token = generateUserToken(user.id);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+  } catch (error) {
+    console.error('Kimi auth error:', error);
+    res.redirect(`${config.frontendUrl}/connect?error=kimi`);
   }
 });
 
@@ -461,21 +468,31 @@ router.post('/logout', requireAuth, (req, res) => {
 });
 
 // Auth providers info
-router.get('/providers', async (_req, res) => {
-  const [codexAvailable, opencodeAvailable, vibeAvailable] = await Promise.all([
-    isProviderAvailable('codex'),
-    isProviderAvailable('opencode'),
-    isProviderAvailable('vibe'),
-  ]);
+router.get('/providers', async (req, res) => {
+  let cliLinkAuthorized = false;
+  try {
+    cliLinkAuthorized = Boolean(getAuthenticatedCliLinkUser(req));
+  } catch {
+    cliLinkAuthorized = false;
+  }
+  const [codexAvailable, opencodeAvailable, piAvailable, kimiAvailable] = cliLinkAuthorized
+    ? await Promise.all([
+        isProviderAvailable('codex'),
+        isProviderAvailable('opencode'),
+        isProviderAvailable('pi'),
+        isProviderAvailable('kimi'),
+      ])
+    : [false, false, false, false];
   res.json({
     success: true,
     data: {
       github: !!(config.github.clientId && config.github.clientSecret),
       google: !!(config.google.clientId && config.google.clientSecret),
-      claude: config.claude.oauthEnabled,
-      codex: codexAvailable,
-      opencode: opencodeAvailable,
-      vibe: vibeAvailable,
+      claude: config.claude.oauthEnabled && cliLinkAuthorized,
+      codex: codexAvailable && cliLinkAuthorized,
+      opencode: opencodeAvailable && cliLinkAuthorized,
+      pi: piAvailable && cliLinkAuthorized,
+      kimi: kimiAvailable && cliLinkAuthorized,
       proxy: config.proxyAuth.enabled,
     },
   });

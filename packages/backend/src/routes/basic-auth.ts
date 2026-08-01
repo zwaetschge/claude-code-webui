@@ -2,15 +2,15 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { config } from '../config';
-import { getAppConfig, getDatabase, setAppConfig } from '../db';
-import { requireAuth } from '../middleware/auth';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { AppError } from '../middleware/errorHandler';
-import { generateUserToken } from '../utils/authTokens';
-import { findUserForBasicAuth } from '../utils/cliUser';
-import { stampLogin, auditFromRequest } from '../utils/auditLog';
-import { isEmailAllowed } from '../auth/passport';
+import { config } from '../config.js';
+import { getAppConfig, getDatabase, setAppConfig } from '../db/index.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { generateUserToken } from '../utils/authTokens.js';
+import { findUserForBasicAuth } from '../utils/cliUser.js';
+import { stampLogin, auditFromRequest } from '../utils/auditLog.js';
+import { isEmailAllowed } from '../auth/passport.js';
 
 const router = Router();
 
@@ -228,7 +228,7 @@ router.put('/credentials', requireAuth, (req, res) => {
 });
 
 // Toggle basic auth enabled/disabled
-router.put('/toggle', requireAuth, (req, res) => {
+router.put('/toggle', requireAuth, requireAdmin, (req, res) => {
   const { enabled } = req.body;
 
   if (typeof enabled !== 'boolean') {

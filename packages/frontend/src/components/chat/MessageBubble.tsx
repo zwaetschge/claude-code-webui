@@ -1,15 +1,18 @@
 import { memo, useCallback, useState } from 'react';
 import { FileText, FileCode, File as FileIcon, Copy, Check } from 'lucide-react';
 import { MemoizedMarkdown } from './MemoizedMarkdown';
+import { ChatMediaImage } from './ChatMediaImage';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from './InteractiveOptions';
 import { DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { useAuthStore } from '@/stores/authStore';
 import { socketService } from '@/services/socket';
 import { cn } from '@/lib/utils';
+import { normalizeClaudeDisplayContent } from '@/lib/claudeDisplay';
 import type { Message, MessageImage, MessageAttachment } from '@plum-code-webui/shared';
 import type { UiProvider } from '@/lib/providers';
 import { useQueryClient } from '@tanstack/react-query';
+import { ProviderToolNotice } from './ProviderToolNotice';
 
 interface MessageBubbleProps {
   message: Message;
@@ -41,6 +44,15 @@ function formatMessageTime(iso: string): string {
         hour: '2-digit',
         minute: '2-digit',
       });
+}
+
+function mediaSignature(message: Message): string {
+  return (message.media ?? [])
+    .map(
+      (media) =>
+        `${media.id}\u0000${media.filename}\u0000${media.mimeType}\u0000${media.byteSize}\u0000${media.altText ?? ''}\u0000${media.source}`
+    )
+    .join('\u0001');
 }
 
 export const MessageBubble = memo(
@@ -79,13 +91,30 @@ export const MessageBubble = memo(
 
     const token = useAuthStore.getState().token || '';
     const timestamp = formatMessageTime(message.createdAt);
+    const displayContent =
+      message.role === 'assistant' && (provider === 'claude' || provider === 'zai')
+        ? normalizeClaudeDisplayContent(message.content)
+        : { message: message.content, providerTools: [], providerToolComplete: false };
+
+    const assistantMedia = message.role === 'assistant' ? (message.media ?? []) : [];
+    const assistantMediaFilenames = new Set(assistantMedia.map((media) => media.filename));
+    const legacyImages =
+      message.role === 'assistant'
+        ? message.images?.filter((image) => !assistantMediaFilenames.has(image.filename))
+        : message.images;
+    const legacyAttachments =
+      message.role === 'assistant'
+        ? message.attachments?.filter(
+            (attachment) => !assistantMediaFilenames.has(attachment.filename)
+          )
+        : message.attachments;
 
     const renderAttachments = () => {
-      if (!message.images?.length && !message.attachments?.length) return null;
+      if (!legacyImages?.length && !legacyAttachments?.length) return null;
       return (
         <div className="flex flex-wrap gap-2 mb-3">
-          {(!message.attachments || message.attachments.length === 0) &&
-            message.images?.map((img: MessageImage, imgIndex: number) => {
+          {(!legacyAttachments || legacyAttachments.length === 0) &&
+            legacyImages?.map((img: MessageImage, imgIndex: number) => {
               const imageUrl = `/api/sessions/${sessionId}/images/${img.filename}?token=${encodeURIComponent(token)}`;
               return (
                 <img
@@ -97,7 +126,7 @@ export const MessageBubble = memo(
                 />
               );
             })}
-          {message.attachments?.map((att: MessageAttachment, attIndex: number) => {
+          {legacyAttachments?.map((att: MessageAttachment, attIndex: number) => {
             const attachmentUrl =
               att.filename && att.path
                 ? `/api/sessions/${sessionId}/attachments/${att.filename}?token=${encodeURIComponent(token)}`
@@ -181,29 +210,32 @@ export const MessageBubble = memo(
     // Assistant turn
     return (
       <div className="turn-asst animate-fade-in">
-        <div className="ai-rail">
-          {timestamp && (
-            <span className="rail-time" title={new Date(message.createdAt).toLocaleString()}>
-              {timestamp}
-            </span>
-          )}
-          <div className="ai-mark" title={assistantName}>
-            <ProviderLogo provider={provider} className="h-4 w-4" />
-          </div>
-          <div className="ai-thread" />
-        </div>
         <div className="ai-body">
           {copyButton}
           {showAssistantIdentity && (
             <div className="asst-meta">
+              <ProviderLogo provider={provider} className="asst-provider-mark" />
               <span className="asst-name">{assistantName}</span>
               {modelLabel && <span className="asst-model">{modelLabel}</span>}
             </div>
           )}
           {renderAttachments()}
-          <MemoizedMarkdown
-            content={message.content}
-            className="prose prose-sm max-w-none dark:prose-invert"
+          {assistantMedia.length > 0 && (
+            <div className="chat-media-grid">
+              {assistantMedia.map((media) => (
+                <ChatMediaImage key={media.id} media={media} sessionId={sessionId} />
+              ))}
+            </div>
+          )}
+          {displayContent.message && (
+            <MemoizedMarkdown
+              content={displayContent.message}
+              className="prose prose-sm max-w-none dark:prose-invert"
+            />
+          )}
+          <ProviderToolNotice
+            tools={displayContent.providerTools}
+            complete={displayContent.providerToolComplete}
           />
           {isChoicePrompt(message.content) &&
             (() => {
@@ -230,6 +262,7 @@ export const MessageBubble = memo(
     return (
       prev.message.id === next.message.id &&
       prev.message.content === next.message.content &&
+      mediaSignature(prev.message) === mediaSignature(next.message) &&
       prev.sessionStatus === next.sessionStatus &&
       prev.provider === next.provider &&
       prev.modelLabel === next.modelLabel &&

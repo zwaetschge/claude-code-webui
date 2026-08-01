@@ -4,13 +4,14 @@ import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import multer from 'multer';
-import { requireAuth } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { config } from '../config';
-import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { isAllowedBasePath } from '../utils/allowedPaths';
+import { requireAuth } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { config } from '../config.js';
+import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
 import type { FileInfo, DirectoryContents } from '@plum-code-webui/shared';
+import { applyUntrustedFileHeaders } from '../utils/untrustedFile.js';
 
 // CSV parsing helper
 function parseCSV(content: string): { headers: string[]; rows: string[][] } {
@@ -686,8 +687,11 @@ router.get(
         '.wasm': 'application/wasm',
       };
 
-      const contentType = contentTypes[ext] || 'application/octet-stream';
-      res.setHeader('Content-Type', contentType);
+      const forcedDownload = applyUntrustedFileHeaders(res, resolvedPath);
+      if (!forcedDownload) {
+        const contentType = contentTypes[ext] || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+      }
       res.setHeader('Content-Length', stats.size);
 
       // Stream the file

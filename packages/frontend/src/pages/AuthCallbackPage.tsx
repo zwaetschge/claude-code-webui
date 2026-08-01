@@ -19,7 +19,8 @@ export function AuthCallbackPage() {
     if (token) {
       setToken(token).then(() => {
         const returnTo = searchParams.get('returnTo');
-        const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/';
+        const safeReturnTo =
+          returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/';
         navigate(safeReturnTo);
       });
     } else {

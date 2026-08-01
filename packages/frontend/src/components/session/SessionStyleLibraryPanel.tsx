@@ -1,12 +1,17 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Loader2, Palette, PenLine, Search, X } from 'lucide-react';
+import { Check, Download, Loader2, Palette, PenLine, Search, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
+import {
+  getDesignDisplayName,
+  getDesignPreviewPresentation,
+  getDesignSlug,
+} from './designPreviewTemplates';
 import type {
   ApiResponse,
   CLIProvider,
@@ -23,6 +28,18 @@ interface SessionStyleLibraryPanelProps {
   selectedSkill: string | null;
   onSessionUpdated: (session: Session) => void;
   className?: string;
+}
+
+interface DesignMdImportResult {
+  status: 'imported' | 'skipped';
+  skill?: {
+    baseName: string;
+    name: string;
+    description: string;
+    dirPath: string;
+  };
+  reason?: string;
+  skillName?: string;
 }
 
 const libraryCopy = {
@@ -923,38 +940,8 @@ function hashString(value: string): number {
   return hash;
 }
 
-function getDesignSlug(item: SkillLibraryItem): string {
-  const source = item.baseName || item.name;
-  return source
-    .replace(/^design-/, '')
-    .replace(/\.disabled$/, '')
-    .replace(/-design$/, '')
-    .toLowerCase();
-}
-
-function getDesignDisplayName(item: SkillLibraryItem): string {
-  const slug = getDesignSlug(item);
-  const overrides: Record<string, string> = {
-    'dragonball-z': 'Dragon Ball Z',
-    material3: 'Material 3',
-    'material-3': 'Material 3',
-    'ricardo-marketplace': 'Ricardo Marketplace',
-    shadcn: 'shadcn',
-    windows95: 'Windows 95',
-  };
-  const override = overrides[slug];
-  if (override) return override;
-
-  return slug
-    .split('-')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
 const DESIGN_PREVIEW_WIDTH = 400;
 const DESIGN_PREVIEW_HEIGHT = 300;
-const DESIGN_PREVIEW_BASE_PATH = '/design-previews/';
 const DESIGN_SHELL_ACCENT = '#67e8f9';
 const DESIGN_SHELL_TEXT = '#f8fafc';
 const DESIGN_SHELL_BORDER = 'rgba(148, 163, 184, 0.34)';
@@ -964,12 +951,6 @@ const DESIGN_PREVIEW_WINDOW_STYLE: CSSProperties = {
   borderRadius: '10px',
   boxShadow: '0 14px 34px rgba(2, 6, 23, 0.28)',
 };
-const DESIGN_PREVIEW_FILE_OVERRIDES: Record<string, string> = {
-  'material-3': 'preview-material3.html',
-  material3: 'preview-material3.html',
-  'ricardo-marketplace': 'preview-marketplace.html',
-};
-
 function getDesignShellStyle(active: boolean): CSSProperties {
   return {
     background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.98))',
@@ -981,12 +962,6 @@ function getDesignShellStyle(active: boolean): CSSProperties {
     color: DESIGN_SHELL_TEXT,
     fontFamily: 'ui-sans-serif, system-ui, sans-serif',
   };
-}
-
-function getDesignPreviewUrl(item: SkillLibraryItem): string {
-  const slug = getDesignSlug(item);
-  const fileName = DESIGN_PREVIEW_FILE_OVERRIDES[slug] || `preview-${slug}.html`;
-  return `${DESIGN_PREVIEW_BASE_PATH}${fileName}`;
 }
 
 interface DesignPreviewFrameProps {
@@ -1055,6 +1030,55 @@ function DesignPreviewFrame({ item, src, className, style }: DesignPreviewFrameP
   );
 }
 
+function getScalarString(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return undefined;
+}
+
+function getFirstTokenColor(item: SkillLibraryItem, names: string[]): string | undefined {
+  const colors = item.designMd?.tokens.colors;
+  if (!colors) return undefined;
+  for (const name of names) {
+    const value = colors[name];
+    if (value) return value;
+  }
+  return Object.values(colors).find(Boolean);
+}
+
+function getDesignMdCardTheme(item: SkillLibraryItem): Partial<DesignCardTheme> | null {
+  if (!item.designMd) return null;
+
+  const primary = getFirstTokenColor(item, ['primary', 'text', 'foreground']) || '#111827';
+  const surface = getFirstTokenColor(item, ['surface', 'neutral', 'background']) || '#ffffff';
+  const secondary = getFirstTokenColor(item, ['secondary', 'muted', 'border']) || primary;
+  const accent = getFirstTokenColor(item, ['tertiary', 'accent', 'primary']) || primary;
+  const text = getFirstTokenColor(item, ['text', 'on-surface', 'foreground']) || primary;
+  const typography =
+    item.designMd.tokens.typography.h1 ||
+    item.designMd.tokens.typography['body-md'] ||
+    Object.values(item.designMd.tokens.typography)[0];
+  const fontFamily = getScalarString(typography?.fontFamily);
+  const radius =
+    getScalarString(item.designMd.tokens.rounded.md) ||
+    getScalarString(item.designMd.tokens.rounded.sm) ||
+    '8px';
+
+  return {
+    bg: `linear-gradient(135deg, ${surface} 0%, ${secondary} 100%)`,
+    border: `color-mix(in srgb, ${accent} 42%, transparent)`,
+    accent,
+    accentSoft: `color-mix(in srgb, ${accent} 18%, transparent)`,
+    text,
+    muted: `color-mix(in srgb, ${text} 66%, transparent)`,
+    pattern: pattern.grid(`color-mix(in srgb, ${accent} 10%, transparent)`),
+    preview: `linear-gradient(90deg, ${primary}, ${accent}, ${surface})`,
+    fontFamily: fontFamily || defaultDesignTheme.fontFamily,
+    radius,
+    previewRadius: radius,
+  };
+}
+
 function getDesignCardTheme(item: SkillLibraryItem): DesignCardTheme {
   const slug = getDesignSlug(item);
   const preset =
@@ -1062,7 +1086,124 @@ function getDesignCardTheme(item: SkillLibraryItem): DesignCardTheme {
   return {
     ...defaultDesignTheme,
     ...preset,
+    ...(getDesignMdCardTheme(item) || {}),
   };
+}
+
+interface DesignTokenPreviewProps {
+  item: SkillLibraryItem;
+  theme: DesignCardTheme;
+  compact?: boolean;
+}
+
+function DesignTokenPreview({ item, theme, compact = false }: DesignTokenPreviewProps) {
+  const colors = Object.entries(item.designMd?.tokens.colors ?? {}).slice(0, compact ? 4 : 6);
+  const typography =
+    item.designMd?.tokens.typography.h1 ||
+    item.designMd?.tokens.typography['body-md'] ||
+    Object.values(item.designMd?.tokens.typography ?? {})[0];
+  const fontFamily = getScalarString(typography?.fontFamily) || theme.fontFamily;
+  const fontSize = getScalarString(typography?.fontSize) || (compact ? '1rem' : '1.25rem');
+  const componentCount = Object.keys(item.designMd?.tokens.components ?? {}).length;
+  const radiusValues = Object.values(item.designMd?.tokens.rounded ?? {})
+    .map(getScalarString)
+    .filter((value): value is string => Boolean(value))
+    .slice(0, 3);
+
+  return (
+    <div
+      className={cn(
+        'relative overflow-hidden border',
+        compact ? 'mt-3 aspect-[4/3] p-3' : 'mt-4 aspect-[4/3] p-4'
+      )}
+      style={{
+        background: theme.bg,
+        borderColor: theme.border,
+        borderRadius: theme.previewRadius,
+        color: theme.text,
+        fontFamily: theme.fontFamily,
+      }}
+      aria-hidden="true"
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-80"
+        style={{ backgroundImage: theme.pattern, backgroundSize: '16px 16px' }}
+      />
+      <div className="relative z-10 flex h-full flex-col justify-between gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div
+              className="truncate font-semibold leading-tight"
+              style={{
+                color: theme.text,
+                fontFamily,
+                fontSize,
+                fontWeight: getScalarString(typography?.fontWeight) || theme.titleWeight,
+              }}
+            >
+              {item.designMd?.name || getDesignDisplayName(item)}
+            </div>
+            <div className="mt-1 truncate text-[10px]" style={{ color: theme.muted }}>
+              DESIGN.md
+            </div>
+          </div>
+          <div
+            className="h-8 w-8 shrink-0 border"
+            style={{
+              background: theme.accent,
+              borderColor: theme.border,
+              borderRadius: theme.previewRadius,
+            }}
+          />
+        </div>
+
+        <div className="grid grid-cols-4 gap-1.5">
+          {colors.map(([name, value]) => (
+            <div key={name} className="min-w-0">
+              <div
+                className="h-7 border"
+                style={{
+                  background: value,
+                  borderColor: theme.border,
+                  borderRadius: '4px',
+                }}
+              />
+              <div className="mt-1 truncate text-[8px]" style={{ color: theme.muted }}>
+                {name}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-[1fr_auto] items-end gap-3">
+          <div className="space-y-1.5">
+            {[70, 44, 58].map((width, index) => (
+              <div
+                key={width}
+                className="h-2"
+                style={{
+                  width: `${width}%`,
+                  background: index === 0 ? theme.accent : theme.accentSoft,
+                  borderRadius: radiusValues[index] || theme.previewRadius,
+                }}
+              />
+            ))}
+          </div>
+          <div
+            className="border px-2 py-1 text-[9px] font-semibold"
+            style={{
+              background: theme.accent,
+              borderColor: theme.border,
+              borderRadius: theme.previewRadius,
+              color: getReadableColorForSolid(theme.accent),
+            }}
+          >
+            {componentCount || colors.length}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function getReadableColorForSolid(color: string): string {
@@ -1802,6 +1943,7 @@ export function SessionStyleLibraryPanel({
   className,
 }: SessionStyleLibraryPanelProps) {
   const [query, setQuery] = useState('');
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const queryClient = useQueryClient();
   const copy = libraryCopy[kind];
   const Icon = copy.icon;
@@ -1864,16 +2006,92 @@ export function SessionStyleLibraryPanel({
     },
   });
 
+  const importDesignMdMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      const response = await api.post<ApiResponse<DesignMdImportResult>>(
+        `/api/claude-config/style-library/design-md/import?provider=${encodeURIComponent(
+          provider
+        )}&conflict=overwrite`,
+        form
+      );
+      return response.data.data;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['style-library', provider] });
+      if (result?.status === 'imported') {
+        toast({
+          title: 'DESIGN.md imported',
+          description: `${result.skill?.baseName || 'Design preset'} is available in the style library.`,
+        });
+      } else {
+        toast({
+          title: 'DESIGN.md skipped',
+          description: result?.reason || 'The design file could not be imported.',
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'DESIGN.md import failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleDesignMdFile = (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    importDesignMdMutation.mutate(file);
+    if (importInputRef.current) {
+      importInputRef.current.value = '';
+    }
+  };
+
+  const exportDesignMd = async (item: SkillLibraryItem | null) => {
+    if (!item) return;
+    try {
+      const response = await api.download(
+        `/api/claude-config/style-library/design/${encodeURIComponent(
+          item.baseName
+        )}/design-md?provider=${encodeURIComponent(provider)}`
+      );
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${item.baseName}-DESIGN.md`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: 'DESIGN.md exported', description: `${item.baseName}-DESIGN.md` });
+    } catch (error) {
+      toast({
+        title: 'DESIGN.md export failed',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
+    }
+  };
+
   const renderDesignPreview = (
     item: SkillLibraryItem,
     theme: DesignCardTheme,
     activeIconColor: string,
     compact = false
   ) => {
+    const presentation = getDesignPreviewPresentation(item);
+    if (presentation.kind === 'tokens') {
+      return <DesignTokenPreview item={item} theme={theme} compact={compact} />;
+    }
+
     return (
       <DesignPreviewFrame
         item={item}
-        src={getDesignPreviewUrl(item)}
+        src={presentation.src}
         className={cn('border', compact ? 'mt-3' : 'mt-4')}
         style={DESIGN_PREVIEW_WINDOW_STYLE}
       />
@@ -3520,11 +3738,25 @@ export function SessionStyleLibraryPanel({
         <div className="relative z-10">
           <div className="mb-3 flex min-w-0 items-center justify-between gap-3">
             <div className="min-w-0">
-              <div
-                className="truncate text-sm font-semibold leading-5"
-                style={{ color: DESIGN_SHELL_TEXT }}
-              >
-                {displayName}
+              <div className="flex min-w-0 items-center gap-2">
+                <div
+                  className="truncate text-sm font-semibold leading-5"
+                  style={{ color: DESIGN_SHELL_TEXT }}
+                >
+                  {displayName}
+                </div>
+                {item.designMd && (
+                  <span
+                    className="shrink-0 border px-1.5 py-0.5 text-[9px] font-semibold"
+                    style={{
+                      borderColor: DESIGN_SHELL_BORDER,
+                      borderRadius: '5px',
+                      color: DESIGN_SHELL_ACCENT,
+                    }}
+                  >
+                    DESIGN.md
+                  </span>
+                )}
               </div>
             </div>
             <div
@@ -3628,6 +3860,18 @@ export function SessionStyleLibraryPanel({
             >
               {displayName}
             </div>
+            {item.designMd && (
+              <span
+                className="shrink-0 border px-1.5 py-0.5 text-[9px] font-semibold"
+                style={{
+                  borderColor: DESIGN_SHELL_BORDER,
+                  borderRadius: '5px',
+                  color: DESIGN_SHELL_ACCENT,
+                }}
+              >
+                DESIGN.md
+              </span>
+            )}
           </div>
           <Button
             type="button"
@@ -3659,6 +3903,45 @@ export function SessionStyleLibraryPanel({
         <div className="mb-2 flex items-center gap-2">
           <Icon className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-semibold">{copy.title}</h3>
+          {kind === 'design' && (
+            <div className="ml-auto flex items-center gap-1.5">
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".md,text/markdown,text/plain"
+                className="hidden"
+                onChange={(event) => handleDesignMdFile(event.target.files)}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importDesignMdMutation.isPending}
+                title="Import DESIGN.md"
+              >
+                {importDesignMdMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Upload className="h-3.5 w-3.5" />
+                )}
+                Import
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={() => exportDesignMd(activeItem)}
+                disabled={!activeItem}
+                title="Export active DESIGN.md"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export
+              </Button>
+            </div>
+          )}
         </div>
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

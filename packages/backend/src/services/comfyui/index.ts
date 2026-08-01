@@ -14,11 +14,16 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { getDatabase } from '../../db';
-import { ComfyUIClient, type ComfyUIOutputImage } from './client';
-import { buildWorkflow, validateParams, type WorkflowId, type WorkflowParams } from './workflows';
+import { getDatabase } from '../../db/index.js';
+import { ComfyUIClient, type ComfyUIOutputImage } from './client.js';
+import {
+  buildWorkflow,
+  validateParams,
+  type WorkflowId,
+  type WorkflowParams,
+} from './workflows.js';
 
 export interface GenerationJob {
   id: string;
@@ -40,12 +45,44 @@ const POLL_INTERVAL_MS = 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 const JOB_RETENTION_MS = 30 * 60 * 1000; // keep finished jobs for 30 min
 const PUBLIC_PREFIX = '/generated';
+const MAX_INPUT_IMAGE_BYTES = 25 * 1024 * 1024;
+const INPUT_UPLOAD_RETENTION_MS = 30 * 60 * 1000;
 
 const OUTPUT_DIR =
   process.env.COMFYUI_OUTPUT_DIR || path.resolve(process.cwd(), 'packages/backend/data/generated');
 
+export function isPathWithin(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+export function detectImageMime(bytes: Buffer): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 6) {
+    const prefix = bytes.subarray(0, 6).toString('ascii');
+    if (prefix === 'GIF87a' || prefix === 'GIF89a') return 'image/gif';
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
 class ComfyUIOrchestrator {
   private jobs = new Map<string, GenerationJob>();
+  private uploadedInputs = new Map<string, { userId: string; expiresAt: number }>();
   private cleanupTimer: NodeJS.Timeout | null = null;
 
   /** Read current ComfyUI URL from app_config, falling back to env then default. */
@@ -98,6 +135,41 @@ class ComfyUIOrchestrator {
     return new ComfyUIClient(this.getBaseUrl());
   }
 
+  async uploadInputImage(
+    userId: string,
+    originalName: string,
+    bytes: Buffer,
+    contentType?: string
+  ): Promise<{ name: string; subfolder?: string; type?: string }> {
+    if (bytes.length > MAX_INPUT_IMAGE_BYTES) throw new Error('input image exceeds 25 MB');
+    const detectedMime = detectImageMime(bytes);
+    if (!detectedMime) throw new Error('input file is not a supported image');
+    if (contentType && contentType !== detectedMime) {
+      throw new Error(
+        `input image type mismatch (declared ${contentType}, detected ${detectedMime})`
+      );
+    }
+
+    const extension =
+      detectedMime === 'image/jpeg'
+        ? '.jpg'
+        : detectedMime === 'image/webp'
+          ? '.webp'
+          : detectedMime === 'image/gif'
+            ? '.gif'
+            : '.png';
+    const safeName = `${randomUUID()}${extension}`;
+    const uploaded = await this.client().uploadImage(safeName || originalName, bytes, {
+      contentType: detectedMime,
+      overwrite: false,
+    });
+    this.uploadedInputs.set(uploaded.name, {
+      userId,
+      expiresAt: Date.now() + INPUT_UPLOAD_RETENTION_MS,
+    });
+    return uploaded;
+  }
+
   /** Background cleanup of stale jobs so the map doesn't grow forever. */
   private ensureCleanupTimer(): void {
     if (this.cleanupTimer) return;
@@ -107,6 +179,10 @@ class ComfyUIOrchestrator {
         if ((job.status === 'completed' || job.status === 'failed') && job.updatedAt < cutoff) {
           this.jobs.delete(id);
         }
+      }
+      const now = Date.now();
+      for (const [name, upload] of this.uploadedInputs) {
+        if (upload.expiresAt < now) this.uploadedInputs.delete(name);
       }
     }, 60_000);
     this.cleanupTimer.unref?.();
@@ -177,10 +253,11 @@ class ComfyUIOrchestrator {
 
   /**
    * For workflows that need an `input_image`, accept either:
-   *   (a) a filename already present in ComfyUI's `/input` directory, or
-   *   (b) an absolute path to a file on the WebUI host.
+   *   (a) a filename uploaded through Plum by this user, or
+   *   (b) a path to this user's attachment/generated-image roots.
    *
-   * If we see (b), upload the bytes to ComfyUI via `/upload/image` and rewrite
+   * If we see (b), validate ownership, type and size, upload the bytes to
+   * ComfyUI via `/upload/image`, and rewrite
    * `params.input_image` to the filename ComfyUI returns. This eliminates a
    * common failure mode where callers pass a path that ComfyUI can't find →
    * LoadImage either errors or silently substitutes a stale image, producing
@@ -188,6 +265,7 @@ class ComfyUIOrchestrator {
    */
   private async materializeInputImage(
     client: ComfyUIClient,
+    userId: string,
     workflowId: WorkflowId,
     params: WorkflowParams
   ): Promise<WorkflowParams> {
@@ -195,41 +273,103 @@ class ComfyUIOrchestrator {
     const value = params.input_image;
     if (!value) return params;
 
-    // Pure filename (no slashes) → caller already uploaded; trust it.
-    if (!value.includes('/') && !value.includes('\\')) return params;
-
-    // Looks like a path. Resolve, stat, and forward to ComfyUI if it's a file.
-    const abs = path.isAbsolute(value) ? value : path.resolve(value);
-    let info;
-    try {
-      info = await stat(abs);
-    } catch {
-      // Not a valid path on disk — pass through and let ComfyUI handle the failure.
-      console.warn(`[comfyui] input_image looks like a path but doesn't exist: ${abs}`);
+    // Pure filenames are accepted only when this user uploaded the image via
+    // Plum's authenticated upload endpoint during the current process life.
+    if (!value.includes('/') && !value.includes('\\')) {
+      const upload = this.uploadedInputs.get(value);
+      if (!upload || upload.userId !== userId || upload.expiresAt < Date.now()) {
+        this.uploadedInputs.delete(value);
+        throw new Error('input image is not owned by this user or has expired');
+      }
       return params;
     }
+
+    // Paths may reference only this user's session attachments or a generated
+    // image owned by one of this user's jobs. Arbitrary absolute paths are
+    // deliberately rejected so ComfyUI cannot be used as a file-exfiltration
+    // relay from the backend/container mounts.
+    const candidate = value.startsWith(`${PUBLIC_PREFIX}/`)
+      ? path.join(OUTPUT_DIR, path.basename(value))
+      : path.isAbsolute(value)
+        ? value
+        : path.resolve(value);
+    let abs: string;
+    let info;
+    try {
+      abs = await realpath(candidate);
+      info = await stat(abs);
+    } catch {
+      throw new Error('input image does not exist');
+    }
     if (!info.isFile()) {
-      console.warn(`[comfyui] input_image points to a non-file: ${abs}`);
-      return params;
+      throw new Error('input image is not a file');
+    }
+    if (info.size > MAX_INPUT_IMAGE_BYTES) throw new Error('input image exceeds 25 MB');
+    if (!(await this.isOwnedInputPath(abs, userId))) {
+      throw new Error('input image path is outside owned attachments or generated images');
     }
 
     const bytes = await readFile(abs);
-    const filename = path.basename(abs);
-    const ext = path.extname(filename).toLowerCase();
-    const mime =
-      ext === '.jpg' || ext === '.jpeg'
-        ? 'image/jpeg'
-        : ext === '.webp'
-          ? 'image/webp'
-          : ext === '.gif'
-            ? 'image/gif'
-            : 'image/png';
-    const uploaded = await client.uploadImage(filename, bytes, {
+    const mime = detectImageMime(bytes);
+    if (!mime) throw new Error('input file is not a supported image');
+    const extension =
+      mime === 'image/jpeg'
+        ? '.jpg'
+        : mime === 'image/webp'
+          ? '.webp'
+          : mime === 'image/gif'
+            ? '.gif'
+            : '.png';
+    const uploaded = await client.uploadImage(`${randomUUID()}${extension}`, bytes, {
       contentType: mime,
-      overwrite: true,
+      overwrite: false,
     });
-    console.log(`[comfyui] uploaded ${abs} → ComfyUI /input/${uploaded.name}`);
+    console.log(`[comfyui] uploaded owned input image → ComfyUI /input/${uploaded.name}`);
     return { ...params, input_image: uploaded.name };
+  }
+
+  private async isOwnedInputPath(filePath: string, userId: string): Promise<boolean> {
+    try {
+      const outputRoot = await realpath(OUTPUT_DIR);
+      if (isPathWithin(outputRoot, filePath)) {
+        const filename = path.basename(filePath);
+        const liveJobOwned = Array.from(this.jobs.values()).some(
+          (job) =>
+            job.userId === userId && job.status === 'completed' && job.outputFilename === filename
+        );
+        if (liveJobOwned) return true;
+
+        if (/^[0-9a-f-]{36}\.png$/i.test(filename)) {
+          try {
+            const owner = JSON.parse(
+              await readFile(path.join(OUTPUT_DIR, '.owners', `${filename}.json`), 'utf8')
+            ) as { userId?: unknown };
+            if (owner.userId === userId) return true;
+          } catch {
+            // Legacy or externally-created generated images have no owner
+            // metadata and therefore fail closed.
+          }
+        }
+        return false;
+      }
+    } catch {
+      // Generated output directory may not exist yet.
+    }
+
+    const sessions = getDatabase()
+      .prepare('SELECT working_directory FROM sessions WHERE user_id = ?')
+      .all(userId) as Array<{ working_directory: string }>;
+    for (const session of sessions) {
+      for (const directoryName of ['.claude-webui-attachments', '.claude-webui-images']) {
+        try {
+          const root = await realpath(path.join(session.working_directory, directoryName));
+          if (isPathWithin(root, filePath)) return true;
+        } catch {
+          // Missing/unreadable attachment roots are simply not eligible.
+        }
+      }
+    }
+    return false;
   }
 
   private async runJob(job: GenerationJob, timeoutMs: number): Promise<void> {
@@ -247,7 +387,12 @@ class ComfyUIOrchestrator {
       // to ComfyUI first so LoadImage actually sees it — otherwise the node
       // silently substitutes whatever happens to be in /input and the edit
       // looks like noise / random style transfer with no relation to input.
-      const resolvedParams = await this.materializeInputImage(client, job.workflowId, job.params);
+      const resolvedParams = await this.materializeInputImage(
+        client,
+        job.userId,
+        job.workflowId,
+        job.params
+      );
 
       const workflow = buildWorkflow(job.workflowId, resolvedParams);
       // Capture the seed we actually used so the response includes it.
@@ -300,6 +445,13 @@ class ComfyUIOrchestrator {
       await mkdir(OUTPUT_DIR, { recursive: true });
       const filename = `${job.id}.png`;
       await writeFile(path.join(OUTPUT_DIR, filename), bytes);
+      const ownerDir = path.join(OUTPUT_DIR, '.owners');
+      await mkdir(ownerDir, { recursive: true });
+      await writeFile(
+        path.join(ownerDir, `${filename}.json`),
+        JSON.stringify({ userId: job.userId }),
+        { encoding: 'utf8', mode: 0o600 }
+      );
 
       update({
         status: 'completed',
@@ -335,11 +487,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 export const comfyui = new ComfyUIOrchestrator();
-export { ComfyUIClient } from './client';
+export { ComfyUIClient } from './client.js';
 export {
   listWorkflows,
   VALID_ASPECTS,
   VALID_MEGAPIXELS,
   type WorkflowId,
   type WorkflowParams,
-} from './workflows';
+} from './workflows.js';

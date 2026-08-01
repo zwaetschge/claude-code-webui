@@ -4,10 +4,7 @@ export type DiscordAlertTransport = 'webhook' | 'bot';
 
 export type DiscordGatewayMode = 'alerts_only' | 'supervisor' | 'autonomous';
 
-export type DiscordMaintenancePolicy =
-  | 'approval_required'
-  | 'session_mode'
-  | 'autonomous_allowed';
+export type DiscordMaintenancePolicy = 'approval_required' | 'session_mode' | 'autonomous_allowed';
 
 export type DiscordAlertEventType =
   | 'discord.test'

@@ -19,17 +19,17 @@ import path from 'node:path';
 import { mkdir, readFile, unlink } from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
-import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { getDatabase } from '../db';
-import { config } from '../config';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { getDatabase } from '../db/index.js';
+import { config } from '../config.js';
 import {
   comfyui,
   listWorkflows,
   VALID_ASPECTS,
   VALID_MEGAPIXELS,
   type WorkflowId,
-} from '../services/comfyui';
+} from '../services/comfyui/index.js';
 
 const router = Router();
 
@@ -203,13 +203,14 @@ router.post(
         .json({ success: false, error: { code: 'NO_FILE', message: 'image field required' } });
     }
     try {
+      const authReq = req as AuthenticatedRequest;
       const bytes = await readFile(req.file.path);
-      const uploaded = await comfyui
-        .client()
-        .uploadImage(req.file.originalname || req.file.filename, bytes, {
-          contentType: req.file.mimetype,
-          overwrite: true,
-        });
+      const uploaded = await comfyui.uploadInputImage(
+        authReq.userId,
+        req.file.originalname || req.file.filename,
+        bytes,
+        req.file.mimetype
+      );
       await unlink(req.file.path).catch(() => undefined);
       res.json({ success: true, data: uploaded });
     } catch (err) {
@@ -301,18 +302,22 @@ internalRouter.post('/generate', requireHookSecret, async (req: Request, res: Re
       .json({ success: false, error: { code: 'INVALID_INPUT', message: parsed.error.message } });
   }
   const sessionId = req.header('x-webui-session-id') || '';
-  let userId = 'mcp-internal';
-  if (sessionId) {
-    try {
-      const db = getDatabase();
-      const row = db.prepare('SELECT user_id FROM sessions WHERE id = ?').get(sessionId) as
-        | { user_id: string }
-        | undefined;
-      if (row?.user_id) userId = row.user_id;
-    } catch {
-      // fall through — keep mcp-internal as a sentinel
-    }
+  if (!sessionId) {
+    return res.status(403).json({
+      success: false,
+      error: { code: 'SESSION_REQUIRED', message: 'WebUI session identity is required' },
+    });
   }
+  const row = getDatabase().prepare('SELECT user_id FROM sessions WHERE id = ?').get(sessionId) as
+    | { user_id: string }
+    | undefined;
+  if (!row?.user_id) {
+    return res.status(403).json({
+      success: false,
+      error: { code: 'INVALID_SESSION', message: 'Unknown WebUI session identity' },
+    });
+  }
+  const userId = row.user_id;
   try {
     const job = await comfyui.generateAndWait(
       userId,

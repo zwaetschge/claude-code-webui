@@ -16,12 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
-import type {
-  Session,
-  ApiResponse,
-  DiscoveredProject,
-  CLIProvider,
-} from '@plum-code-webui/shared';
+import type { Session, ApiResponse, DiscoveredProject, CLIProvider } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 
 interface DiscoveredProjectsProps {

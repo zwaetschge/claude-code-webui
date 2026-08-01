@@ -11,6 +11,7 @@ import {
   CLI_PROVIDER_LIMIT_LABELS,
   USAGE_PROVIDER_SHORT_LABEL,
   getUsageLimitProviderForModel,
+  type AccountUsageLimitProvider,
 } from '@/lib/providers';
 import type { CLIProvider, UsageData } from '@plum-code-webui/shared';
 
@@ -255,29 +256,33 @@ export function ContextPopover({
   const activeSession = sessions.find((s) => s.id === resolvedSessionId);
   const provider: CLIProvider = sessionProvider || activeSession?.cliProvider || 'codex';
   const effectiveModel =
-    cleanModelId(sessionModel) ||
     cleanModelId(sessionRuntimeModel) ||
-    cleanModelId(activeSession?.cliModel) ||
     cleanModelId(activeSession?.runtime?.model) ||
     cleanModelId(usage.model) ||
+    cleanModelId(sessionModel) ||
+    cleanModelId(activeSession?.cliModel) ||
     CLI_PROVIDER_DEFAULT_MODEL[provider];
   const usageProvider = getUsageLimitProviderForModel(provider, effectiveModel);
-  const limitsSupported = true;
+  const limitsSupported = usageProvider !== null;
 
-  const { data: usageLimits } = useQuery({
-    queryKey: ['usage-limits', usageProvider],
+  const { data: usageLimitResult } = useQuery({
+    queryKey: ['usage-limits', usageProvider ?? 'none'],
     queryFn: async () => {
+      if (!usageProvider) return null;
       const response = await api.get<UsageLimitsResponse>(
         `/api/usage/limits?provider=${usageProvider}`
       );
-      if (response.data.success && response.data.supported && response.data.data) {
-        return response.data.data;
-      }
-      return null;
+      return response.data.success ? response.data : null;
     },
     staleTime: 60000,
     enabled: !!resolvedSessionId && limitsSupported,
   });
+  const usageLimits = usageLimitResult?.supported ? usageLimitResult.data : null;
+  const responseProvider = usageLimitResult?.provider as AccountUsageLimitProvider | undefined;
+  const resolvedUsageProvider =
+    responseProvider && responseProvider in CLI_PROVIDER_LIMIT_LABELS
+      ? responseProvider
+      : usageProvider;
 
   const hasContextWindow = usage.contextWindow > 0;
   const percent = hasContextWindow ? (usage.contextUsedPercent ?? 0) : 0;
@@ -286,8 +291,10 @@ export function ContextPopover({
   const isCritical = percent >= 95;
 
   // Build limit bars for popover
-  const labels = CLI_PROVIDER_LIMIT_LABELS[usageProvider];
-  const providerShortLabel = USAGE_PROVIDER_SHORT_LABEL[usageProvider];
+  const labels = resolvedUsageProvider ? CLI_PROVIDER_LIMIT_LABELS[resolvedUsageProvider] : null;
+  const providerShortLabel = resolvedUsageProvider
+    ? USAGE_PROVIDER_SHORT_LABEL[resolvedUsageProvider]
+    : null;
   const limitBars: Array<{
     key: string;
     label: string;
@@ -295,7 +302,7 @@ export function ContextPopover({
     value: number;
     resetsAt: string | null;
   }> = [];
-  if (usageLimits) {
+  if (usageLimits && labels) {
     if (usageLimits.fiveHour) {
       limitBars.push({
         key: 'session',
@@ -326,25 +333,27 @@ export function ContextPopover({
   }
 
   const sidebarMeters = [
-    {
-      key: 'five-hour',
-      label:
-        usageProvider === 'opencode-go'
-          ? 'Go'
-          : usageProvider === 'z-ai'
-            ? 'Z'
-            : labels.session.title,
-      value: usageLimits?.fiveHour?.utilization ?? null,
-      title: `${providerShortLabel} ${labels.session.title} limit`,
-      tone: 'session',
-    },
-    {
-      key: 'weekly',
-      label: 'Weekly',
-      value: usageLimits?.sevenDay?.utilization ?? usageLimits?.sevenDaySonnet?.utilization ?? null,
-      title: `${providerShortLabel} weekly limit`,
-      tone: 'weekly',
-    },
+    ...(labels && providerShortLabel
+      ? [
+          {
+            key: 'five-hour',
+            label: labels.session.title,
+            value: usageLimits?.fiveHour?.utilization ?? null,
+            title: `${providerShortLabel} ${labels.session.title} limit`,
+            tone: 'session',
+          },
+          {
+            key: 'weekly',
+            label: 'Weekly',
+            value:
+              usageLimits?.sevenDay?.utilization ??
+              usageLimits?.sevenDaySonnet?.utilization ??
+              null,
+            title: `${providerShortLabel} weekly limit`,
+            tone: 'weekly',
+          },
+        ]
+      : []),
     {
       key: 'context',
       label: 'Context',
@@ -533,7 +542,9 @@ export function ContextPopover({
               ? `Context: ${rawPercent.toFixed(0)}%${
                   contextStats ? ` · ${contextStats.compactEvents} compacts` : ''
                 }`
-              : 'Usage limits'
+              : limitsSupported
+                ? 'Usage limits'
+                : 'Context usage'
         }
       >
         {triggerVariant === 'sidebarUsageBar' ? (

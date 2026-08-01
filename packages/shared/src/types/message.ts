@@ -12,6 +12,21 @@ export interface MessageAttachment {
   type: 'image' | 'text' | 'pdf' | 'document';
 }
 
+export type ChatMediaSource = 'provider' | 'workspace' | 'comfyui';
+
+/**
+ * Persisted chat media exposed to clients. Storage keys and host filesystem
+ * paths intentionally never cross the API boundary.
+ */
+export interface ChatMedia {
+  id: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  altText?: string;
+  source: ChatMediaSource;
+}
+
 export interface Message {
   id: string;
   sessionId: string;
@@ -20,6 +35,7 @@ export interface Message {
   createdAt: string;
   images?: MessageImage[];
   attachments?: MessageAttachment[];
+  media?: ChatMedia[];
 }
 
 export interface ToolUse {

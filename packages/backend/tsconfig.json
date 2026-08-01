@@ -4,6 +4,8 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "noEmit": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "types": ["node"]
   },

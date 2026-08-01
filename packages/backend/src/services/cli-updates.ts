@@ -8,15 +8,15 @@ import { getCliEnv, getNpmPrefix } from '../utils/cliPaths.js';
 
 const execAsync = promisify(exec);
 
-export const CLI_UPDATE_PROVIDERS = ['claude', 'codex', 'opencode', 'vibe'] as const;
+export const CLI_UPDATE_PROVIDERS = ['claude', 'codex', 'opencode', 'pi', 'kimi'] as const;
 
 const CLI_UPDATE_COMMANDS: Record<CLIProvider, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code@latest',
-  codex: 'npm install -g @openai/codex@0.135.0',
+  zai: 'npm install -g @anthropic-ai/claude-code@latest',
+  codex: 'npm install -g @openai/codex@latest',
   opencode: 'npm install -g opencode-ai@latest',
-  // Vibe ships as a Python package installed via pipx — fall back to fresh install
-  // when no existing pipx env is present so first-time provision also works.
-  vibe: 'pipx upgrade mistral-vibe || pipx install mistral-vibe',
+  pi: 'npm install -g @earendil-works/pi-coding-agent@latest pi-mcp-adapter@latest',
+  kimi: 'npm install -g @moonshot-ai/kimi-code@latest',
 };
 
 let updateInFlight: Promise<CliProviderUpdateResponse> | null = null;
@@ -45,6 +45,10 @@ async function runUpdateCommand(command: string, env: NodeJS.ProcessEnv, timeout
   }
 }
 
+export function getCliUpdateCommand(provider: CLIProvider): string | undefined {
+  return CLI_UPDATE_COMMANDS[provider];
+}
+
 export async function runCliUpdates(providers?: CLIProvider[]): Promise<CliProviderUpdateResponse> {
   if (updateInFlight) {
     return updateInFlight;
@@ -61,7 +65,7 @@ export async function runCliUpdates(providers?: CLIProvider[]): Promise<CliProvi
       await fs.mkdir(path.join(prefix, 'bin'), { recursive: true });
       await fs.mkdir(path.join(prefix, 'lib'), { recursive: true });
 
-      const command = CLI_UPDATE_COMMANDS[provider];
+      const command = getCliUpdateCommand(provider);
       if (!command) {
         results.push({
           provider,

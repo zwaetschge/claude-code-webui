@@ -47,6 +47,7 @@ export class TaskManager {
 
   start(): void {
     this.cleanupTimer = setInterval(() => this.cleanup(), 60_000);
+    this.cleanupTimer.unref();
   }
 
   stop(): void {

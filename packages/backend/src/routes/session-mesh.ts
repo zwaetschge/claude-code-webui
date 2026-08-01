@@ -1,9 +1,9 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { auditFromRequest } from '../utils/auditLog';
-import { peerService } from '../services/session-mesh/PeerService';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { auditFromRequest } from '../utils/auditLog.js';
+import { peerService } from '../services/session-mesh/PeerService.js';
 
 const router = Router();
 

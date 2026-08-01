@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { getDatabase } from '../db';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError } from '../middleware/errorHandler';
-import { generateUserToken } from '../utils/authTokens';
+import { getDatabase } from '../db/index.js';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { generateUserToken } from '../utils/authTokens.js';
 
 const router = Router();
 

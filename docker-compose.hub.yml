@@ -4,12 +4,33 @@
 # Before running, create a .env file with:
 #   SESSION_SECRET=your-session-secret-at-least-32-characters
 #   JWT_SECRET=your-jwt-secret-at-least-32-characters
+#   ENCRYPTION_KEY=your-independent-encryption-key
+#   AUTH_ALLOWED_EMAILS=admin@example.com
+#
+# This pull-based production compose intentionally has no insecure auth
+# defaults. Compose refuses to create the container while any required value
+# is empty.
 
 services:
+  config-guard:
+    image: valentin2177/plum-code-webui:latest
+    restart: 'no'
+    network_mode: none
+    entrypoint: ['/bin/sh', '/app/scripts/validate-production-env.sh']
+    environment:
+      - 'SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set to at least 32 random characters}'
+      - 'JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set to at least 32 random characters}'
+      - 'AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:?AUTH_ALLOWED_EMAILS must contain at least one trusted email for the public Hub deployment}'
+      - 'ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set independently so stored provider credentials are encrypted}'
+
   plum-code-webui:
     image: valentin2177/plum-code-webui:latest
     container_name: plum-code-webui
     restart: unless-stopped
+    init: true
+    depends_on:
+      config-guard:
+        condition: service_completed_successfully
     ports:
       - '5174:3001'
     shm_size: '${WEBUI_SHM_SIZE:-1gb}'
@@ -18,6 +39,8 @@ services:
       - TZ=${TZ:-Europe/Zurich}
       - CODEX_WEBUI_SANDBOX_MODE=${CODEX_WEBUI_SANDBOX_MODE:-danger-full-access}
       - CODEX_WEBUI_APPROVAL_POLICY=${CODEX_WEBUI_APPROVAL_POLICY:-never}
+      - CLI_RUNNER_ACCESS=${CLI_RUNNER_ACCESS:-admin-only}
+      - CLI_RUNNER_ALLOWED_EMAILS=${CLI_RUNNER_ALLOWED_EMAILS:-}
       - CHROME_BIN=${CHROME_BIN:-/usr/local/bin/plum-chromium}
       - CHROMIUM_BIN=${CHROMIUM_BIN:-/usr/local/bin/plum-chromium}
       - CHROMIUM_PATH=${CHROMIUM_PATH:-/usr/local/bin/plum-chromium}
@@ -27,23 +50,28 @@ services:
       - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-1}
       - PUPPETEER_SKIP_DOWNLOAD=${PUPPETEER_SKIP_DOWNLOAD:-1}
       - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=${PUPPETEER_SKIP_CHROMIUM_DOWNLOAD:-1}
-      - SESSION_SECRET=${SESSION_SECRET:-changeme-session-secret-at-least-32-chars}
-      - JWT_SECRET=${JWT_SECRET:-changeme-jwt-secret-at-least-32-chars}
+      - 'SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set to at least 32 random characters}'
+      - 'JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set to at least 32 random characters}'
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5174}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5174}
       - ALLOWED_BASE_PATHS=${ALLOWED_BASE_PATHS:-/workspace}
-      - AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}
+      # The Hub compose publishes a host port, so an explicit allowlist is
+      # mandatory. Use the portable compose for a private/proxy-only topology.
+      - 'AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:?AUTH_ALLOWED_EMAILS must contain at least one trusted email for the public Hub deployment}'
       - SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL:-}
-      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-opus,sonnet,haiku}
+      - 'ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set independently so stored provider credentials are encrypted}'
+      - CLI_PROVIDER_CLAUDE_MODELS=${CLI_PROVIDER_CLAUDE_MODELS:-}
+      - CLI_PROVIDER_CLAUDE_DEFAULT_MODEL=${CLI_PROVIDER_CLAUDE_DEFAULT_MODEL:-sonnet}
       - CLI_PROVIDER_CODEX_MODELS=${CLI_PROVIDER_CODEX_MODELS:-}
       - CLI_PROVIDER_OPENCODE_MODELS=${CLI_PROVIDER_OPENCODE_MODELS:-}
       - CLI_PROVIDER_OPENCODE_DEFAULT_MODEL=${CLI_PROVIDER_OPENCODE_DEFAULT_MODEL:-z-ai/glm-5.1}
       - CLI_PROVIDER_OPENCODE_DEFAULT_AGENT=${CLI_PROVIDER_OPENCODE_DEFAULT_AGENT:-build}
       - CLI_PROVIDER_OPENCODE_STYLE_PROMPT=${CLI_PROVIDER_OPENCODE_STYLE_PROMPT:-}
-      - CLI_PROVIDER_VIBE_MODELS=${CLI_PROVIDER_VIBE_MODELS:-}
-      - CLI_PROVIDER_VIBE_DEFAULT_MODEL=${CLI_PROVIDER_VIBE_DEFAULT_MODEL:-mistral-vibe-cli-latest}
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - CLI_PROVIDER_PI_MODELS=${CLI_PROVIDER_PI_MODELS:-}
+      - CLI_PROVIDER_PI_DEFAULT_MODEL=${CLI_PROVIDER_PI_DEFAULT_MODEL:-z-ai/glm-5.1}
       - OPENCODE_DEBUG_EVENTS=${OPENCODE_DEBUG_EVENTS:-0}
+      - HOME_ASSISTANT_URL=${HOME_ASSISTANT_URL:-}
+      - HOME_ASSISTANT_TOKEN=${HOME_ASSISTANT_TOKEN:-}
       - GODOT_BIN=${GODOT_BIN:-}
       - GODOT_TIMEOUT_MS=${GODOT_TIMEOUT_MS:-120000}
       - BLENDER_BIN=${BLENDER_BIN:-blender-headless}
@@ -57,21 +85,27 @@ services:
       - CLI_AUTO_UPDATE=${CLI_AUTO_UPDATE:-true}
       - CLI_AUTO_UPDATE_INTERVAL_HOURS=${CLI_AUTO_UPDATE_INTERVAL_HOURS:-24}
       - CLI_AUTO_UPDATE_PROVIDERS=${CLI_AUTO_UPDATE_PROVIDERS:-}
+      - SUPERPOWERS_ENABLED=${SUPERPOWERS_ENABLED:-false}
     volumes:
       # Persist database
       - claude-data:/app/packages/backend/data
       # Mount Claude credentials from host
       - ${HOME}/.claude:/home/node/.claude
-      # Mount Codex, OpenCode, and Vibe credentials from host
+      # Mount Codex and OpenCode credentials from host
       - ${HOME}/.codex:/home/node/.codex
       - ${HOME}/.opencode:/home/node/.opencode
-      - ${HOME}/.vibe:/home/node/.vibe
+      - ${HOME}/.pi:/home/node/.pi
+      - ${HOME}/.kimi-code:/home/node/.kimi-code
       # Persist npm global installs (CLI updates)
       - ${HOME}/.npm-global:/home/node/.npm-global
       # Mount your project directories (adjust as needed)
       - ${HOME}:/workspace
-      # Optional: Docker socket for container access
-      # - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/health/ready']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
     networks:
       - claude-network
 

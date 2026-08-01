@@ -9,12 +9,13 @@ import type {
   DockerContainerStats,
   WatchdogAutonomyLevel,
 } from '@plum-code-webui/shared';
-import { getDatabase } from '../../db';
-import { AppError } from '../../middleware/errorHandler';
-import { safeJsonParse } from '../../utils/json';
-import { dockerHost } from '../docker';
-import { discordNotifier } from '../discord';
-import { peerService } from '../session-mesh/PeerService';
+import { getDatabase } from '../../db/index.js';
+import { AppError } from '../../middleware/errorHandler.js';
+import { safeJsonParse } from '../../utils/json.js';
+import { dockerHost } from '../docker/index.js';
+import { discordNotifier } from '../discord/index.js';
+import { homeAssistantStatusLights } from '../home-assistant/index.js';
+import { peerService } from '../session-mesh/PeerService.js';
 
 function defaultWatchdogWorkspace(): string {
   const candidates = [
@@ -91,8 +92,10 @@ function deriveIncident(input: {
     return { severity: 'error', reason: 'Container health check reports unhealthy' };
   }
   if (detail.state === 'exited') return { severity: 'error', reason: 'Container exited' };
-  if (detail.state === 'restarting') return { severity: 'warning', reason: 'Container is restarting' };
-  if (detail.health === 'starting') return { severity: 'warning', reason: 'Container health is starting' };
+  if (detail.state === 'restarting')
+    return { severity: 'warning', reason: 'Container is restarting' };
+  if (detail.health === 'starting')
+    return { severity: 'warning', reason: 'Container health is starting' };
 
   const currentRestartCount =
     typeof detail.restartCount === 'number' && Number.isFinite(detail.restartCount)
@@ -195,13 +198,7 @@ export class WatchdogService {
          cli_model, mode, surface, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'stopped', ?, 'codex', NULL, 'planning', 'task',
                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-    ).run(
-      sessionId,
-      userId,
-      sessionName,
-      workspace,
-      `Assigned to Docker container ${detail.name}`
-    );
+    ).run(sessionId, userId, sessionName, workspace, `Assigned to Docker container ${detail.name}`);
 
     db.prepare(
       `INSERT INTO container_watchdogs
@@ -276,14 +273,15 @@ export class WatchdogService {
                container_name = ?,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`
-      )
-      .run(detail.name, watchdog.id);
+        )
+        .run(detail.name, watchdog.id);
 
       const incident = deriveIncident({
         detail,
         previousRestartCount: previousSnapshot ? previousSnapshot.restartCount : null,
       });
       if (incident) {
+        homeAssistantStatusLights.notifySession(watchdog.sessionId, 'problem');
         getDatabase()
           .prepare(
             `UPDATE container_watchdogs

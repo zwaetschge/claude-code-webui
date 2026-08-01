@@ -32,23 +32,20 @@ export function QuestionApprovalDialog({
     [answers, customAnswers, question.questions]
   );
 
-  const toggleAnswer = useCallback(
-    (questionIndex: number, label: string, multiple: boolean) => {
-      setAnswers((current) => {
-        const next = current.map((entry) => [...entry]);
-        const selected = next[questionIndex] ?? [];
-        if (!multiple) {
-          next[questionIndex] = [label];
-          return next;
-        }
-        next[questionIndex] = selected.includes(label)
-          ? selected.filter((item) => item !== label)
-          : [...selected, label];
+  const toggleAnswer = useCallback((questionIndex: number, label: string, multiple: boolean) => {
+    setAnswers((current) => {
+      const next = current.map((entry) => [...entry]);
+      const selected = next[questionIndex] ?? [];
+      if (!multiple) {
+        next[questionIndex] = [label];
         return next;
-      });
-    },
-    []
-  );
+      }
+      next[questionIndex] = selected.includes(label)
+        ? selected.filter((item) => item !== label)
+        : [...selected, label];
+      return next;
+    });
+  }, []);
 
   const submit = useCallback(async () => {
     setIsSubmitting(true);

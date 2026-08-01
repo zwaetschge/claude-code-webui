@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import simpleGit, { SimpleGit } from 'simple-git';
+import { simpleGit, type SimpleGit } from 'simple-git';
 import path from 'path';
-import { requireAuth } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { isAllowedBasePath } from '../utils/allowedPaths';
+import { requireAuth } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
 import type { GitStatus, GitBranch, GitCommit } from '@plum-code-webui/shared';
 
 const router = Router();
@@ -1105,7 +1105,7 @@ router.post(
 Diff:
 ${truncatedDiff}`;
 
-      const { runAdminLLM } = await import('../utils/adminLLM');
+      const { runAdminLLM } = await import('../utils/adminLLM.js');
       const { text } = await runAdminLLM(prompt, { cwd: repoPath, timeoutMs: 60_000 });
 
       // Strip markdown fences if the model wrapped its output.

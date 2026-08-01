@@ -9,8 +9,18 @@ import type {
   CLIProvider,
 } from '@plum-code-webui/shared';
 import { CLI_FORWARDED_COMMANDS } from '@plum-code-webui/shared';
-import { listCodexFeatures } from '../utils/codexCli';
-import { listSkillLibrary } from '../utils/skillLibrary';
+import { listCodexFeatures } from '../utils/codexCli.js';
+import { listSkillLibrary } from '../utils/skillLibrary.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
+import { AppError } from '../middleware/errorHandler.js';
+
+export function resolveAllowedCommandPath(inputPath: string): string {
+  const resolvedPath = resolve(inputPath);
+  if (!isAllowedBasePath(resolvedPath)) {
+    throw new AppError('Path not allowed', 403, 'FORBIDDEN_PATH');
+  }
+  return resolvedPath;
+}
 
 // Built-in command definitions (native WebUI handlers)
 const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 'scope'>> = {
@@ -152,9 +162,9 @@ const BUILTIN_COMMAND_DEFS: Record<BuiltinCommandName, Omit<Command, 'name' | 's
 const CLI_FORWARDED_DESCRIPTIONS: Record<string, string> = {
   btw: 'Ask a quick side question without adding to the conversation',
   debug: 'Enable debug logging and troubleshoot',
-  effort: 'Set the model effort level (low|medium|high|xhigh|max|auto)',
+  effort: 'Set the model effort level (none|minimal|low|medium|high|xhigh|max|ultra|auto)',
   plan: 'Enter plan mode',
-  init: 'Initialize project with a CLAUDE.md guide',
+  init: 'Initialize project with an AGENTS.md guide',
   review: 'Review a pull request locally',
   recap: 'Generate a one-line session summary',
   'security-review': 'Analyze pending changes for security vulnerabilities',
@@ -173,9 +183,11 @@ const CLI_FORWARDED_DESCRIPTIONS: Record<string, string> = {
 
 const PROVIDER_LABELS: Record<CLIProvider, string> = {
   claude: 'Claude Code',
+  zai: 'Z.AI Code',
   codex: 'Codex',
   opencode: 'OpenCode',
-  vibe: 'Mistral Vibe',
+  pi: 'Pi',
+  kimi: 'Kimi Code',
 };
 
 const OPENCODE_FORWARDED_COMMANDS = new Set(['init', 'review', 'security-review', 'plan']);
@@ -222,11 +234,12 @@ export class CommandService {
 
     // Add project commands if projectPath provided
     if (projectPath) {
-      const projectCommandsDir = join(projectPath, '.claude', 'commands');
+      const allowedProjectPath = resolveAllowedCommandPath(projectPath);
+      const projectCommandsDir = join(allowedProjectPath, '.claude', 'commands');
       const projectCommands = await this.loadCommandsFromDir(
         projectCommandsDir,
         'project',
-        projectPath
+        allowedProjectPath
       );
       commands.push(...projectCommands);
     }
@@ -394,7 +407,7 @@ export class CommandService {
           error: `/${parsed.name} is a Claude Code native command and is not available in OpenCode. Use /init, /review, /security-review, /plan, a WebUI command, or ask OpenCode in plain language.`,
         };
       }
-      if (provider !== 'claude') {
+      if (provider !== 'claude' && provider !== 'zai') {
         return {
           success: false,
           error: `/${parsed.name} is a Claude Code native command and is not available in ${PROVIDER_LABELS[provider]}. Use a WebUI command or ask ${PROVIDER_LABELS[provider]} in plain language.`,
@@ -477,7 +490,7 @@ export class CommandService {
           .map((c) => `/${c.name} — ${c.description}`)
           .join('\n');
         const cliList =
-          provider === 'claude'
+          provider === 'claude' || provider === 'zai'
             ? Object.entries(CLI_FORWARDED_DESCRIPTIONS)
                 .map(([name, desc]) => `/${name} — ${desc}`)
                 .join('\n')
@@ -485,7 +498,7 @@ export class CommandService {
               ? Array.from(OPENCODE_FORWARDED_COMMANDS)
                   .map((name) => `/${name} — ${CLI_FORWARDED_DESCRIPTIONS[name]}`)
                   .join('\n')
-            : '';
+              : '';
         const customList = commands
           .filter((c) => c.scope !== 'builtin')
           .map((c) => `/${c.name} — ${c.description} [${c.scope}]`)
@@ -549,7 +562,7 @@ export class CommandService {
           return {
             success: false,
             error:
-              '/imagegen is a Codex shortcut. Switch this session to Codex or ask the active provider to use the ComfyUI image tools.',
+              '/imagegen is a Codex shortcut. Switch this session to Codex to use Codex image generation.',
           };
         }
         if (!prompt) {
@@ -587,6 +600,10 @@ export class CommandService {
           success: true,
           action: 'forward_to_cli',
           response: rawArgs ? `/goal ${rawArgs}` : '/goal',
+          data: {
+            recordMessage: false,
+            updateLastMessage: false,
+          },
         };
       }
 
@@ -595,8 +612,8 @@ export class CommandService {
           success: true,
           response:
             context.provider === 'codex'
-              ? 'Codex subagents are available when you explicitly ask for parallel agents in your prompt. Example: "Use two subagents: one to inspect backend routes and one to inspect frontend state, then merge the findings."'
-              : 'Subagent behavior is provider-specific. Switch this session to Codex for Codex subagent workflows.',
+              ? 'Codex subagents are available when you explicitly ask for parallel agents in your prompt. Persist project handoff notes and agent instructions in AGENTS.md. Example: "Use two subagents: one to inspect backend routes and one to inspect frontend state, then merge the findings."'
+              : 'Subagent behavior is provider-specific. Persist project handoff notes and agent instructions in AGENTS.md; switch this session to Codex for Codex subagent workflows.',
         };
 
       case 'web-search':
@@ -649,7 +666,7 @@ export class CommandService {
         return {
           success: true,
           response:
-            context.provider === 'claude'
+            context.provider === 'claude' || context.provider === 'zai'
               ? 'Claude permission hooks are managed by the WebUI permission prompt bridge.'
               : 'Codex does not use Claude hook files. WebUI maps session modes to Codex sandbox and approval settings at process spawn.',
         };
@@ -852,7 +869,11 @@ export class CommandService {
         };
 
       case 'compact':
-        if (context.provider === 'codex' || context.provider === 'opencode') {
+        if (
+          context.provider === 'codex' ||
+          context.provider === 'opencode' ||
+          context.provider === 'pi'
+        ) {
           const rawArgs = parsed.rawArgs.trim();
           return {
             success: true,
@@ -906,7 +927,7 @@ export class CommandService {
     let result = text;
     let match;
 
-    const rootResolved = resolve(workingDirectory);
+    const rootResolved = resolveAllowedCommandPath(workingDirectory);
     const rootPrefix = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
 
     while ((match = fileRefRegex.exec(text)) !== null) {

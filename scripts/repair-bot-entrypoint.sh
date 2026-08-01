@@ -13,6 +13,10 @@ echo "========================================"
 WATCHER_PID=""
 WEBUI_PID=""
 
+# The repair WebUI shares the main provider config for emergency access, but
+# the main WebUI must remain the single owner of external skill imports.
+export WEBUI_EXTERNAL_SKILL_SYNC="${WEBUI_EXTERNAL_SKILL_SYNC:-false}"
+
 cleanup() {
     echo "[repair-bot] Shutting down..."
     if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
@@ -44,7 +48,16 @@ fi
 
 # Start WebUI
 echo "[repair-bot] Starting WebUI..."
-npx tsx /app/packages/backend/src/index.ts &
+if [ -f /app/packages/backend/dist/index.js ]; then
+    node /app/packages/backend/dist/index.js &
+elif [ -x /app/packages/backend/node_modules/.bin/tsx ] && [ -f /app/packages/backend/src/index.ts ]; then
+    # One-release compatibility path: lets the existing sidecar reload the new
+    # watcher before the first slim/compiled image has been built.
+    /app/packages/backend/node_modules/.bin/tsx /app/packages/backend/src/index.ts &
+else
+    echo "[repair-bot] ERROR: no compiled backend or legacy tsx source runtime found" >&2
+    exit 1
+fi
 WEBUI_PID=$!
 
 wait "$WEBUI_PID"

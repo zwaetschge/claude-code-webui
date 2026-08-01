@@ -1,4 +1,9 @@
-import type { Session, SessionQueueData, SubagentRun, ToolExecution } from '@plum-code-webui/shared';
+import type {
+  Session,
+  SessionQueueData,
+  SubagentRun,
+  ToolExecution,
+} from '@plum-code-webui/shared';
 import type { ActivityState, AgentState } from '@/stores/sessionStore';
 
 export type SessionRunTone = 'working' | 'live-idle' | 'idle' | 'error';
@@ -31,7 +36,11 @@ function compactDetail(value: string | null | undefined, fallback: string): stri
 function describeTool(toolName: string | null | undefined): string | undefined {
   if (!toolName) return undefined;
   const normalized = toolName.replace(/[_\s-]/g, '').toLowerCase();
-  if (normalized.includes('bash') || normalized.includes('shell') || normalized.includes('command')) {
+  if (
+    normalized.includes('bash') ||
+    normalized.includes('shell') ||
+    normalized.includes('command')
+  ) {
     return 'Running command';
   }
   if (normalized.includes('grep') || normalized.includes('glob') || normalized.includes('search')) {
@@ -86,7 +95,7 @@ export function getSessionRunState(
       signals.activity?.message ||
         (activeSubagents.length > 1 ? `${activeSubagents.length} subagents running` : undefined) ||
         activeSubagents[0]?.description ||
-      signals.activeAgent?.description ||
+        signals.activeAgent?.description ||
         describeTool(toolName) ||
         session.runtime?.activitySummary ||
         session.runtime?.currentAgentDescription ||

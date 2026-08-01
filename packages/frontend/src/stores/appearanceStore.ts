@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { BackgroundAnimation, Theme } from '@plum-code-webui/shared';
 
 export const DEFAULT_BACKGROUND_ANIMATION: BackgroundAnimation = 'aurora';
+export const THEME_STORAGE_KEY = 'theme';
 export const BACKGROUND_ANIMATION_STORAGE_KEY = 'background-animation';
 
 export const BACKGROUND_ANIMATION_OPTIONS: Array<{
@@ -38,20 +39,36 @@ export function normalizeBackgroundAnimation(value: unknown): BackgroundAnimatio
 }
 
 export function normalizeTheme(value: unknown): Theme {
-  return value === 'light' || value === 'dark' ? value : 'dark';
+  return value === 'light' || value === 'dark' || value === 'system' || value === 'eink'
+    ? value
+    : 'dark';
+}
+
+function resolveSystemTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'dark';
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 export function getStoredTheme(): Theme {
   if (typeof window === 'undefined') return 'dark';
-  return normalizeTheme(window.localStorage.getItem('theme'));
+  return normalizeTheme(window.localStorage.getItem(THEME_STORAGE_KEY));
+}
+
+export function setStoredTheme(theme: unknown): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(THEME_STORAGE_KEY, normalizeTheme(theme));
 }
 
 export function applyTheme(theme: Theme): void {
   if (typeof document === 'undefined') return;
   const next = normalizeTheme(theme);
+  const resolved = next === 'system' ? resolveSystemTheme() : next;
+  const root = document.documentElement;
 
-  document.documentElement.classList.remove('light', 'dark');
-  document.documentElement.classList.add(next);
+  root.classList.remove('light', 'dark', 'eink');
+  root.classList.add(resolved);
+  root.dataset.theme = next;
+  root.dataset.resolvedTheme = resolved;
 }
 
 export function getStoredBackgroundAnimation(): BackgroundAnimation {

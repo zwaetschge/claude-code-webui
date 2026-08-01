@@ -78,6 +78,11 @@ class SocketService {
 
     this.socket.on('session:error', (data) => {
       console.error('Session error:', data.error);
+      toast({
+        title: 'Session action failed',
+        description: data.error,
+        variant: 'destructive',
+      });
     });
 
     this.socket.on('session:thinking', (data) => {
@@ -640,6 +645,7 @@ class SocketService {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
+        sessionId,
         requestId,
         action,
         pattern,

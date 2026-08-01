@@ -1,6 +1,6 @@
 # Plum Code WebUI
 
-Self-hosted web interface for Codex, OpenCode, Mistral Vibe, and Claude Code CLIs. Plum Code WebUI gives each provider the same browser workspace: streaming chat, tool approvals, file and git panes, provider analytics, shared agents/skills/plugins, preview tooling, and built-in MCP servers inside one Docker deployment.
+Self-hosted web interface for Codex, OpenCode, Pi, and Claude Code harnesses. Plum Code WebUI gives each harness the same browser workspace: streaming chat, tool approvals, file and git panes, provider analytics, shared agents/skills/plugins, preview tooling, and built-in MCP servers inside one Docker deployment.
 
 > **Default provider: Codex.** Anthropic is restricting `claude -p` / introducing a credit system, so Codex is now the primary CLI. Claude stays available as a legacy option.
 
@@ -13,7 +13,7 @@ Self-hosted web interface for Codex, OpenCode, Mistral Vibe, and Claude Code CLI
 ## Desktop
 
 ![Sessions dashboard](docs/screenshots/plum-dashboard.png)
-_Sessions dashboard - create or resume projects, filter by provider, and start Codex/OpenCode/Vibe/Claude sessions from one place._
+_Sessions dashboard - create or resume projects, filter by provider, and start Codex/OpenCode/Claude sessions from one place._
 
 ![Codex chat](docs/screenshots/plum-chat-codex.png)
 _Codex chat - streaming output, tool execution, provider/model controls, YOLO mode, usage limits, and right-rail workspace controls._
@@ -40,6 +40,7 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 - Provider-aware streaming responses over WebSocket
 - Multi-session management with history, starring, groups, provider badges, and running-state indicators
 - Per-session provider, model, reasoning, service-tier, web-search, and permission-mode controls
+- Per-session Home Assistant status lights with green success pulses, red problem pulses, and a blue question heartbeat
 - Image attachments plus inline image generation/editing through ComfyUI MCP
 - LaTeX/Math rendering with KaTeX
 - Interactive choice prompts and permission approvals
@@ -47,6 +48,8 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 - Usage limit bar for providers that expose quotas
 - Todo and subagent lifecycle rendering when the active CLI emits them
 - Shared `/agents`, `/skills`, `/subagents`, and slash-command discovery
+- Lean capability catalog: a small active core plus searchable on-demand skills, styles, personas, and domain packs
+- Optional Superpowers workflow skills from `obra/Superpowers`, disabled instance-wide by default
 
 ### DevTools Integration
 
@@ -59,16 +62,18 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 
 - **Codex** (OpenAI) - **default provider**, per-turn `codex exec` process model with auto-respawn, chunk-level streaming, transcript-prefix resume, and model discovery from `~/.codex/models_cache.json`
 - **OpenCode** - server-backed HTTP/SSE provider routing for GLM (`z-ai/glm-*`), Kimi, Anthropic/OpenAI/Gemini routes, and 75+ other LLMs
-- **Mistral Vibe** - Mistral Medium 3.5 / Devstral coding models, argv-based prompt execution, per-session `VIBE_HOME`, and `--continue` resume
-- **Claude Code** (Anthropic) - legacy persistent stream-json provider
+- **Pi** - alternative persistent RPC harness that reuses OpenCode's API connections/models plus shared skills, agents, and MCP servers
+- **Kimi Code** - Moonshot's native persistent ACP agent with device-code login, live token/tool streaming, queued follow-ups, cancel, and persisted native sessions
+- **Claude Code** (Anthropic) - legacy persistent stream-json provider with a configurable Anthropic-compatible API endpoint
 - Per-session provider selection; switching providers restarts the underlying CLI cleanly
-- Dedicated auth routes: `/auth/codex`, `/auth/opencode`, `/auth/vibe`, `/auth/claude`
-- Independent CLI instances + persisted auth per provider (`~/.codex`, `~/.local/share/opencode`, `~/.vibe`, `~/.claude`)
+- When explicitly enabled instance-wide, shared Superpowers skills install into `~/.claude/skills`; Codex also gets a managed local `superpowers@plum-managed` plugin cache/config entry, and OpenCode uses `skills.paths` without the upstream auto-bootstrap plugin
+- Dedicated auth routes: `/auth/codex`, `/auth/opencode`, `/auth/pi`, `/auth/claude`
+- Independent harness state with persisted config (`~/.codex`, `~/.local/share/opencode`, `~/.pi`, `~/.claude`); Pi deliberately reuses OpenCode credentials
 - Admin/helper LLM calls, such as commit message generation, route through the same Codex-first provider preference
 
 ### Analytics
 
-- Unified `usage_history` ledger for all providers
+- Idempotent `usage_history` ledger keyed by provider and turn, with Pi and OpenCode reported separately
 - Token volume, request count, cache efficiency, pricing coverage, and API-equivalent spend
 - Per-model pricing with explicit unpriced-model handling
 - Provider grouping shared between backend analytics and frontend charts
@@ -127,10 +132,13 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 ### Extensions
 
 - Shared agents from `~/.claude/agents`
-- Shared skills from `~/.claude/skills`, including design-system skill packs
+- Active core skills from `~/.claude/skills`; on-demand workflows remain under `~/.claude/skill-catalog`, and optional design/writing presets remain under `~/.claude/style-library`
+- CLI discovery command: `node /app/scripts/capability-catalog.mjs search "<task>"` and `show <name>`
+- Consolidated legacy names stay discoverable through aliases; retired packages are blocked from external re-import
+- Optional Superpowers sync from `https://github.com/obra/Superpowers`; disabled across all providers, users, and workspaces unless the instance explicitly opts in
 - Plugin management for user and marketplace plugins
 - Codex plugin browser/install flow for OpenAI-curated plugins
-- Auto-sync of external skill packs and provider links for OpenCode/Vibe where supported
+- Auto-sync of external skill packs and provider links for OpenCode where supported
 
 ### Mobile Support
 
@@ -144,10 +152,11 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 
 - Tabbed settings interface
 - Theme configuration
-- Per-provider API key / OAuth management (Codex, OpenCode, Mistral Vibe, Claude, GitHub, Google)
+- Per-provider API key / OAuth management (Codex, OpenCode, Claude, GitHub, Google)
 - MCP Server management with connection testing
-- Mistral API key storage encrypted with `ENCRYPTION_KEY`
+- Per-user Claude API URL, encrypted token, and optional model mappings for Anthropic-compatible services such as Z.AI
 - ComfyUI URL testing and persistence
+- Home Assistant connection testing, encrypted token storage, and per-session light assignment
 - Memory viewer for session context
 
 ## Tech Stack
@@ -191,16 +200,16 @@ The installer walks you through:
 1. **Prereq check** - docker, docker compose plugin, openssl, daemon connectivity.
 2. **Interactive `.env`** - public URL, port, allowlisted login emails, host paths for data/config/workspace. Auto-generates `SESSION_SECRET` + `JWT_SECRET`.
 3. **`docker compose build` + `up -d`** - first run takes a few minutes.
-4. **Health wait** - polls `/health` (or the container's healthcheck) for up to 2 min.
+4. **Health wait** - polls `/health/ready` (or the container's healthcheck) for up to 2 min.
 5. **Optional Codex login** - runs `codex login` inside the container because Codex is the default provider. Other providers can be authenticated later from Settings or their dedicated `/auth/<provider>` route. Can be skipped with `--skip-login`.
 
 Re-run any time to reconfigure (existing `.env` values are preserved unless you pass `--reset`). Non-interactive mode (`--non-interactive`) takes all defaults and is useful for CI bootstraps.
 
-**Requirements:** Docker 24+, Docker Compose plugin, openssl. The container ships its own Node plus the `codex`, `opencode`, `vibe`, and `claude` CLIs.
+**Requirements:** Docker 24+, Docker Compose plugin, openssl. The container ships Node 22 plus the `codex`, `opencode`, `pi`, and `claude` harnesses.
 
 ### Site-specific deployment (Traefik, Unraid, etc.)
 
-The repo's `docker-compose.yml` is intentionally portable: no Traefik labels, no absolute paths, no external networks. Site-specific overrides go into `docker-compose.override.yml` (gitignored), which Compose auto-merges. A copy-paste starting point lives at `docker-compose.override.yml.example` and shows how to add Traefik labels, absolute host paths (for example `/mnt/user/appdata/...` on Unraid), `group_add` for the docker socket GID, and the repair-bot rebuild sidecar.
+The repo's `docker-compose.yml` is intentionally portable: no Traefik labels, no absolute paths, no external networks. Site-specific overrides go into `docker-compose.override.yml` (gitignored), which Compose auto-merges. A copy-paste starting point lives at `docker-compose.override.yml.example` and shows Traefik labels, absolute host paths, a read-only Docker socket proxy, and the repair-bot sidecar. Never mount the raw Docker socket into the main WebUI. A trusted, admin-only deployment may selectively enable the proxy's `BUILD`, `IMAGES`, `CONTAINERS`, and `NETWORKS` groups together with `POST=1`; Compose needs `NETWORKS` to inspect external networks. This is host-equivalent authority and must not be exposed to untrusted CLI users. Plum's own controlled rebuild continues to run through the repair-bot.
 
 ### Manual Docker (no installer)
 
@@ -220,7 +229,7 @@ pnpm dev                    # backend (3006) + frontend (5173) in parallel
 ./scripts/start-webui.sh    # generates ephemeral secrets, kills stale PIDs, tails logs
 ```
 
-Prerequisites: Node 20+, pnpm 9+, and whichever provider CLIs you want to run locally (`codex`, `opencode`, `vibe`, `claude`).
+Prerequisites: Node 22.19+, pnpm 9+, and whichever harnesses you want to run locally (`codex`, `opencode`, `pi`, `claude`).
 
 ### Production build (no Docker)
 
@@ -237,7 +246,16 @@ For deployed Docker instances, use the repair-bot sidecar instead of recreating 
 bash scripts/plum-rebuild.sh
 ```
 
-The script writes `data/rebuild-trigger.json`, waits for `repair-bot` to rebuild and recreate the main container from outside, then runs a sanity check against `http://localhost:${WEBUI_PORT:-4545}/`. Use `--no-cache`, `--no-wait`, or `--timeout=N` when needed.
+The script writes `data/rebuild-trigger.json`, waits for `repair-bot` to rebuild and recreate the main container from outside, then runs a sanity check. The sidecar protects the previous image, requires candidate image identity plus `/health/ready`, and automatically rolls back a failed candidate. Use `--no-cache`, `--no-wait`, or `--timeout=N` when needed.
+
+Create and validate an online SQLite backup, then preview retention changes:
+
+```bash
+node scripts/plum-maintenance.mjs
+node scripts/plum-maintenance.mjs --dry-run
+```
+
+If the repair sidecar also runs its emergency WebUI against the shared provider config, set `WEBUI_EXTERNAL_SKILL_SYNC=false` on that service. The main WebUI remains the single owner of external skill imports and catalog reconciliation.
 
 ## Configuration
 
@@ -245,30 +263,38 @@ The script writes `data/rebuild-trigger.json`, waits for `repair-bot` to rebuild
 
 Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on startup). `scripts/install.sh` writes the common values into `.env`; the rest are optional deployment or provider overrides.
 
-| Variable                                                                           | Description                                                                                                                                                 | Required    |
-| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `SESSION_SECRET` / `JWT_SECRET`                                                    | Express session and JWT signing secrets (min 32 chars each). Installer auto-generates.                                                                      | Yes         |
-| `AUTH_ALLOWED_EMAILS`                                                              | Comma-separated email allowlist enforced for both OAuth and basic-auth. Empty = no allowlist, only safe behind a private network or SSO proxy.              | Recommended |
-| `SEED_ADMIN_EMAIL`                                                                 | First user with this email gets `role=admin` on first login. Defaults to the first allowlist entry when unset.                                              | No          |
-| `FRONTEND_URL` / `CORS_ALLOWED_ORIGINS` / `TRUST_PROXY`                            | Public URL, extra CORS origins, and Express proxy trust. `TRUST_PROXY=true` is unsafe without a trusted reverse proxy in front.                             | No          |
-| `WEBUI_PORT` / `WEBUI_SHM_SIZE` / `TZ`                                             | Host port (default `4545`), Chromium shared memory (default `1gb`), and timezone.                                                                           | No          |
-| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR` / `ALLOWED_BASE_PATHS`                 | Host paths bind-mounted to persistent data, provider homes, and workspaces.                                                                                 | No          |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL`                | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`.                                                                                    | No          |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL`                | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`.                                                                                    | No          |
-| `ENCRYPTION_KEY`                                                                   | Enables encrypted storage for provider API keys, including the Mistral key managed in Settings.                                                             | Recommended |
-| `CLI_PROVIDER_<PROVIDER>_MODELS`                                                   | Override model menus for `CODEX`, `OPENCODE`, `VIBE`, or `CLAUDE`; empty means auto-discover or use provider fallback.                                      | No          |
-| `CLI_PROVIDER_<PROVIDER>_DEFAULT_MODEL`                                            | Override defaults such as Codex `gpt-5.5`, OpenCode `z-ai/glm-5.1`, Vibe `mistral-vibe-cli-latest`, or Claude `sonnet`.                                     | No          |
-| `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` / `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`       | OpenCode WebUI primary agent and Codex-like communication style. Defaults to `build`; set style prompt to `0` or `false` to disable the injected reminder.  | No          |
-| `MISTRAL_API_KEY`                                                                  | Enables Mistral Vibe when no user-specific key is stored in Settings.                                                                                       | No          |
-| `ADMIN_LLM_PROVIDER`                                                               | Pin admin/helper calls to `codex`, `opencode`, `vibe`, or `claude`. Default preference is Codex first.                                                      | No          |
-| `CODEX_WEBUI_SANDBOX_MODE` / `CODEX_WEBUI_APPROVAL_POLICY`                         | Codex Docker defaults. The image defaults to `danger-full-access` / `never` because Codex's Landlock `workspace-write` sandbox is unreliable inside Docker. | No          |
-| `CODEX_USAGE_URL` / `CODEX_USER_AGENT`                                             | Override the ChatGPT Codex usage endpoint or User-Agent used for `/api/usage/limits?provider=codex`.                                                        | No          |
-| `COMFYUI_URL`                                                                      | Fallback ComfyUI base URL. Settings can override it without restart.                                                                                        | No          |
-| `OPENAI_API_KEY`                                                                   | Exposes OpenAI API billing to CLI sessions and `scripts/openai-image.sh` when no key is stored in app settings.                                             | No          |
-| `GODOT_BIN` / `GODOT_TIMEOUT_MS`                                                   | Optional Godot 4 binary and timeout for the built-in Godot MCP. Scaffolding works without it; validation/export require it.                                 | No          |
-| `BLENDER_BIN` / `BLENDER_TIMEOUT_MS`                                               | Blender binary and timeout for the built-in Blender MCP. The runtime image defaults to `blender-headless`.                                                  | No          |
-| `PREVIEW_HOSTNAME`                                                                 | Optional hostname used by the dev-server preview proxy.                                                                                                     | No          |
-| `CHROME_BIN` / `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` / `PUPPETEER_EXECUTABLE_PATH` | System Chromium wrapper exposed to CLI sessions (default: `/usr/local/bin/plum-chromium`).                                                                  | No          |
+| Variable                                                                                 | Description                                                                                                                                                                                        | Required    |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `SESSION_SECRET` / `JWT_SECRET`                                                          | Express session and JWT signing secrets (min 32 chars each). Installer auto-generates.                                                                                                             | Yes         |
+| `AUTH_ALLOWED_EMAILS`                                                                    | Comma-separated email allowlist enforced for both OAuth and basic-auth. Empty = no allowlist, only safe behind a private network or SSO proxy.                                                     | Recommended |
+| `SEED_ADMIN_EMAIL`                                                                       | First user with this email gets `role=admin` on first login. Defaults to the first allowlist entry when unset.                                                                                     | No          |
+| `FRONTEND_URL` / `CORS_ALLOWED_ORIGINS` / `TRUST_PROXY`                                  | Public URL, extra CORS origins, and Express proxy trust. `TRUST_PROXY=true` is unsafe without a trusted reverse proxy in front.                                                                    | No          |
+| `WEBUI_PORT` / `WEBUI_SHM_SIZE` / `TZ`                                                   | Host port (default `4545`), Chromium shared memory (default `1gb`), and timezone.                                                                                                                  | No          |
+| `DATA_DIR` / `CONFIG_DIR` / `WORKSPACE_DIR` / `ALLOWED_BASE_PATHS`                       | Host paths bind-mounted to persistent data, provider homes, and workspaces.                                                                                                                        | No          |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` / `GITHUB_CALLBACK_URL`                      | Optional GitHub OAuth. Callback: `${FRONTEND_URL}/auth/github/callback`.                                                                                                                           | No          |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_CALLBACK_URL`                      | Optional Google OAuth. Callback: `${FRONTEND_URL}/auth/google/callback`.                                                                                                                           | No          |
+| `ENCRYPTION_KEY`                                                                         | Enables encrypted storage for provider API tokens, including the per-user Claude custom API token managed in Settings.                                                                             | Recommended |
+| `CLI_RUNNER_ACCESS` / `CLI_RUNNER_ALLOWED_EMAILS`                                        | Runner execution defaults to admin-only while processes share one Unix/provider home. Allow only explicitly trusted non-admin emails; `trusted-users` is an intentional private-deployment opt-in. | No          |
+| `CLI_PROVIDER_<PROVIDER>_MODELS`                                                         | Override model menus for `CODEX`, `OPENCODE`, or `CLAUDE`; empty means auto-discover or use provider fallback.                                                                                     | No          |
+| `CLI_PROVIDER_<PROVIDER>_DEFAULT_MODEL`                                                  | Override defaults such as Codex `gpt-5.5`, OpenCode `z-ai/glm-5.1`, or Claude `sonnet`.                                                                                                            | No          |
+| `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` / `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`             | OpenCode WebUI primary agent and Codex-like communication style. Defaults to `build`; set style prompt to `0` or `false` to disable the injected reminder.                                         | No          |
+| `CLI_AUTO_UPDATE` / `CLI_AUTO_UPDATE_PROVIDERS` / `CLI_AUTO_UPDATE_INTERVAL_HOURS`       | Runtime CLI autoupdater. Docker Compose defaults to Codex-only updates on boot and every 24 hours; set providers to a comma-separated list to opt in more CLIs.                                    | No          |
+| `SUPERPOWERS_ENABLED` / `SUPERPOWERS_REPO_URL` / `SUPERPOWERS_REF`                       | Managed Superpowers sync + provider registration. Disabled instance-wide by default; set enabled to `true` to opt all providers, users, and workspaces back in.                                    | No          |
+| `SUPERPOWERS_SYNC_INTERVAL_MS` / `SUPERPOWERS_GIT_TIMEOUT_MS`                            | Optional Superpowers refresh interval and Git operation timeout. Defaults: 6 hours / 45 seconds.                                                                                                   | No          |
+| `ADMIN_LLM_PROVIDER`                                                                     | Pin admin/helper calls to `codex`, `opencode`, or `claude`. Default preference is Codex first.                                                                                                     | No          |
+| `CODEX_WEBUI_SANDBOX_MODE` / `CODEX_WEBUI_APPROVAL_POLICY`                               | Codex Docker defaults. The image defaults to `danger-full-access` / `never` because Codex's Landlock `workspace-write` sandbox is unreliable inside Docker.                                        | No          |
+| `CODEX_USAGE_URL` / `CODEX_USER_AGENT`                                                   | Override the ChatGPT Codex usage endpoint or User-Agent used for `/api/usage/limits?provider=codex`.                                                                                               | No          |
+| `CODEX_USAGE_TIMEOUT_MS` / `CODEX_USAGE_CACHE_TTL_MS`                                    | Bound Codex quota requests and singleflight-cache successful responses. Defaults: 10 seconds / 60 seconds.                                                                                         | No          |
+| `COMFYUI_URL`                                                                            | Fallback ComfyUI base URL. Settings can override it without restart.                                                                                                                               | No          |
+| `OPENAI_API_KEY`                                                                         | Exposes OpenAI API billing to CLI sessions and `scripts/openai-image.sh` when no key is stored in app settings.                                                                                    | No          |
+| `HOME_ASSISTANT_URL` / `HOME_ASSISTANT_TOKEN`                                            | Optional fallback Home Assistant connection for physical session status lights. Settings can store an encrypted token instead.                                                                     | No          |
+| `GODOT_BIN` / `GODOT_TIMEOUT_MS`                                                         | Optional Godot 4 binary and timeout for the built-in Godot MCP. Scaffolding works without it; validation/export require it.                                                                        | No          |
+| `BLENDER_BIN` / `BLENDER_TIMEOUT_MS`                                                     | Blender binary and timeout for the built-in Blender MCP. The runtime image defaults to `blender-headless`.                                                                                         | No          |
+| `PREVIEW_HOSTNAME`                                                                       | Optional hostname used by the dev-server preview proxy.                                                                                                                                            | No          |
+| `CHROME_BIN` / `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` / `PUPPETEER_EXECUTABLE_PATH`       | System Chromium wrapper exposed to CLI sessions (default: `/usr/local/bin/plum-chromium`).                                                                                                         | No          |
+| `PLUM_BACKUP_RETENTION_DAYS` / `PLUM_LOG_RETENTION_DAYS` / `PLUM_SESSION_RETENTION_DAYS` | Retention windows used by `scripts/plum-maintenance.mjs` for validated backups and managed runtime artifacts.                                                                                      | No          |
+
+GPT-5.6 WebUI sessions use one root agent by default to avoid delegation loops. Set `CODEX_WEBUI_AGENT_MODE=parallel` or configure `CODEX_WEBUI_AGENT_MAX_DEPTH` / `CODEX_WEBUI_AGENT_MAX_THREADS` when parallel Codex agents are intentional.
 
 ### CLI Integration
 
@@ -281,15 +307,12 @@ codex exec --json --skip-git-repo-check --cd /workspace/my-project ...
 # OpenCode - server-backed model routing for GLM, Kimi, Anthropic, OpenAI, etc.
 opencode run --format json --model z-ai/glm-5.1 ...
 
-# Mistral Vibe - argv prompt, isolated VIBE_HOME per WebUI session
-vibe --output streaming --trust --workdir /workspace/my-project -p "..."
-
 # Claude Code - legacy persistent stream-json provider
 claude --print --verbose --output-format stream-json --input-format stream-json \
        --include-partial-messages --dangerously-skip-permissions
 ```
 
-All CLIs ship inside the container; their auth/state directories (`~/.codex`, `~/.opencode`, `~/.vibe`, `~/.claude`) survive rebuilds via the `${CONFIG_DIR}` bind mount. OpenCode is symlinked into its expected `~/.config/opencode` and `~/.local/share/opencode` paths. The runtime image also includes system Chromium, Chromedriver, fonts, and Xvfb; sessions inherit `CHROME_BIN=/usr/local/bin/plum-chromium` plus Playwright/Puppeteer executable-path env vars for headless browser checks.
+All harnesses ship inside the container; their auth/state directories (`~/.codex`, `~/.opencode`, `~/.pi`, `~/.kimi-code`, `~/.claude`) survive rebuilds via the `${CONFIG_DIR}` bind mount. Plum gives each WebUI user an isolated OpenCode server, SSE stream, configuration, data and OAuth/account directory under `~/.opencode/users/<sha256-user-key>`; legacy global OpenCode OAuth state is not auto-assigned, so affected users reconnect once through the WebUI. Pi receives a per-user generated config that references the same encrypted OpenCode provider store. The runtime image also includes system Chromium, Chromedriver, fonts, and Xvfb; sessions inherit `CHROME_BIN=/usr/local/bin/plum-chromium` plus Playwright/Puppeteer executable-path env vars for headless browser checks.
 
 ## Project Structure
 
@@ -299,7 +322,7 @@ packages/
 │   ├── src/
 │   │   ├── routes/       # REST API endpoints (~30 modules)
 │   │   ├── services/
-│   │   │   └── claude/   # Legacy folder name; owns Codex / OpenCode / Vibe / Claude lifecycle
+│   │   │   └── claude/   # Legacy folder name; owns Codex / OpenCode / Claude lifecycle
 │   │   ├── auth/         # Passport (GitHub, Google) + basic-auth + allowlist
 │   │   ├── middleware/   # CSP, rate limiting, error handling
 │   │   └── db/           # SQLite (better-sqlite3) + migrations
@@ -377,13 +400,17 @@ packages/
 ### Settings, Extensions & MCP
 
 - `GET /api/settings` / `PUT /api/settings` - User settings
-- `GET/PUT/DELETE /api/settings/mistral-key` - Mistral Vibe key management
+- `GET/PUT/DELETE /api/settings/claude-api` - per-user Claude API URL, encrypted token, and model mappings
 - `GET/PUT /api/settings/integrations` - OpenAI/ComfyUI integration settings
 - `GET/POST/PUT/DELETE /api/mcp` - MCP server management and testing
 - `GET/PUT /api/comfyui/settings` - ComfyUI endpoint configuration
 - `POST /api/comfyui/generate` - Submit an image generation job
+- `GET/PUT /api/home-assistant/settings` - Home Assistant connection status and admin configuration
+- `POST /api/home-assistant/test` / `GET /api/home-assistant/lights` - Test the connection and list assignable lights
+- `PUT /api/home-assistant/sessions/:id/light` - Assign or remove a status light for one session
+- `POST /api/home-assistant/sessions/:id/test` - Preview success, problem, or question on the assigned light
 - `GET/POST/PUT/DELETE /api/claude-config/agents` - Shared agent files
-- `GET/POST/PUT/DELETE /api/claude-config/skills` - Shared skill packs
+- `GET/POST/PUT/DELETE /api/claude-config/skills` - searchable active/on-demand skill catalog (`library=all`, optional `query` and `status` filters)
 - `GET/POST/PUT/DELETE /api/claude-config/plugins` - User and marketplace plugins
 - `GET /api/codex/plugins`, `POST /api/codex/plugins/install`, `POST /api/codex/plugins/:id` - Codex plugin listing, install, and enable/disable flow
 
@@ -425,5 +452,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - [OpenAI](https://openai.com) for Codex
 - [OpenCode](https://opencode.ai/) for multi-provider CLI routing
-- [Mistral AI](https://mistral.ai/) for Mistral Vibe and Devstral models
+- [Pi](https://github.com/earendil-works/pi) for the alternative extensible agent harness
 - [Anthropic](https://anthropic.com) for Claude and Claude Code

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useSessionStore } from '@/stores/sessionStore';
-import { CLI_PROVIDER_LIMIT_LABELS } from '@/lib/providers';
+import { CLI_PROVIDER_LIMIT_LABELS, getUsageLimitProviderForModel } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 
 interface UsageLimitData {
@@ -50,16 +50,23 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const provider = activeSession?.cliProvider || 'codex';
-  const limitsSupported = provider === 'claude' || provider === 'codex';
+  const usageProvider = getUsageLimitProviderForModel(
+    provider,
+    activeSession?.runtime?.model || activeSession?.cliModel
+  );
+  const limitsSupported = usageProvider !== null;
 
   // Context usage from the active session
   const currentUsage = activeSessionId ? usage[activeSessionId] : undefined;
   const contextPercent = currentUsage?.contextUsedPercent ?? 0;
 
   const { data: usageLimits } = useQuery({
-    queryKey: ['usage-limits', provider],
+    queryKey: ['usage-limits', usageProvider ?? 'none'],
     queryFn: async () => {
-      const response = await api.get<UsageLimitsResponse>(`/api/usage/limits?provider=${provider}`);
+      if (!usageProvider) return null;
+      const response = await api.get<UsageLimitsResponse>(
+        `/api/usage/limits?provider=${usageProvider}`
+      );
       if (response.data.success && response.data.supported && response.data.data) {
         return response.data.data;
       }
@@ -73,41 +80,42 @@ export function UsageLimitsBar({ className }: UsageLimitsBarProps) {
     return null;
   }
 
-  const labels = CLI_PROVIDER_LIMIT_LABELS[provider];
+  const labels = usageProvider ? CLI_PROVIDER_LIMIT_LABELS[usageProvider] : null;
 
-  const limits = usageLimits
-    ? ([
-        usageLimits.fiveHour && {
-          key: 'session',
-          label: labels.session.title,
-          sublabel: labels.session.subtitle,
-          value: usageLimits.fiveHour.utilization,
-          resetsAt: usageLimits.fiveHour.resetsAt,
-        },
-        usageLimits.sevenDay &&
-          labels.weeklyAll && {
-            key: 'weekly',
-            label: labels.weeklyAll.title,
-            sublabel: labels.weeklyAll.subtitle,
-            value: usageLimits.sevenDay.utilization,
-            resetsAt: usageLimits.sevenDay.resetsAt,
+  const limits =
+    usageLimits && labels
+      ? ([
+          usageLimits.fiveHour && {
+            key: 'session',
+            label: labels.session.title,
+            sublabel: labels.session.subtitle,
+            value: usageLimits.fiveHour.utilization,
+            resetsAt: usageLimits.fiveHour.resetsAt,
           },
-        usageLimits.sevenDaySonnet &&
-          labels.weeklySonnet && {
-            key: 'sonnet',
-            label: labels.weeklySonnet.title,
-            sublabel: labels.weeklySonnet.subtitle,
-            value: usageLimits.sevenDaySonnet.utilization,
-            resetsAt: usageLimits.sevenDaySonnet.resetsAt,
-          },
-      ].filter(Boolean) as Array<{
-        key: string;
-        label: string;
-        sublabel?: string;
-        value: number;
-        resetsAt?: string | null;
-      }>)
-    : [];
+          usageLimits.sevenDay &&
+            labels.weeklyAll && {
+              key: 'weekly',
+              label: labels.weeklyAll.title,
+              sublabel: labels.weeklyAll.subtitle,
+              value: usageLimits.sevenDay.utilization,
+              resetsAt: usageLimits.sevenDay.resetsAt,
+            },
+          usageLimits.sevenDaySonnet &&
+            labels.weeklySonnet && {
+              key: 'sonnet',
+              label: labels.weeklySonnet.title,
+              sublabel: labels.weeklySonnet.subtitle,
+              value: usageLimits.sevenDaySonnet.utilization,
+              resetsAt: usageLimits.sevenDaySonnet.resetsAt,
+            },
+        ].filter(Boolean) as Array<{
+          key: string;
+          label: string;
+          sublabel?: string;
+          value: number;
+          resetsAt?: string | null;
+        }>)
+      : [];
 
   // Show nothing if no session
   if (!activeSessionId) {

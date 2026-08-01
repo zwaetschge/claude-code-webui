@@ -16,16 +16,13 @@ enum class CliProvider(val displayName: String, val id: String) {
     CLAUDE("Claude", "claude"),
     CODEX("Codex", "codex"),
     OPENCODE("OpenCode", "opencode"),
-    VIBE("Mistral Vibe", "vibe"),
+    PI("Pi", "pi"),
     UNKNOWN("Unknown", "unknown"),
     ;
 
     companion object {
-        fun fromId(id: String): CliProvider = when (id.lowercase()) {
-            "glm", "kimi", "z-ai", "zai" -> OPENCODE
-            "gemini" -> UNKNOWN
-            else -> entries.find { it.id.equals(id, ignoreCase = true) } ?: UNKNOWN
-        }
+        fun fromId(id: String): CliProvider =
+            entries.find { it.id.equals(id, ignoreCase = true) } ?: UNKNOWN
     }
 }
 
@@ -78,15 +75,15 @@ object ProviderThemes {
             icon = Icons.Filled.FlashOn,
             displayName = "OpenCode",
         ),
-        CliProvider.VIBE to ProviderTheme(
-            color = VibeColor,
-            colorDark = Color(0xFFFCA5A5),
-            containerColor = Color(0xFFFFECEC),
-            containerColorDark = Color(0xFF4A1010),
-            onContainerColor = Color(0xFFB91C1C),
-            onContainerColorDark = Color(0xFFFCA5A5),
+        CliProvider.PI to ProviderTheme(
+            color = Color(0xFF0F766E),
+            colorDark = Color(0xFF5EEAD4),
+            containerColor = Color(0xFFCCFBF1),
+            containerColorDark = Color(0xFF134E4A),
+            onContainerColor = Color(0xFF115E59),
+            onContainerColorDark = Color(0xFF99F6E4),
             icon = Icons.Filled.Cloud,
-            displayName = "Mistral Vibe",
+            displayName = "Pi",
         ),
     )
 

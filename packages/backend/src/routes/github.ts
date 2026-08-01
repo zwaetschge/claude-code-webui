@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError } from '../middleware/errorHandler';
-import { githubService } from '../services/github';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { githubService } from '../services/github.js';
 
 const router = Router();
 

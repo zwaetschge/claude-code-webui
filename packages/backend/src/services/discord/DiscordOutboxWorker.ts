@@ -1,5 +1,5 @@
-import { getDatabase } from '../../db';
-import { discordIntegrationService } from './DiscordIntegrationService';
+import { getDatabase } from '../../db/index.js';
+import { discordIntegrationService } from './DiscordIntegrationService.js';
 
 const MAX_ATTEMPTS = 5;
 const DEFAULT_INTERVAL_MS = 15_000;
@@ -29,7 +29,10 @@ async function responseBody(response: Response): Promise<Record<string, unknown>
   }
 }
 
-function retryAfterSeconds(response: Response, body: Record<string, unknown> | string | null): number {
+function retryAfterSeconds(
+  response: Response,
+  body: Record<string, unknown> | string | null
+): number {
   const header = response.headers.get('retry-after');
   const headerSeconds = header ? Number.parseFloat(header) : Number.NaN;
   if (Number.isFinite(headerSeconds) && headerSeconds > 0) return Math.ceil(headerSeconds);
@@ -42,10 +45,14 @@ function retryAfterSeconds(response: Response, body: Record<string, unknown> | s
   return 60;
 }
 
-function formatDiscordError(response: Response, body: Record<string, unknown> | string | null): string {
+function formatDiscordError(
+  response: Response,
+  body: Record<string, unknown> | string | null
+): string {
   if (!body) return `Discord returned HTTP ${response.status}`;
   if (typeof body === 'string') return `Discord returned HTTP ${response.status}: ${body}`;
-  const message = typeof body.message === 'string' ? body.message : JSON.stringify(body).slice(0, 700);
+  const message =
+    typeof body.message === 'string' ? body.message : JSON.stringify(body).slice(0, 700);
   return `Discord returned HTTP ${response.status}: ${message}`;
 }
 
@@ -100,7 +107,10 @@ export class DiscordOutboxWorker {
     }
   }
 
-  async processNow(id: string, options: { ignoreEnabled?: boolean } = {}): Promise<DiscordSendResult> {
+  async processNow(
+    id: string,
+    options: { ignoreEnabled?: boolean } = {}
+  ): Promise<DiscordSendResult> {
     const db = getDatabase();
     db.prepare(
       `UPDATE discord_outbox
@@ -138,12 +148,12 @@ export class DiscordOutboxWorker {
           ? `https://discord.com/api/v10/channels/${runtime.channelId}/messages`
           : runtime.webhookUrl!,
         {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(isBotTransport ? { Authorization: `Bot ${runtime.botToken}` } : {}),
-        },
-        body: isBotTransport ? botMessageBody(row.payloadJson) : row.payloadJson,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(isBotTransport ? { Authorization: `Bot ${runtime.botToken}` } : {}),
+          },
+          body: isBotTransport ? botMessageBody(row.payloadJson) : row.payloadJson,
         }
       );
 

@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { getDatabase } from '../db';
+import { getDatabase } from '../db/index.js';
 
 export interface AuditEntry {
   actorUserId: string | null;

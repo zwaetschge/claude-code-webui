@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { config } from '../config';
-import { getDatabase } from '../db';
-import { AppError } from './errorHandler';
+import { config } from '../config.js';
+import { getDatabase } from '../db/index.js';
+import { AppError } from './errorHandler.js';
 
 export interface AuthenticatedRequest extends Request {
   userId: string;
@@ -69,27 +69,44 @@ function enforceUserLifecycle(userId: string): void {
   }
 }
 
-export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
-  // Check for JWT in Authorization header
+/**
+ * Resolve a WebUI identity without mutating the request. This is shared by
+ * normal API authentication and the CLI-provider link routes: provider
+ * credentials prove that a CLI is installed, not who is using the WebUI.
+ */
+export function resolveAuthenticatedUserId(req: Request): string | null {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
     let userId: string;
     try {
-      const decoded = jwt.verify(token, config.jwtSecret) as { userId: string };
+      const decoded = jwt.verify(token, config.jwtSecret) as { userId?: unknown };
+      if (typeof decoded.userId !== 'string' || !decoded.userId) {
+        throw new Error('missing user id');
+      }
       userId = decoded.userId;
     } catch {
       throw new AppError('Invalid token', 401, 'INVALID_TOKEN');
     }
     enforceUserLifecycle(userId);
-    (req as AuthenticatedRequest).userId = userId;
-    return next();
+    return userId;
   }
 
-  // Check for session-based auth
   if (req.isAuthenticated && req.isAuthenticated() && req.user) {
-    const userId = (req.user as { id: string }).id;
+    const userId = (req.user as { id?: unknown }).id;
+    if (typeof userId !== 'string' || !userId) {
+      throw new AppError('Invalid session identity', 401, 'INVALID_SESSION');
+    }
     enforceUserLifecycle(userId);
+    return userId;
+  }
+
+  return null;
+}
+
+export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
+  const userId = resolveAuthenticatedUserId(req);
+  if (userId) {
     (req as AuthenticatedRequest).userId = userId;
     return next();
   }

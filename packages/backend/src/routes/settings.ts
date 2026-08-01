@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { getAppConfig, getDatabase, setAppConfig } from '../db';
-import { AppError } from '../middleware/errorHandler';
-import { safeEncrypt, safeDecrypt } from '../utils/encryption';
-import { safeJsonParse } from '../utils/json';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { getAppConfig, getDatabase, setAppConfig } from '../db/index.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { safeEncrypt, safeDecrypt } from '../utils/encryption.js';
+import { safeJsonParse } from '../utils/json.js';
 import type {
   UserSettings,
   Theme,
@@ -15,43 +15,130 @@ import type {
   CodexServiceTier,
   LocalUsageBudget,
   OracleBrowserSettings,
+  AnalyticsSettings,
 } from '@plum-code-webui/shared';
-import { parseOracleBrowserSettings } from '../utils/oracleSettings';
+import { DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS } from '@plum-code-webui/shared';
+import { parseOracleBrowserSettings } from '../utils/oracleSettings.js';
 
 const router = Router();
 
-const updateSettingsSchema = z.object({
-  theme: z.enum(['dark', 'light', 'system']).optional(),
+const CLAUDE_API_TIMEOUT_MS = 3_000_000;
+
+export interface ClaudeApiConfig {
+  baseUrl: string;
+  authToken: string;
+  opusModel?: string;
+  sonnetModel?: string;
+  haikuModel?: string;
+  apiTimeoutMs: number;
+}
+
+export type ZaiApiConfig = ClaudeApiConfig;
+
+export const DEFAULT_ENABLED_CLI_PROVIDERS: CLIProvider[] = [
+  'codex',
+  'claude',
+  'zai',
+  'opencode',
+  'pi',
+  'kimi',
+];
+
+export type ClaudeApiEndpointKind = 'anthropic' | 'z-ai' | 'custom';
+
+export function getClaudeApiEndpointKind(config: ClaudeApiConfig | null): ClaudeApiEndpointKind {
+  if (!config) return 'anthropic';
+
+  try {
+    const hostname = new URL(config.baseUrl).hostname.toLowerCase();
+    if (hostname === 'z.ai' || hostname.endsWith('.z.ai')) return 'z-ai';
+    if (hostname === 'anthropic.com' || hostname.endsWith('.anthropic.com')) return 'anthropic';
+  } catch {
+    // The settings schema validates URLs; keep malformed legacy values isolated.
+  }
+
+  return 'custom';
+}
+
+export function getClaudeApiModelLabels(
+  config: ClaudeApiConfig | null
+): Partial<Record<'opus' | 'sonnet' | 'haiku', string>> | null {
+  if (!config) return null;
+  const labels: Partial<Record<'opus' | 'sonnet' | 'haiku', string>> = {};
+  if (config.opusModel) labels.opus = config.opusModel;
+  if (config.sonnetModel) labels.sonnet = config.sonnetModel;
+  if (config.haikuModel) labels.haiku = config.haikuModel;
+  return labels;
+}
+
+const claudeApiSettingsSchema = z.object({
+  baseUrl: z.string().trim().url().max(2048),
+  authToken: z.string().trim().min(1).max(4096).optional(),
+  opusModel: z.string().trim().max(200).optional(),
+  sonnetModel: z.string().trim().max(200).optional(),
+  haikuModel: z.string().trim().max(200).optional(),
+});
+
+function compactOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export function buildClaudeApiEnv(config: ClaudeApiConfig | null): Record<string, string> {
+  if (!config) return {};
+
+  const env: Record<string, string> = {
+    ANTHROPIC_BASE_URL: config.baseUrl,
+    ANTHROPIC_AUTH_TOKEN: config.authToken,
+    API_TIMEOUT_MS: String(config.apiTimeoutMs),
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  };
+
+  if (config.opusModel) env.ANTHROPIC_DEFAULT_OPUS_MODEL = config.opusModel;
+  if (config.sonnetModel) env.ANTHROPIC_DEFAULT_SONNET_MODEL = config.sonnetModel;
+  if (config.haikuModel) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = config.haikuModel;
+
+  return env;
+}
+
+export const updateSettingsSchema = z.object({
+  theme: z.enum(['dark', 'light', 'system', 'eink']).optional(),
   defaultWorkingDir: z.string().nullable().optional(),
   allowedTools: z.array(z.string()).optional(),
   customSystemPrompt: z.string().nullable().optional(),
-  uiProvider: z.enum(['plum', 'claude', 'codex', 'opencode', 'vibe']).optional(),
+  uiProvider: z.enum(['plum', 'claude', 'zai', 'codex', 'opencode', 'pi']).optional(),
   backgroundAnimation: z.enum(['glass', 'aurora', 'ribbons', 'still']).optional(),
-  defaultCliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']).optional(),
+  defaultCliProvider: z.enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']).optional(),
+  enabledCliProviders: z
+    .array(z.enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']))
+    .min(1)
+    .optional(),
   cliProviderModels: z
     .object({
       claude: z.string().optional(),
+      zai: z.string().optional(),
       codex: z.string().optional(),
       opencode: z.string().optional(),
-      vibe: z.string().optional(),
+      pi: z.string().optional(),
     })
     .partial()
     .optional(),
   cliProviderModelLists: z
     .object({
       claude: z.array(z.string()).optional(),
+      zai: z.array(z.string()).optional(),
       codex: z.array(z.string()).optional(),
       opencode: z.array(z.string()).optional(),
-      vibe: z.array(z.string()).optional(),
+      pi: z.array(z.string()).optional(),
     })
     .partial()
     .optional(),
   cliProviderReasoning: z
     .object({
       claude: z.string().optional(),
+      zai: z.string().optional(),
       codex: z.string().optional(),
       opencode: z.string().optional(),
-      vibe: z.string().optional(),
+      pi: z.string().optional(),
     })
     .partial()
     .optional(),
@@ -68,6 +155,10 @@ const updateSettingsSchema = z.object({
         .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
         .partial()
         .optional(),
+      zai: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
       codex: z
         .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
         .partial()
@@ -76,7 +167,7 @@ const updateSettingsSchema = z.object({
         .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
         .partial()
         .optional(),
-      vibe: z
+      pi: z
         .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
         .partial()
         .optional(),
@@ -94,22 +185,69 @@ const updateSettingsSchema = z.object({
     })
     .partial()
     .optional(),
+  analytics: z
+    .object({
+      hiddenLimitMetrics: z
+        .object({
+          codex: z.array(z.string().max(160)).optional(),
+          kimi: z.array(z.string().max(160)).optional(),
+          claude: z.array(z.string().max(160)).optional(),
+          zai: z.array(z.string().max(160)).optional(),
+        })
+        .partial()
+        .optional(),
+    })
+    .partial()
+    .optional(),
 });
+
+export function stripDeviceAppearanceSettings<
+  T extends { theme?: unknown; backgroundAnimation?: unknown },
+>(settings: T): Omit<T, 'theme' | 'backgroundAnimation'> {
+  const accountSettings = { ...settings };
+  delete accountSettings.theme;
+  delete accountSettings.backgroundAnimation;
+  return accountSettings;
+}
 
 function parseUiProvider(value: unknown): UiProvider {
   return value === 'plum' ||
     value === 'claude' ||
+    value === 'zai' ||
     value === 'codex' ||
     value === 'opencode' ||
-    value === 'vibe'
+    value === 'pi'
     ? value
     : 'plum';
 }
 
 function parseCliProvider(value: unknown): CLIProvider {
-  return value === 'claude' || value === 'codex' || value === 'opencode' || value === 'vibe'
+  return value === 'claude' ||
+    value === 'zai' ||
+    value === 'codex' ||
+    value === 'opencode' ||
+    value === 'pi'
     ? value
     : 'codex';
+}
+
+export function parseEnabledCliProviders(value: unknown): CLIProvider[] {
+  if (!Array.isArray(value)) return [...DEFAULT_ENABLED_CLI_PROVIDERS];
+  const valid = new Set<CLIProvider>(DEFAULT_ENABLED_CLI_PROVIDERS);
+  const providers = value.filter(
+    (provider): provider is CLIProvider =>
+      typeof provider === 'string' && valid.has(provider as CLIProvider)
+  );
+  return providers.length > 0 ? [...new Set(providers)] : [...DEFAULT_ENABLED_CLI_PROVIDERS];
+}
+
+export function getEnabledCliProvidersForUser(userId: string): CLIProvider[] {
+  const db = getDatabase();
+  const settings = db
+    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
+    .get(userId) as { settings_json: string | null } | undefined;
+  const parsed = safeJsonParse<Record<string, unknown>>(settings?.settings_json, {});
+  return parseEnabledCliProviders(parsed.enabledCliProviders);
 }
 
 function parseBackgroundAnimation(value: unknown): BackgroundAnimation {
@@ -131,7 +269,7 @@ function parseCliProviderModels(value: unknown): Partial<Record<CLIProvider, str
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, string>> = {};
 
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
+  const providers: CLIProvider[] = DEFAULT_ENABLED_CLI_PROVIDERS;
   for (const provider of providers) {
     const model = raw[provider];
     if (typeof model === 'string' && model.trim()) {
@@ -151,7 +289,7 @@ function parseCliProviderModelLists(
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, string[]>> = {};
 
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
+  const providers: CLIProvider[] = DEFAULT_ENABLED_CLI_PROVIDERS;
   for (const provider of providers) {
     const models = raw[provider];
     if (Array.isArray(models)) {
@@ -178,6 +316,7 @@ const VALID_REASONING_LEVELS = new Set([
   'extra_high',
   'xhigh',
   'max',
+  'ultra',
 ]);
 
 function normalizeReasoningLevel(value: unknown): string | undefined {
@@ -206,7 +345,7 @@ function parseCliProviderReasoning(
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, string>> = {};
 
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
+  const providers: CLIProvider[] = DEFAULT_ENABLED_CLI_PROVIDERS;
   for (const provider of providers) {
     const level = normalizeReasoningLevel(raw[provider]);
     if (level) {
@@ -254,7 +393,7 @@ function parseLocalUsageBudgets(
 
   const raw = value as Record<string, unknown>;
   const parsed: Partial<Record<CLIProvider, LocalUsageBudget>> = {};
-  const providers: CLIProvider[] = ['claude', 'codex', 'opencode', 'vibe'];
+  const providers: CLIProvider[] = DEFAULT_ENABLED_CLI_PROVIDERS;
 
   for (const provider of providers) {
     const entry = raw[provider];
@@ -272,6 +411,34 @@ function parseLocalUsageBudgets(
 
 function normalizeOracleBrowserSettings(value: unknown): OracleBrowserSettings | undefined {
   return parseOracleBrowserSettings(value);
+}
+
+export function parseAnalyticsSettings(value: unknown): AnalyticsSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { hiddenLimitMetrics: DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS };
+  }
+  const parsed = value as { hiddenLimitMetrics?: unknown };
+  if (
+    !parsed.hiddenLimitMetrics ||
+    typeof parsed.hiddenLimitMetrics !== 'object' ||
+    Array.isArray(parsed.hiddenLimitMetrics)
+  ) {
+    return { hiddenLimitMetrics: {} };
+  }
+  const hiddenLimitMetrics: NonNullable<AnalyticsSettings['hiddenLimitMetrics']> = {};
+  for (const provider of ['codex', 'kimi', 'claude', 'zai'] as const) {
+    const metrics = (parsed.hiddenLimitMetrics as Record<string, unknown>)[provider];
+    if (!Array.isArray(metrics)) continue;
+    hiddenLimitMetrics[provider] = [
+      ...new Set(
+        metrics.filter(
+          (metric): metric is string =>
+            typeof metric === 'string' && metric.length > 0 && metric.length <= 160
+        )
+      ),
+    ];
+  }
+  return { hiddenLimitMetrics };
 }
 
 // Get user settings
@@ -318,6 +485,7 @@ router.get('/', requireAuth, (req, res) => {
   const uiProvider = parseUiProvider(settingsJson.uiProvider);
   const backgroundAnimation = parseBackgroundAnimation(settingsJson.backgroundAnimation);
   const defaultCliProvider = parseCliProvider(settingsJson.defaultCliProvider);
+  const enabledCliProviders = parseEnabledCliProviders(settingsJson.enabledCliProviders);
   const cliProviderModels = parseCliProviderModels(settingsJson.cliProviderModels);
   const cliProviderModelLists = parseCliProviderModelLists(settingsJson.cliProviderModelLists);
   const cliProviderReasoning = parseCliProviderReasoning(settingsJson.cliProviderReasoning);
@@ -327,6 +495,7 @@ router.get('/', requireAuth, (req, res) => {
   const codexWebSearch = parseCodexWebSearch(settingsJson.codexWebSearch);
   const localUsageBudgets = parseLocalUsageBudgets(settingsJson.localUsageBudgets);
   const oracleBrowser = normalizeOracleBrowserSettings(settingsJson.oracleBrowser);
+  const analytics = parseAnalyticsSettings(settingsJson.analytics);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -337,6 +506,7 @@ router.get('/', requireAuth, (req, res) => {
     uiProvider,
     backgroundAnimation,
     defaultCliProvider,
+    enabledCliProviders,
     cliProviderModels,
     cliProviderModelLists,
     cliProviderReasoning,
@@ -344,6 +514,7 @@ router.get('/', requireAuth, (req, res) => {
     codexWebSearch,
     localUsageBudgets,
     oracleBrowser,
+    analytics,
   };
 
   res.json({ success: true, data: userSettings });
@@ -360,13 +531,12 @@ router.put('/', requireAuth, (req, res) => {
 
   const db = getDatabase();
   const {
-    theme,
     defaultWorkingDir,
     allowedTools,
     customSystemPrompt,
     uiProvider,
-    backgroundAnimation,
     defaultCliProvider,
+    enabledCliProviders,
     cliProviderModels,
     cliProviderModelLists,
     cliProviderReasoning,
@@ -374,15 +544,12 @@ router.put('/', requireAuth, (req, res) => {
     codexWebSearch,
     localUsageBudgets,
     oracleBrowser,
-  } = parsed.data;
+    analytics,
+  } = stripDeviceAppearanceSettings(parsed.data);
 
   const updates: string[] = [];
   const values: unknown[] = [];
 
-  if (theme !== undefined) {
-    updates.push('theme = ?');
-    values.push(theme);
-  }
   if (defaultWorkingDir !== undefined) {
     updates.push('default_working_dir = ?');
     values.push(defaultWorkingDir);
@@ -397,15 +564,16 @@ router.put('/', requireAuth, (req, res) => {
   }
   if (
     uiProvider !== undefined ||
-    backgroundAnimation !== undefined ||
     defaultCliProvider !== undefined ||
+    enabledCliProviders !== undefined ||
     cliProviderModels !== undefined ||
     cliProviderModelLists !== undefined ||
     cliProviderReasoning !== undefined ||
     cliProviderServiceTiers !== undefined ||
     codexWebSearch !== undefined ||
     localUsageBudgets !== undefined ||
-    oracleBrowser !== undefined
+    oracleBrowser !== undefined ||
+    analytics !== undefined
   ) {
     const existing = db
       .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
@@ -415,11 +583,15 @@ router.put('/', requireAuth, (req, res) => {
     if (uiProvider !== undefined) {
       settingsJson.uiProvider = uiProvider;
     }
-    if (backgroundAnimation !== undefined) {
-      settingsJson.backgroundAnimation = backgroundAnimation;
-    }
     if (defaultCliProvider !== undefined) {
       settingsJson.defaultCliProvider = defaultCliProvider;
+    }
+    if (enabledCliProviders !== undefined) {
+      const normalizedEnabledProviders = parseEnabledCliProviders(enabledCliProviders);
+      settingsJson.enabledCliProviders = normalizedEnabledProviders;
+      if (!normalizedEnabledProviders.includes(settingsJson.defaultCliProvider as CLIProvider)) {
+        settingsJson.defaultCliProvider = normalizedEnabledProviders[0];
+      }
     }
     if (cliProviderModels !== undefined) {
       const normalized = parseCliProviderModels(cliProviderModels) || {};
@@ -472,6 +644,9 @@ router.put('/', requireAuth, (req, res) => {
         delete settingsJson.oracleBrowser;
       }
     }
+    if (analytics !== undefined) {
+      settingsJson.analytics = parseAnalyticsSettings(analytics);
+    }
     updates.push('settings_json = ?');
     values.push(JSON.stringify(settingsJson));
   }
@@ -502,6 +677,7 @@ router.put('/', requireAuth, (req, res) => {
   const updatedUiProvider = parseUiProvider(updatedJson.uiProvider);
   const updatedBackgroundAnimation = parseBackgroundAnimation(updatedJson.backgroundAnimation);
   const updatedDefaultCliProvider = parseCliProvider(updatedJson.defaultCliProvider);
+  const updatedEnabledCliProviders = parseEnabledCliProviders(updatedJson.enabledCliProviders);
   const updatedCliProviderModels = parseCliProviderModels(updatedJson.cliProviderModels);
   const updatedCliProviderModelLists = parseCliProviderModelLists(
     updatedJson.cliProviderModelLists
@@ -513,6 +689,7 @@ router.put('/', requireAuth, (req, res) => {
   const updatedCodexWebSearch = parseCodexWebSearch(updatedJson.codexWebSearch);
   const updatedLocalUsageBudgets = parseLocalUsageBudgets(updatedJson.localUsageBudgets);
   const updatedOracleBrowser = normalizeOracleBrowserSettings(updatedJson.oracleBrowser);
+  const updatedAnalytics = parseAnalyticsSettings(updatedJson.analytics);
 
   const userSettings: UserSettings = {
     userId: settings.userId,
@@ -523,6 +700,7 @@ router.put('/', requireAuth, (req, res) => {
     uiProvider: updatedUiProvider,
     backgroundAnimation: updatedBackgroundAnimation,
     defaultCliProvider: updatedDefaultCliProvider,
+    enabledCliProviders: updatedEnabledCliProviders,
     cliProviderModels: updatedCliProviderModels,
     cliProviderModelLists: updatedCliProviderModelLists,
     cliProviderReasoning: updatedCliProviderReasoning,
@@ -530,6 +708,7 @@ router.put('/', requireAuth, (req, res) => {
     codexWebSearch: updatedCodexWebSearch,
     localUsageBudgets: updatedLocalUsageBudgets,
     oracleBrowser: updatedOracleBrowser,
+    analytics: updatedAnalytics,
   };
 
   res.json({ success: true, data: userSettings });
@@ -688,67 +867,55 @@ export function getGitHubTokenForUser(userId: string): string | null {
   return null;
 }
 
-// Get Mistral API key status (not the actual key)
-router.get('/mistral-key', requireAuth, (req, res) => {
+function serializeZaiApiStatus(config: ZaiApiConfig | null) {
+  return {
+    configured: !!config,
+    baseUrl: config?.baseUrl ?? '',
+    hasAuthToken: !!config?.authToken,
+    authTokenPreview: config?.authToken
+      ? `${config.authToken.substring(0, 8)}...${config.authToken.slice(-4)}`
+      : null,
+    opusModel: config?.opusModel ?? '',
+    sonnetModel: config?.sonnetModel ?? '',
+    haikuModel: config?.haikuModel ?? '',
+  };
+}
+
+// Z.AI runs through the Claude Code transport, but is a separate WebUI
+// provider. Its endpoint/token are never injected into Anthropic subscription
+// sessions.
+router.get('/zai-api', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
-  const db = getDatabase();
-  const envKey = process.env.MISTRAL_API_KEY || '';
-
-  const settings = db
-    .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
-    .get(userId) as { settings_json: string | null } | undefined;
-
-  if (settings?.settings_json) {
-    const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});
-    const encryptedKey = parsed.mistralApiKey;
-    if (typeof encryptedKey === 'string') {
-      const apiKey = safeDecrypt(encryptedKey);
-      if (apiKey) {
-        res.json({
-          success: true,
-          data: {
-            hasKey: true,
-            keyPreview: `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`,
-            source: 'user' as const,
-            envFallback: !!envKey,
-          },
-        });
-        return;
-      }
-    }
-  }
-
-  res.json({
-    success: true,
-    data: {
-      hasKey: !!envKey,
-      keyPreview: envKey ? `${envKey.substring(0, 8)}...${envKey.slice(-4)}` : null,
-      source: envKey ? ('env' as const) : ('none' as const),
-      envFallback: !!envKey,
-    },
-  });
+  res.json({ success: true, data: serializeZaiApiStatus(getZaiApiConfigForUser(userId)) });
 });
 
-// Set Mistral API key
-router.put('/mistral-key', requireAuth, (req, res) => {
+router.put('/zai-api', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
-  const { apiKey } = req.body;
-
-  if (!apiKey || typeof apiKey !== 'string') {
-    throw new AppError('API key is required', 400, 'MISSING_API_KEY');
+  const parsed = claudeApiSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError('Invalid Z.AI configuration', 400, 'VALIDATION_ERROR');
   }
 
   const db = getDatabase();
-
-  // Get existing settings_json
   const existing = db
     .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
     .get(userId) as { settings_json: string | null } | undefined;
-
   const settingsObj = safeJsonParse<Record<string, unknown>>(existing?.settings_json, {});
+  const existingConfig = getZaiApiConfigForUser(userId);
+  const authToken = parsed.data.authToken || existingConfig?.authToken;
+  if (!authToken) {
+    throw new AppError('API token is required', 400, 'MISSING_API_TOKEN');
+  }
 
-  // Encrypt the API key before storing
-  settingsObj.mistralApiKey = safeEncrypt(apiKey);
+  settingsObj.zaiApi = {
+    baseUrl: parsed.data.baseUrl,
+    authToken: safeEncrypt(authToken),
+    opusModel: compactOptionalString(parsed.data.opusModel),
+    sonnetModel: compactOptionalString(parsed.data.sonnetModel),
+    haikuModel: compactOptionalString(parsed.data.haikuModel),
+    apiTimeoutMs: CLAUDE_API_TIMEOUT_MS,
+  };
+  delete settingsObj.claudeApi;
 
   db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(
     JSON.stringify(settingsObj),
@@ -758,26 +925,28 @@ router.put('/mistral-key', requireAuth, (req, res) => {
   res.json({
     success: true,
     data: {
-      hasKey: true,
-      keyPreview: `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`,
+      configured: true,
+      baseUrl: parsed.data.baseUrl,
+      hasAuthToken: true,
+      authTokenPreview: `${authToken.substring(0, 8)}...${authToken.slice(-4)}`,
+      opusModel: compactOptionalString(parsed.data.opusModel) ?? '',
+      sonnetModel: compactOptionalString(parsed.data.sonnetModel) ?? '',
+      haikuModel: compactOptionalString(parsed.data.haikuModel) ?? '',
     },
   });
 });
 
-// Delete Mistral API key
-router.delete('/mistral-key', requireAuth, (req, res) => {
+router.delete('/zai-api', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
-
-  // Get existing settings_json
   const existing = db
     .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
     .get(userId) as { settings_json: string | null } | undefined;
 
   if (existing?.settings_json) {
     const settingsObj = safeJsonParse<Record<string, unknown>>(existing.settings_json, {});
-    delete settingsObj.mistralApiKey;
-
+    delete settingsObj.zaiApi;
+    delete settingsObj.claudeApi;
     db.prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?').run(
       JSON.stringify(settingsObj),
       userId
@@ -787,24 +956,46 @@ router.delete('/mistral-key', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-// Get Mistral API key for internal use (returns full decrypted key)
-export function getMistralApiKeyForUser(userId: string): string | null {
+export function getZaiApiConfigForUser(userId: string): ZaiApiConfig | null {
   const db = getDatabase();
-
   const settings = db
     .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
     .get(userId) as { settings_json: string | null } | undefined;
+  const parsed = safeJsonParse<Record<string, unknown>>(settings?.settings_json, {});
+  const stored =
+    parsed.zaiApi && typeof parsed.zaiApi === 'object'
+      ? parsed.zaiApi
+      : parsed.claudeApi && typeof parsed.claudeApi === 'object'
+        ? parsed.claudeApi
+        : null;
+  if (!stored) return null;
 
-  if (settings?.settings_json) {
-    const parsed = safeJsonParse<Record<string, unknown>>(settings.settings_json, {});
-    const encryptedKey = parsed.mistralApiKey;
-    if (typeof encryptedKey === 'string') {
-      return safeDecrypt(encryptedKey);
-    }
-  }
+  const raw = stored as Record<string, unknown>;
+  const baseUrl = compactOptionalString(raw.baseUrl);
+  const authToken = typeof raw.authToken === 'string' ? safeDecrypt(raw.authToken) : null;
+  if (!baseUrl || !authToken) return null;
 
-  return null;
+  return {
+    baseUrl,
+    authToken,
+    opusModel: compactOptionalString(raw.opusModel),
+    sonnetModel: compactOptionalString(raw.sonnetModel),
+    haikuModel: compactOptionalString(raw.haikuModel),
+    apiTimeoutMs:
+      typeof raw.apiTimeoutMs === 'number' && Number.isFinite(raw.apiTimeoutMs)
+        ? raw.apiTimeoutMs
+        : CLAUDE_API_TIMEOUT_MS,
+  };
 }
+
+/** @deprecated Use the dedicated Z.AI settings route and getter. */
+export const getClaudeApiConfigForUser = getZaiApiConfigForUser;
+
+// Compatibility aliases for older frontends during a rolling deployment.
+router.get('/claude-api', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  res.json({ success: true, data: serializeZaiApiStatus(getZaiApiConfigForUser(userId)) });
+});
 
 // ComfyUI / LoRA Tester integration URLs (admin-wide, stored in app_config)
 const integrationsSchema = z.object({
@@ -822,7 +1013,7 @@ router.get('/integrations', requireAuth, (_req, res) => {
   });
 });
 
-router.put('/integrations', requireAuth, (req, res) => {
+router.put('/integrations', requireAuth, requireAdmin, (req, res) => {
   const parsed = integrationsSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');

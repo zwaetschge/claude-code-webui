@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth } from '../middleware/auth.js';
 
 const execAsync = promisify(exec);
 const router = Router();

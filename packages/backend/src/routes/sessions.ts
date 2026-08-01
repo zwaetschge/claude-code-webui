@@ -6,22 +6,33 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import os from 'os';
 import multer from 'multer';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { getDatabase } from '../db';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { config } from '../config';
-import { safeJsonParse } from '../utils/json';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { getProcessManager } from '../websocket';
-import { isAllowedBasePath } from '../utils/allowedPaths';
-import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize';
-import { resolveConfigHome } from '../utils/configPaths';
-import { readSkillLibraryItem } from '../utils/skillLibrary';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { getDatabase } from '../db/index.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { config } from '../config.js';
+import { safeJsonParse } from '../utils/json.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { getProcessManager } from '../websocket/index.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
+import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize.js';
+import { resolveConfigHome } from '../utils/configPaths.js';
+import { readSkillLibraryItem } from '../utils/skillLibrary.js';
 import { resolveContextWindow as contextWindowFor } from '../utils/contextWindow.js';
-import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
-import { readLatestCodexContextSnapshot } from '../services/claude/ClaudeProcessManager';
-import { comfyui } from '../services/comfyui';
-import { scanProject } from '../utils/projectScanner';
+import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers.js';
+import { readLatestCodexContextSnapshot } from '../services/claude/ClaudeProcessManager.js';
+import { scanProject } from '../utils/projectScanner.js';
+import {
+  buildSessionIconImagePrompt,
+  generateSessionIconImage,
+} from '../services/sessionIconGenerator.js';
+import {
+  ensureSessionIconThumbnail,
+  parseSessionIconThumbnailSize,
+  sessionIconCacheControl,
+} from '../services/sessionIconThumbnail.js';
+import { applyUntrustedFileHeaders } from '../utils/untrustedFile.js';
+import { loadMessageMedia, resolveOwnedChatMedia } from '../services/chatMedia.js';
+import { getEnabledCliProvidersForUser, getZaiApiConfigForUser } from './settings.js';
 
 const router = Router();
 
@@ -35,10 +46,13 @@ const projectDescriptionCache = new Map<
 >();
 
 // Validation schemas
-const createSessionSchema = z.object({
+export const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   workingDirectory: z.string().optional(), // Optional - will be auto-generated from name
-  cliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']).optional().default('codex'),
+  cliProvider: z
+    .enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi'])
+    .optional()
+    .default('codex'),
   cliModel: z.string().trim().min(1).max(200).nullable().optional(),
   cliReasoning: z.string().trim().min(1).max(50).nullable().optional(),
   cliServiceTier: z.enum(['fast']).nullable().optional(),
@@ -52,8 +66,8 @@ const updateSessionSchema = z.object({
   workingDirectory: z.string().min(1).optional(),
 });
 
-const updateProviderSchema = z.object({
-  cliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']),
+export const updateProviderSchema = z.object({
+  cliProvider: z.enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']),
 });
 
 const updateSessionModelSchema = z.object({
@@ -135,8 +149,6 @@ async function attachProjectDescription<T extends Record<string, unknown>>(sessi
 const SESSION_ICON_DIR =
   process.env.SESSION_ICON_DIR ||
   path.resolve(process.cwd(), 'packages/backend/data/session-icons');
-const GENERATED_IMAGE_DIR =
-  process.env.COMFYUI_OUTPUT_DIR || path.resolve(process.cwd(), 'packages/backend/data/generated');
 const MAX_ICON_BYTES = 6 * 1024 * 1024;
 
 const ICON_EXT_BY_MIME: Record<string, string> = {
@@ -227,6 +239,23 @@ function validateWorkingDirectory(dir: string): boolean {
   return isAllowedBasePath(dir);
 }
 
+function assertProviderEnabled(userId: string, provider: CLIProvider): void {
+  if (!getEnabledCliProvidersForUser(userId).includes(provider)) {
+    throw new AppError(
+      `${CLI_PROVIDERS[provider].name} is disabled in Settings`,
+      409,
+      'PROVIDER_DISABLED'
+    );
+  }
+  if (provider === 'zai' && !getZaiApiConfigForUser(userId)) {
+    throw new AppError(
+      'Configure Z.AI in Settings before starting a Z.AI session',
+      409,
+      'PROVIDER_NOT_CONFIGURED'
+    );
+  }
+}
+
 // Sanitize session name for folder creation
 function sanitizeFolderName(name: string): string {
   return name
@@ -292,7 +321,7 @@ function sessionIconSelect(prefix = ''): string {
   const p = prefix ? `${prefix}.` : '';
   return `CASE
                 WHEN ${p}icon_path IS NOT NULL AND ${p}icon_path != ''
-                THEN '/api/sessions/' || ${p}id || '/icon?v=' || COALESCE(strftime('%s', ${p}updated_at), '')
+                THEN '/api/sessions/' || ${p}id || '/icon?v=' || lower(hex(substr(${p}icon_path, -16)))
                 ELSE NULL
               END as iconUrl,
               ${p}icon_source as iconSource`;
@@ -357,6 +386,7 @@ function selectSessionById(
               s.design_style_skill as designStyleSkill,
               s.writing_style_skill as writingStyleSkill,
               s.android_device_serial as androidDeviceSerial,
+              s.home_assistant_entity_id as homeAssistantEntityId,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt
        FROM sessions s WHERE s.id = ? ${whereUser}`
@@ -391,37 +421,215 @@ async function storeSessionIcon(
   return { ...updated, starred: Boolean(updated.starred) };
 }
 
-async function readProjectIconCandidate(projectPath: string): Promise<{
+const ROOT_PROJECT_ICON_CANDIDATES = [
+  '.plum/icon.png',
+  '.plum/icon.webp',
+  '.plum/icon.jpg',
+  '.plum/icon.svg',
+  'plum-icon.png',
+  'icon.png',
+  'icon.webp',
+  'favicon.png',
+  'favicon.ico',
+  'favicon.svg',
+  'public/icon.png',
+  'public/icon.webp',
+  'public/favicon.png',
+  'public/favicon.ico',
+  'public/favicon.svg',
+  'public/icons/icon-1024.png',
+  'public/icons/icon-512.png',
+  'public/icons/icon-384.png',
+  'public/icons/icon-256.png',
+  'public/icons/icon-192.png',
+  'public/icons/maskable-512.png',
+  'public/icons/maskable-192.png',
+  'public/icons/apple-touch-icon.png',
+  'app/icon.png',
+  'app/favicon.ico',
+  'src/app/icon.png',
+  'src/app/favicon.ico',
+  'src-tauri/icons/icon.png',
+  'src-tauri/icons/128x128.png',
+  'assets/icon.png',
+  'assets/favicon.png',
+  'resources/icon.png',
+];
+
+const NESTED_PROJECT_ICON_CANDIDATES = [
+  'resources/icon.png',
+  'resources/icon.webp',
+  'resources/icon.jpg',
+  'public/icons/icon-1024.png',
+  'public/icons/icon-512.png',
+  'public/icons/icon-384.png',
+  'public/icons/icon-256.png',
+  'public/icons/icon-192.png',
+  'public/icons/maskable-512.png',
+  'public/icons/maskable-192.png',
+  'public/icons/apple-touch-icon.png',
+  'public/favicon.svg',
+  'public/favicon.ico',
+  'public/favicon.png',
+  'public/icon.png',
+  'app/icon.png',
+  'app/favicon.ico',
+  'src/app/icon.png',
+  'src/app/favicon.ico',
+  'assets/icon.png',
+  'assets/favicon.png',
+  'src-tauri/icons/icon.png',
+  'src-tauri/icons/128x128.png',
+];
+
+function isPathInside(basePath: string, candidatePath: string): boolean {
+  const relative = path.relative(path.resolve(basePath), path.resolve(candidatePath));
+  return (
+    relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+  );
+}
+
+function addIconCandidate(
+  candidates: string[],
+  seen: Set<string>,
+  projectRoot: string,
+  basePath: string,
+  relPath: string | null | undefined
+): void {
+  const trimmed = relPath?.trim();
+  if (!trimmed || /^(?:https?:|data:|file:)/i.test(trimmed)) return;
+  const resolved = path.resolve(basePath, trimmed.replace(/^[/\\]+/, ''));
+  if (!isPathInside(projectRoot, resolved) || seen.has(resolved)) return;
+  seen.add(resolved);
+  candidates.push(resolved);
+}
+
+async function collectProjectIconSearchRoots(projectRoot: string): Promise<string[]> {
+  const roots = [projectRoot];
+  const seen = new Set(roots.map((root) => path.resolve(root)));
+
+  const addRoot = async (candidate: string) => {
+    const resolved = path.resolve(candidate);
+    if (seen.has(resolved) || !isPathInside(projectRoot, resolved)) return;
+    try {
+      const stat = await fs.stat(resolved);
+      if (!stat.isDirectory()) return;
+      seen.add(resolved);
+      roots.push(resolved);
+    } catch {
+      // not a directory
+    }
+  };
+
+  for (const rel of ['desktop', 'frontend', 'client', 'app']) {
+    await addRoot(path.join(projectRoot, rel));
+  }
+
+  for (const rel of ['packages', 'apps']) {
+    const container = path.join(projectRoot, rel);
+    const entries = await fs.readdir(container, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await addRoot(path.join(container, entry.name));
+      }
+    }
+  }
+
+  return roots;
+}
+
+function manifestIconScore(sizes: string | undefined): number {
+  if (!sizes) return 0;
+  if (sizes.toLowerCase() === 'any') return 1_000_000;
+  const scores = [...sizes.matchAll(/(\d+)\s*x\s*(\d+)/gi)].map((match) => {
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    return Number.isFinite(width) && Number.isFinite(height) ? width * height : 0;
+  });
+  return scores.length ? Math.max(...scores) : 0;
+}
+
+async function addPackageJsonIconCandidates(
+  candidates: string[],
+  seen: Set<string>,
+  projectRoot: string,
+  searchRoot: string
+): Promise<void> {
+  try {
+    const raw = await fs.readFile(path.join(searchRoot, 'package.json'), 'utf8');
+    const parsed = safeJsonParse<{
+      icon?: unknown;
+      icons?: unknown;
+      build?: {
+        icon?: unknown;
+        linux?: { icon?: unknown };
+        directories?: { buildResources?: unknown };
+      };
+    }>(raw, {});
+    const refs = [parsed.icon, parsed.build?.icon, parsed.build?.linux?.icon].filter(
+      (value): value is string => typeof value === 'string'
+    );
+
+    const buildResources =
+      typeof parsed.build?.directories?.buildResources === 'string'
+        ? parsed.build.directories.buildResources
+        : null;
+    for (const ref of refs) {
+      addIconCandidate(candidates, seen, projectRoot, searchRoot, ref);
+      if (buildResources && !ref.includes('/') && !ref.includes('\\')) {
+        addIconCandidate(candidates, seen, projectRoot, searchRoot, path.join(buildResources, ref));
+      }
+    }
+  } catch {
+    // package.json is optional
+  }
+}
+
+async function addManifestIconCandidates(
+  candidates: string[],
+  seen: Set<string>,
+  projectRoot: string,
+  searchRoot: string
+): Promise<void> {
+  for (const manifest of ['public/manifest.json', 'public/site.webmanifest', 'manifest.json']) {
+    try {
+      const manifestPath = path.join(searchRoot, manifest);
+      const raw = await fs.readFile(manifestPath, 'utf8');
+      const parsed = safeJsonParse<{ icons?: Array<{ src?: string; sizes?: string }> }>(raw, {});
+      const icons = parsed.icons
+        ?.slice()
+        .sort((a, b) => manifestIconScore(b.sizes) - manifestIconScore(a.sizes))
+        .filter((item) => item.src);
+      for (const icon of icons ?? []) {
+        addIconCandidate(candidates, seen, projectRoot, path.dirname(manifestPath), icon.src);
+      }
+    } catch {
+      // manifest is optional
+    }
+  }
+}
+
+export async function readProjectIconCandidate(projectPath: string): Promise<{
   path: string;
   buffer: Buffer;
   ext: string;
 } | null> {
-  const candidates = [
-    '.plum/icon.png',
-    '.plum/icon.webp',
-    '.plum/icon.jpg',
-    '.plum/icon.svg',
-    'plum-icon.png',
-    'icon.png',
-    'icon.webp',
-    'favicon.png',
-    'favicon.ico',
-    'public/icon.png',
-    'public/icon.webp',
-    'public/favicon.png',
-    'public/favicon.ico',
-    'public/favicon.svg',
-    'app/icon.png',
-    'app/favicon.ico',
-    'src-tauri/icons/icon.png',
-    'src-tauri/icons/128x128.png',
-    'assets/icon.png',
-    'assets/favicon.png',
-    'resources/icon.png',
-  ];
+  const projectRoot = path.resolve(projectPath);
+  const searchRoots = await collectProjectIconSearchRoots(projectRoot);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
 
-  for (const rel of candidates) {
-    const candidate = path.join(projectPath, rel);
+  for (const searchRoot of searchRoots) {
+    const rels =
+      searchRoot === projectRoot ? ROOT_PROJECT_ICON_CANDIDATES : NESTED_PROJECT_ICON_CANDIDATES;
+    for (const rel of rels) {
+      addIconCandidate(candidates, seen, projectRoot, searchRoot, rel);
+    }
+    await addPackageJsonIconCandidates(candidates, seen, projectRoot, searchRoot);
+    await addManifestIconCandidates(candidates, seen, projectRoot, searchRoot);
+  }
+
+  for (const candidate of candidates) {
     try {
       const stat = await fs.stat(candidate);
       if (!stat.isFile() || stat.size > MAX_ICON_BYTES) continue;
@@ -433,41 +641,22 @@ async function readProjectIconCandidate(projectPath: string): Promise<{
     }
   }
 
-  for (const manifest of ['public/manifest.json', 'public/site.webmanifest', 'manifest.json']) {
-    try {
-      const manifestPath = path.join(projectPath, manifest);
-      const raw = await fs.readFile(manifestPath, 'utf8');
-      const parsed = safeJsonParse<{ icons?: Array<{ src?: string; sizes?: string }> }>(raw, {});
-      const icon = parsed.icons
-        ?.slice()
-        .sort((a, b) => (b.sizes || '').localeCompare(a.sizes || ''))
-        .find((item) => item.src);
-      if (!icon?.src) continue;
-      const src = icon.src.replace(/^\//, '');
-      const candidate = path.resolve(path.dirname(manifestPath), src);
-      if (!candidate.startsWith(path.resolve(projectPath))) continue;
-      const stat = await fs.stat(candidate);
-      if (!stat.isFile() || stat.size > MAX_ICON_BYTES) continue;
-      const ext = getIconExtension(candidate);
-      const buffer = await fs.readFile(candidate);
-      return { path: candidate, buffer, ext };
-    } catch {
-      // try next manifest
-    }
-  }
-
   return null;
 }
 
-function buildGeneratedIconPrompt(session: { name: string; workingDirectory: string }): string {
-  const projectName = path.basename(session.workingDirectory);
-  return [
-    `Create a polished square app icon for a developer workspace session named "${session.name}".`,
-    `Project folder: "${projectName}".`,
-    'Use a single centered abstract symbol that suggests software, tooling, and focused work.',
-    'Modern premium icon, high contrast, crisp edges, dark transparent-looking background, subtle depth.',
-    'No words, no letters, no numbers, no watermark, no UI screenshot, no tiny details.',
-  ].join(' ');
+export function buildGeneratedIconPrompt(session: {
+  name: string;
+  workingDirectory: string;
+}): string {
+  return buildSessionIconImagePrompt(session);
+}
+
+export function buildCodexSessionIconMessage(
+  session: { name: string; workingDirectory: string },
+  prompt?: string | null
+): string {
+  const text = (prompt?.trim() || buildGeneratedIconPrompt(session)).replace(/\s+/g, ' ').trim();
+  return `$imagegen ${text}`;
 }
 
 function attachRuntime<T extends Record<string, unknown>>(session: T): T & { runtime: unknown } {
@@ -747,6 +936,7 @@ router.get(
               s.design_style_skill as designStyleSkill,
               s.writing_style_skill as writingStyleSkill,
               s.android_device_serial as androidDeviceSerial,
+              s.home_assistant_entity_id as homeAssistantEntityId,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(
@@ -793,7 +983,7 @@ router.post(
   rateLimiters.sessionCreation,
   rateLimiters.upload,
   parseCreateSessionUpload,
-  async (req, res) => {
+  asyncHandler(async (req, res) => {
     const userId = (req as AuthenticatedRequest).userId;
     const parsed = createSessionSchema.safeParse(req.body);
 
@@ -812,6 +1002,7 @@ router.post(
       surface,
       initialMessage,
     } = parsed.data;
+    assertProviderEnabled(userId, cliProvider);
     const db = getDatabase();
     let storedReasoning = cliReasoning?.trim() || null;
     let storedServiceTier = cliProvider === 'codex' ? cliServiceTier || null : null;
@@ -910,7 +1101,31 @@ router.post(
       storedServiceTier
     );
 
-    const newSession = selectSessionById(db, sessionId, userId) as Record<string, unknown>;
+    let newSession = selectSessionById(db, sessionId, userId) as Record<string, unknown>;
+    const projectIcon = await readProjectIconCandidate(workingDirectory).catch((err) => {
+      console.warn(
+        '[Sessions] Failed to scan project icon:',
+        err instanceof Error ? err.message : err
+      );
+      return null;
+    });
+    if (projectIcon) {
+      try {
+        newSession = await storeSessionIcon(
+          db,
+          sessionId,
+          userId,
+          projectIcon.buffer,
+          projectIcon.ext,
+          'project'
+        );
+      } catch (err) {
+        console.warn(
+          '[Sessions] Failed to apply project icon:',
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -933,7 +1148,7 @@ router.post(
         }
       })();
     }
-  }
+  })
 );
 
 // Update session
@@ -1036,6 +1251,7 @@ router.patch('/:id/provider', requireAuth, (req, res) => {
   }
 
   const { cliProvider } = parsed.data;
+  assertProviderEnabled(userId, cliProvider);
 
   if (existing.cliProvider !== cliProvider) {
     db.prepare(
@@ -1286,7 +1502,7 @@ router.patch(
     if (designStyleSkill !== undefined) {
       if (designStyleSkill !== null) {
         const style = await readSkillLibraryItem(configHome, designStyleSkill);
-        if (!style || style.libraryKind !== 'design' || !style.enabled) {
+        if (!style || style.libraryKind !== 'design') {
           throw new AppError('UI style template not found', 400, 'INVALID_STYLE');
         }
       }
@@ -1297,7 +1513,7 @@ router.patch(
     if (writingStyleSkill !== undefined) {
       if (writingStyleSkill !== null) {
         const style = await readSkillLibraryItem(configHome, writingStyleSkill);
-        if (!style || style.libraryKind !== 'writing' || !style.enabled) {
+        if (!style || style.libraryKind !== 'writing') {
           throw new AppError('Writing style template not found', 400, 'INVALID_STYLE');
         }
       }
@@ -1339,12 +1555,56 @@ router.get(
     }
 
     const iconPath = resolveSessionIconPath(row.iconPath);
-    const ext = path.extname(iconPath).toLowerCase();
-    const contentType = ICON_MIME_BY_EXT[ext] || 'application/octet-stream';
     await fs.access(iconPath);
+
+    const requestedSize = req.query.size;
+    const thumbnailSize = parseSessionIconThumbnailSize(requestedSize);
+    if (requestedSize !== undefined && thumbnailSize === null) {
+      throw new AppError('Unsupported session icon thumbnail size', 400, 'INVALID_ICON_SIZE');
+    }
+
+    let responsePath = iconPath;
+    let variant = 'original';
+    let thumbnailFallback = false;
+    if (thumbnailSize !== null) {
+      try {
+        responsePath = await ensureSessionIconThumbnail(iconPath, thumbnailSize);
+        variant = `thumbnail-${thumbnailSize}`;
+      } catch (error) {
+        thumbnailFallback = true;
+        variant = 'original-fallback';
+        console.warn(
+          `[sessions] Could not create ${thumbnailSize}px thumbnail for session ${req.params.id}; serving the original icon`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+
+    const ext = path.extname(responsePath).toLowerCase();
+    const contentType = ICON_MIME_BY_EXT[ext] || 'application/octet-stream';
+    const stat = await fs.stat(responsePath);
+    const etag = `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+    const isVersioned = typeof req.query.v === 'string' && req.query.v.length > 0;
+
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    createReadStream(iconPath).pipe(res);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader(
+      'Cache-Control',
+      sessionIconCacheControl({ versioned: isVersioned, thumbnailFallback })
+    );
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', stat.mtime.toUTCString());
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Plum-Icon-Variant', variant);
+    if (req.fresh) {
+      res.status(304).end();
+      return;
+    }
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    createReadStream(responsePath).pipe(res);
   })
 );
 
@@ -1437,51 +1697,29 @@ router.post(
     if (!session) throw new AppError('Session not found', 404, 'NOT_FOUND');
 
     const scanned = await scanProject(session.workingDirectory).catch(() => null);
-    const defaultPrompt = buildGeneratedIconPrompt(session);
-    const prompt = [
-      parsed.data.prompt?.trim() || defaultPrompt,
-      scanned?.framework ? `Framework signal: ${scanned.framework}.` : null,
-      scanned?.techStack?.length
-        ? `Tech stack: ${scanned.techStack.slice(0, 4).join(', ')}.`
+    const generatedIcon = await generateSessionIconImage({
+      sessionId,
+      session,
+      prompt: parsed.data.prompt,
+      project: scanned
+        ? {
+            framework: scanned.framework,
+            techStack: scanned.techStack,
+          }
         : null,
-    ]
-      .filter(Boolean)
-      .join(' ');
-
-    const job = await comfyui.generateAndWait(
-      userId,
-      'z-image-turbo',
-      {
-        prompt,
-        negative_prompt:
-          'text, letters, words, numbers, watermark, logo text, screenshot, busy background, tiny details, low contrast',
-        aspect_ratio: '1:1 (Perfect Square)',
-        megapixel: '1.0',
-        steps: 9,
-        cfg: 2.2,
-        filename_prefix: `session-icon-${sessionId}`,
-      },
-      { timeoutMs: 2 * 60 * 1000 }
-    );
-
-    if (job.status !== 'completed' || !job.outputFilename) {
-      throw new AppError(job.error || 'Icon generation failed', 502, 'GENERATE_FAILED');
-    }
-
-    const generatedPath = path.join(GENERATED_IMAGE_DIR, job.outputFilename);
-    const buffer = await fs.readFile(generatedPath);
+    });
     const updatedSession = await storeSessionIcon(
       db,
       sessionId,
       userId,
-      buffer,
-      '.png',
+      generatedIcon.buffer,
+      generatedIcon.ext,
       'generated'
     );
     res.json({
       success: true,
       data: attachRuntimeAndTelemetry(updatedSession),
-      meta: { generationId: job.id, prompt, seed: job.seed ?? null },
+      meta: { generator: 'codex-imagegen', prompt: generatedIcon.prompt },
     });
   })
 );
@@ -1619,8 +1857,12 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       .prepare('SELECT 1 FROM messages WHERE session_id = ? AND rowid < ? LIMIT 1')
       .get(req.params.id, oldestRid) !== undefined;
 
-  // Strip the synthetic `rid` before returning.
-  const messages = ordered.map(({ rid: _rid, ...rest }) => rest);
+  // Strip the synthetic `rid` and hydrate durable, path-free media metadata.
+  const mediaByMessage = loadMessageMedia(ordered.map((row) => String(row.id)));
+  const messages = ordered.map(({ rid: _rid, ...rest }) => {
+    const media = mediaByMessage.get(String(rest.id));
+    return media?.length ? { ...rest, media } : rest;
+  });
 
   res.json({
     success: true,
@@ -1853,6 +2095,51 @@ async function validateToken(
   }
 }
 
+// Serve durable assistant/workspace media. Unlike the legacy filename routes,
+// lookup is by opaque media id and is bound to both session and authenticated
+// owner. Foreign users receive the same 404 as a missing object.
+router.get(
+  '/:id/media/:mediaId',
+  requireAuth,
+  asyncHandler(async (req, res, next) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const media = await resolveOwnedChatMedia({
+      sessionId: req.params.id as string,
+      mediaId: req.params.mediaId as string,
+      userId,
+    });
+    if (!media) throw new AppError('Media not found', 404, 'NOT_FOUND');
+
+    const etag = `"sha256-${media.sha256}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.setHeader('Content-Type', media.mimeType);
+    res.setHeader('Content-Length', String(media.byteSize));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+
+    const safeName = media.filename.replace(/[\r\n"]/g, '') || 'image';
+    const asciiFallback = safeName.replace(/[^\x20-\x7e]/g, '_') || 'image';
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+    );
+
+    if (req.header('if-none-match') === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      res.sendFile(media.filePath, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    }).catch(next);
+  })
+);
+
 // Serve session images (supports token in query param for browser image loading)
 router.get('/:id/images/:filename', async (req, res, next) => {
   try {
@@ -1884,6 +2171,7 @@ router.get('/:id/images/:filename', async (req, res, next) => {
 
     try {
       await fs.access(imagePath);
+      applyUntrustedFileHeaders(res, imagePath);
       res.sendFile(imagePath);
     } catch {
       return res
@@ -1932,11 +2220,13 @@ router.get('/:id/attachments/:filename', async (req, res, next) => {
 
     try {
       await fs.access(attachmentPath);
+      applyUntrustedFileHeaders(res, attachmentPath);
       res.sendFile(attachmentPath);
     } catch {
       // Try legacy image path
       try {
         await fs.access(legacyImagePath);
+        applyUntrustedFileHeaders(res, legacyImagePath);
         res.sendFile(legacyImagePath);
       } catch {
         return res

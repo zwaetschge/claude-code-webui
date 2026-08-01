@@ -7,9 +7,10 @@ import type {
   InterServerEvents,
   SocketData,
 } from '@plum-code-webui/shared';
-import { config } from '../config';
-import { getDatabase } from '../db';
-import { ClaudeProcessManager } from '../services/claude/ClaudeProcessManager';
+import { config } from '../config.js';
+import { getDatabase } from '../db/index.js';
+import { ClaudeProcessManager } from '../services/claude/ClaudeProcessManager.js';
+import { getRunnerAccessDecision } from '../utils/runnerAccess.js';
 
 // Per-socket token bucket for message-send events.
 // Each socket gets WS_MSG_BURST tokens that refill at WS_MSG_RATE per second.
@@ -80,31 +81,74 @@ function canAccessSession(sessionId: string, userId: string): boolean {
 // someone else's session. ProcessManager enforces the same rule downstream; this
 // is the outer layer so unauthorized writes never touch in-memory state like
 // pendingModes (which sits upstream of startSession's DB check).
-function canControlSession(sessionId: string, userId: string): boolean {
-  if (!sessionId || !userId) return false;
+function controlDenialReason(sessionId: string, userId: string): string | null {
+  if (!sessionId || !userId) return 'Runner authorization failed';
   try {
     const db = getDatabase();
-    const row = db
-      .prepare(`SELECT 1 FROM sessions WHERE id = ? AND user_id = ?`)
-      .get(sessionId, userId);
-    return !!row;
+    const row = db.prepare(`SELECT user_id FROM sessions WHERE id = ?`).get(sessionId) as
+      | { user_id: string }
+      | undefined;
+    if (!row || row.user_id !== userId) return 'Forbidden: session not owned';
+
+    const runnerAccess = getRunnerAccessDecision(userId, db);
+    return runnerAccess.allowed ? null : runnerAccess.reason || 'Runner access denied';
   } catch (err) {
     console.error(
       `[WS] canControlSession check failed sessionId=${sessionId} userId=${userId}:`,
       err
     );
-    return false;
+    return 'Runner authorization failed';
   }
 }
 
 // Module-level processManager reference for external access
 let _processManager: ClaudeProcessManager | null = null;
+let _io: Server | null = null;
+
+function isActiveUser(userId: string): boolean {
+  if (!userId) return false;
+  try {
+    const row = getDatabase()
+      .prepare(`SELECT 1 FROM users WHERE id = ? AND status = 'active'`)
+      .get(userId);
+    return !!row;
+  } catch {
+    return false;
+  }
+}
 
 export function getProcessManager(): ClaudeProcessManager {
   if (!_processManager) {
     throw new Error('ProcessManager not initialized. Call setupWebSocket first.');
   }
   return _processManager;
+}
+
+/** Immediately revoke live sockets and stop active CLI sessions for a user. */
+export function disconnectUserSockets(userId: string): number {
+  if (!_io || !userId) return 0;
+
+  let disconnected = 0;
+  for (const socket of _io.sockets.sockets.values()) {
+    if (socket.data.userId !== userId) continue;
+    disconnected += 1;
+    socket.disconnect(true);
+  }
+
+  if (_processManager) {
+    for (const sessionId of _processManager.getRunningSessionIds()) {
+      try {
+        const owner = getDatabase()
+          .prepare('SELECT user_id FROM sessions WHERE id = ?')
+          .get(sessionId) as { user_id: string } | undefined;
+        if (owner?.user_id === userId) _processManager.stopSession(sessionId, userId);
+      } catch (error) {
+        console.warn(`[WS] Failed to stop revoked user session ${sessionId}:`, error);
+      }
+    }
+  }
+
+  return disconnected;
 }
 
 export function setupWebSocket(httpServer: HttpServer): Server {
@@ -134,6 +178,7 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
   const processManager = new ClaudeProcessManager(io);
   _processManager = processManager;
+  _io = io;
 
   // Authentication middleware
   io.use((socket, next) => {
@@ -144,6 +189,9 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
     try {
       const decoded = jwt.verify(token, config.jwtSecret) as { userId: string };
+      if (!isActiveUser(decoded.userId)) {
+        return next(new Error('Account unavailable'));
+      }
       socket.data.userId = decoded.userId;
       socket.data.subscribedSessions = new Set();
       next();
@@ -159,6 +207,13 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     const messageBucket = makeBucket();
     // Per-socket seen clientMessageIds (for idempotent session:send retries).
     const seenSendIds = new Set<string>();
+
+    // Re-check lifecycle state on every event so a suspended/deleted user
+    // cannot keep an already-authenticated JWT socket alive.
+    socket.use((_event, next) => {
+      if (isActiveUser(socket.data.userId)) return next();
+      socket.disconnect(true);
+    });
 
     const rateLimited = (sessionId: string, event: string): boolean => {
       if (takeToken(messageBucket)) return false;
@@ -179,7 +234,7 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     });
 
     // Subscribe to session output
-    socket.on('session:subscribe', (sessionId) => {
+    socket.on('session:subscribe', async (sessionId) => {
       if (!canAccessSession(sessionId, socket.data.userId)) {
         console.warn(
           `[WS] DENIED session:subscribe userId=${socket.data.userId} sessionId=${sessionId}`
@@ -190,6 +245,14 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       socket.data.subscribedSessions.add(sessionId);
       socket.join(`session:${sessionId}`);
       console.log(`Socket ${socket.id} subscribed to session ${sessionId}`);
+      try {
+        await processManager.recoverInterruptedKimiTurn(sessionId, socket.data.userId);
+      } catch (err) {
+        socket.emit('session:error', {
+          sessionId,
+          error: logError('session:subscribe-recovery', sessionId, err) || 'Failed to recover Kimi',
+        });
+      }
     });
 
     // Unsubscribe from session output
@@ -218,9 +281,10 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     };
 
     const denyControl = (sessionId: string, event: string): boolean => {
-      if (canControlSession(sessionId, socket.data.userId)) return false;
+      const reason = controlDenialReason(sessionId, socket.data.userId);
+      if (!reason) return false;
       console.warn(`[WS] DENIED ${event} userId=${socket.data.userId} sessionId=${sessionId}`);
-      socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
+      socket.emit('session:error', { sessionId, error: reason });
       return true;
     };
 
@@ -362,6 +426,18 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       socket.data.subscribedSessions.add(sessionId);
       socket.join(`session:${sessionId}`);
       console.log(`Socket ${socket.id} joined session room ${sessionId}`);
+
+      // Kimi ACP requests cannot survive a container replacement. If the
+      // persisted transcript ends with an unanswered user message, reopening
+      // the chat resumes the native session and continues it automatically.
+      try {
+        await processManager.recoverInterruptedKimiTurn(sessionId, socket.data.userId);
+      } catch (err) {
+        socket.emit('session:error', {
+          sessionId,
+          error: logError('session:reconnect-recovery', sessionId, err) || 'Failed to recover Kimi',
+        });
+      }
 
       const isRunning = processManager.isSessionRunning(sessionId);
 

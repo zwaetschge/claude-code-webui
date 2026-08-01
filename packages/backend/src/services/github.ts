@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { simpleGit, SimpleGit } from 'simple-git';
 import type { GitHubUser, GitHubRepo, CreateRepoRequest } from '@plum-code-webui/shared';
-import { getGitHubTokenForUser } from '../routes/settings';
+import { getGitHubTokenForUser } from '../routes/settings.js';
 
 export class GitHubService {
   private getOctokit(userId: string): Octokit | null {

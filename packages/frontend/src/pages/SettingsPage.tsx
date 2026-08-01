@@ -1,6 +1,6 @@
-import { useEffect, useState, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useState, useMemo, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Plus,
@@ -8,6 +8,7 @@ import {
   Server,
   Sun,
   Moon,
+  Monitor,
   Terminal,
   CheckCircle2,
   RefreshCw,
@@ -21,7 +22,6 @@ import {
   ToggleRight,
   Puzzle,
   Store,
-  Upload,
   Key,
   Eye,
   EyeOff,
@@ -39,9 +39,11 @@ import {
   Shield,
   FileText,
   LayoutDashboard,
+  BarChart3,
   Bell,
   Send,
   ChevronRight,
+  Globe2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -64,11 +66,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
-import { AgentSkillEditorDialog } from '@/components/ui/agent-skill-editor';
 import { PluginEditorDialog } from '@/components/ui/plugin-editor';
 import { MarketplaceBrowserDialog } from '@/components/ui/marketplace-browser';
+import { CapabilityCatalogSections } from '@/components/settings/CapabilityCatalogSections';
+import {
+  getSkillCatalogCounts,
+  type AgentInfo,
+  type SkillInfo,
+} from '@/components/settings/capabilityCatalog';
 import { api } from '@/services/api';
 import { toast } from '@/hooks/use-toast';
+import { DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS } from '@plum-code-webui/shared';
 import type {
   UserSettings,
   McpServer,
@@ -87,43 +95,28 @@ import type {
   DiscordIntegrationSettingsUpdate,
   DiscordMaintenancePolicy,
   DiscordTestResult,
+  HomeAssistantIntegrationSettings,
+  AnalyticsLimitProvider,
 } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { CLI_PROVIDER_LABEL } from '@/lib/providers';
+import { toUiProvider } from '@/lib/providers';
+import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import {
   applyTheme,
   BACKGROUND_ANIMATION_OPTIONS,
   getStoredBackgroundAnimation,
   getStoredTheme,
   normalizeTheme,
+  setStoredTheme,
   useAppearanceStore,
 } from '@/stores/appearanceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AdminOverviewPage } from '@/pages/admin/AdminOverviewPage';
 import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
 import { AdminAuditLogPage } from '@/pages/admin/AdminAuditLogPage';
-
-interface AgentInfo {
-  id: string;
-  name: string;
-  description: string;
-  tools?: string[];
-  model?: string;
-  filePath: string;
-  source: 'user' | 'project';
-  enabled: boolean;
-}
-
-interface SkillInfo {
-  id: string;
-  name: string;
-  description: string;
-  allowedTools?: string[];
-  model?: string;
-  dirPath: string;
-  source: 'user' | 'project';
-  enabled: boolean;
-}
+import { HomeAssistantSettingsCard } from '@/components/integrations/HomeAssistantSettingsCard';
+import { CliDeviceLoginDialog } from '@/components/settings/CliDeviceLoginDialog';
 
 interface PluginInfo {
   id: string;
@@ -184,6 +177,25 @@ interface OracleBrowserTestResult {
   manualLoginProfileDir?: string | null;
 }
 
+interface AnalyticsLimitHistoryPoint {
+  provider: AnalyticsLimitProvider;
+  metricKey: string;
+  metricLabel: string;
+}
+
+interface AnalyticsLimitHistoryData {
+  points: AnalyticsLimitHistoryPoint[];
+}
+
+const ANALYTICS_LIMIT_PROVIDER_ORDER: AnalyticsLimitProvider[] = ['codex', 'kimi', 'claude', 'zai'];
+
+const ANALYTICS_LIMIT_PROVIDER_LABEL: Record<AnalyticsLimitProvider, string> = {
+  codex: 'Codex',
+  kimi: 'Kimi',
+  claude: 'Claude',
+  zai: 'Z.AI',
+};
+
 interface CodexFeatureFlag {
   name: string;
   stage: string;
@@ -230,8 +242,31 @@ interface ProviderDiagnostic {
   } | null;
 }
 
+interface ClaudeApiStatus {
+  configured: boolean;
+  baseUrl: string;
+  hasAuthToken: boolean;
+  authTokenPreview: string | null;
+  opusModel: string;
+  sonnetModel: string;
+  haikuModel: string;
+}
+
+const ACTIVATABLE_CLI_PROVIDERS: Array<{
+  id: CLIProvider;
+  description: string;
+}> = [
+  { id: 'codex', description: 'OpenAI Codex subscription sessions' },
+  { id: 'claude', description: 'Anthropic Claude subscription sessions' },
+  { id: 'zai', description: 'Z.AI GLM Coding Plan via Claude Code' },
+  { id: 'opencode', description: 'OpenCode multi-provider harness' },
+  { id: 'pi', description: 'Pi harness with OpenCode connections' },
+  { id: 'kimi', description: 'Moonshot Kimi Code CLI (browser login)' },
+];
+
 type SettingsTab =
   | 'general'
+  | 'analytics'
   | 'security'
   | 'api-keys'
   | 'integrations'
@@ -239,7 +274,15 @@ type SettingsTab =
   | 'extensions'
   | 'admin';
 
-type GeneralSettingsTab = 'workspace' | 'codex' | 'oracle' | 'interface' | 'opencode';
+type GeneralSettingsTab =
+  | 'workspace'
+  | 'codex'
+  | 'claude'
+  | 'zai'
+  | 'pi'
+  | 'oracle'
+  | 'interface'
+  | 'opencode';
 type AdminSettingsTab = 'overview' | 'users' | 'audit-log';
 type SettingsNavTone = 'brand' | 'success' | 'warning' | 'neutral';
 
@@ -299,6 +342,7 @@ interface SettingsPanelProps {
 
 const SETTINGS_TABS = new Set<SettingsTab>([
   'general',
+  'analytics',
   'security',
   'api-keys',
   'integrations',
@@ -313,17 +357,30 @@ const SETTINGS_TAB_DESCRIPTORS: Record<SettingsTab, SettingsTabDescriptor> = {
   general: {
     label: 'General',
     eyebrow: 'Workspace',
-    description: 'Default workspace, provider runtime, model menus, and interface behavior live here.',
+    description:
+      'Default workspace, provider runtime, model menus, and interface behavior live here.',
     icon: Settings2,
     highlights: ['Workspace defaults', 'Provider runtime', 'Appearance'],
     sections: [
+      { id: 'active-providers', label: 'Active providers' },
       { id: 'default-directory', label: 'Default directory' },
       { id: 'cli-updates', label: 'CLI updates' },
       { id: 'codex-cli', label: 'Codex CLI' },
+      { id: 'claude-cli', label: 'Claude Code' },
+      { id: 'zai-cli', label: 'Z.AI Code' },
+      { id: 'pi-cli', label: 'Pi' },
       { id: 'oracle-browser', label: 'Oracle browser' },
       { id: 'appearance', label: 'Appearance' },
       { id: 'opencode-models', label: 'OpenCode models' },
     ],
+  },
+  analytics: {
+    label: 'Analytics',
+    eyebrow: 'Chart visibility',
+    description: 'Choose which provider quota lines appear in the combined analytics graph.',
+    icon: BarChart3,
+    highlights: ['Provider limits', 'Chart visibility', 'Per-account preferences'],
+    sections: [{ id: 'analytics-limit-metrics', label: 'Limit metrics' }],
   },
   security: {
     label: 'Security',
@@ -341,10 +398,9 @@ const SETTINGS_TAB_DESCRIPTORS: Record<SettingsTab, SettingsTabDescriptor> = {
     eyebrow: 'Credentials',
     description: 'Store provider credentials and per-provider secrets used by integrations.',
     icon: KeyRound,
-    highlights: ['GitHub access', 'Mistral Vibe', 'OpenCode providers'],
+    highlights: ['GitHub access', 'OpenCode providers'],
     sections: [
       { id: 'github-token', label: 'GitHub token' },
-      { id: 'mistral-api-key', label: 'Mistral key' },
       { id: 'opencode-providers', label: 'OpenCode providers' },
     ],
   },
@@ -405,6 +461,7 @@ const GENERAL_SETTINGS_TABS: GeneralSettingsTabDescriptor[] = [
     description: 'Default folder and CLI updates.',
     icon: FolderOpen,
     sections: [
+      { id: 'active-providers', label: 'Active providers' },
       { id: 'default-directory', label: 'Default directory' },
       { id: 'cli-updates', label: 'CLI updates' },
     ],
@@ -415,6 +472,34 @@ const GENERAL_SETTINGS_TABS: GeneralSettingsTabDescriptor[] = [
     description: 'Codex runtime, feature flags, and plugins.',
     icon: Bot,
     sections: [{ id: 'codex-cli', label: 'Codex CLI' }],
+  },
+  {
+    value: 'claude',
+    label: 'Claude Code',
+    description: 'Anthropic subscription runtime.',
+    icon: Bot,
+    sections: [{ id: 'claude-cli', label: 'Claude Code' }],
+  },
+  {
+    value: 'zai',
+    label: 'Z.AI',
+    description: 'GLM Coding Plan endpoint and model mapping.',
+    icon: Globe2,
+    sections: [{ id: 'zai-cli', label: 'Z.AI Code' }],
+  },
+  {
+    value: 'opencode',
+    label: 'OpenCode',
+    description: 'Curated OpenCode model menu.',
+    icon: Server,
+    sections: [{ id: 'opencode-models', label: 'OpenCode models' }],
+  },
+  {
+    value: 'pi',
+    label: 'Pi',
+    description: 'Pi runtime and shared provider models.',
+    icon: Bot,
+    sections: [{ id: 'pi-cli', label: 'Pi' }],
   },
   {
     value: 'oracle',
@@ -429,13 +514,6 @@ const GENERAL_SETTINGS_TABS: GeneralSettingsTabDescriptor[] = [
     description: 'Theme and background behavior.',
     icon: Settings2,
     sections: [{ id: 'appearance', label: 'Appearance' }],
-  },
-  {
-    value: 'opencode',
-    label: 'OpenCode',
-    description: 'Curated OpenCode model menu.',
-    icon: Server,
-    sections: [{ id: 'opencode-models', label: 'OpenCode models' }],
   },
 ];
 
@@ -461,10 +539,7 @@ function SettingsPanel({
   children,
 }: SettingsPanelProps) {
   return (
-    <Card
-      id={id}
-      className={cn('settings-panel-card border border-border/70', className)}
-    >
+    <Card id={id} className={cn('settings-panel-card border border-border/70', className)}>
       <CardHeader className="settings-panel-header flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1.5">
           <p className="settings-panel-eyebrow text-[11px] font-semibold uppercase text-muted-foreground">
@@ -529,6 +604,7 @@ function getGeneralSettingsTab(tab: string | null, sectionId?: string | null): G
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const configProvider = useMemo(() => 'claude' as const, []);
@@ -613,15 +689,6 @@ export function SettingsPage() {
 
   const [cliUpdateResults, setCliUpdateResults] = useState<CliProviderUpdateResult[] | null>(null);
 
-  // Agent/Skill editor state
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editorType, setEditorType] = useState<'agent' | 'skill'>('agent');
-  const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create');
-  const [editingItem, setEditingItem] = useState<{
-    name: string;
-    data: Record<string, unknown>;
-  } | null>(null);
-
   // Plugin editor state
   const [pluginEditorOpen, setPluginEditorOpen] = useState(false);
   const [pluginEditorMode, setPluginEditorMode] = useState<'create' | 'edit'>('create');
@@ -642,9 +709,14 @@ export function SettingsPage() {
   const [githubTokenInput, setGithubTokenInput] = useState('');
   const [showGithubToken, setShowGithubToken] = useState(false);
 
-  // Mistral API key state
-  const [mistralKeyInput, setMistralKeyInput] = useState('');
-  const [showMistralKey, setShowMistralKey] = useState(false);
+  const [claudeApiDraft, setClaudeApiDraft] = useState({
+    baseUrl: '',
+    opusModel: '',
+    sonnetModel: '',
+    haikuModel: '',
+  });
+  const [claudeAuthTokenInput, setClaudeAuthTokenInput] = useState('');
+  const [showClaudeAuthToken, setShowClaudeAuthToken] = useState(false);
 
   // Integration URL state (ComfyUI)
   const [comfyuiUrlInput, setComfyuiUrlInput] = useState('');
@@ -694,19 +766,17 @@ export function SettingsPage() {
     },
   });
 
-  useEffect(() => {
-    if (settings?.theme) {
-      const nextTheme = normalizeTheme(settings.theme);
-      localStorage.setItem('theme', nextTheme);
-      applyTheme(nextTheme);
-      setCurrentTheme(nextTheme);
-    }
-
-    if (settings?.backgroundAnimation) {
-      setBackgroundAnimation(settings.backgroundAnimation);
-      setCurrentBackgroundAnimation(settings.backgroundAnimation);
-    }
-  }, [settings?.backgroundAnimation, settings?.theme, setBackgroundAnimation]);
+  const { data: analyticsLimitHistory, isLoading: analyticsLimitHistoryLoading } = useQuery({
+    queryKey: ['usage-limit-history', '90d', 'settings'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<AnalyticsLimitHistoryData>>(
+        '/api/usage/limit-history?range=90d&providers=codex,kimi,claude,zai'
+      );
+      return response.data.data;
+    },
+    enabled: activeTab === 'analytics',
+    staleTime: 60_000,
+  });
 
   // Fetch MCP servers
   const { data: mcpServers, isLoading: mcpLoading } = useQuery({
@@ -715,6 +785,7 @@ export function SettingsPage() {
       const response = await api.get<ApiResponse<McpServer[]>>('/api/mcp-servers');
       return response.data.data || [];
     },
+    enabled: activeTab === 'extensions',
   });
 
   // Fetch OpenCode providers
@@ -726,6 +797,8 @@ export function SettingsPage() {
       );
       return response.data.data || [];
     },
+    enabled:
+      activeTab === 'api-keys' || (activeTab === 'general' && activeGeneralTab === 'opencode'),
   });
 
   // Fetch available OpenCode providers (with models)
@@ -738,10 +811,12 @@ export function SettingsPage() {
       }>('/api/opencode/available-providers');
       return response.data.data || {};
     },
+    enabled:
+      activeTab === 'api-keys' || (activeTab === 'general' && activeGeneralTab === 'opencode'),
   });
 
   // Check Claude CLI status
-  const { refetch: refetchClaudeStatus } = useQuery({
+  const { data: claudeStatus, refetch: refetchClaudeStatus } = useQuery({
     queryKey: ['claude-status'],
     queryFn: async () => {
       const response =
@@ -770,6 +845,7 @@ export function SettingsPage() {
       const response = await api.get<ApiResponse<CodexFeatureFlag[]>>('/api/codex/features');
       return response.data.data || [];
     },
+    enabled: activeTab === 'general' || activeTab === 'diagnostics',
   });
 
   const { data: codexPlugins, isLoading: codexPluginsLoading } = useQuery({
@@ -778,6 +854,7 @@ export function SettingsPage() {
       const response = await api.get<ApiResponse<CodexPluginInfo[]>>('/api/codex/plugins');
       return response.data.data || [];
     },
+    enabled: activeTab === 'extensions',
   });
 
   const {
@@ -792,6 +869,7 @@ export function SettingsPage() {
       );
       return response.data.data || [];
     },
+    enabled: activeTab === 'diagnostics' || (activeTab === 'general' && activeGeneralTab === 'pi'),
   });
 
   // Fetch Claude agents from ~/.claude/agents/
@@ -803,6 +881,7 @@ export function SettingsPage() {
       );
       return response.data.data || [];
     },
+    enabled: activeTab === 'extensions',
   });
 
   // Fetch Claude skills from ~/.claude/skills/
@@ -810,10 +889,11 @@ export function SettingsPage() {
     queryKey: ['claude-skills', configProvider],
     queryFn: async () => {
       const response = await api.get<ApiResponse<SkillInfo[]>>(
-        withProvider('/api/claude-config/skills')
+        withProvider('/api/claude-config/skills?library=all')
       );
       return response.data.data || [];
     },
+    enabled: activeTab === 'extensions',
   });
 
   // Fetch installed plugins
@@ -825,6 +905,7 @@ export function SettingsPage() {
       );
       return response.data.data || [];
     },
+    enabled: activeTab === 'extensions',
   });
 
   // Fetch known marketplaces
@@ -844,6 +925,7 @@ export function SettingsPage() {
       >(withProvider('/api/claude-config/marketplaces'));
       return response.data.data || [];
     },
+    enabled: activeTab === 'extensions',
   });
 
   // Fetch GitHub token status
@@ -855,22 +937,16 @@ export function SettingsPage() {
       >('/api/settings/github-token');
       return response.data.data;
     },
+    enabled: activeTab === 'api-keys',
   });
 
-  // Fetch Mistral API key status
-  const { data: mistralKeyStatus, refetch: refetchMistralKey } = useQuery({
-    queryKey: ['mistral-key'],
+  const { data: claudeApiStatus, refetch: refetchClaudeApi } = useQuery({
+    queryKey: ['zai-api'],
     queryFn: async () => {
-      const response = await api.get<
-        ApiResponse<{
-          hasKey: boolean;
-          keyPreview: string | null;
-          source: 'user' | 'env' | 'none';
-          envFallback: boolean;
-        }>
-      >('/api/settings/mistral-key');
+      const response = await api.get<ApiResponse<ClaudeApiStatus>>('/api/settings/zai-api');
       return response.data.data;
     },
+    enabled: activeTab === 'general' && activeGeneralTab === 'zai',
   });
 
   // Fetch integration URL (ComfyUI)
@@ -884,6 +960,18 @@ export function SettingsPage() {
       setComfyuiUrlInput(data.comfyuiUrl || '');
       return data;
     },
+    enabled: activeTab === 'integrations',
+  });
+
+  const { data: homeAssistantSettings } = useQuery({
+    queryKey: ['home-assistant-settings'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<HomeAssistantIntegrationSettings>>(
+        '/api/home-assistant/settings'
+      );
+      return response.data.data;
+    },
+    enabled: activeTab === 'integrations',
   });
 
   const { data: discordSettings, refetch: refetchDiscordSettings } = useQuery({
@@ -905,6 +993,7 @@ export function SettingsPage() {
       }
       return data;
     },
+    enabled: activeTab === 'integrations',
   });
 
   // Fetch basic auth credentials info
@@ -916,11 +1005,22 @@ export function SettingsPage() {
       );
       return response.data.data;
     },
+    enabled: activeTab === 'security',
   });
 
   useEffect(() => {
     setOracleBrowserDraft(settings?.oracleBrowser || {});
   }, [settings?.oracleBrowser]);
+
+  useEffect(() => {
+    if (!claudeApiStatus) return;
+    setClaudeApiDraft({
+      baseUrl: claudeApiStatus.baseUrl,
+      opusModel: claudeApiStatus.opusModel,
+      sonnetModel: claudeApiStatus.sonnetModel,
+      haikuModel: claudeApiStatus.haikuModel,
+    });
+  }, [claudeApiStatus]);
 
   // Filter installed plugins based on search
   const filteredPlugins = useMemo(() => {
@@ -937,6 +1037,11 @@ export function SettingsPage() {
         plugin.marketplace?.toLowerCase().includes(query)
     );
   }, [installedPlugins, pluginSearchQuery]);
+
+  const { skillPackageCount, stylePresetCount } = useMemo(
+    () => getSkillCatalogCounts(claudeSkills),
+    [claudeSkills]
+  );
 
   const filteredCodexPlugins = useMemo(() => {
     if (!codexPlugins) return [];
@@ -1007,6 +1112,7 @@ export function SettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['cli-providers'] });
       toast({ title: 'Settings saved' });
     },
     onError: (error: Error) => {
@@ -1154,80 +1260,6 @@ export function SettingsPage() {
     },
   });
 
-  // Toggle agent mutation
-  const toggleAgentMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const response = await api.put<ApiResponse<{ enabled: boolean }>>(
-        withProvider(`/api/claude-config/agent/${name}/toggle`)
-      );
-      return response.data.data;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['claude-agents', configProvider] });
-      toast({ title: data?.enabled ? 'Agent enabled' : 'Agent disabled' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Toggle skill mutation
-  const toggleSkillMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const response = await api.put<ApiResponse<{ enabled: boolean }>>(
-        withProvider(`/api/claude-config/skill/${name}/toggle`)
-      );
-      return response.data.data;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['claude-skills', configProvider] });
-      toast({ title: data?.enabled ? 'Skill enabled' : 'Skill disabled' });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  // Skill bulk import
-  const skillImportInputRef = useRef<HTMLInputElement | null>(null);
-  const importSkillsMutation = useMutation({
-    mutationFn: async (files: File[]) => {
-      const form = new FormData();
-      for (const f of files) form.append('files', f);
-      const response = await api.post<
-        ApiResponse<{
-          imported: Array<{ name: string; dirPath: string }>;
-          skipped: Array<{ file: string; skillName?: string; reason: string }>;
-          errors: Array<{ file: string; error: string }>;
-        }>
-      >(withProvider('/api/claude-config/skills/import'), form);
-      return response.data.data!;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['claude-skills', configProvider] });
-      const importedCount = data.imported.length;
-      const skippedCount = data.skipped.length;
-      const errorCount = data.errors.length;
-      const parts = [`${importedCount} imported`];
-      if (skippedCount) parts.push(`${skippedCount} skipped`);
-      if (errorCount) parts.push(`${errorCount} errors`);
-      toast({
-        title: importedCount > 0 ? 'Skills imported' : 'No skills imported',
-        description: parts.join(' · '),
-        variant: errorCount > 0 ? 'destructive' : undefined,
-      });
-    },
-    onError: (error: Error) => {
-      toast({ title: 'Import failed', description: error.message, variant: 'destructive' });
-    },
-  });
-
-  const handleSkillImportFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    importSkillsMutation.mutate(Array.from(files));
-    if (skillImportInputRef.current) skillImportInputRef.current.value = '';
-  };
-
   // Toggle plugin mutation
   const togglePluginMutation = useMutation({
     mutationFn: async (name: string) => {
@@ -1278,31 +1310,43 @@ export function SettingsPage() {
     },
   });
 
-  const setMistralKeyMutation = useMutation({
-    mutationFn: async (apiKey: string) => {
-      const response = await api.put<ApiResponse<{ hasKey: boolean; keyPreview: string }>>(
-        '/api/settings/mistral-key',
-        { apiKey }
-      );
+  const saveClaudeApiMutation = useMutation({
+    mutationFn: async () => {
+      const response = await api.put<ApiResponse<ClaudeApiStatus>>('/api/settings/zai-api', {
+        ...claudeApiDraft,
+        ...(claudeAuthTokenInput.trim() ? { authToken: claudeAuthTokenInput.trim() } : {}),
+      });
       return response.data.data;
     },
     onSuccess: () => {
-      refetchMistralKey();
-      setMistralKeyInput('');
-      toast({ title: 'Mistral API key saved' });
+      setClaudeAuthTokenInput('');
+      refetchClaudeApi();
+      queryClient.invalidateQueries({ queryKey: ['cli-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['usage-limits'] });
+      toast({
+        title: 'Z.AI Code saved',
+        description: 'New and restarted Z.AI sessions will use this endpoint.',
+      });
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     },
   });
 
-  const deleteMistralKeyMutation = useMutation({
+  const resetClaudeApiMutation = useMutation({
     mutationFn: async () => {
-      await api.delete('/api/settings/mistral-key');
+      await api.delete('/api/settings/zai-api');
     },
     onSuccess: () => {
-      refetchMistralKey();
-      toast({ title: 'Mistral API key removed' });
+      setClaudeAuthTokenInput('');
+      setClaudeApiDraft({ baseUrl: '', opusModel: '', sonnetModel: '', haikuModel: '' });
+      refetchClaudeApi();
+      queryClient.invalidateQueries({ queryKey: ['cli-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['usage-limits'] });
+      toast({
+        title: 'Z.AI configuration removed',
+        description: 'Claude subscription sessions are unchanged.',
+      });
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -1472,6 +1516,21 @@ export function SettingsPage() {
     }
     return map;
   }, [openCodeProviders]);
+  const piDiagnostic = useMemo(
+    () => providerDiagnostics?.find((provider) => provider.id === 'pi'),
+    [providerDiagnostics]
+  );
+  const piModelGroups = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const model of piDiagnostic?.models || []) {
+      const separatorIndex = model.indexOf('/');
+      const providerId = separatorIndex > 0 ? model.slice(0, separatorIndex) : 'other';
+      const providerModels = groups.get(providerId) || [];
+      providerModels.push(model);
+      groups.set(providerId, providerModels);
+    }
+    return Array.from(groups.entries());
+  }, [piDiagnostic?.models]);
   const selectedModelProvider = modelProviderId ? availableProviders?.[modelProviderId] : undefined;
   const selectedStoredModelProvider = modelProviderId
     ? openCodeProviderById.get(modelProviderId)
@@ -1552,16 +1611,15 @@ export function SettingsPage() {
   };
 
   const handleThemeChange = (theme: Theme) => {
-    localStorage.setItem('theme', theme);
-    setCurrentTheme(theme);
-    applyTheme(theme);
-    updateSettingsMutation.mutate({ theme });
+    const nextTheme = normalizeTheme(theme);
+    setStoredTheme(nextTheme);
+    setCurrentTheme(nextTheme);
+    applyTheme(nextTheme);
   };
 
   const handleBackgroundAnimationChange = (backgroundAnimation: BackgroundAnimation) => {
     setCurrentBackgroundAnimation(backgroundAnimation);
     setBackgroundAnimation(backgroundAnimation);
-    updateSettingsMutation.mutate({ backgroundAnimation });
   };
 
   const saveOracleBrowserSettings = () => {
@@ -1594,52 +1652,6 @@ export function SettingsPage() {
     }
   };
 
-  const openAgentEditor = (mode: 'create' | 'edit', agent?: AgentInfo) => {
-    setEditorType('agent');
-    setEditorMode(mode);
-    if (agent) {
-      // Extract base name from filePath
-      const baseName =
-        agent.filePath.split('/').pop()?.replace('.md.disabled', '').replace('.md', '') ||
-        agent.name;
-      setEditingItem({
-        name: baseName,
-        data: {
-          name: agent.name,
-          description: agent.description,
-          tools: agent.tools,
-          model: agent.model,
-          prompt: '', // Will be fetched by the editor
-        },
-      });
-    } else {
-      setEditingItem(null);
-    }
-    setEditorOpen(true);
-  };
-
-  const openSkillEditor = (mode: 'create' | 'edit', skill?: SkillInfo) => {
-    setEditorType('skill');
-    setEditorMode(mode);
-    if (skill) {
-      // Extract base name from dirPath
-      const baseName = skill.dirPath.split('/').pop()?.replace('.disabled', '') || skill.name;
-      setEditingItem({
-        name: baseName,
-        data: {
-          name: skill.name,
-          description: skill.description,
-          allowedTools: skill.allowedTools,
-          model: skill.model,
-          content: '', // Will be fetched by the editor
-        },
-      });
-    } else {
-      setEditingItem(null);
-    }
-    setEditorOpen(true);
-  };
-
   const openPluginEditor = (mode: 'create' | 'edit', plugin?: PluginInfo) => {
     setPluginEditorMode(mode);
     if (plugin) {
@@ -1665,18 +1677,73 @@ export function SettingsPage() {
   const themeOptions = [
     { value: 'light' as Theme, label: 'Light', icon: Sun, description: 'Bright glass surface' },
     { value: 'dark' as Theme, label: 'Dark', icon: Moon, description: 'Graphite glass surface' },
+    {
+      value: 'system' as Theme,
+      label: 'System',
+      icon: Monitor,
+      description: 'Follow device preference',
+    },
+    {
+      value: 'eink' as Theme,
+      label: 'E-Ink',
+      icon: FileText,
+      description: 'Static high-contrast grayscale',
+    },
   ];
 
   const configuredOpenCodeProviders =
     openCodeProviders?.filter((provider) => provider.hasKey) || [];
   const configuredApiKeyCount =
-    (githubTokenStatus?.hasToken ? 1 : 0) +
-    (mistralKeyStatus?.hasKey ? 1 : 0) +
-    configuredOpenCodeProviders.length;
+    (githubTokenStatus?.hasToken ? 1 : 0) + configuredOpenCodeProviders.length;
   const healthyProviderCount =
     providerDiagnostics?.filter((provider) => provider.installed && provider.authenticated)
       .length || 0;
   const totalProviderCount = providerDiagnostics?.length || 0;
+  const analyticsLimitMetricsByProvider = useMemo(() => {
+    const byProvider = new Map<AnalyticsLimitProvider, Array<{ key: string; label: string }>>();
+    ANALYTICS_LIMIT_PROVIDER_ORDER.forEach((provider) => byProvider.set(provider, []));
+    const seen = new Set<string>();
+    for (const point of analyticsLimitHistory?.points || []) {
+      const identity = `${point.provider}\u001f${point.metricKey}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      byProvider.get(point.provider)?.push({ key: point.metricKey, label: point.metricLabel });
+    }
+    byProvider.forEach((metrics) => metrics.sort((a, b) => a.label.localeCompare(b.label)));
+    return byProvider;
+  }, [analyticsLimitHistory]);
+  const analyticsHiddenLimitMetrics =
+    settings?.analytics?.hiddenLimitMetrics ?? DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS;
+  const analyticsLimitMetricCount = Array.from(analyticsLimitMetricsByProvider.values()).reduce(
+    (total, metrics) => total + metrics.length,
+    0
+  );
+  const analyticsVisibleLimitMetricCount = Array.from(
+    analyticsLimitMetricsByProvider.entries()
+  ).reduce(
+    (total, [provider, metrics]) =>
+      total +
+      metrics.filter((metric) => !analyticsHiddenLimitMetrics[provider]?.includes(metric.key))
+        .length,
+    0
+  );
+  const updateAnalyticsLimitMetricVisibility = (
+    provider: AnalyticsLimitProvider,
+    metricKey: string,
+    visible: boolean
+  ) => {
+    const nextHidden = Object.fromEntries(
+      ANALYTICS_LIMIT_PROVIDER_ORDER.map((item) => [
+        item,
+        [...(analyticsHiddenLimitMetrics[item] || [])],
+      ])
+    ) as Partial<Record<AnalyticsLimitProvider, string[]>>;
+    const providerHidden = new Set(nextHidden[provider] || []);
+    if (visible) providerHidden.delete(metricKey);
+    else providerHidden.add(metricKey);
+    nextHidden[provider] = [...providerHidden];
+    updateSettingsMutation.mutate({ analytics: { hiddenLimitMetrics: nextHidden } });
+  };
 
   const settingsNavItems = useMemo<SettingsNavItem[]>(() => {
     const items: SettingsNavItem[] = [
@@ -1699,25 +1766,50 @@ export function SettingsPage() {
         tone: basicAuthCredentials?.enabled ? 'success' : 'warning',
       },
       {
+        value: 'analytics',
+        ...SETTINGS_TAB_DESCRIPTORS.analytics,
+        badge:
+          analyticsLimitMetricCount > 0
+            ? `${analyticsVisibleLimitMetricCount}/${analyticsLimitMetricCount}`
+            : 'Defaults',
+        note:
+          analyticsLimitMetricCount > 0
+            ? `${analyticsVisibleLimitMetricCount} provider limit curves visible in Analytics.`
+            : 'Choose which provider limit curves appear in the combined graph.',
+        tone: 'brand',
+      },
+      {
         value: 'api-keys',
         ...SETTINGS_TAB_DESCRIPTORS['api-keys'],
         badge: `${configuredApiKeyCount} saved`,
         note:
           configuredApiKeyCount > 0
-            ? `${configuredOpenCodeProviders.length} OpenCode provider key${configuredOpenCodeProviders.length === 1 ? '' : 's'} plus GitHub/Mistral credentials.`
+            ? `${configuredOpenCodeProviders.length} OpenCode provider key${configuredOpenCodeProviders.length === 1 ? '' : 's'} plus GitHub credentials.`
             : 'No provider credentials stored yet.',
         tone: configuredApiKeyCount > 0 ? 'brand' : 'neutral',
       },
       {
         value: 'integrations',
         ...SETTINGS_TAB_DESCRIPTORS.integrations,
-        badge: integrations?.comfyuiUrl || discordSettings?.configured ? 'Configured' : 'Pending',
-        note: discordSettings?.configured
-          ? `Discord alerts ${discordSettings.enabled ? 'enabled' : 'configured'} via ${discordSettings.transport === 'bot' ? 'bot token' : 'webhook'}.`
-          : integrations?.comfyuiUrl
-            ? integrations.comfyuiUrl
-            : 'Add ComfyUI and Discord endpoints to unlock external workflows.',
-        tone: integrations?.comfyuiUrl || discordSettings?.configured ? 'success' : 'warning',
+        badge:
+          integrations?.comfyuiUrl ||
+          discordSettings?.configured ||
+          homeAssistantSettings?.configured
+            ? 'Configured'
+            : 'Pending',
+        note: homeAssistantSettings?.configured
+          ? `Home Assistant session lights ${homeAssistantSettings.enabled ? 'enabled' : 'configured'}.`
+          : discordSettings?.configured
+            ? `Discord alerts ${discordSettings.enabled ? 'enabled' : 'configured'} via ${discordSettings.transport === 'bot' ? 'bot token' : 'webhook'}.`
+            : integrations?.comfyuiUrl
+              ? integrations.comfyuiUrl
+              : 'Add Home Assistant, ComfyUI, or Discord to unlock external workflows.',
+        tone:
+          integrations?.comfyuiUrl ||
+          discordSettings?.configured ||
+          homeAssistantSettings?.configured
+            ? 'success'
+            : 'warning',
       },
       {
         value: 'diagnostics',
@@ -1738,7 +1830,7 @@ export function SettingsPage() {
         value: 'extensions',
         ...SETTINGS_TAB_DESCRIPTORS.extensions,
         badge: `${(mcpServers?.length || 0) + (installedPlugins?.length || 0) + (claudeSkills?.length || 0) + (claudeAgents?.length || 0)}`,
-        note: `${mcpServers?.length || 0} MCP · ${claudeAgents?.length || 0} agents · ${claudeSkills?.length || 0} skills · ${installedPlugins?.length || 0} plugins`,
+        note: `${mcpServers?.length || 0} MCP · ${claudeAgents?.length || 0} agents · ${skillPackageCount} skills · ${stylePresetCount} presets · ${installedPlugins?.length || 0} plugins`,
         tone:
           (mcpServers?.length || 0) +
             (installedPlugins?.length || 0) +
@@ -1767,6 +1859,8 @@ export function SettingsPage() {
     return items;
   }, [
     activeAdminTab,
+    analyticsLimitMetricCount,
+    analyticsVisibleLimitMetricCount,
     basicAuthCredentials?.enabled,
     basicAuthCredentials?.username,
     claudeAgents?.length,
@@ -1776,9 +1870,12 @@ export function SettingsPage() {
     discordSettings?.configured,
     discordSettings?.enabled,
     discordSettings?.transport,
-    discordSettings?.webhookUrlPreview,
     healthyProviderCount,
+    homeAssistantSettings?.configured,
+    homeAssistantSettings?.enabled,
     installedPlugins?.length,
+    skillPackageCount,
+    stylePresetCount,
     integrations?.comfyuiUrl,
     isAdmin,
     mcpServers?.length,
@@ -1790,6 +1887,7 @@ export function SettingsPage() {
     const byValue = new Map(settingsNavItems.map((item) => [item.value, item]));
     const groups: Array<{ label: string; values: SettingsTab[] }> = [
       { label: 'Essentials', values: ['general', 'security'] },
+      { label: 'Insights', values: ['analytics'] },
       { label: 'Connections', values: ['api-keys', 'integrations'] },
       { label: 'System', values: ['diagnostics', 'extensions', 'admin'] },
     ];
@@ -1879,17 +1977,38 @@ export function SettingsPage() {
   };
 
   useEffect(() => {
-    const sectionId = searchParams.get('section');
+    const hashSection = location.hash.startsWith('#')
+      ? decodeURIComponent(location.hash.slice(1))
+      : '';
+    const sectionId = searchParams.get('section') || hashSection;
     if (!sectionId || activeTab === 'admin') return;
 
-    const timeoutId = window.setTimeout(() => {
-      document
-        .getElementById(sectionId)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
-    }, 0);
+    const scrollToSection = () => {
+      window.requestAnimationFrame(() => {
+        document.getElementById(sectionId)?.scrollIntoView({
+          // Re-run after async query/layout milestones below; smooth scrolling
+          // would let later layout shifts interrupt the correction.
+          behavior: 'auto',
+          block: 'start',
+          inline: 'nearest',
+        });
+      });
+    };
+    const timeoutIds = [0, 150, 500, 1_200].map((delay) =>
+      window.setTimeout(scrollToSection, delay)
+    );
 
-    return () => window.clearTimeout(timeoutId);
-  }, [activeTab, searchParams]);
+    return () => timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+  }, [
+    activeTab,
+    claudeAgents?.length,
+    claudeSkills?.length,
+    codexPlugins?.length,
+    installedPlugins?.length,
+    location.hash,
+    mcpServers?.length,
+    searchParams,
+  ]);
 
   if (settingsLoading || mcpLoading) {
     return (
@@ -2034,14 +2153,8 @@ export function SettingsPage() {
             </div>
 
             {!codexStatus?.authenticated && codexStatus?.installed && (
-              <Button
-                onClick={() => {
-                  window.location.href = '/auth/codex';
-                }}
-                size="sm"
-                className="w-full"
-              >
-                Check Codex login
+              <Button onClick={() => handleGeneralTabChange('codex')} size="sm" className="w-full">
+                Open Codex login
               </Button>
             )}
           </aside>
@@ -2289,6 +2402,65 @@ export function SettingsPage() {
                     <TabsContent value="workspace" className="settings-general-pane mt-0">
                       <div className="settings-pane-column">
                         <SettingsPanel
+                          id="active-providers"
+                          eyebrow="Runtime"
+                          title="Active providers"
+                          description="Choose which providers appear when creating or switching sessions. Existing sessions remain visible."
+                        >
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {ACTIVATABLE_CLI_PROVIDERS.map((provider) => {
+                              const enabledProviders =
+                                settings?.enabledCliProviders ??
+                                ACTIVATABLE_CLI_PROVIDERS.map((item) => item.id);
+                              const enabled = enabledProviders.includes(provider.id);
+                              const lastEnabled = enabled && enabledProviders.length === 1;
+                              return (
+                                <div
+                                  key={provider.id}
+                                  className="flex items-center gap-3 rounded-lg border border-border/70 bg-card/50 p-3"
+                                >
+                                  <ProviderLogo
+                                    provider={toUiProvider(provider.id)}
+                                    className="h-8 w-8"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium">
+                                      {CLI_PROVIDER_LABEL[provider.id]}
+                                    </p>
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {provider.description}
+                                    </p>
+                                  </div>
+                                  {provider.id === 'kimi' && (
+                                    <CliDeviceLoginDialog
+                                      provider="kimi"
+                                      triggerClassName="h-8 px-3 text-xs"
+                                    />
+                                  )}
+                                  <Switch
+                                    checked={enabled}
+                                    disabled={lastEnabled || updateSettingsMutation.isPending}
+                                    aria-label={`${enabled ? 'Disable' : 'Enable'} ${CLI_PROVIDER_LABEL[provider.id]}`}
+                                    onCheckedChange={(checked) => {
+                                      const next = checked
+                                        ? [...enabledProviders, provider.id]
+                                        : enabledProviders.filter((id) => id !== provider.id);
+                                      updateSettingsMutation.mutate({
+                                        enabledCliProviders: [...new Set(next)],
+                                      });
+                                    }}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Claude Code uses your Anthropic subscription. Z.AI has separate
+                            credentials and can run at the same time in another session.
+                          </p>
+                        </SettingsPanel>
+
+                        <SettingsPanel
                           id="default-directory"
                           eyebrow="Workspace"
                           title="Default Directory"
@@ -2380,7 +2552,6 @@ export function SettingsPage() {
                             )}
                           </Card>
                         </section>
-
                       </div>
                     </TabsContent>
 
@@ -2423,21 +2594,30 @@ export function SettingsPage() {
                                       : 'Codex CLI is not available in the WebUI container.'}
                                   </p>
                                 </div>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => refetchCodexStatus()}
-                                  disabled={isRefetchingCodex}
-                                  className="gap-2"
-                                >
-                                  <RefreshCw
-                                    className={cn(
-                                      'h-3.5 w-3.5',
-                                      isRefetchingCodex && 'animate-spin'
-                                    )}
+                                <div className="flex flex-col gap-2 sm:flex-row">
+                                  <CliDeviceLoginDialog
+                                    provider="codex"
+                                    authenticated={codexStatus?.authenticated}
+                                    disabled={!codexStatus?.installed}
+                                    onCompleted={() => refetchCodexStatus()}
+                                    triggerClassName="gap-2"
                                   />
-                                  Refresh
-                                </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => refetchCodexStatus()}
+                                    disabled={isRefetchingCodex}
+                                    className="gap-2"
+                                  >
+                                    <RefreshCw
+                                      className={cn(
+                                        'h-3.5 w-3.5',
+                                        isRefetchingCodex && 'animate-spin'
+                                      )}
+                                    />
+                                    Refresh
+                                  </Button>
+                                </div>
                               </div>
 
                               <div className="grid gap-3 md:grid-cols-[1fr_260px] md:items-center">
@@ -2720,6 +2900,296 @@ export function SettingsPage() {
                       </div>
                     </TabsContent>
 
+                    {/* Claude Code subscription */}
+                    <TabsContent value="claude" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <section id="claude-cli">
+                          <Card className="border border-border/70">
+                            <CardHeader>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <CardTitle className="text-base">Claude Code</CardTitle>
+                                  <CardDescription>
+                                    Anthropic subscription sessions, isolated from Z.AI credentials.
+                                  </CardDescription>
+                                </div>
+                                <div
+                                  className={cn(
+                                    'w-fit rounded-full px-2.5 py-1 text-xs font-medium',
+                                    claudeStatus?.authenticated
+                                      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                  )}
+                                >
+                                  {claudeStatus?.authenticated
+                                    ? 'Subscription connected'
+                                    : 'Login required'}
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-lg border border-border/70 bg-card/50 p-4">
+                                  <p className="text-sm font-medium">Authentication</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {claudeStatus?.installed
+                                      ? `${claudeStatus.version || 'Claude Code installed'} · uses the saved Anthropic subscription`
+                                      : 'Claude Code CLI is not installed in the WebUI container.'}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border border-border/70 bg-card/50 p-4">
+                                  <p className="text-sm font-medium">Credential isolation</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Z.AI endpoint variables and API tokens are removed from every
+                                    Claude subscription process.
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                <p className="text-xs text-muted-foreground">
+                                  Claude and Z.AI sessions can run concurrently because each process
+                                  receives its own provider environment.
+                                </p>
+                                <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                                  <CliDeviceLoginDialog
+                                    provider="claude"
+                                    authenticated={claudeStatus?.authenticated}
+                                    disabled={!claudeStatus?.installed}
+                                    onCompleted={() => refetchClaudeStatus()}
+                                    triggerClassName="gap-2"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => refetchClaudeStatus()}
+                                    className="gap-2"
+                                  >
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                    Refresh status
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </section>
+                      </div>
+                    </TabsContent>
+
+                    {/* Z.AI Code */}
+                    <TabsContent value="zai" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <section id="zai-cli">
+                          <Card className="border border-border/70">
+                            <CardHeader>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <CardTitle className="text-base">Z.AI Code</CardTitle>
+                                  <CardDescription>
+                                    Configure Z.AI independently from Claude subscription sessions.
+                                  </CardDescription>
+                                </div>
+                                <div
+                                  className={cn(
+                                    'w-fit rounded-full px-2.5 py-1 text-xs font-medium',
+                                    claudeApiStatus?.configured
+                                      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                      : 'bg-muted text-muted-foreground'
+                                  )}
+                                >
+                                  {claudeApiStatus?.configured
+                                    ? 'Z.AI configured'
+                                    : 'Not configured'}
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                              <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <div className="space-y-1">
+                                    <p className="text-sm font-medium">Z.AI GLM Coding Plan</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Uses Z.AI's Anthropic-compatible Claude Code endpoint. Model
+                                      mappings stay optional.
+                                    </p>
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      setClaudeApiDraft((current) => ({
+                                        ...current,
+                                        baseUrl: 'https://api.z.ai/api/anthropic',
+                                      }))
+                                    }
+                                    className="shrink-0 gap-2"
+                                  >
+                                    <Zap className="h-3.5 w-3.5" />
+                                    Use Z.AI endpoint
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2">
+                                <label
+                                  className="text-sm font-medium"
+                                  htmlFor="claude-api-base-url"
+                                >
+                                  API base URL
+                                </label>
+                                <div className="relative">
+                                  <Globe2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                  <Input
+                                    id="claude-api-base-url"
+                                    type="url"
+                                    value={claudeApiDraft.baseUrl}
+                                    onChange={(event) =>
+                                      setClaudeApiDraft((current) => ({
+                                        ...current,
+                                        baseUrl: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="https://api.example.com/anthropic"
+                                    className="pl-10 font-mono text-sm"
+                                  />
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Saved as <code>ANTHROPIC_BASE_URL</code>. HTTPS and
+                                  private-network HTTP endpoints are both accepted for Z.AI
+                                  sessions.
+                                </p>
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium" htmlFor="claude-api-token">
+                                  API token
+                                </label>
+                                <div className="relative">
+                                  <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                  <Input
+                                    id="claude-api-token"
+                                    type={showClaudeAuthToken ? 'text' : 'password'}
+                                    value={claudeAuthTokenInput}
+                                    onChange={(event) =>
+                                      setClaudeAuthTokenInput(event.target.value)
+                                    }
+                                    placeholder={
+                                      claudeApiStatus?.hasAuthToken
+                                        ? `Configured: ${claudeApiStatus.authTokenPreview || 'encrypted token'}`
+                                        : 'Enter API token'
+                                    }
+                                    className="pl-10 pr-10 font-mono text-sm"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowClaudeAuthToken((visible) => !visible)}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 hover:bg-muted"
+                                    aria-label={
+                                      showClaudeAuthToken ? 'Hide API token' : 'Show API token'
+                                    }
+                                  >
+                                    {showClaudeAuthToken ? (
+                                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                    ) : (
+                                      <Eye className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                  </button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Stored encrypted per user and passed as{' '}
+                                  <code>ANTHROPIC_AUTH_TOKEN</code> only to Z.AI sessions. Claude
+                                  subscription sessions never receive it. Leave blank to keep the
+                                  saved token.
+                                </p>
+                              </div>
+
+                              <div className="space-y-3">
+                                <div>
+                                  <p className="text-sm font-medium">Optional model mapping</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Map Claude's aliases to model IDs exposed by the target API.
+                                    Blank fields use the provider's defaults.
+                                  </p>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-3">
+                                  {(
+                                    [
+                                      ['opusModel', 'Opus', 'glm-5.2'],
+                                      ['sonnetModel', 'Sonnet', 'glm-5.2'],
+                                      ['haikuModel', 'Haiku', 'glm-5.2'],
+                                    ] as const
+                                  ).map(([field, label, placeholder]) => (
+                                    <div key={field} className="space-y-1.5">
+                                      <label
+                                        className="text-xs font-medium"
+                                        htmlFor={`claude-${field}`}
+                                      >
+                                        {label}
+                                      </label>
+                                      <Input
+                                        id={`claude-${field}`}
+                                        value={claudeApiDraft[field]}
+                                        onChange={(event) =>
+                                          setClaudeApiDraft((current) => ({
+                                            ...current,
+                                            [field]: event.target.value,
+                                          }))
+                                        }
+                                        placeholder={placeholder}
+                                        className="font-mono text-sm"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col-reverse gap-2 border-t border-border/70 pt-4 sm:flex-row sm:justify-between">
+                                <Button
+                                  variant="ghost"
+                                  onClick={() => resetClaudeApiMutation.mutate()}
+                                  disabled={
+                                    !claudeApiStatus?.configured || resetClaudeApiMutation.isPending
+                                  }
+                                  className="text-muted-foreground"
+                                >
+                                  Remove Z.AI configuration
+                                </Button>
+                                <Button
+                                  onClick={() => saveClaudeApiMutation.mutate()}
+                                  disabled={
+                                    !claudeApiDraft.baseUrl.trim() ||
+                                    (!claudeAuthTokenInput.trim() &&
+                                      !claudeApiStatus?.hasAuthToken) ||
+                                    saveClaudeApiMutation.isPending
+                                  }
+                                  className="gap-2"
+                                >
+                                  {saveClaudeApiMutation.isPending ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="h-4 w-4" />
+                                  )}
+                                  Save Z.AI Code
+                                </Button>
+                              </div>
+
+                              <p className="text-xs text-muted-foreground">
+                                The change applies when a Z.AI session starts or restarts.{' '}
+                                <a
+                                  href="https://docs.z.ai/devpack/tool/claude"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-primary hover:underline"
+                                >
+                                  Z.AI Claude Code documentation
+                                </a>
+                              </p>
+                            </CardContent>
+                          </Card>
+                        </section>
+                      </div>
+                    </TabsContent>
+
                     {/* Oracle Browser Auth */}
                     <TabsContent value="oracle" className="settings-general-pane mt-0">
                       <div className="settings-pane-column">
@@ -2974,8 +3444,8 @@ export function SettingsPage() {
                         <SettingsPanel
                           id="appearance"
                           eyebrow="Appearance"
-                          title="Light, dark, and motion"
-                          description="Keep the Plum glass interface consistent while tuning contrast and background movement."
+                          title="Theme and background"
+                          description="Choose the interface contrast mode and the background used outside static E-Ink mode."
                         >
                           <div className="space-y-4">
                             <div className="flex flex-wrap gap-2">
@@ -2993,7 +3463,7 @@ export function SettingsPage() {
                                       handleThemeChange(option.value);
                                     }}
                                     className={cn(
-                                      'flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2.5 transition-all',
+                                      'flex min-h-11 items-center gap-2 rounded-xl border px-4 py-2.5 text-left transition-all',
                                       'hover:scale-[1.02] active:scale-[0.98]',
                                       isActive
                                         ? 'border-primary bg-primary/10 text-primary'
@@ -3001,29 +3471,47 @@ export function SettingsPage() {
                                     )}
                                   >
                                     <Icon className="h-4 w-4" />
-                                    <span className="text-sm font-medium">{option.label}</span>
+                                    <span className="min-w-0">
+                                      <span className="block text-sm font-medium">
+                                        {option.label}
+                                      </span>
+                                      <span className="hidden text-xs text-muted-foreground sm:block">
+                                        {option.description}
+                                      </span>
+                                    </span>
                                     {isActive ? <CheckCircle2 className="ml-1 h-4 w-4" /> : null}
                                   </button>
                                 );
                               })}
                             </div>
 
+                            {currentTheme === 'eink' ? (
+                              <p className="text-xs text-muted-foreground">
+                                E-Ink mode keeps the interface static and ignores animated
+                                backgrounds until you switch back to Light, Dark, or System.
+                              </p>
+                            ) : null}
+
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                               {BACKGROUND_ANIMATION_OPTIONS.map((option) => {
                                 const isActive = currentBackgroundAnimation === option.value;
+                                const backgroundDisabled = currentTheme === 'eink';
 
                                 return (
                                   <button
                                     type="button"
                                     key={option.value}
+                                    disabled={backgroundDisabled}
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
+                                      if (backgroundDisabled) return;
                                       handleBackgroundAnimationChange(option.value);
                                     }}
                                     className={cn(
                                       'flex min-h-[58px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all',
                                       'hover:scale-[1.01] active:scale-[0.99]',
+                                      backgroundDisabled && 'cursor-not-allowed opacity-55',
                                       isActive
                                         ? 'border-primary bg-primary/10 text-primary'
                                         : 'border-border bg-card hover:border-primary/40'
@@ -3047,7 +3535,6 @@ export function SettingsPage() {
                             </div>
                           </div>
                         </SettingsPanel>
-
                       </div>
                     </TabsContent>
 
@@ -3262,8 +3749,280 @@ export function SettingsPage() {
                         </section>
                       </div>
                     </TabsContent>
+
+                    {/* Pi runtime */}
+                    <TabsContent value="pi" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <section id="pi-cli">
+                          <Card className="border border-border/70">
+                            <CardHeader>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <CardTitle className="text-base">Pi</CardTitle>
+                                  <CardDescription>
+                                    Pi uses your enabled OpenCode provider accounts with its own
+                                    persistent RPC session runtime.
+                                  </CardDescription>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className={cn(
+                                      'w-fit rounded-full px-2.5 py-1 text-xs font-medium',
+                                      piDiagnostic?.installed &&
+                                        piDiagnostic.authenticated &&
+                                        piDiagnostic.modelCount > 0
+                                        ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                    )}
+                                  >
+                                    {providerDiagnosticsLoading
+                                      ? 'Checking...'
+                                      : piDiagnostic?.installed &&
+                                          piDiagnostic.authenticated &&
+                                          piDiagnostic.modelCount > 0
+                                        ? 'Pi ready'
+                                        : 'Setup needed'}
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => refetchProviderDiagnostics()}
+                                    disabled={providerDiagnosticsLoading}
+                                    className="gap-2"
+                                  >
+                                    <RefreshCw
+                                      className={cn(
+                                        'h-3.5 w-3.5',
+                                        providerDiagnosticsLoading && 'animate-spin'
+                                      )}
+                                    />
+                                    Refresh
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-5">
+                              <div className="grid gap-3 sm:grid-cols-3">
+                                <div className="rounded-lg border border-border/70 bg-card/50 p-4">
+                                  <p className="text-sm font-medium">Runtime</p>
+                                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                                    {piDiagnostic?.installed
+                                      ? piDiagnostic.version || 'Pi CLI installed'
+                                      : 'Pi CLI is not installed'}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border border-border/70 bg-card/50 p-4">
+                                  <p className="text-sm font-medium">Provider accounts</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {piModelGroups.length > 0
+                                      ? `${piModelGroups.length} enabled connection${piModelGroups.length === 1 ? '' : 's'}`
+                                      : 'No usable connection found'}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border border-border/70 bg-card/50 p-4">
+                                  <p className="text-sm font-medium">Model menu</p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {piDiagnostic
+                                      ? `${piDiagnostic.modelCount} runnable models`
+                                      : 'Loading user-specific models'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {providerDiagnosticsLoading ? (
+                                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                                  Loading Pi runtime and model discovery...
+                                </div>
+                              ) : piDiagnostic && piDiagnostic.modelCount > 0 ? (
+                                <div className="space-y-3">
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                                    <div>
+                                      <p className="text-sm font-medium">Available models</p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Generated from your enabled provider accounts. Image- and
+                                        video-only models are excluded.
+                                      </p>
+                                    </div>
+                                    <p className="shrink-0 text-xs text-muted-foreground">
+                                      Default: <code>{piDiagnostic.defaultModel || 'auto'}</code>
+                                    </p>
+                                  </div>
+                                  <div className="grid max-h-[440px] gap-3 overflow-y-auto pr-1 md:grid-cols-2">
+                                    {piModelGroups.map(([providerId, models]) => (
+                                      <div
+                                        key={providerId}
+                                        className="min-w-0 rounded-lg border border-border/70 bg-card/40 p-3"
+                                      >
+                                        <div className="mb-2 flex items-center justify-between gap-2">
+                                          <p className="truncate text-sm font-semibold">
+                                            {providerId}
+                                          </p>
+                                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                                            {models.length}
+                                          </span>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                          {models.map((model) => (
+                                            <div
+                                              key={model}
+                                              title={model}
+                                              className="truncate rounded-md bg-muted/55 px-2.5 py-1.5 font-mono text-xs"
+                                            >
+                                              {model}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-4">
+                                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                                    Pi needs an enabled provider account
+                                  </p>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Add or enable a Z.AI, Qwen/Alibaba, DeepSeek, or other OpenCode
+                                    connection. Pi will rebuild its model menu automatically.
+                                  </p>
+                                </div>
+                              )}
+
+                              <div className="flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                <p className="text-xs text-muted-foreground">
+                                  Credentials stay in the per-user OpenCode store. Pi receives only
+                                  the generated, secret-free provider configuration.
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleSettingsDestination('api-keys', 'opencode-providers')
+                                  }
+                                  className="shrink-0 gap-2"
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                  Manage provider accounts
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </section>
+                      </div>
+                    </TabsContent>
                   </Tabs>
                 </>
+              </TabsContent>
+
+              {/* Analytics Tab */}
+              <TabsContent value="analytics" className="settings-pane-rail mt-0">
+                <SettingsPanel
+                  id="analytics-limit-metrics"
+                  eyebrow="Combined chart"
+                  title="Provider limit curves"
+                  description="Choose which quota and account-limit curves appear in Analytics. Token model curves are unaffected; provider switches on the Analytics page filter both together."
+                  action={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={updateSettingsMutation.isPending}
+                      onClick={() =>
+                        updateSettingsMutation.mutate({
+                          analytics: {
+                            hiddenLimitMetrics: Object.fromEntries(
+                              Object.entries(DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS).map(
+                                ([provider, metrics]) => [provider, [...metrics]]
+                              )
+                            ),
+                          },
+                        })
+                      }
+                    >
+                      Restore defaults
+                    </Button>
+                  }
+                >
+                  {analyticsLimitHistoryLoading ? (
+                    <div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading provider limits…
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {ANALYTICS_LIMIT_PROVIDER_ORDER.map((provider) => {
+                        const metrics = analyticsLimitMetricsByProvider.get(provider) || [];
+                        const hidden = new Set(analyticsHiddenLimitMetrics[provider] || []);
+                        const visibleCount = metrics.filter(
+                          (metric) => !hidden.has(metric.key)
+                        ).length;
+                        return (
+                          <div
+                            key={provider}
+                            className="rounded-xl border border-border/70 bg-card/50 p-4"
+                          >
+                            <div className="mb-4 flex items-center gap-3">
+                              <ProviderLogo provider={toUiProvider(provider)} className="h-9 w-9" />
+                              <div className="min-w-0 flex-1">
+                                <p className="font-semibold">
+                                  {ANALYTICS_LIMIT_PROVIDER_LABEL[provider]}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {visibleCount}/{metrics.length} curves visible
+                                </p>
+                              </div>
+                            </div>
+                            {metrics.length > 0 ? (
+                              <div className="space-y-2">
+                                {metrics.map((metric) => {
+                                  const visible = !hidden.has(metric.key);
+                                  return (
+                                    <div
+                                      key={metric.key}
+                                      className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/45 px-3 py-2.5"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium">
+                                          {metric.label}
+                                        </p>
+                                        <p className="truncate font-mono text-[10px] text-muted-foreground">
+                                          {metric.key}
+                                        </p>
+                                      </div>
+                                      <Switch
+                                        checked={visible}
+                                        disabled={updateSettingsMutation.isPending}
+                                        aria-label={`${visible ? 'Hide' : 'Show'} ${metric.label} for ${ANALYTICS_LIMIT_PROVIDER_LABEL[provider]}`}
+                                        onCheckedChange={(checked) =>
+                                          updateAnalyticsLimitMetricVisibility(
+                                            provider,
+                                            metric.key,
+                                            checked
+                                          )
+                                        }
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="rounded-lg border border-dashed border-border/70 p-3 text-xs text-muted-foreground">
+                                No recorded limit metrics yet. They appear here after the first
+                                successful provider quota sample.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Defaults hide Parallel sessions, Web search, and GPT-5.3-Codex-Spark. Changes
+                    are stored per Plum account and apply on every device.
+                  </p>
+                </SettingsPanel>
               </TabsContent>
 
               {/* API Keys Tab */}
@@ -3368,118 +4127,6 @@ export function SettingsPage() {
                   </Card>
                 </section>
 
-                {/* Mistral API Key */}
-                <section id="mistral-api-key">
-                  <div className="settings-section-headband">
-                    <h2 className="text-lg font-semibold">Mistral API Key</h2>
-                    <Key className="h-4 w-4 text-gray-500" />
-                  </div>
-                  <Card
-                    className={cn(
-                      'border',
-                      mistralKeyStatus?.hasKey
-                        ? 'border-green-500/30 bg-green-500/5'
-                        : 'border-gray-500/30 bg-gray-500/5'
-                    )}
-                  >
-                    <CardContent className="pt-4 pb-4">
-                      {mistralKeyStatus?.hasKey ? (
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-lg bg-green-500/15">
-                            <Key className="h-4 w-4 text-green-600 dark:text-green-400" />
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-green-600 dark:text-green-400">
-                              API key configured
-                              {mistralKeyStatus.source === 'env' && (
-                                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                  (from .env)
-                                </span>
-                              )}
-                              {mistralKeyStatus.source === 'user' && (
-                                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                                  (per-user)
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-xs text-muted-foreground font-mono">
-                              {mistralKeyStatus.keyPreview}
-                            </p>
-                          </div>
-                          {mistralKeyStatus.source === 'user' && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => deleteMistralKeyMutation.mutate()}
-                              disabled={deleteMistralKeyMutation.isPending}
-                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="h-4 w-4 mr-1" />
-                              Remove
-                            </Button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-gray-500/15">
-                              <Key className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                            </div>
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                                No key set
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                Required for the Mistral Vibe CLI provider
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <div className="relative flex-1">
-                              <Input
-                                type={showMistralKey ? 'text' : 'password'}
-                                value={mistralKeyInput}
-                                onChange={(e) => setMistralKeyInput(e.target.value)}
-                                placeholder="Mistral API key"
-                                className="font-mono text-sm pr-10"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowMistralKey(!showMistralKey)}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted"
-                              >
-                                {showMistralKey ? (
-                                  <EyeOff className="h-4 w-4 text-muted-foreground" />
-                                ) : (
-                                  <Eye className="h-4 w-4 text-muted-foreground" />
-                                )}
-                              </button>
-                            </div>
-                            <Button
-                              onClick={() => setMistralKeyMutation.mutate(mistralKeyInput)}
-                              disabled={!mistralKeyInput || setMistralKeyMutation.isPending}
-                            >
-                              {setMistralKeyMutation.isPending ? 'Saving...' : 'Save'}
-                            </Button>
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            Generate one at{' '}
-                            <a
-                              href="https://console.mistral.ai/api-keys/"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline"
-                            >
-                              console.mistral.ai
-                            </a>
-                            . Stored encrypted in your user settings.
-                          </p>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </section>
-
                 {/* OpenCode Providers (wrapped in its own section) */}
                 <section id="opencode-providers">
                   <Card>
@@ -3488,7 +4135,8 @@ export function SettingsPage() {
                         <div>
                           <CardTitle className="text-base">OpenCode Providers</CardTitle>
                           <CardDescription>
-                            Configure API keys for OpenCode-compatible providers
+                            Configure API keys once; OpenCode and Pi use the same connections and
+                            model catalogue
                           </CardDescription>
                         </div>
                         <Button
@@ -3596,6 +4244,7 @@ export function SettingsPage() {
 
               {/* Integrations Tab */}
               <TabsContent value="integrations" className="settings-pane-rail mt-0">
+                <HomeAssistantSettingsCard />
                 <section id="comfyui-integration">
                   <div className="settings-section-headband">
                     <h2 className="text-lg font-semibold">ComfyUI Integration</h2>
@@ -4362,318 +5011,11 @@ export function SettingsPage() {
                   )}
                 </section>
 
-                {/* Claude Agents */}
-                <section id="agents">
-                  <div className="settings-section-headband">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-semibold">Agents</h2>
-                      {claudeAgents && claudeAgents.length > 0 && (
-                        <span className="px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
-                          {claudeAgents.length}
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={() => openAgentEditor('create')}
-                      className="gap-1.5 h-8 px-3 text-xs"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Add
-                    </Button>
-                  </div>
-
-                  {claudeAgents && claudeAgents.length > 0 ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {claudeAgents.map((agent) => {
-                        const baseName =
-                          agent.filePath
-                            .split('/')
-                            .pop()
-                            ?.replace('.md.disabled', '')
-                            .replace('.md', '') || agent.name;
-                        return (
-                          <Card
-                            key={agent.id}
-                            className={cn(
-                              'group relative overflow-hidden transition-all hover:shadow-md',
-                              agent.enabled
-                                ? 'hover:border-primary/30'
-                                : 'opacity-60 hover:opacity-80'
-                            )}
-                          >
-                            <CardContent className="pt-5 pb-4">
-                              <div className="flex items-start gap-3">
-                                <div
-                                  className={cn(
-                                    'p-2 rounded-lg shrink-0',
-                                    agent.enabled
-                                      ? 'bg-primary/10 text-primary'
-                                      : 'bg-muted text-muted-foreground'
-                                  )}
-                                >
-                                  <Bot className="h-4 w-4" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <p className="font-semibold truncate">{agent.name}</p>
-                                    {!agent.enabled && (
-                                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground shrink-0">
-                                        Disabled
-                                      </span>
-                                    )}
-                                    {agent.model && (
-                                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground shrink-0">
-                                        {agent.model}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-muted-foreground line-clamp-2">
-                                    {agent.description || 'No description'}
-                                  </p>
-                                  {agent.tools && agent.tools.length > 0 && (
-                                    <div className="flex flex-wrap gap-1 mt-2">
-                                      {agent.tools.slice(0, 3).map((tool) => (
-                                        <span
-                                          key={tool}
-                                          className="px-1.5 py-0.5 text-[10px] rounded bg-muted/70 text-muted-foreground"
-                                        >
-                                          {tool}
-                                        </span>
-                                      ))}
-                                      {agent.tools.length > 3 && (
-                                        <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted/70 text-muted-foreground">
-                                          +{agent.tools.length - 3}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Action buttons */}
-                              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => toggleAgentMutation.mutate(baseName)}
-                                  title={agent.enabled ? 'Disable' : 'Enable'}
-                                >
-                                  {agent.enabled ? (
-                                    <ToggleRight className="h-4 w-4 text-green-600" />
-                                  ) : (
-                                    <ToggleLeft className="h-4 w-4 text-muted-foreground" />
-                                  )}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => openAgentEditor('edit', agent)}
-                                  title="Edit"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </CardContent>
-                            <div
-                              className={cn(
-                                'absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-primary/50 to-primary/10 opacity-0 group-hover:opacity-100 transition-opacity',
-                                !agent.enabled && 'from-muted-foreground/30 to-muted-foreground/10'
-                              )}
-                            />
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <Card className="border-dashed">
-                      <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                        <div className="p-4 rounded-full bg-primary/10 mb-4">
-                          <Bot className="h-8 w-8 text-primary/50" />
-                        </div>
-                        <p className="font-medium text-muted-foreground mb-1">No agents found</p>
-                        <p className="text-sm text-muted-foreground/70 max-w-xs mb-4">
-                          Create custom agents to extend Claude's capabilities
-                        </p>
-                        <Button
-                          size="sm"
-                          onClick={() => openAgentEditor('create')}
-                          className="gap-2"
-                        >
-                          <Plus className="h-4 w-4" />
-                          Create Agent
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  )}
-                </section>
-
-                {/* Claude Skills */}
-                <section id="skills">
-                  <div className="settings-section-headband">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-semibold">Skills</h2>
-                      {claudeSkills && claudeSkills.length > 0 && (
-                        <span className="px-2 py-0.5 text-xs font-medium bg-green-500/10 text-green-600 dark:text-green-400 rounded-full">
-                          {claudeSkills.length}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={skillImportInputRef}
-                        type="file"
-                        multiple
-                        accept=".md,.skill,.zip"
-                        className="hidden"
-                        onChange={(e) => handleSkillImportFiles(e.target.files)}
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => skillImportInputRef.current?.click()}
-                        disabled={importSkillsMutation.isPending}
-                        className="gap-1.5 h-8 px-3 text-xs"
-                        title="Import .md or .skill/.zip files"
-                      >
-                        {importSkillsMutation.isPending ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )}
-                        Import
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => openSkillEditor('create')}
-                        className="gap-1.5 h-8 px-3 text-xs bg-green-600 hover:bg-green-700"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add
-                      </Button>
-                    </div>
-                  </div>
-
-                  {claudeSkills && claudeSkills.length > 0 ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {claudeSkills.map((skill) => {
-                        const baseName =
-                          skill.dirPath.split('/').pop()?.replace('.disabled', '') || skill.name;
-                        return (
-                          <Card
-                            key={skill.id}
-                            className={cn(
-                              'group relative overflow-hidden transition-all hover:shadow-md',
-                              skill.enabled
-                                ? 'hover:border-green-500/30'
-                                : 'opacity-60 hover:opacity-80'
-                            )}
-                          >
-                            <CardContent className="pt-5 pb-4">
-                              <div className="flex items-start gap-3">
-                                <div
-                                  className={cn(
-                                    'p-2 rounded-lg shrink-0',
-                                    skill.enabled
-                                      ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                                      : 'bg-muted text-muted-foreground'
-                                  )}
-                                >
-                                  <Wand2 className="h-4 w-4" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <p className="font-semibold truncate">{skill.name}</p>
-                                    {!skill.enabled && (
-                                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground shrink-0">
-                                        Disabled
-                                      </span>
-                                    )}
-                                    {skill.model && (
-                                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-muted text-muted-foreground shrink-0">
-                                        {skill.model}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-muted-foreground line-clamp-2">
-                                    {skill.description || 'No description'}
-                                  </p>
-                                  {skill.allowedTools && skill.allowedTools.length > 0 && (
-                                    <div className="flex flex-wrap gap-1 mt-2">
-                                      {skill.allowedTools.map((tool) => (
-                                        <span
-                                          key={tool}
-                                          className="px-1.5 py-0.5 text-[10px] rounded bg-green-500/10 text-green-600 dark:text-green-400"
-                                        >
-                                          {tool}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Action buttons */}
-                              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => toggleSkillMutation.mutate(baseName)}
-                                  title={skill.enabled ? 'Disable' : 'Enable'}
-                                >
-                                  {skill.enabled ? (
-                                    <ToggleRight className="h-4 w-4 text-green-600" />
-                                  ) : (
-                                    <ToggleLeft className="h-4 w-4 text-muted-foreground" />
-                                  )}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => openSkillEditor('edit', skill)}
-                                  title="Edit"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </CardContent>
-                            <div
-                              className={cn(
-                                'absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-green-500/50 to-green-500/10 opacity-0 group-hover:opacity-100 transition-opacity',
-                                !skill.enabled && 'from-muted-foreground/30 to-muted-foreground/10'
-                              )}
-                            />
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <Card className="border-dashed">
-                      <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                        <div className="p-4 rounded-full bg-green-500/10 mb-4">
-                          <Wand2 className="h-8 w-8 text-green-500/50" />
-                        </div>
-                        <p className="font-medium text-muted-foreground mb-1">No skills found</p>
-                        <p className="text-sm text-muted-foreground/70 max-w-xs mb-4">
-                          Create custom skills to add reusable capabilities
-                        </p>
-                        <Button
-                          size="sm"
-                          onClick={() => openSkillEditor('create')}
-                          className="gap-2 bg-green-600 hover:bg-green-700"
-                        >
-                          <Plus className="h-4 w-4" />
-                          Create Skill
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  )}
-                </section>
-
+                <CapabilityCatalogSections
+                  agents={claudeAgents}
+                  skills={claudeSkills}
+                  configProvider={configProvider}
+                />
                 {/* Codex Marketplace */}
                 <section id="codex-marketplace">
                   <div className="settings-section-headband">
@@ -5063,16 +5405,6 @@ export function SettingsPage() {
           onChange={(path) => {
             updateSettingsMutation.mutate({ defaultWorkingDir: path });
           }}
-        />
-
-        <AgentSkillEditorDialog
-          open={editorOpen}
-          onOpenChange={setEditorOpen}
-          type={editorType}
-          mode={editorMode}
-          initialData={editingItem?.data}
-          editName={editingItem?.name}
-          configProvider={configProvider}
         />
 
         <PluginEditorDialog

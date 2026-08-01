@@ -4,14 +4,14 @@ import type { NextFunction, Request, Response } from 'express';
 import { createReadStream, type Stats } from 'fs';
 import fs from 'fs/promises';
 import httpProxy from 'http-proxy';
-import { config } from '../config';
+import { config } from '../config.js';
 import {
   STATIC_INIT_PATH,
   STATIC_ROOT_COOKIE,
   decodePreviewRoot,
   previewContentType,
   resolvePreviewStaticPath,
-} from '../utils/previewStatic';
+} from '../utils/previewStatic.js';
 
 const PORT_COOKIE = 'preview_port';
 const INIT_PATH = '/__preview-init';

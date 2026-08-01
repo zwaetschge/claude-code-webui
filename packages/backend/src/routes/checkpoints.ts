@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import { getDatabase } from '../db';
-import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { getDatabase } from '../db/index.js';
+import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 

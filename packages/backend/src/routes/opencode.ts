@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { execFileSync } from 'child_process';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import {
   buildOpenCodeCommandEnv,
   getOpenCodeProviderCatalog,
   resolveOpenCodeBinary,
   type OpenCodeProviderCatalog,
-} from '../utils/opencodeCatalog';
+} from '../utils/opencodeCatalog.js';
 import {
   buildOpenCodeProviderCredentialEnv,
   encryptOpenCodeProviderKey,
@@ -17,8 +17,16 @@ import {
   readOpenCodeProvidersForUser,
   writeOpenCodeProvidersForUser,
   type OpenCodeProvider,
-} from '../utils/opencodeProviderKeys';
-import { opencodeServer } from '../services/opencode/OpencodeServer';
+} from '../utils/opencodeProviderKeys.js';
+import {
+  buildOpenCodeServerProcessEnv,
+  opencodeServer,
+} from '../services/opencode/OpencodeServer.js';
+import {
+  ensureOpenCodeTenantDirectories,
+  resolveOpenCodeTenantPaths,
+} from '../services/opencode/tenantPaths.js';
+import { syncProviderLinks } from '../utils/providerLinks.js';
 
 const router = Router();
 
@@ -66,8 +74,7 @@ router.put('/providers', requireAuth, (req, res) => {
 
     const { id, name, apiKey, baseUrl, enabled = true } = result.data;
     const catalogProvider = getOpenCodeProviderCatalog()[id];
-    const finalBaseUrl =
-      baseUrl && baseUrl.trim() !== '' ? baseUrl.trim() : catalogProvider?.api;
+    const finalBaseUrl = baseUrl && baseUrl.trim() !== '' ? baseUrl.trim() : catalogProvider?.api;
 
     const providers = readOpenCodeProvidersForUser(userId);
     const now = new Date().toISOString();
@@ -143,9 +150,20 @@ router.post('/providers/:id/test', requireAuth, (req, res) => {
       return res.status(404).json({ success: false, error: 'Provider not found' });
     }
 
+    const tenantPaths = resolveOpenCodeTenantPaths(userId);
+    ensureOpenCodeTenantDirectories(tenantPaths);
+    syncProviderLinks({
+      quiet: true,
+      userId,
+      opencodeConfigPath: `${tenantPaths.configDir}/opencode.json`,
+      opencodeAgentsDir: `${tenantPaths.configDir}/agents`,
+    });
+    const commandEnv = buildOpenCodeCommandEnv();
     const env: NodeJS.ProcessEnv = {
-      ...buildOpenCodeCommandEnv(),
+      ...buildOpenCodeServerProcessEnv(commandEnv),
       ...buildOpenCodeProviderCredentialEnv(userId),
+      OPENCODE_CONFIG_DIR: tenantPaths.configDir,
+      OPENCODE_DATA_DIR: tenantPaths.dataDir,
     };
     const catalog = getOpenCodeProviderCatalog();
     const modelCount = catalog[id]?.models.length || 0;
@@ -245,10 +263,12 @@ router.post('/questions/respond', requireAuth, async (req, res) => {
   }
 
   try {
+    const userId = (req as AuthenticatedRequest).userId;
     const handled = await opencodeServer.replyQuestion(
       result.data.requestId,
       result.data.answers,
-      result.data.providerSessionId
+      result.data.providerSessionId,
+      userId
     );
     if (!handled) {
       return res.status(404).json({ success: false, error: 'Question request not found' });
@@ -267,9 +287,11 @@ router.post('/questions/reject', requireAuth, async (req, res) => {
   }
 
   try {
+    const userId = (req as AuthenticatedRequest).userId;
     const handled = await opencodeServer.rejectQuestion(
       result.data.requestId,
-      result.data.providerSessionId
+      result.data.providerSessionId,
+      userId
     );
     if (!handled) {
       return res.status(404).json({ success: false, error: 'Question request not found' });

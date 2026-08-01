@@ -14,16 +14,31 @@
  * }
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { getDatabase } from '../db';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { getDatabase } from '../db/index.js';
 
 const router = Router();
+
+function requireAdminForGlobalScope(req: Request, res: Response, next: NextFunction): void {
+  if (req.body?.scope === 'global') {
+    requireAdmin(req, res, next);
+    return;
+  }
+  next();
+}
+
+function assertProjectPathOwned(userId: string, projectPath: string): void {
+  const owned = getDatabase()
+    .prepare('SELECT id FROM sessions WHERE user_id = ? AND working_directory = ? LIMIT 1')
+    .get(userId, path.resolve(projectPath)) as { id: string } | undefined;
+  if (!owned) throw new AppError('Project not found', 404, 'NOT_FOUND');
+}
 
 // Types
 interface ClaudeSettings {
@@ -106,6 +121,7 @@ async function getSessionWorkingDirectory(
 router.get(
   '/global',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (_req: Request, res: Response) => {
     const settingsPath = getGlobalSettingsPath();
     const settings = await readSettingsFile(settingsPath);
@@ -165,6 +181,7 @@ router.get(
 router.post(
   '/add-pattern',
   requireAuth,
+  requireAdminForGlobalScope,
   asyncHandler(async (req: Request, res: Response) => {
     const parsed = addPatternSchema.safeParse(req.body);
 
@@ -189,8 +206,10 @@ router.post(
         );
       }
 
-      actualProjectPath = projectPath;
-      settingsPath = getProjectSettingsPath(projectPath);
+      const userId = (req as AuthenticatedRequest).userId;
+      assertProjectPathOwned(userId, projectPath);
+      actualProjectPath = path.resolve(projectPath);
+      settingsPath = getProjectSettingsPath(actualProjectPath);
     }
 
     // Read existing settings
@@ -238,6 +257,7 @@ router.post(
 router.post(
   '/remove-pattern',
   requireAuth,
+  requireAdminForGlobalScope,
   asyncHandler(async (req: Request, res: Response) => {
     const parsed = removePatternSchema.safeParse(req.body);
 
@@ -259,7 +279,9 @@ router.post(
           'MISSING_PROJECT_PATH'
         );
       }
-      settingsPath = getProjectSettingsPath(projectPath);
+      const userId = (req as AuthenticatedRequest).userId;
+      assertProjectPathOwned(userId, projectPath);
+      settingsPath = getProjectSettingsPath(path.resolve(projectPath));
     }
 
     // Read existing settings

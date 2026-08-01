@@ -3,16 +3,18 @@ import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs/promises';
 import http from 'http';
 import path from 'path';
-import { config } from '../config';
-import { requireAuth } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { redactSensitiveText } from '../utils/sanitize';
+import { config } from '../config.js';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { redactSensitiveText } from '../utils/sanitize.js';
+import { getDatabase } from '../db/index.js';
+import { buildRestrictedChildEnv } from '../utils/childProcessEnv.js';
 import {
   STATIC_INIT_PATH,
   encodePreviewRoot,
   isAllowedPreviewPath,
   isPreviewStaticFile,
-} from '../utils/previewStatic';
+} from '../utils/previewStatic.js';
 
 const router = Router();
 
@@ -60,6 +62,7 @@ interface ResolvedStartScript {
 }
 
 interface PreviewProcessRecord {
+  userId: string;
   projectPath: string;
   scriptName: string;
   command: string;
@@ -96,6 +99,7 @@ const previewProcesses = new Map<string, PreviewProcessRecord>();
 function previewProcessPath(): string {
   const parts = [
     '/home/node/.npm-global/bin',
+    '/opt/plum-cli/bin',
     path.join(process.cwd(), 'node_modules', '.bin'),
     process.env.PATH || '',
   ].filter(Boolean);
@@ -113,6 +117,13 @@ function isPathAllowed(dir: string): boolean {
 function isSubpath(parentPath: string, childPath: string): boolean {
   const relativePath = path.relative(parentPath, childPath);
   return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function assertProjectOwnedByUser(projectPath: string, userId: string): void {
+  const owned = getDatabase()
+    .prepare('SELECT id FROM sessions WHERE user_id = ? AND working_directory = ? LIMIT 1')
+    .get(userId, path.resolve(projectPath));
+  if (!owned) throw new AppError('Project not found', 404, 'PROJECT_NOT_FOUND');
 }
 
 function isHtmlPreviewFile(filePath: string): boolean {
@@ -204,12 +215,13 @@ function processState(record: PreviewProcessRecord): PreviewStartCommand {
 
 function attachStartCommandState(
   projectPath: string | null,
+  userId: string,
   commands: PreviewStartCommand[]
 ): PreviewStartCommand[] {
   if (!projectPath) return commands;
   return commands.map((command) => {
     const record = previewProcesses.get(processKey(projectPath, command.name));
-    return record ? processState(record) : command;
+    return record?.userId === userId ? processState(record) : command;
   });
 }
 
@@ -542,6 +554,7 @@ router.get(
   '/static-file',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
     const rawProjectPath = typeof req.query.projectPath === 'string' ? req.query.projectPath : '';
     const rawFilePath = typeof req.query.filePath === 'string' ? req.query.filePath : '';
     const projectPath = rawProjectPath.trim() ? path.resolve(rawProjectPath) : '';
@@ -553,6 +566,7 @@ router.get(
     if (!isPathAllowed(projectPath)) {
       throw new AppError('Project path is not allowed', 403, 'PROJECT_PATH_FORBIDDEN');
     }
+    assertProjectOwnedByUser(projectPath, userId);
     if (!isSubpath(projectPath, filePath)) {
       throw new AppError('File is outside the project path', 403, 'FILE_PATH_FORBIDDEN');
     }
@@ -594,6 +608,7 @@ router.get(
   '/ports',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
     const projectPath =
       typeof req.query.projectPath === 'string' && req.query.projectPath.trim()
         ? path.resolve(req.query.projectPath)
@@ -601,6 +616,7 @@ router.get(
     const savedPorts = parseSavedPorts(req.query.ports);
     const candidateMap = new Map<number, PreviewCandidate>();
 
+    if (projectPath) assertProjectOwnedByUser(projectPath, userId);
     const hints = await projectHints(projectPath);
     for (const candidate of hints.candidates) addCandidate(candidateMap, candidate);
     for (const port of savedPorts) {
@@ -628,7 +644,7 @@ router.get(
       projectPath,
       scannedAt: new Date().toISOString(),
       ports,
-      startCommands: attachStartCommandState(projectPath, hints.startCommands),
+      startCommands: attachStartCommandState(projectPath, userId, hints.startCommands),
       artifacts: [],
     });
   })
@@ -638,6 +654,7 @@ router.post(
   '/start',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
     const rawProjectPath = typeof req.body?.projectPath === 'string' ? req.body.projectPath : '';
     const rawScript = typeof req.body?.script === 'string' ? req.body.script : '';
     const projectPath = rawProjectPath.trim() ? path.resolve(rawProjectPath) : '';
@@ -646,11 +663,15 @@ router.post(
     if (!projectPath || !scriptName) {
       throw new AppError('Project path and script are required', 400, 'VALIDATION_ERROR');
     }
+    assertProjectOwnedByUser(projectPath, userId);
 
     const script = await resolveStartScript(projectPath, scriptName);
     const key = processKey(projectPath, script.name);
     const existing = previewProcesses.get(key);
     if (existing?.status === 'starting' || existing?.status === 'running') {
+      if (existing.userId !== userId) {
+        throw new AppError('Preview process is unavailable', 409, 'PROCESS_UNAVAILABLE');
+      }
       res.status(202).json(processState(existing));
       return;
     }
@@ -658,7 +679,7 @@ router.post(
     const child = spawn(script.manager, script.args, {
       cwd: projectPath,
       env: {
-        ...process.env,
+        ...buildRestrictedChildEnv(),
         BROWSER: 'none',
         FORCE_COLOR: '1',
         PATH: previewProcessPath(),
@@ -668,6 +689,7 @@ router.post(
     });
 
     const record: PreviewProcessRecord = {
+      userId,
       projectPath,
       scriptName: script.name,
       command: script.command,
@@ -711,6 +733,7 @@ router.post(
   '/stop',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
     const rawProjectPath = typeof req.body?.projectPath === 'string' ? req.body.projectPath : '';
     const rawScript = typeof req.body?.script === 'string' ? req.body.script : '';
     const projectPath = rawProjectPath.trim() ? path.resolve(rawProjectPath) : '';
@@ -722,9 +745,10 @@ router.post(
     if (!isPathAllowed(projectPath)) {
       throw new AppError('Project path is not allowed', 403, 'PROJECT_PATH_FORBIDDEN');
     }
+    assertProjectOwnedByUser(projectPath, userId);
 
     const record = previewProcesses.get(processKey(projectPath, scriptName));
-    if (!record) {
+    if (!record || record.userId !== userId) {
       throw new AppError('Preview process not found', 404, 'PROCESS_NOT_FOUND');
     }
 

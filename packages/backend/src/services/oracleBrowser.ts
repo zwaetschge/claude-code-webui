@@ -10,7 +10,7 @@ import type { OracleBrowserMode } from '@plum-code-webui/shared';
 import {
   DEFAULT_ORACLE_CHATGPT_URL,
   getOracleRuntimeConfigForSession,
-} from '../utils/oracleSettings';
+} from '../utils/oracleSettings.js';
 
 const DEFAULT_BROWSER_BIN =
   process.env.CHROME_BIN ||
@@ -469,9 +469,7 @@ async function waitForPageTarget(
 
   while (Date.now() < deadline) {
     if (options?.shouldAbort?.()) {
-      throw (
-        options.getAbortError?.() || new Error('Chromium exited before opening a page target.')
-      );
+      throw options.getAbortError?.() || new Error('Chromium exited before opening a page target.');
     }
     try {
       const targets = await readJson<DevToolsTarget[]>(`http://127.0.0.1:${port}/json/list`);
@@ -1091,18 +1089,14 @@ export class OracleBrowserManager {
       instance.display = virtualDisplay;
     }
 
-    const child = spawn(
-      DEFAULT_BROWSER_BIN,
-      buildChromiumArgs(instance, launchHeadless),
-      {
-        env: {
-          ...process.env,
-          CHROMIUM_USER_DATA_DIR: instance.profileDir,
-          ...(virtualDisplay ? { DISPLAY: virtualDisplay } : {}),
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
+    const child = spawn(DEFAULT_BROWSER_BIN, buildChromiumArgs(instance, launchHeadless), {
+      env: {
+        ...process.env,
+        CHROMIUM_USER_DATA_DIR: instance.profileDir,
+        ...(virtualDisplay ? { DISPLAY: virtualDisplay } : {}),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
     instance.process = child;
     child.stdout.on('data', (chunk) => {

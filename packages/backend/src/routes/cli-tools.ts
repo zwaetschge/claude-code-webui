@@ -2,10 +2,13 @@ import { Router } from 'express';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import * as pty from 'node-pty';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { getDatabase } from '../db';
-import { AppError } from '../middleware/errorHandler';
+import path from 'node:path';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { getDatabase } from '../db/index.js';
+import { AppError } from '../middleware/errorHandler.js';
 import type { CliTool, CliToolExecution } from '@plum-code-webui/shared';
+import { buildRestrictedChildEnv } from '../utils/childProcessEnv.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
 
 const router = Router();
 
@@ -78,7 +81,7 @@ router.get('/:id', requireAuth, (req, res) => {
 });
 
 // Create CLI tool
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, requireAdmin, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const parsed = createCliToolSchema.safeParse(req.body);
 
@@ -116,7 +119,7 @@ router.post('/', requireAuth, (req, res) => {
 });
 
 // Update CLI tool
-router.put('/:id', requireAuth, (req, res) => {
+router.put('/:id', requireAuth, requireAdmin, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const parsed = updateCliToolSchema.safeParse(req.body);
 
@@ -179,7 +182,7 @@ router.put('/:id', requireAuth, (req, res) => {
 });
 
 // Delete CLI tool
-router.delete('/:id', requireAuth, (req, res) => {
+router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
 
@@ -195,7 +198,7 @@ router.delete('/:id', requireAuth, (req, res) => {
 });
 
 // Execute CLI tool with a prompt
-router.post('/:id/execute', requireAuth, async (req, res) => {
+router.post('/:id/execute', requireAuth, requireAdmin, async (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const parsed = executeCliToolSchema.safeParse(req.body);
 
@@ -222,7 +225,26 @@ router.post('/:id/execute', requireAuth, async (req, res) => {
   }
 
   const { prompt, workingDirectory, sessionId } = parsed.data;
-  const cwd = tool.useSessionCwd && workingDirectory ? workingDirectory : process.cwd();
+  const session = sessionId
+    ? (db
+        .prepare('SELECT working_directory FROM sessions WHERE id = ? AND user_id = ?')
+        .get(sessionId, userId) as { working_directory: string } | undefined)
+    : undefined;
+  if (sessionId && !session) {
+    throw new AppError('Session not found', 404, 'SESSION_NOT_FOUND');
+  }
+
+  let cwd = process.cwd();
+  if (tool.useSessionCwd) {
+    const requestedCwd = session?.working_directory || workingDirectory;
+    if (requestedCwd) {
+      const resolvedCwd = path.resolve(requestedCwd);
+      if (!isAllowedBasePath(resolvedCwd)) {
+        throw new AppError('Working directory is not allowed', 403, 'FORBIDDEN_PATH');
+      }
+      cwd = resolvedCwd;
+    }
+  }
 
   // Save user message if sessionId provided
   if (sessionId) {
@@ -259,10 +281,7 @@ router.post('/:id/execute', requireAuth, async (req, res) => {
           cols: 120,
           rows: 30,
           cwd,
-          env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' } as Record<
-            string,
-            string
-          >,
+          env: buildRestrictedChildEnv({ TERM: 'xterm-256color', FORCE_COLOR: '1' }),
         });
 
         let output = '';

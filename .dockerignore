@@ -1,11 +1,18 @@
 node_modules
 **/node_modules
+.pnpm-store
 **/dist
 **/*.tsbuildinfo
 .git
 .logs
 .pids
 data
+/config
+/workspace
+/html previews
+/scripts/__pycache__
+/*.list*
+/tmp-*.png
 *.log
 .env.local
 .DS_Store

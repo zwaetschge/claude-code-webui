@@ -5,14 +5,14 @@ import type {
   DiscordIntegrationSettingsUpdate,
   DiscordTestResult,
 } from '@plum-code-webui/shared';
-import { requireAdmin, requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { auditFromRequest } from '../utils/auditLog';
+import { requireAdmin, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { auditFromRequest } from '../utils/auditLog.js';
 import {
   discordIntegrationService,
   discordNotifier,
   discordOutboxWorker,
-} from '../services/discord';
+} from '../services/discord/index.js';
 
 const router = Router();
 
@@ -20,11 +20,7 @@ router.use(requireAuth, requireAdmin);
 
 const severitySchema = z.enum(['info', 'warning', 'error', 'critical']);
 const gatewayModeSchema = z.enum(['alerts_only', 'supervisor', 'autonomous']);
-const maintenancePolicySchema = z.enum([
-  'approval_required',
-  'session_mode',
-  'autonomous_allowed',
-]);
+const maintenancePolicySchema = z.enum(['approval_required', 'session_mode', 'autonomous_allowed']);
 
 const updateSettingsSchema = z.object({
   enabled: z.boolean().optional(),
@@ -33,13 +29,23 @@ const updateSettingsSchema = z.object({
   clearWebhookUrl: z.boolean().optional(),
   botToken: z.string().trim().min(20).max(256).nullable().optional(),
   clearBotToken: z.boolean().optional(),
-  channelId: z.string().trim().regex(/^\d{5,40}$/).nullable().optional(),
+  channelId: z
+    .string()
+    .trim()
+    .regex(/^\d{5,40}$/)
+    .nullable()
+    .optional(),
   channelLabel: z.string().trim().max(80).nullable().optional(),
   minSeverity: severitySchema.optional(),
   gatewayMode: gatewayModeSchema.optional(),
   maintenancePolicy: maintenancePolicySchema.optional(),
   inboundJobsEnabled: z.boolean().optional(),
-  criticalRoleId: z.string().trim().regex(/^\d{5,40}$/).nullable().optional(),
+  criticalRoleId: z
+    .string()
+    .trim()
+    .regex(/^\d{5,40}$/)
+    .nullable()
+    .optional(),
 });
 
 const outboxQuerySchema = z.object({

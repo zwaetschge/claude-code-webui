@@ -4,11 +4,11 @@ import type {
   SessionDelegationStatus,
   SessionPeerLink,
 } from '@plum-code-webui/shared';
-import { getDatabase } from '../../db';
-import { AppError } from '../../middleware/errorHandler';
-import { safeJsonParse } from '../../utils/json';
-import { discordNotifier } from '../discord';
-import { getProcessManager } from '../../websocket';
+import { getDatabase } from '../../db/index.js';
+import { AppError } from '../../middleware/errorHandler.js';
+import { safeJsonParse } from '../../utils/json.js';
+import { discordNotifier } from '../discord/index.js';
+import { getProcessManager } from '../../websocket/index.js';
 
 interface SessionRow {
   id: string;
@@ -142,7 +142,9 @@ export class PeerService {
       JSON.stringify({ linkedBy: 'user' })
     );
 
-    return this.listPeers(source.id, params.userId).find((peer) => peer.targetSessionId === target.id)!;
+    return this.listPeers(source.id, params.userId).find(
+      (peer) => peer.targetSessionId === target.id
+    )!;
   }
 
   removePeer(sourceSessionId: string, targetSessionId: string, userId: string): void {

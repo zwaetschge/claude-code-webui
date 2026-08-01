@@ -20,8 +20,11 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import {
-  AreaChart,
   Area,
+  Bar,
+  ComposedChart,
+  Line,
+  ReferenceLine,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -32,14 +35,21 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
+import { formatNumber } from '@/lib/analyticsFormat';
 import {
+  ACCOUNT_USAGE_LIMIT_PROVIDERS,
   CLI_PROVIDER_LABEL,
   CLI_PROVIDER_LIMIT_LABELS,
-  type CLIProvider,
+  type AccountUsageLimitProvider,
   type UiProvider,
 } from '@/lib/providers';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
-import { getProviderLabelForModel } from '@plum-code-webui/shared';
+import {
+  DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS,
+  getProviderLabelForModel,
+  getUsageModelKey,
+  type UserSettings,
+} from '@plum-code-webui/shared';
 
 interface ApiResponse<T> {
   success: boolean;
@@ -235,53 +245,141 @@ interface UsageLimitData {
     dailyRequests: number;
     weeklyRequests: number;
   };
+  accountUsage?: {
+    periodDays: number;
+    totalTokens: number;
+    totalRequests: number;
+    startsAt: string | null;
+    endsAt: string | null;
+    timezone: 'Asia/Shanghai';
+    models: Array<{ model: string; tokens: number }>;
+  };
 }
 
 interface UsageLimitsResponse {
   success: boolean;
   supported: boolean;
-  provider: UsageLimitProvider;
+  provider: AccountUsageLimitProvider;
   data: UsageLimitData | null;
   error?: { code: string; message: string };
 }
 
-type UsageLimitProvider = CLIProvider | 'z-ai' | 'opencode-go';
+type UsageLimitHistoryRange = '24h' | '7d' | '30d' | '90d';
 
-const USAGE_PROVIDERS: UsageLimitProvider[] = [
-  'codex',
-  'z-ai',
-  'opencode-go',
-  'opencode',
-  'vibe',
-  'claude',
+interface UsageLimitHistoryPoint {
+  provider: AccountUsageLimitProvider;
+  metricKey: string;
+  metricLabel: string;
+  utilization: number | null;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
+  unit: string | null;
+  resetsAt: string | null;
+  windowSeconds: number | null;
+  source: string | null;
+  resetDetected: boolean;
+  resetEventAt: string | null;
+  recordedAt: string;
+}
+
+interface UsageLimitHistoryData {
+  range: UsageLimitHistoryRange;
+  startsAt: string;
+  endsAt: string;
+  sampledEverySeconds: number;
+  points: UsageLimitHistoryPoint[];
+  trackedTokens: Array<{
+    provider: AccountUsageLimitProvider;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    totalTokens: number;
+    recordedAt: string;
+  }>;
+  latestAt: string | null;
+}
+
+type UsageLimitTracker = AccountUsageLimitProvider;
+
+// The quota-history chart plots persisted upstream snapshots. The Alibaba Token
+// Plan has no upstream quota API — its utilisation is derived from our own
+// usage_history on request — so it appears in the live limits bar but not here.
+const USAGE_PROVIDERS: UsageLimitTracker[] = ACCOUNT_USAGE_LIMIT_PROVIDERS.filter(
+  (provider): provider is UsageLimitTracker => provider !== 'alibaba'
+);
+const DEFAULT_USAGE_TRACKERS: UsageLimitTracker[] = [...USAGE_PROVIDERS];
+const USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v2';
+const USAGE_HISTORY_RANGES: Array<{ value: UsageLimitHistoryRange; label: string }> = [
+  { value: '24h', label: '24h' },
+  { value: '7d', label: '7d' },
+  { value: '30d', label: '30d' },
+  { value: '90d', label: '90d' },
 ];
 
-const USAGE_PROVIDER_COLORS: Record<UsageLimitProvider, string> = {
+const USAGE_PROVIDER_COLORS: Record<AccountUsageLimitProvider, string> = {
   claude: '#f97316',
+  zai: '#14b8a6',
   codex: '#22c55e',
-  opencode: '#3b82f6',
-  'opencode-go': '#2563eb',
-  vibe: '#fa520f',
-  'z-ai': '#0f766e',
+  kimi: '#2582ed',
+  alibaba: '#f59e0b',
 };
 
-const USAGE_PROVIDER_LABELS: Record<UsageLimitProvider, string> = {
-  ...CLI_PROVIDER_LABEL,
-  'opencode-go': 'OpenCode Go',
-  'z-ai': 'Z.ai Coding Plan',
+const USAGE_PROVIDER_LIMIT_COLORS: Record<AccountUsageLimitProvider, readonly string[]> = {
+  codex: ['#22c55e', '#86efac', '#15803d', '#4ade80'],
+  kimi: ['#2582ed', '#7db5ff', '#1d4ed8', '#60a5fa'],
+  claude: ['#f97316', '#fdba74', '#c2410c', '#fb923c'],
+  zai: ['#14b8a6', '#5eead4', '#0f766e', '#2dd4bf'],
+  alibaba: ['#f59e0b', '#fcd34d', '#b45309', '#fbbf24'],
 };
 
-const USAGE_PROVIDER_LOGO: Record<UsageLimitProvider, UiProvider> = {
+const USAGE_PROVIDER_LABELS: Record<AccountUsageLimitProvider, string> = {
+  codex: CLI_PROVIDER_LABEL.codex,
+  kimi: CLI_PROVIDER_LABEL.kimi,
+  claude: CLI_PROVIDER_LABEL.claude,
+  zai: CLI_PROVIDER_LABEL.zai,
+  alibaba: 'Alibaba Token Plan',
+};
+
+const USAGE_TRACKER_LABELS: Record<UsageLimitTracker, string> = {
+  codex: 'Codex',
+  kimi: 'Kimi',
+  claude: 'Claude',
+  zai: 'Z.AI',
+  alibaba: 'Token Plan',
+};
+
+const USAGE_TRACKER_ANALYTICS_LABEL: Record<UsageLimitTracker, string> = {
+  codex: 'Codex',
+  kimi: 'Kimi',
+  claude: 'Claude',
+  zai: 'Z.AI',
+  alibaba: 'Other',
+};
+
+function loadUsageLimitTrackers(): UsageLimitTracker[] {
+  if (typeof window === 'undefined') return DEFAULT_USAGE_TRACKERS;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(USAGE_TRACKERS_STORAGE_KEY) || 'null');
+    if (!Array.isArray(stored)) return DEFAULT_USAGE_TRACKERS;
+    return USAGE_PROVIDERS.filter((provider) => stored.includes(provider));
+  } catch {
+    return DEFAULT_USAGE_TRACKERS;
+  }
+}
+
+const USAGE_PROVIDER_LOGO: Record<AccountUsageLimitProvider, UiProvider> = {
   claude: 'claude',
+  zai: 'zai',
   codex: 'codex',
-  opencode: 'opencode',
-  'opencode-go': 'opencode',
-  vibe: 'vibe',
-  'z-ai': 'opencode',
+  kimi: 'kimi',
+  // No dedicated brand mark yet; the neutral Plum badge keeps the row readable.
+  alibaba: 'plum',
 };
 
 const USAGE_LIMIT_LABELS: Record<
-  UsageLimitProvider,
+  AccountUsageLimitProvider,
   {
     session: { title: string; subtitle?: string };
     weeklyAll?: { title: string; subtitle?: string };
@@ -289,14 +387,6 @@ const USAGE_LIMIT_LABELS: Record<
   }
 > = {
   ...CLI_PROVIDER_LIMIT_LABELS,
-  'opencode-go': {
-    session: { title: 'Rolling', subtitle: 'Go quota' },
-    weeklyAll: { title: 'Weekly', subtitle: 'Go quota' },
-  },
-  'z-ai': {
-    session: { title: '5h', subtitle: 'Tokens' },
-    weeklyAll: { title: 'Weekly', subtitle: 'Tokens' },
-  },
 };
 
 const PERIODS = [
@@ -325,7 +415,9 @@ const PROVIDER_FALLBACK_COLOR = '#94a3b8';
 
 const PROVIDER_COLORS: Record<string, string> = {
   Codex: '#22c55e',
+  Kimi: '#2582ed',
   OpenCode: '#3b82f6',
+  Pi: '#a855f7',
   Vibe: '#fa520f',
   Claude: '#f97316',
   Other: PROVIDER_FALLBACK_COLOR,
@@ -358,16 +450,6 @@ function withAlpha(hex: string, alpha: string): string {
 
 function getProviderColor(provider?: string): string {
   return PROVIDER_COLORS[provider || ''] ?? PROVIDER_FALLBACK_COLOR;
-}
-
-function formatNumber(num: number): string {
-  if (num >= 1_000_000) {
-    return (num / 1_000_000).toFixed(1) + 'M';
-  }
-  if (num >= 1_000) {
-    return (num / 1_000).toFixed(1) + 'K';
-  }
-  return num.toLocaleString();
 }
 
 function formatCurrency(amount: number): string {
@@ -500,24 +582,476 @@ function parseTimelineLabel(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function formatTimelineLabel(value: string): string {
-  const date = parseTimelineLabel(value);
-  if (!date) return value;
-  if (/^\d{4}-\d{2}$/.test(value)) {
-    return date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
-  }
-  if (/\d{2}:00$/.test(value)) {
-    return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' });
-  }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
 function LimitResetLine({ resetsAt }: { resetsAt?: string | null }) {
   if (!resetsAt) return null;
   return (
     <p className="text-[11px] text-muted-foreground">
       Reset {formatResetDelta(resetsAt)} · {formatResetAbsolute(resetsAt)}
     </p>
+  );
+}
+
+function formatHistoryAmount(value: number | null | undefined, unit: string | null): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  if (unit === 'tokens') return `${formatNumber(value)} tokens`;
+  if (unit === 'requests') return `${formatNumber(value)} calls`;
+  if (unit === 'usd') return formatCurrency(value);
+  return formatNumber(value);
+}
+
+function formatHistoryAxis(value: number, unit: string | null, percentOnly: boolean): string {
+  if (percentOnly) return `${Math.round(value)}%`;
+  if (unit === 'usd') return `$${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}`;
+  return formatNumber(value);
+}
+
+function formatHistoryTimestamp(value: number, includeDate = false): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(
+    undefined,
+    includeDate
+      ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+      : { hour: '2-digit', minute: '2-digit' }
+  );
+}
+
+export function ProviderLimitHistory({
+  enabledProviders,
+  selectedProvider,
+  onProviderChange,
+  selectedMetric,
+  onMetricChange,
+  range,
+  onRangeChange,
+  data,
+  isLoading,
+  isError,
+}: {
+  enabledProviders: UsageLimitTracker[];
+  selectedProvider: UsageLimitTracker;
+  onProviderChange: (provider: UsageLimitTracker) => void;
+  selectedMetric: string;
+  onMetricChange: (metric: string) => void;
+  range: UsageLimitHistoryRange;
+  onRangeChange: (range: UsageLimitHistoryRange) => void;
+  data?: UsageLimitHistoryData;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  const activeProvider = enabledProviders.includes(selectedProvider)
+    ? selectedProvider
+    : enabledProviders[0] || selectedProvider;
+  const providerPoints = (data?.points || []).filter((point) => point.provider === activeProvider);
+  const metricOptions = Array.from(
+    providerPoints.reduce((metrics, point) => {
+      if (!metrics.has(point.metricKey)) metrics.set(point.metricKey, point.metricLabel);
+      return metrics;
+    }, new Map<string, string>())
+  ).map(([key, label]) => ({ key, label }));
+  const activeMetric = metricOptions.some((metric) => metric.key === selectedMetric)
+    ? selectedMetric
+    : metricOptions[0]?.key || selectedMetric;
+  const points = providerPoints
+    .filter((point) => point.metricKey === activeMetric)
+    .sort((a, b) => Date.parse(a.recordedAt) - Date.parse(b.recordedAt));
+  const latest = points.at(-1);
+  const earliest = points[0];
+  const hasAbsoluteValues = points.some((point) => point.used !== null);
+  const unit = latest?.unit || points.find((point) => point.unit)?.unit || null;
+  const percentOnly = !hasAbsoluteValues;
+  const sampleMs = (data?.sampledEverySeconds || 15 * 60) * 1000;
+  const trackedTokenPoints = (data?.trackedTokens || [])
+    .filter((point) => point.provider === activeProvider)
+    .sort((a, b) => Date.parse(a.recordedAt) - Date.parse(b.recordedAt));
+  const trackedTokensInView = trackedTokenPoints.reduce(
+    (total, point) => total + point.totalTokens,
+    0
+  );
+  const latestTrackedTokens = trackedTokenPoints.at(-1)?.totalTokens ?? 0;
+  const chartBuckets = new Map<
+    number,
+    {
+      timestamp: number;
+      utilization: number | null;
+      used: number | null;
+      limit: number | null;
+      trackedTokens: number;
+    }
+  >();
+  for (const point of points) {
+    const timestamp = Math.floor(Date.parse(point.recordedAt) / sampleMs) * sampleMs;
+    chartBuckets.set(timestamp, {
+      timestamp,
+      utilization: point.utilization,
+      used: point.used,
+      limit: point.limit,
+      trackedTokens: chartBuckets.get(timestamp)?.trackedTokens || 0,
+    });
+  }
+  for (const point of trackedTokenPoints) {
+    const timestamp = Math.floor(Date.parse(point.recordedAt) / sampleMs) * sampleMs;
+    const current = chartBuckets.get(timestamp);
+    chartBuckets.set(timestamp, {
+      timestamp,
+      utilization: current?.utilization ?? null,
+      used: current?.used ?? null,
+      limit: current?.limit ?? null,
+      trackedTokens: point.totalTokens,
+    });
+  }
+  const chartData = Array.from(chartBuckets.values()).sort((a, b) => a.timestamp - b.timestamp);
+  const chartStartsAt =
+    data && chartData[0]
+      ? Math.max(
+          Date.parse(data.startsAt),
+          chartData[0].timestamp - data.sampledEverySeconds * 1000
+        )
+      : data
+        ? Date.parse(data.startsAt)
+        : 'dataMin';
+  const resetEvents = Array.from(
+    new Set(
+      points
+        .filter((point) => point.resetDetected && point.resetEventAt)
+        .map((point) => Date.parse(point.resetEventAt!))
+        .filter(Number.isFinite)
+    )
+  );
+  const latestValue = hasAbsoluteValues ? latest?.used : latest?.utilization;
+  const earliestValue = hasAbsoluteValues ? earliest?.used : earliest?.utilization;
+  const valueDelta =
+    latestValue !== null &&
+    latestValue !== undefined &&
+    earliestValue !== null &&
+    earliestValue !== undefined
+      ? latestValue - earliestValue
+      : null;
+  const nextReset =
+    latest?.resetsAt && Date.parse(latest.resetsAt) > Date.now() ? latest.resetsAt : null;
+  const latestRecordedMs = latest ? Date.parse(latest.recordedAt) : Number.NaN;
+  const stale = Number.isFinite(latestRecordedMs) && Date.now() - latestRecordedMs > 35 * 60 * 1000;
+  const color = USAGE_PROVIDER_COLORS[activeProvider];
+  const gradientId = `quota-area-${activeProvider}-${activeMetric}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+  const metricLabel =
+    metricOptions.find((metric) => metric.key === activeMetric)?.label || 'Quota history';
+  const yDomain: [number, number | 'auto'] = percentOnly ? [0, 100] : [0, 'auto'];
+  const sampleMinutes = Math.round((data?.sampledEverySeconds || 15 * 60) / 60);
+
+  return (
+    <section
+      className="analytics-quota-history"
+      style={{ '--analytics-provider-color': color } as CSSProperties}
+      aria-labelledby="provider-limit-history-title"
+    >
+      <div className="analytics-quota-history-header">
+        <div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <h3 id="provider-limit-history-title" className="text-sm font-semibold">
+              Limit history
+            </h3>
+            <span
+              className={cn(
+                'rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide',
+                stale
+                  ? 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              )}
+            >
+              {stale ? 'Stale' : 'Live tracking'}
+            </span>
+            <span className="analytics-quota-sample-cadence">{sampleMinutes} min samples</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Consumption over time with detected and scheduled resets.
+          </p>
+        </div>
+        <div className="analytics-quota-history-ranges" aria-label="Quota history range">
+          {USAGE_HISTORY_RANGES.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              aria-pressed={range === item.value}
+              onClick={() => onRangeChange(item.value)}
+              className={cn(
+                'ui-pill ui-pill-subtle min-h-9 transition-colors',
+                range === item.value && 'ui-pill-accent'
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="analytics-quota-history-filters">
+        <div className="flex flex-wrap gap-1.5" aria-label="Tracked provider">
+          {enabledProviders.map((provider) => (
+            <button
+              key={provider}
+              type="button"
+              aria-pressed={activeProvider === provider}
+              onClick={() => {
+                onProviderChange(provider);
+                onMetricChange(provider === 'zai' ? 'account_30d_tokens' : 'five_hour');
+              }}
+              className={cn(
+                'ui-pill ui-pill-subtle min-h-9 transition-colors',
+                activeProvider === provider && 'ui-pill-accent'
+              )}
+            >
+              <ProviderLogo provider={USAGE_PROVIDER_LOGO[provider]} className="h-3.5 w-3.5" />
+              {USAGE_TRACKER_LABELS[provider]}
+            </button>
+          ))}
+        </div>
+        {metricOptions.length > 0 && (
+          <div className="analytics-quota-history-metrics" aria-label="Tracked limit">
+            {metricOptions.map((metric) => (
+              <button
+                key={metric.key}
+                type="button"
+                aria-pressed={activeMetric === metric.key}
+                onClick={() => onMetricChange(metric.key)}
+                className={cn(
+                  'ui-pill ui-pill-subtle min-h-9 transition-colors',
+                  activeMetric === metric.key && 'ui-pill-accent'
+                )}
+              >
+                {metric.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="analytics-quota-history-empty">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span>Loading quota history…</span>
+        </div>
+      ) : isError ? (
+        <div className="analytics-quota-history-empty text-destructive">
+          <AlertCircle className="h-5 w-5" />
+          <span>Quota history could not be loaded.</span>
+        </div>
+      ) : points.length === 0 ? (
+        <div className="analytics-quota-history-empty">
+          <Gauge className="h-5 w-5" />
+          <div>
+            <p className="font-medium text-foreground">Tracking starts with the next live check</p>
+            <p className="mt-1 text-xs">
+              Plum records provider quotas in the background every 15 minutes.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="analytics-quota-history-summary">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {metricLabel}
+              </p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">
+                {hasAbsoluteValues
+                  ? formatHistoryAmount(latest?.used, unit)
+                  : `${Math.round(latest?.utilization || 0)}%`}
+              </p>
+              {hasAbsoluteValues && latest?.limit !== null && latest?.limit !== undefined && (
+                <p className="text-xs text-muted-foreground">
+                  of {formatHistoryAmount(latest.limit, unit)}
+                  {latest.utilization !== null ? ` · ${Math.round(latest.utilization)}%` : ''}
+                </p>
+              )}
+              {percentOnly && (
+                <p className="text-xs text-muted-foreground">
+                  Provider limit size is hidden · {formatNumber(trackedTokensInView)} tokens tracked
+                  by Plum in this view.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Plum tokens · latest interval
+              </p>
+              <p className="mt-1 text-base font-semibold tabular-nums">
+                {formatHistoryAmount(latestTrackedTokens, 'tokens')}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {formatHistoryAmount(trackedTokensInView, 'tokens')} tracked in this view
+                {valueDelta !== null
+                  ? ` · provider ${valueDelta > 0 ? '+' : ''}${
+                      percentOnly
+                        ? `${Math.round(valueDelta)} pts`
+                        : formatHistoryAmount(valueDelta, unit)
+                    }`
+                  : ''}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Resets</p>
+              <p className="mt-1 text-base font-semibold tabular-nums">
+                {resetEvents.length} detected
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {nextReset
+                  ? `Next ${formatResetDelta(nextReset)} · ${formatResetAbsolute(nextReset)}`
+                  : 'No upcoming reset reported'}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Last sample
+              </p>
+              <p className="mt-1 text-base font-semibold tabular-nums">
+                {latest ? formatHistoryTimestamp(Date.parse(latest.recordedAt), true) : '—'}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {data
+                  ? `Stored every ${Math.round(data.sampledEverySeconds / 60)} min in this view`
+                  : ''}
+              </p>
+            </div>
+          </div>
+
+          <div
+            className="analytics-quota-history-chart"
+            role="img"
+            aria-label={`${USAGE_TRACKER_LABELS[activeProvider]} ${metricLabel}: ${
+              hasAbsoluteValues
+                ? formatHistoryAmount(latest?.used, unit)
+                : `${Math.round(latest?.utilization || 0)} percent`
+            }, ${formatHistoryAmount(trackedTokensInView, 'tokens')} tracked by Plum and ${
+              resetEvents.length
+            } resets in the selected range.`}
+          >
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minHeight={240}
+              minWidth={1}
+              initialDimension={{ width: 720, height: 280 }}
+            >
+              <ComposedChart data={chartData} margin={{ top: 18, right: 16, bottom: 4, left: 4 }}>
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity={0.42} />
+                    <stop offset="72%" stopColor={color} stopOpacity={0.08} />
+                    <stop offset="100%" stopColor={color} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                <XAxis
+                  type="number"
+                  dataKey="timestamp"
+                  domain={[chartStartsAt, data ? Date.parse(data.endsAt) : 'dataMax']}
+                  scale="time"
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(value) => formatHistoryTimestamp(Number(value), range !== '24h')}
+                  minTickGap={28}
+                />
+                <YAxis
+                  yAxisId="quota"
+                  domain={yDomain}
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(value) => formatHistoryAxis(Number(value), unit, percentOnly)}
+                  width={64}
+                />
+                <YAxis
+                  yAxisId="tracked"
+                  orientation="right"
+                  domain={[0, 'auto']}
+                  tick={{ fontSize: 10 }}
+                  tickFormatter={(value) => formatHistoryAxis(Number(value), 'tokens', false)}
+                  width={58}
+                />
+                <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 11 }} />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    return (
+                      <div className="rounded-lg border border-border/70 bg-popover p-3 shadow-sm">
+                        <p className="mb-2 font-medium">
+                          {formatHistoryTimestamp(Number(label), true)}
+                        </p>
+                        {payload.map((entry) => (
+                          <p
+                            key={String(entry.dataKey)}
+                            className="text-sm"
+                            style={{ color: entry.color }}
+                          >
+                            {entry.name}:{' '}
+                            {entry.dataKey === 'utilization'
+                              ? `${Math.round(entry.value as number)}%`
+                              : entry.dataKey === 'trackedTokens'
+                                ? formatHistoryAmount(entry.value as number, 'tokens')
+                                : formatHistoryAmount(entry.value as number, unit)}
+                          </p>
+                        ))}
+                      </div>
+                    );
+                  }}
+                />
+                {resetEvents.map((timestamp) => (
+                  <ReferenceLine
+                    key={timestamp}
+                    x={timestamp}
+                    stroke="#f59e0b"
+                    strokeDasharray="4 4"
+                    label={{ value: 'Reset', fill: '#f59e0b', fontSize: 10, position: 'insideTop' }}
+                  />
+                ))}
+                <Area
+                  yAxisId="quota"
+                  type="monotone"
+                  dataKey={hasAbsoluteValues ? 'used' : 'utilization'}
+                  name={hasAbsoluteValues ? 'Used' : 'Utilization'}
+                  stroke={color}
+                  strokeWidth={3}
+                  fill={`url(#${gradientId})`}
+                  fillOpacity={1}
+                  connectNulls
+                  dot={points.length < 3 ? { r: 4, fill: color } : false}
+                  activeDot={{ r: 5 }}
+                  isAnimationActive={false}
+                />
+                <Bar
+                  yAxisId="tracked"
+                  dataKey="trackedTokens"
+                  name="Plum tokens / interval"
+                  fill={withAlpha(color, '8c')}
+                  maxBarSize={18}
+                  radius={[4, 4, 0, 0]}
+                  isAnimationActive={false}
+                />
+                {hasAbsoluteValues && points.some((point) => point.limit !== null) && (
+                  <Line
+                    yAxisId="quota"
+                    type="stepAfter"
+                    dataKey="limit"
+                    name="Limit"
+                    stroke={withAlpha(color, '88')}
+                    strokeWidth={1.5}
+                    strokeDasharray="6 4"
+                    connectNulls
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          {points.length === 1 && (
+            <p className="text-xs text-muted-foreground">
+              First sample stored. The line and reset history will fill automatically with each
+              15-minute quota refresh.
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -592,10 +1126,26 @@ export function AnalyticsPage() {
   const [periodOffset, setPeriodOffset] = useState(0);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('tokens');
   const [topSessionsLimit, setTopSessionsLimit] = useState(TOP_SESSIONS_PAGE_SIZE);
+  const [enabledUsageTrackers, setEnabledUsageTrackers] =
+    useState<UsageLimitTracker[]>(loadUsageLimitTrackers);
+  const [limitOverlayProvider, setLimitOverlayProvider] = useState<'all' | UsageLimitTracker>(
+    'all'
+  );
+  const [usageHistoryRange, setUsageHistoryRange] = useState<UsageLimitHistoryRange>('7d');
   // Capture the offset once per mount so query keys stay stable even if the system clock
   // nudges (e.g. DST rollover mid-session would otherwise refetch every render).
   const tzOffsetRef = useRef(getTzOffsetMinutes());
   const tzOffset = tzOffsetRef.current;
+  const timelineGranularity = period === '24h' ? 'hour' : 'day';
+
+  const { data: userSettings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<UserSettings>>('/api/settings');
+      return response.data.data;
+    },
+    staleTime: 60_000,
+  });
 
   const {
     data: summary,
@@ -610,6 +1160,9 @@ export function AnalyticsPage() {
       );
       return response.data.data;
     },
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   const {
@@ -617,13 +1170,16 @@ export function AnalyticsPage() {
     isLoading: timelineLoading,
     isError: timelineError,
   } = useQuery({
-    queryKey: ['analytics-timeline', period, periodOffset, tzOffset],
+    queryKey: ['analytics-timeline', period, periodOffset, tzOffset, timelineGranularity],
     queryFn: async () => {
       const response = await api.get<ApiResponse<TimelineData[]>>(
-        `/api/analytics/timeline?period=${period}&tz=${tzOffset}&offset=${periodOffset}`
+        `/api/analytics/timeline?period=${period}&tz=${tzOffset}&offset=${periodOffset}&granularity=${timelineGranularity}`
       );
       return response.data.data;
     },
+    refetchInterval: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   // Fetch usage limits for all supported providers
@@ -635,21 +1191,55 @@ export function AnalyticsPage() {
         const response = await api.get<UsageLimitsResponse>(`/api/usage/limits?provider=${prov}`);
         return { cliProvider: prov, ...response.data };
       },
-      staleTime: 60000, // 1 minute
-      refetchInterval: 300000, // 5 minutes — quotas shift; don't keep stale values on screen
+      staleTime: 5 * 60_000,
+      refetchInterval: 15 * 60_000,
       retry: 1,
+      enabled: enabledUsageTrackers.includes(prov),
     });
   });
 
   const usageLimitsData = usageLimitsQueries
     .filter((q) => q.data?.success && q.data?.supported && q.data?.data)
     .map((q) => ({
-      provider: q.data!.cliProvider,
+      tracker: q.data!.cliProvider,
+      provider: q.data!.provider,
       data: q.data!.data!,
       error: q.data!.error,
     }));
 
-  const usageLimitsLoading = usageLimitsQueries.some((q) => q.isLoading);
+  const usageLimitsLoading = usageLimitsQueries.some(
+    (q, index) => enabledUsageTrackers.includes(USAGE_PROVIDERS[index]!) && q.isLoading
+  );
+
+  const { data: usageLimitHistory } = useQuery({
+    queryKey: [
+      'usage-limit-history',
+      usageHistoryRange,
+      [...enabledUsageTrackers].sort().join(','),
+    ],
+    queryFn: async () => {
+      const providers = enabledUsageTrackers.join(',');
+      const response = await api.get<ApiResponse<UsageLimitHistoryData>>(
+        `/api/usage/limit-history?range=${usageHistoryRange}&providers=${encodeURIComponent(providers)}`
+      );
+      return response.data.data;
+    },
+    enabled: enabledUsageTrackers.length > 0 && !usageLimitsLoading,
+    staleTime: 60_000,
+    refetchInterval: 15 * 60_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  });
+
+  const toggleUsageTracker = useCallback((provider: UsageLimitTracker) => {
+    setEnabledUsageTrackers((current) => {
+      const next = current.includes(provider)
+        ? current.filter((item) => item !== provider)
+        : [...current, provider];
+      window.localStorage.setItem(USAGE_TRACKERS_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const isLoading = summaryLoading || timelineLoading;
   const hasError = summaryError || timelineError;
@@ -683,6 +1273,7 @@ export function AnalyticsPage() {
     setPeriod(next);
     setPeriodOffset(0);
     setTopSessionsLimit(TOP_SESSIONS_PAGE_SIZE);
+    setUsageHistoryRange(next === 'all' ? '90d' : (next as UsageLimitHistoryRange));
   }, []);
 
   const exportJson = useCallback(() => {
@@ -712,36 +1303,6 @@ export function AnalyticsPage() {
       'text/csv'
     );
   }, [timeline, period, periodOffset]);
-
-  const tokenBreakdown = useMemo(() => {
-    if (!summary) return [];
-    return [
-      {
-        key: 'input',
-        label: 'Input',
-        value: summary.totals.inputTokens,
-        color: TOKEN_COLORS.input,
-      },
-      {
-        key: 'output',
-        label: 'Output',
-        value: summary.totals.outputTokens,
-        color: TOKEN_COLORS.output,
-      },
-      {
-        key: 'cacheRead',
-        label: 'Cache Read',
-        value: summary.totals.cacheReadTokens,
-        color: TOKEN_COLORS.cacheRead,
-      },
-      {
-        key: 'cacheCreate',
-        label: 'Cache Create',
-        value: summary.totals.cacheCreationTokens,
-        color: TOKEN_COLORS.cacheCreate,
-      },
-    ].filter((item) => item.value > 0);
-  }, [summary]);
 
   const providerSummary = useMemo<ProviderStats[]>(() => {
     if (!summary?.byModel?.length) return [];
@@ -775,25 +1336,45 @@ export function AnalyticsPage() {
     return Array.from(map.values())
       .map((entry) => ({
         ...entry,
-        models: entry.models.sort((a, b) => b.cost - a.cost).slice(0, 3),
+        // Provider totals are only useful when the user can see which model
+        // produced them. Keep every used model and order by token volume so
+        // Codex variants such as sol, terra, and luna remain distinguishable.
+        models: entry.models.sort((a, b) => b.tokens - a.tokens),
       }))
       .sort((a, b) => b.cost - a.cost);
   }, [summary]);
 
   const modelSeries = useMemo(() => {
     if (!summary?.byModel?.length) return [];
+    const modelCounts = summary.byModel.reduce((counts, model) => {
+      const name = model.model || 'Unknown';
+      counts.set(name, (counts.get(name) || 0) + 1);
+      return counts;
+    }, new Map<string, number>());
     return summary.byModel.map((model, index) => {
       const modelName = model.model || 'Unknown';
+      const provider = model.provider || getProviderLabelForModel(model.model);
       return {
-        key: getModelKey(modelName, index),
-        label: modelName,
+        key: getModelKey(`${provider}-${modelName}`, index),
+        lookupKey: getUsageModelKey(provider, modelName),
+        label: (modelCounts.get(modelName) || 0) > 1 ? `${modelName} · ${provider}` : modelName,
         model: modelName,
-        provider: model.provider || getProviderLabelForModel(model.model),
-        color: getModelColor(modelName, index),
+        provider,
+        color: getModelColor(`${provider}-${modelName}`, index),
         fillOpacity: 0.28,
       };
     });
   }, [summary]);
+
+  const visibleModelSeries = useMemo(
+    () =>
+      limitOverlayProvider === 'all'
+        ? modelSeries
+        : modelSeries.filter(
+            (series) => series.provider === USAGE_TRACKER_ANALYTICS_LABEL[limitOverlayProvider]
+          ),
+    [modelSeries, limitOverlayProvider]
+  );
 
   const fallbackSeries = useMemo(() => {
     if (chartMetric === 'tokens') {
@@ -832,7 +1413,7 @@ export function AnalyticsPage() {
     ];
   }, [chartMetric]);
 
-  const chartSeries = modelSeries.length > 0 ? modelSeries : fallbackSeries;
+  const chartSeries = modelSeries.length > 0 ? visibleModelSeries : fallbackSeries;
 
   const chartData = useMemo(() => {
     if (!timeline || timeline.length === 0) return [];
@@ -842,8 +1423,8 @@ export function AnalyticsPage() {
     return timeline.map((entry) => {
       const models = entry.models || {};
       const dataPoint: Record<string, number | string> = { date: entry.date };
-      modelSeries.forEach((series) => {
-        const stats = models[series.model];
+      visibleModelSeries.forEach((series) => {
+        const stats = models[series.lookupKey];
         let value = 0;
         if (chartMetric === 'cost') {
           value = stats?.cost ?? 0;
@@ -856,7 +1437,181 @@ export function AnalyticsPage() {
       });
       return dataPoint;
     });
-  }, [timeline, modelSeries, chartMetric]);
+  }, [timeline, modelSeries, visibleModelSeries, chartMetric]);
+
+  const limitOverlaySeries = useMemo(() => {
+    const providerOrder = new Map(enabledUsageTrackers.map((provider, index) => [provider, index]));
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        provider: UsageLimitTracker;
+        metricKey: string;
+        metricLabel: string;
+        points: UsageLimitHistoryPoint[];
+      }
+    >();
+    const hiddenLimitMetrics =
+      userSettings?.analytics?.hiddenLimitMetrics ?? DEFAULT_ANALYTICS_HIDDEN_LIMIT_METRICS;
+    for (const point of usageLimitHistory?.points || []) {
+      if (!providerOrder.has(point.provider) || point.utilization === null) continue;
+      if (
+        point.provider !== 'alibaba' &&
+        hiddenLimitMetrics[point.provider]?.includes(point.metricKey)
+      ) {
+        continue;
+      }
+      const groupKey = `${point.provider}\u001f${point.metricKey}`;
+      const existing = groups.get(groupKey);
+      if (existing) {
+        existing.points.push(point);
+        continue;
+      }
+      groups.set(groupKey, {
+        key: `limit_${point.provider}_${point.metricKey.replace(/[^a-z0-9]+/gi, '_')}`,
+        provider: point.provider,
+        metricKey: point.metricKey,
+        metricLabel: point.metricLabel,
+        points: [point],
+      });
+    }
+    const metricPriority = (metricKey: string) => {
+      if (metricKey === 'five_hour') return 0;
+      if (metricKey === 'seven_day') return 1;
+      return 2;
+    };
+    const metricIndexByProvider = new Map<UsageLimitTracker, number>();
+    return Array.from(groups.values())
+      .sort(
+        (a, b) =>
+          (providerOrder.get(a.provider) ?? 99) - (providerOrder.get(b.provider) ?? 99) ||
+          metricPriority(a.metricKey) - metricPriority(b.metricKey) ||
+          a.metricLabel.localeCompare(b.metricLabel)
+      )
+      .map((series) => {
+        const metricIndex = metricIndexByProvider.get(series.provider) || 0;
+        metricIndexByProvider.set(series.provider, metricIndex + 1);
+        const palette = USAGE_PROVIDER_LIMIT_COLORS[series.provider];
+        return {
+          ...series,
+          label: `${USAGE_TRACKER_LABELS[series.provider]} · ${series.metricLabel}`,
+          color: palette[metricIndex % palette.length] || USAGE_PROVIDER_COLORS[series.provider],
+          points: series.points.sort((a, b) => Date.parse(a.recordedAt) - Date.parse(b.recordedAt)),
+        };
+      });
+  }, [usageLimitHistory, enabledUsageTrackers, userSettings?.analytics?.hiddenLimitMetrics]);
+  const visibleLimitOverlaySeries = useMemo(
+    () =>
+      limitOverlayProvider === 'all'
+        ? limitOverlaySeries
+        : limitOverlaySeries.filter((series) => series.provider === limitOverlayProvider),
+    [limitOverlaySeries, limitOverlayProvider]
+  );
+  const combinedChartData = useMemo(() => {
+    let usageBuckets = chartData.flatMap((entry) => {
+      const parsed = parseTimelineLabel(String(entry.date));
+      if (!parsed) return [];
+      const timestamp = parsed.getTime();
+      const usageBucket: Record<string, number | string | null> = {
+        timestamp,
+        date: String(entry.date),
+      };
+      chartSeries.forEach((series) => {
+        const value = (entry as Record<string, unknown>)[series.key];
+        usageBucket[series.key] = typeof value === 'number' ? value : 0;
+      });
+      return [usageBucket];
+    });
+
+    // The API omits hours without usage. A time-series chart must not bridge
+    // those gaps with a smoothed area because that invents token volume across
+    // inactive hours. Build the complete 24-hour grid and explicitly represent
+    // missing hours as zero; quota samples can then align to real clock time.
+    if (period === '24h' && analyticsWindow?.startsAt && analyticsWindow?.endsAt) {
+      const usageByTimestamp = new Map(
+        usageBuckets.map((bucket) => [Number(bucket.timestamp), bucket])
+      );
+      const start = new Date(analyticsWindow.startsAt);
+      const end = new Date(analyticsWindow.endsAt);
+      start.setMinutes(0, 0, 0);
+      end.setMinutes(0, 0, 0);
+      const hourlyBuckets: Array<Record<string, number | string | null>> = [];
+      for (
+        let timestamp = start.getTime();
+        Number.isFinite(timestamp) && timestamp <= end.getTime();
+        timestamp += 60 * 60 * 1000
+      ) {
+        const existing = usageByTimestamp.get(timestamp);
+        if (existing) {
+          hourlyBuckets.push(existing);
+          continue;
+        }
+        const emptyBucket: Record<string, number | string | null> = {
+          timestamp,
+          date: new Date(timestamp).toISOString(),
+        };
+        chartSeries.forEach((series) => {
+          emptyBucket[series.key] = 0;
+        });
+        hourlyBuckets.push(emptyBucket);
+      }
+      usageBuckets = hourlyBuckets;
+    }
+
+    const sortedBuckets = usageBuckets.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+    const previousInterval =
+      sortedBuckets.length > 1
+        ? Number(sortedBuckets.at(-1)?.timestamp) - Number(sortedBuckets.at(-2)?.timestamp)
+        : 60 * 60 * 1000;
+
+    // Keep the analytics buckets authoritative. Injecting every 30-minute
+    // quota sample into a daily/hourly stacked series makes Recharts treat the
+    // missing token values as zero and destroys the token curve. Instead, take
+    // the opening quota sample for completed buckets and the latest quota
+    // sample for the still-running bucket. Using the end-of-day sample at the
+    // day's start shifts the limit line left by up to 24 hours.
+    return sortedBuckets.map((bucket, index) => {
+      const bucketStart = Number(bucket.timestamp);
+      const bucketEnd =
+        index + 1 < sortedBuckets.length
+          ? Number(sortedBuckets[index + 1]?.timestamp)
+          : bucketStart + Math.max(previousInterval, 1);
+      const isCurrentBucket = index === sortedBuckets.length - 1 && periodOffset === 0;
+      const combinedBucket = { ...bucket };
+      visibleLimitOverlaySeries.forEach((series) => {
+        const samplesInBucket = series.points.filter((point) => {
+          const recordedAt = Date.parse(point.recordedAt);
+          return recordedAt >= bucketStart && recordedAt < bucketEnd;
+        });
+        const limitSample = isCurrentBucket ? samplesInBucket.at(-1) : samplesInBucket[0];
+        combinedBucket[series.key] = limitSample?.utilization ?? null;
+      });
+      return combinedBucket;
+    });
+  }, [chartData, chartSeries, visibleLimitOverlaySeries, periodOffset, period, analyticsWindow]);
+  const overlayResetEvents = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          visibleLimitOverlaySeries
+            .flatMap((series) => series.points)
+            .filter((point) => point.resetDetected && point.resetEventAt)
+            .map((point) => Date.parse(point.resetEventAt!))
+            .filter(Number.isFinite)
+        )
+      ),
+    [visibleLimitOverlaySeries]
+  );
+  const providerMixGradient = useMemo(() => {
+    if (totalCost <= 0 || providerSummary.length === 0) return 'conic-gradient(#334155 0 100%)';
+    let cursor = 0;
+    const stops = providerSummary.map((provider) => {
+      const start = cursor;
+      cursor += (provider.cost / totalCost) * 100;
+      return `${getProviderColor(provider.provider)} ${start}% ${cursor}%`;
+    });
+    return `conic-gradient(${stops.join(', ')})`;
+  }, [providerSummary, totalCost]);
 
   return (
     <div className="analytics-shell glass-page analytics-dashboard container mx-auto">
@@ -867,9 +1622,7 @@ export function AnalyticsPage() {
             Unified Analytics
           </div>
           <h1>All providers. One ledger.</h1>
-          <p>
-            Token volume and API-equivalent spend across every connected coding provider.
-          </p>
+          <p>Token volume and API-equivalent spend across every connected coding provider.</p>
           <div className="analytics-provider-pills">
             {providerSummary.length === 0 ? (
               <span className="ui-pill ui-pill-subtle">All providers</span>
@@ -1008,220 +1761,272 @@ export function AnalyticsPage() {
       )}
 
       {/* Provider Usage Limits */}
-      {usageLimitsData.length > 0 && (
-        <Card className="analytics-quota-panel">
-          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Gauge className="h-5 w-5" />
-                Provider Limits
-              </CardTitle>
-              <CardDescription>Usage limits and quotas per provider</CardDescription>
-            </div>
+      <Card className="analytics-quota-panel">
+        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Gauge className="h-5 w-5" />
+              Provider Limits
+            </CardTitle>
+            <CardDescription>Usage limits and quotas per provider</CardDescription>
+          </div>
+          <div className="flex max-w-full flex-wrap items-center gap-1.5">
+            {USAGE_PROVIDERS.map((provider) => {
+              const enabled = enabledUsageTrackers.includes(provider);
+              return (
+                <button
+                  key={provider}
+                  type="button"
+                  aria-pressed={enabled}
+                  onClick={() => toggleUsageTracker(provider)}
+                  className={cn(
+                    'ui-pill transition-colors',
+                    enabled ? 'ui-pill-accent' : 'ui-pill-subtle opacity-60 hover:opacity-100'
+                  )}
+                  title={`${enabled ? 'Hide' : 'Show'} ${USAGE_TRACKER_LABELS[provider]} limits`}
+                >
+                  <ProviderLogo provider={USAGE_PROVIDER_LOGO[provider]} className="h-3.5 w-3.5" />
+                  {USAGE_TRACKER_LABELS[provider]}
+                </button>
+              );
+            })}
             {usageLimitsLoading && (
               <div className="ui-pill ui-pill-subtle">
                 <div className="animate-spin h-3 w-3 border-2 border-muted-foreground border-t-transparent rounded-full" />
                 Refreshing
               </div>
             )}
-          </CardHeader>
-          <CardContent>
-            <div className="analytics-quota-grid">
-              {usageLimitsData.map(({ provider, data, error }) => {
-                const color = USAGE_PROVIDER_COLORS[provider] || PROVIDER_FALLBACK_COLOR;
-                const labels = USAGE_LIMIT_LABELS[provider];
-                const providerName = USAGE_PROVIDER_LABELS[provider];
-                const logoProvider = USAGE_PROVIDER_LOGO[provider];
-
-                return (
-                  <div
-                    key={provider}
-                    className="analytics-quota-card"
-                    style={{ '--analytics-provider-color': color } as CSSProperties}
-                  >
-                    <div className="flex items-center gap-3">
-                      <ProviderLogo provider={logoProvider} className="h-6 w-6" />
-                      <div>
-                        <h3 className="text-sm font-semibold">{providerName}</h3>
-                        <p className="text-xs text-muted-foreground">
-                          {data.subscriptionType || data.rateLimitTier || 'Rate limits'}
-                        </p>
-                      </div>
-                      <span className="ml-auto rounded-md border border-border/70 px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {formatLimitSource(data.source)}
-                      </span>
-                    </div>
-
-                    {error && (
-                      <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span>{error.message}</span>
-                      </div>
-                    )}
-
-                    <div className="space-y-3">
-                      {/* Session / 5h limit */}
-                      {data.fiveHour && (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              <Clock className="h-3 w-3" />
-                              {labels.session.title}
-                              {labels.session.subtitle && (
-                                <span className="text-muted-foreground/60">
-                                  ({labels.session.subtitle})
-                                </span>
-                              )}
-                            </span>
-                            <span className="font-medium">{data.fiveHour.utilization}%</span>
-                          </div>
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${Math.min(100, data.fiveHour.utilization)}%`,
-                                backgroundColor: data.fiveHour.utilization > 80 ? '#ef4444' : color,
-                              }}
-                            />
-                          </div>
-                          {formatLimitUsage(data.fiveHour) && (
-                            <p className="text-[11px] text-muted-foreground">
-                              {formatLimitUsage(data.fiveHour)}
-                            </p>
-                          )}
-                          <LimitResetLine resetsAt={data.fiveHour.resetsAt} />
-                        </div>
-                      )}
-
-                      {/* Weekly all models */}
-                      {data.sevenDay && labels.weeklyAll && (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              <Calendar className="h-3 w-3" />
-                              {labels.weeklyAll.title}
-                              {labels.weeklyAll.subtitle && (
-                                <span className="text-muted-foreground/60">
-                                  ({labels.weeklyAll.subtitle})
-                                </span>
-                              )}
-                            </span>
-                            <span className="font-medium">{data.sevenDay.utilization}%</span>
-                          </div>
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${Math.min(100, data.sevenDay.utilization)}%`,
-                                backgroundColor:
-                                  data.sevenDay.utilization > 80
-                                    ? '#ef4444'
-                                    : withAlpha(color, 'cc'),
-                              }}
-                            />
-                          </div>
-                          {formatLimitUsage(data.sevenDay) && (
-                            <p className="text-[11px] text-muted-foreground">
-                              {formatLimitUsage(data.sevenDay)}
-                            </p>
-                          )}
-                          <LimitResetLine resetsAt={data.sevenDay.resetsAt} />
-                        </div>
-                      )}
-
-                      {/* Weekly Sonnet / special models */}
-                      {data.sevenDaySonnet && labels.weeklySonnet && (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              <Zap className="h-3 w-3" />
-                              {labels.weeklySonnet.title}
-                              {labels.weeklySonnet.subtitle && (
-                                <span className="text-muted-foreground/60">
-                                  ({labels.weeklySonnet.subtitle})
-                                </span>
-                              )}
-                            </span>
-                            <span className="font-medium">{data.sevenDaySonnet.utilization}%</span>
-                          </div>
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${Math.min(100, data.sevenDaySonnet.utilization)}%`,
-                                backgroundColor:
-                                  data.sevenDaySonnet.utilization > 80
-                                    ? '#ef4444'
-                                    : withAlpha(color, '99'),
-                              }}
-                            />
-                          </div>
-                          {formatLimitUsage(data.sevenDaySonnet) && (
-                            <p className="text-[11px] text-muted-foreground">
-                              {formatLimitUsage(data.sevenDaySonnet)}
-                            </p>
-                          )}
-                          <LimitResetLine resetsAt={data.sevenDaySonnet.resetsAt} />
-                        </div>
-                      )}
-
-                      {data.additional?.map((limit) => (
-                        <div key={limit.name} className="space-y-1.5">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              <Gauge className="h-3 w-3" />
-                              {limit.name.replace(/_/g, ' ')}
-                            </span>
-                            <span className="font-medium">{limit.utilization}%</span>
-                          </div>
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-500"
-                              style={{
-                                width: `${Math.min(100, limit.utilization)}%`,
-                                backgroundColor: limit.utilization > 80 ? '#ef4444' : color,
-                              }}
-                            />
-                          </div>
-                          {formatLimitUsage(limit) && (
-                            <p className="text-[11px] text-muted-foreground">
-                              {formatLimitUsage(limit)}
-                            </p>
-                          )}
-                          <LimitResetLine resetsAt={limit.resetsAt} />
-                        </div>
-                      ))}
-                    </div>
-
-                    {data.localBudget && (
-                      <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-xs">
-                        <div>
-                          <p className="text-muted-foreground">24h spend</p>
-                          <p className="font-medium">
-                            {formatCurrency(data.localBudget.dailySpendUsd)}
-                            {data.localBudget.dailyUsd
-                              ? ` / ${formatCurrency(data.localBudget.dailyUsd)}`
-                              : ''}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Weekly spend</p>
-                          <p className="font-medium">
-                            {formatCurrency(data.localBudget.weeklySpendUsd)}
-                            {data.localBudget.weeklyUsd
-                              ? ` / ${formatCurrency(data.localBudget.weeklyUsd)}`
-                              : ''}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {enabledUsageTrackers.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
+              All provider cards are hidden. Background quota history continues to be recorded.
             </div>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            <div className="space-y-4">
+              <div className="analytics-quota-grid">
+                {usageLimitsData.map(({ tracker, provider, data, error }) => {
+                  const color = USAGE_PROVIDER_COLORS[provider] || PROVIDER_FALLBACK_COLOR;
+                  const labels = USAGE_LIMIT_LABELS[provider];
+                  const providerName = USAGE_PROVIDER_LABELS[provider];
+                  const logoProvider = USAGE_PROVIDER_LOGO[tracker];
+
+                  return (
+                    <div
+                      key={tracker}
+                      className="analytics-quota-card"
+                      style={{ '--analytics-provider-color': color } as CSSProperties}
+                    >
+                      <div className="flex items-center gap-3">
+                        <ProviderLogo provider={logoProvider} className="h-6 w-6" />
+                        <div>
+                          <h3 className="text-sm font-semibold">{providerName}</h3>
+                          <p className="text-xs text-muted-foreground">
+                            {data.subscriptionType || data.rateLimitTier || 'Rate limits'}
+                          </p>
+                        </div>
+                        <span className="ml-auto rounded-md border border-border/70 px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {formatLimitSource(data.source)}
+                        </span>
+                      </div>
+
+                      {error && (
+                        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{error.message}</span>
+                        </div>
+                      )}
+
+                      {data.accountUsage && (
+                        <div className="rounded-md border border-border/70 bg-muted/35 px-3 py-2.5">
+                          <div className="flex items-baseline justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] text-muted-foreground">
+                                Official account · {data.accountUsage.periodDays} days
+                              </p>
+                              <p className="text-base font-semibold tabular-nums">
+                                {formatNumber(data.accountUsage.totalTokens)} tokens
+                              </p>
+                            </div>
+                            <p className="text-xs tabular-nums text-muted-foreground">
+                              {formatNumber(data.accountUsage.totalRequests)} calls
+                            </p>
+                          </div>
+                          <p className="mt-1 text-[10px] text-muted-foreground/80">
+                            Z.AI account total · day boundary Asia/Shanghai (UTC+8), including usage
+                            outside Plum
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="space-y-3">
+                        {/* Session / 5h limit */}
+                        {data.fiveHour && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <Clock className="h-3 w-3" />
+                                {labels.session.title}
+                                {labels.session.subtitle && (
+                                  <span className="text-muted-foreground/60">
+                                    ({labels.session.subtitle})
+                                  </span>
+                                )}
+                              </span>
+                              <span className="font-medium">{data.fiveHour.utilization}%</span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.min(100, data.fiveHour.utilization)}%`,
+                                  backgroundColor:
+                                    data.fiveHour.utilization > 80 ? '#ef4444' : color,
+                                }}
+                              />
+                            </div>
+                            {formatLimitUsage(data.fiveHour) && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {formatLimitUsage(data.fiveHour)}
+                              </p>
+                            )}
+                            <LimitResetLine resetsAt={data.fiveHour.resetsAt} />
+                          </div>
+                        )}
+
+                        {/* Weekly all models */}
+                        {data.sevenDay && labels.weeklyAll && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <Calendar className="h-3 w-3" />
+                                {labels.weeklyAll.title}
+                                {labels.weeklyAll.subtitle && (
+                                  <span className="text-muted-foreground/60">
+                                    ({labels.weeklyAll.subtitle})
+                                  </span>
+                                )}
+                              </span>
+                              <span className="font-medium">{data.sevenDay.utilization}%</span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.min(100, data.sevenDay.utilization)}%`,
+                                  backgroundColor:
+                                    data.sevenDay.utilization > 80
+                                      ? '#ef4444'
+                                      : withAlpha(color, 'cc'),
+                                }}
+                              />
+                            </div>
+                            {formatLimitUsage(data.sevenDay) && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {formatLimitUsage(data.sevenDay)}
+                              </p>
+                            )}
+                            <LimitResetLine resetsAt={data.sevenDay.resetsAt} />
+                          </div>
+                        )}
+
+                        {/* Weekly Sonnet / special models */}
+                        {data.sevenDaySonnet && labels.weeklySonnet && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <Zap className="h-3 w-3" />
+                                {labels.weeklySonnet.title}
+                                {labels.weeklySonnet.subtitle && (
+                                  <span className="text-muted-foreground/60">
+                                    ({labels.weeklySonnet.subtitle})
+                                  </span>
+                                )}
+                              </span>
+                              <span className="font-medium">
+                                {data.sevenDaySonnet.utilization}%
+                              </span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.min(100, data.sevenDaySonnet.utilization)}%`,
+                                  backgroundColor:
+                                    data.sevenDaySonnet.utilization > 80
+                                      ? '#ef4444'
+                                      : withAlpha(color, '99'),
+                                }}
+                              />
+                            </div>
+                            {formatLimitUsage(data.sevenDaySonnet) && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {formatLimitUsage(data.sevenDaySonnet)}
+                              </p>
+                            )}
+                            <LimitResetLine resetsAt={data.sevenDaySonnet.resetsAt} />
+                          </div>
+                        )}
+
+                        {data.additional?.map((limit) => (
+                          <div key={limit.name} className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="flex items-center gap-1.5 text-muted-foreground">
+                                <Gauge className="h-3 w-3" />
+                                {limit.name.replace(/_/g, ' ')}
+                              </span>
+                              <span className="font-medium">{limit.utilization}%</span>
+                            </div>
+                            <div className="h-2 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{
+                                  width: `${Math.min(100, limit.utilization)}%`,
+                                  backgroundColor: limit.utilization > 80 ? '#ef4444' : color,
+                                }}
+                              />
+                            </div>
+                            {formatLimitUsage(limit) && (
+                              <p className="text-[11px] text-muted-foreground">
+                                {formatLimitUsage(limit)}
+                              </p>
+                            )}
+                            <LimitResetLine resetsAt={limit.resetsAt} />
+                          </div>
+                        ))}
+                      </div>
+
+                      {data.localBudget && (
+                        <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-xs">
+                          <div>
+                            <p className="text-muted-foreground">24h spend</p>
+                            <p className="font-medium">
+                              {formatCurrency(data.localBudget.dailySpendUsd)}
+                              {data.localBudget.dailyUsd
+                                ? ` / ${formatCurrency(data.localBudget.dailyUsd)}`
+                                : ''}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Weekly spend</p>
+                            <p className="font-medium">
+                              {formatCurrency(data.localBudget.weeklySpendUsd)}
+                              {data.localBudget.weeklyUsd
+                                ? ` / ${formatCurrency(data.localBudget.weeklyUsd)}`
+                                : ''}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="analytics-metric-grid">
         <Card className="analytics-metric-card is-tokens">
@@ -1346,41 +2151,74 @@ export function AnalyticsPage() {
         <Card className="analytics-chart-panel">
           <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <CardTitle className="text-lg">Usage Over Time</CardTitle>
+              <CardTitle className="text-lg">Usage &amp; Limits Over Time</CardTitle>
               <CardDescription>
-                Per-model volume across every provider in the selected window.
+                Model activity and provider quota consumption on one shared timeline.
               </CardDescription>
             </div>
-            <div role="radiogroup" aria-label="Chart metric" className="flex flex-wrap gap-2">
-              {CHART_METRICS.map((metric, idx) => (
+            <div className="analytics-chart-controls">
+              <div role="radiogroup" aria-label="Chart metric" className="flex flex-wrap gap-1.5">
+                {CHART_METRICS.map((metric, idx) => (
+                  <button
+                    key={metric.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={chartMetric === metric.value}
+                    tabIndex={chartMetric === metric.value ? 0 : -1}
+                    onClick={() => setChartMetric(metric.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const next = CHART_METRICS[(idx + 1) % CHART_METRICS.length];
+                        if (next) setChartMetric(next.value);
+                      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const prev =
+                          CHART_METRICS[(idx - 1 + CHART_METRICS.length) % CHART_METRICS.length];
+                        if (prev) setChartMetric(prev.value);
+                      }
+                    }}
+                    className={cn(
+                      'ui-pill ui-pill-subtle transition-colors',
+                      chartMetric === metric.value && 'ui-pill-accent'
+                    )}
+                  >
+                    {metric.label}
+                  </button>
+                ))}
+              </div>
+              <div className="analytics-limit-overlay-controls" aria-label="Limit overlay">
                 <button
-                  key={metric.value}
                   type="button"
-                  role="radio"
-                  aria-checked={chartMetric === metric.value}
-                  tabIndex={chartMetric === metric.value ? 0 : -1}
-                  onClick={() => setChartMetric(metric.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-                      e.preventDefault();
-                      const next = CHART_METRICS[(idx + 1) % CHART_METRICS.length];
-                      if (next) setChartMetric(next.value);
-                    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                      e.preventDefault();
-                      const prev =
-                        CHART_METRICS[(idx - 1 + CHART_METRICS.length) % CHART_METRICS.length];
-                      if (prev) setChartMetric(prev.value);
-                    }
-                  }}
+                  aria-pressed={limitOverlayProvider === 'all'}
+                  onClick={() => setLimitOverlayProvider('all')}
                   className={cn(
                     'ui-pill ui-pill-subtle transition-colors',
-                    chartMetric === metric.value &&
-                      'bg-foreground text-background border-transparent'
+                    limitOverlayProvider === 'all' && 'ui-pill-accent'
                   )}
                 >
-                  {metric.label}
+                  <Gauge className="h-3.5 w-3.5" />
+                  All limits · {limitOverlaySeries.length}
                 </button>
-              ))}
+                {enabledUsageTrackers.map((provider) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    aria-pressed={limitOverlayProvider === provider}
+                    onClick={() => setLimitOverlayProvider(provider)}
+                    className={cn(
+                      'ui-pill ui-pill-subtle transition-colors',
+                      limitOverlayProvider === provider && 'ui-pill-accent'
+                    )}
+                  >
+                    <ProviderLogo
+                      provider={USAGE_PROVIDER_LOGO[provider]}
+                      className="h-3.5 w-3.5"
+                    />
+                    {USAGE_TRACKER_LABELS[provider]}
+                  </button>
+                ))}
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -1395,32 +2233,60 @@ export function AnalyticsPage() {
                   <AlertCircle className="h-5 w-5" />
                   <span className="text-sm">Failed to load timeline</span>
                 </div>
-              ) : chartData.length > 0 ? (
+              ) : combinedChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%" minHeight={240} minWidth={0}>
-                  <AreaChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <ComposedChart
+                    data={combinedChartData}
+                    margin={{ top: 12, right: 8, bottom: 2, left: 0 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="stroke-muted"
+                      vertical={false}
+                    />
                     <XAxis
-                      dataKey="date"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => formatTimelineLabel(String(value))}
+                      type="number"
+                      dataKey="timestamp"
+                      domain={['dataMin', 'dataMax']}
+                      scale="time"
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) =>
+                        formatHistoryTimestamp(Number(value), period !== '24h')
+                      }
+                      minTickGap={32}
                     />
                     <YAxis
-                      tick={{ fontSize: 12 }}
+                      yAxisId="usage"
+                      tick={{ fontSize: 11 }}
                       tickFormatter={(value) => formatChartValue(chartMetric, value)}
+                      width={58}
+                    />
+                    <YAxis
+                      yAxisId="limit"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) => `${Math.round(value)}%`}
+                      width={44}
                     />
                     <Tooltip
                       content={({ active, payload, label }) => {
                         if (!active || !payload?.length) return null;
                         return (
-                          <div className="bg-popover border border-border/70 rounded-lg p-3 shadow-sm">
-                            <p className="font-medium mb-2">{formatTimelineLabel(String(label))}</p>
+                          <div className="analytics-chart-tooltip">
+                            <p className="font-medium mb-2">
+                              {formatHistoryTimestamp(Number(label), true)}
+                            </p>
                             {payload.map((entry) => (
                               <p
                                 key={entry.dataKey}
                                 className="text-sm"
                                 style={{ color: entry.color }}
                               >
-                                {entry.name}: {formatChartValue(chartMetric, entry.value as number)}
+                                {entry.name}:{' '}
+                                {String(entry.dataKey).startsWith('limit_')
+                                  ? `${Math.round(entry.value as number)}%`
+                                  : formatChartValue(chartMetric, entry.value as number)}
                               </p>
                             ))}
                           </div>
@@ -1428,9 +2294,19 @@ export function AnalyticsPage() {
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
+                    {overlayResetEvents.map((timestamp) => (
+                      <ReferenceLine
+                        key={timestamp}
+                        x={timestamp}
+                        stroke="#f59e0b"
+                        strokeDasharray="4 4"
+                        label={{ value: 'Reset', fill: '#f59e0b', fontSize: 10 }}
+                      />
+                    ))}
                     {chartSeries.map((series) => (
                       <Area
                         key={series.key}
+                        yAxisId="usage"
                         type="monotone"
                         dataKey={series.key}
                         name={series.label}
@@ -1440,9 +2316,26 @@ export function AnalyticsPage() {
                         stroke={series.color}
                         fill={series.color}
                         fillOpacity={series.fillOpacity}
+                        isAnimationActive={false}
                       />
                     ))}
-                  </AreaChart>
+                    {visibleLimitOverlaySeries.map((series) => (
+                      <Line
+                        key={series.key}
+                        yAxisId="limit"
+                        type="monotone"
+                        dataKey={series.key}
+                        name={series.label}
+                        stroke={series.color}
+                        strokeWidth={2.25}
+                        strokeDasharray="7 4"
+                        connectNulls
+                        dot={false}
+                        activeDot={{ r: 4 }}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </ComposedChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -1455,36 +2348,42 @@ export function AnalyticsPage() {
 
         <Card className="analytics-composition-panel">
           <CardHeader>
-            <CardTitle className="text-lg">Token Composition</CardTitle>
-            <CardDescription>Input, output, and cache volume combined.</CardDescription>
+            <CardTitle className="text-lg">Provider Mix</CardTitle>
+            <CardDescription>Share of API-equivalent spend.</CardDescription>
           </CardHeader>
           <CardContent>
-            {tokenBreakdown.length > 0 ? (
-              <div className="space-y-4">
-                <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
-                  {tokenBreakdown.map((segment) => (
-                    <div
-                      key={segment.key}
-                      style={{
-                        width: `${(segment.value / totalTokens) * 100}%`,
-                        backgroundColor: segment.color,
-                      }}
-                    />
-                  ))}
+            {providerSummary.length > 0 ? (
+              <div className="analytics-provider-mix">
+                <div
+                  className="analytics-provider-donut"
+                  style={{ background: providerMixGradient }}
+                >
+                  <div className="analytics-provider-donut-core">
+                    <strong>{formatCurrency(totalCost)}</strong>
+                    <span>Total spend</span>
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  {tokenBreakdown.map((segment) => (
-                    <div key={segment.key} className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
+                <div className="analytics-provider-mix-list">
+                  {providerSummary.map((provider) => {
+                    const percent = totalCost > 0 ? (provider.cost / totalCost) * 100 : 0;
+                    return (
+                      <div key={provider.provider}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: getProviderColor(provider.provider) }}
+                          />
+                          <span className="truncate">{provider.provider}</span>
+                        </span>
                         <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: segment.color }}
-                        />
-                        <span className="text-muted-foreground">{segment.label}</span>
+                          className="tabular-nums text-muted-foreground"
+                          title={formatCurrency(provider.cost)}
+                        >
+                          {percent.toFixed(1)}%
+                        </span>
                       </div>
-                      <span className="font-medium">{formatNumber(segment.value)}</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -1635,12 +2534,16 @@ export function AnalyticsPage() {
                           <span
                             key={model.model}
                             className="ui-pill ui-pill-subtle"
+                            title={`${model.model}: ${formatNumber(model.tokens)} tokens (${model.requests} requests)`}
                             style={{
                               borderColor: withAlpha(color, '40'),
                               backgroundColor: withAlpha(color, '0f'),
                             }}
                           >
                             <span className="truncate max-w-[140px]">{model.model}</span>
+                            <span className="tabular-nums text-muted-foreground">
+                              {formatNumber(model.tokens)} tokens
+                            </span>
                             {model.pricingKnown === false && (
                               <span className="text-amber-600 dark:text-amber-400">no price</span>
                             )}
@@ -1668,11 +2571,11 @@ export function AnalyticsPage() {
             {summary?.byModel && summary.byModel.length > 0 ? (
               <div className="space-y-3">
                 {summary.byModel.slice(0, 8).map((model, index) => {
-                  const provider = getProviderLabelForModel(model.model);
+                  const provider = model.provider || getProviderLabelForModel(model.model);
                   const color = getProviderColor(provider);
                   return (
                     <div
-                      key={model.model || `model-${index}`}
+                      key={`${provider}:${model.model || `model-${index}`}`}
                       className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2"
                     >
                       <div className="min-w-0">

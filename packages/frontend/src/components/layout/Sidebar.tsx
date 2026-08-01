@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 import {
   LayoutDashboard,
   Settings,
@@ -34,6 +35,7 @@ import { SessionIcon } from '@/components/session/SessionIcon';
 import { ContextPopover } from '@/components/session/SessionControls';
 import { CLI_PROVIDER_LABEL, UI_PROVIDER_META } from '@/lib/providers';
 import { getSessionRunState } from '@/lib/sessionRunState';
+import { RECENT_SESSIONS_LIMIT } from '@/lib/sessionGrouping';
 import { api, ApiError } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -109,10 +111,29 @@ export function Sidebar({
     activity,
     activeAgent,
     agentRuns,
-    streamingContent,
     toolExecutions,
     queueState,
-  } = useSessionStore();
+  } = useSessionStore(
+    useShallow((state) => ({
+      sessions: state.sessions,
+      setSessions: state.setSessions,
+      updateSession: state.updateSession,
+      removeSession: state.removeSession,
+      activity: state.activity,
+      activeAgent: state.activeAgent,
+      agentRuns: state.agentRuns,
+      toolExecutions: state.toolExecutions,
+      queueState: state.queueState,
+    }))
+  );
+  const streamingSessionIds = useSessionStore(
+    useShallow((state) =>
+      Object.entries(state.streamingContent)
+        .filter(([, content]) => Boolean(content))
+        .map(([sessionId]) => sessionId)
+        .sort()
+    )
+  );
   const { categories, fetchCategories } = useCategoryStore();
   const activeMeta = UI_PROVIDER_META.plum;
   const iconUploadInputRef = useRef<HTMLInputElement>(null);
@@ -170,12 +191,22 @@ export function Sidebar({
             activity: activity[activeSession.id],
             activeAgent: activeAgent[activeSession.id],
             agentRuns: agentRuns[activeSession.id],
-            streamingContent: streamingContent[activeSession.id],
+            streamingContent: streamingSessionIds.includes(activeSession.id)
+              ? 'streaming'
+              : undefined,
             tools: toolExecutions[activeSession.id],
             queue: queueState[activeSession.id],
           })
         : null,
-    [activeAgent, activeSession, activity, agentRuns, queueState, streamingContent, toolExecutions]
+    [
+      activeAgent,
+      activeSession,
+      activity,
+      agentRuns,
+      queueState,
+      streamingSessionIds,
+      toolExecutions,
+    ]
   );
 
   const filteredSessions = useMemo(() => {
@@ -210,7 +241,7 @@ export function Sidebar({
         activity: activity[a.id],
         activeAgent: activeAgent[a.id],
         agentRuns: agentRuns[a.id],
-        streamingContent: streamingContent[a.id],
+        streamingContent: streamingSessionIds.includes(a.id) ? 'streaming' : undefined,
         tools: toolExecutions[a.id],
         queue: queueState[a.id],
       }).isWorking;
@@ -218,7 +249,7 @@ export function Sidebar({
         activity: activity[b.id],
         activeAgent: activeAgent[b.id],
         agentRuns: agentRuns[b.id],
-        streamingContent: streamingContent[b.id],
+        streamingContent: streamingSessionIds.includes(b.id) ? 'streaming' : undefined,
         tools: toolExecutions[b.id],
         queue: queueState[b.id],
       }).isWorking;
@@ -236,7 +267,7 @@ export function Sidebar({
     searchQuery,
     sessions,
     sortMode,
-    streamingContent,
+    streamingSessionIds,
     toolExecutions,
   ]);
 
@@ -251,7 +282,7 @@ export function Sidebar({
             activity: activity[session.id],
             activeAgent: activeAgent[session.id],
             agentRuns: agentRuns[session.id],
-            streamingContent: streamingContent[session.id],
+            streamingContent: streamingSessionIds.includes(session.id) ? 'streaming' : undefined,
             tools: toolExecutions[session.id],
             queue: queueState[session.id],
           }).isWorking
@@ -280,7 +311,7 @@ export function Sidebar({
       .sort((a, b) =>
         (b.updatedAt ?? b.createdAt ?? '').localeCompare(a.updatedAt ?? a.createdAt ?? '')
       )
-      .slice(0, 5);
+      .slice(0, RECENT_SESSIONS_LIMIT);
 
     if (recentSessions.length > 0) {
       priorityGroups.push({
@@ -338,7 +369,7 @@ export function Sidebar({
     categories,
     filteredSessions,
     queueState,
-    streamingContent,
+    streamingSessionIds,
     toolExecutions,
   ]);
 
@@ -350,12 +381,12 @@ export function Sidebar({
             activity: activity[session.id],
             activeAgent: activeAgent[session.id],
             agentRuns: agentRuns[session.id],
-            streamingContent: streamingContent[session.id],
+            streamingContent: streamingSessionIds.includes(session.id) ? 'streaming' : undefined,
             tools: toolExecutions[session.id],
             queue: queueState[session.id],
           }).isWorking
       ).length,
-    [activity, activeAgent, agentRuns, queueState, sessions, streamingContent, toolExecutions]
+    [activity, activeAgent, agentRuns, queueState, sessions, streamingSessionIds, toolExecutions]
   );
 
   const handleLinkClick = () => {
@@ -467,7 +498,9 @@ export function Sidebar({
         `/api/sessions/${session.id}/icon/generate`
       );
       await applyIconSession(response.data.data);
-      toast({ title: 'Session icon updated' });
+      toast({
+        title: 'Session icon updated',
+      });
     } catch (err) {
       toast({
         title: 'Icon generation failed',
@@ -628,7 +661,7 @@ export function Sidebar({
       activity: activity[session.id],
       activeAgent: activeAgent[session.id],
       agentRuns: agentRuns[session.id],
-      streamingContent: streamingContent[session.id],
+      streamingContent: streamingSessionIds.includes(session.id) ? 'streaming' : undefined,
       tools: toolExecutions[session.id],
       queue: queueState[session.id],
     });

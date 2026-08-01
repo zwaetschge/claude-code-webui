@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { getDatabase } from '../db';
-import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError } from '../middleware/errorHandler';
-import { auditFromRequest } from '../utils/auditLog';
+import { getDatabase } from '../db/index.js';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { auditFromRequest } from '../utils/auditLog.js';
+import { revokeUserHttpSessions } from '../services/SqliteSessionStore.js';
+import { disconnectUserSockets } from '../websocket/index.js';
 
 const router = Router();
 
@@ -126,6 +128,11 @@ router.patch('/users/:id', (req, res) => {
 
   db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
+  if (parsed.data.status === 'suspended' || parsed.data.password !== undefined) {
+    revokeUserHttpSessions(targetId, db);
+    disconnectUserSockets(targetId);
+  }
+
   auditFromRequest(req, 'admin.user.update', {
     resourceType: 'user',
     resourceId: targetId,
@@ -164,6 +171,8 @@ router.delete('/users/:id', (req, res) => {
     }
   }
 
+  disconnectUserSockets(targetId);
+  revokeUserHttpSessions(targetId, db);
   db.prepare(`DELETE FROM users WHERE id = ?`).run(targetId);
 
   auditFromRequest(req, 'admin.user.delete', {
