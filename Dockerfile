@@ -84,7 +84,10 @@ ARG OPENCODE_VERSION=1.17.17
 ARG PI_CODING_AGENT_VERSION=0.83.0
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
 ARG KIMI_CODE_VERSION=0.31.1
-RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
+ARG NPM_VERSION=12.0.2
+RUN npm install -g npm@${NPM_VERSION} && \
+    npm --version | grep -Fx "${NPM_VERSION}" && \
+    mkdir -p /home/node/.npm-global /opt/plum-cli && \
     npm install -g --prefix /opt/plum-cli \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
       @earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION} \
