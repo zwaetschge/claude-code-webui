@@ -110,9 +110,19 @@ RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     tar -xzf /tmp/brace-expansion-${NPM_BRACE_EXPANSION_VERSION}.tgz \
       -C /usr/local/lib/node_modules/npm/node_modules/brace-expansion \
       --strip-components=1 && \
+    rm -rf \
+      /opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion && \
+    mkdir -p \
+      /opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion && \
+    tar -xzf /tmp/brace-expansion-${NPM_BRACE_EXPANSION_VERSION}.tgz \
+      -C /opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion \
+      --strip-components=1 && \
     rm -f /tmp/brace-expansion-${NPM_BRACE_EXPANSION_VERSION}.tgz && \
     node -p \
       "require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version" \
+      | grep -Fx "${NPM_BRACE_EXPANSION_VERSION}" && \
+    node -p \
+      "require('/opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion/package.json').version" \
       | grep -Fx "${NPM_BRACE_EXPANSION_VERSION}" && \
     /usr/local/bin/npm cache clean --force && rm -rf /root/.npm
 
