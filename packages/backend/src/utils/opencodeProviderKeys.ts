@@ -1,8 +1,8 @@
 import { createHash } from 'crypto';
-import { getDatabase } from '../db';
-import { safeDecrypt, safeEncrypt } from './encryption';
-import { getOpenCodeProviderCatalog, type OpenCodeProviderCatalog } from './opencodeCatalog';
-import { safeJsonParse } from './json';
+import { getDatabase } from '../db/index.js';
+import { safeDecrypt, safeEncrypt } from './encryption.js';
+import { getOpenCodeProviderCatalog, type OpenCodeProviderCatalog } from './opencodeCatalog.js';
+import { safeJsonParse } from './json.js';
 
 export interface OpenCodeProvider {
   id: string;

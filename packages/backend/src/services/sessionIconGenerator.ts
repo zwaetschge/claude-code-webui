@@ -2,9 +2,9 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { AppError } from '../middleware/errorHandler';
-import { CLI_PROVIDERS } from './cli-providers';
-import { safeJsonParse } from '../utils/json';
+import { AppError } from '../middleware/errorHandler.js';
+import { CLI_PROVIDERS } from './cli-providers.js';
+import { safeJsonParse } from '../utils/json.js';
 
 const DEFAULT_TIMEOUT_MS = 240_000;
 const MAX_CAPTURED_OUTPUT_CHARS = 48_000;
@@ -204,6 +204,7 @@ async function runCodexSessionIconCommand(
         PATH: uniquePath([
           path.dirname(command.command),
           '/home/node/.npm-global/bin',
+          '/opt/plum-cli/bin',
           '/usr/local/bin',
           '/usr/bin',
           process.env.PATH || '',

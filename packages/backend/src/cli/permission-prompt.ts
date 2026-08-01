@@ -260,6 +260,7 @@ function makeRequest(
     const client = isHttps ? https : http;
 
     const hookSecret = process.env.WEBUI_HOOK_SECRET || '';
+    const webuiSessionId = process.env.WEBUI_SESSION_ID || '';
 
     const requestOptions = {
       hostname: parsedUrl.hostname,
@@ -269,6 +270,7 @@ function makeRequest(
       headers: {
         'Content-Type': 'application/json',
         ...(hookSecret ? { 'X-Webui-Hook-Secret': hookSecret } : {}),
+        ...(webuiSessionId ? { 'X-Webui-Session-Id': webuiSessionId } : {}),
         ...(options.body ? { 'Content-Length': Buffer.byteLength(options.body) } : {}),
       },
       timeout: options.timeout || 130000, // Default 130s to allow for 2min long-poll

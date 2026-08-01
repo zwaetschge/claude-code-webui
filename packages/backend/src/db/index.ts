@@ -5,11 +5,22 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
-import { estimateModelCost, LLM_PRICING_RATE_CARD_VERSION } from '@plum-code-webui/shared';
+import {
+  estimateModelCost,
+  LLM_PRICING_RATE_CARD_VERSION,
+  type CLIProvider,
+} from '@plum-code-webui/shared';
 import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '..', '..', 'data', 'claude-webui.db');
+const DATA_DIRECTORY = process.env.WEBUI_DATA_DIR
+  ? path.resolve(process.env.WEBUI_DATA_DIR)
+  : path.join(__dirname, '..', '..', 'data');
+const DB_PATH = path.join(DATA_DIRECTORY, 'claude-webui.db');
+
+export function getDatabasePath(): string {
+  return DB_PATH;
+}
 
 let db: Database.Database;
 
@@ -34,7 +45,308 @@ export function initDatabase(): Database.Database {
   // Run migrations
   runMigrations(db);
 
+  // The in-memory process registry starts empty after every backend restart.
+  // Any persisted `running` rows therefore describe processes owned by the old
+  // backend instance and must not be presented as live sessions.
+  const reconciled = reconcileStaleRunningSessions(db);
+  if (reconciled > 0) {
+    console.log(`[DB] Reconciled ${reconciled} stale running session(s) to stopped.`);
+  }
+
   return db;
+}
+
+export interface UsageHistoryTurnInput {
+  userId: string;
+  sessionId: string;
+  provider: CLIProvider;
+  turnId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  model: string | null;
+  createdAt?: string;
+}
+
+export interface UsageSubagentTurnInput {
+  userId: string;
+  sessionId: string;
+  provider: CLIProvider;
+  turnId: string;
+  agentId: string;
+  parentAgentId: string | null;
+  agentType: string | null;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+/**
+ * Record the per-subagent split of a turn. Purely additive detail — the turn's
+ * usage_history row already contains these tokens, so never sum both.
+ */
+export function insertUsageSubagentTurns(
+  database: Database.Database,
+  rows: UsageSubagentTurnInput[]
+): number {
+  if (rows.length === 0) return 0;
+  const statement = database.prepare(`
+    INSERT INTO usage_subagent_turns (
+      user_id, session_id, provider, turn_id, agent_id, parent_agent_id, agent_type, model,
+      input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+      total_tokens, cost_usd
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id, provider, turn_id, agent_id) DO NOTHING
+  `);
+  const insertAll = database.transaction((items: UsageSubagentTurnInput[]) => {
+    let inserted = 0;
+    for (const row of items) {
+      inserted += statement.run(
+        row.userId,
+        row.sessionId,
+        row.provider,
+        row.turnId,
+        row.agentId,
+        row.parentAgentId,
+        row.agentType,
+        row.model,
+        row.inputTokens,
+        row.outputTokens,
+        row.cacheReadTokens,
+        row.cacheCreationTokens,
+        row.totalTokens,
+        row.costUsd
+      ).changes;
+    }
+    return inserted;
+  });
+  return insertAll(rows);
+}
+
+/** True when this provider turn has already been booked into usage_history. */
+export function usageHistoryTurnExists(
+  database: Database.Database,
+  sessionId: string,
+  provider: CLIProvider,
+  turnId: string
+): boolean {
+  const row = database
+    .prepare(
+      `SELECT 1 FROM usage_history
+        WHERE session_id = ? AND provider = ? AND turn_id = ?
+        LIMIT 1`
+    )
+    .get(sessionId, provider, turnId);
+  return !!row;
+}
+
+/** Persist one provider turn exactly once. Returns false for a duplicate turn. */
+export function insertUsageHistoryTurn(
+  database: Database.Database,
+  input: UsageHistoryTurnInput
+): boolean {
+  const createdAt = input.createdAt
+    ? new Date(input.createdAt).toISOString().slice(0, 19).replace('T', ' ')
+    : null;
+  const result = database
+    .prepare(
+      `
+      INSERT INTO usage_history (
+        user_id,
+        session_id,
+        provider,
+        turn_id,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        total_tokens,
+        cost_usd,
+        model,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(session_id, provider, turn_id) DO NOTHING
+    `
+    )
+    .run(
+      input.userId,
+      input.sessionId,
+      input.provider,
+      input.turnId,
+      input.inputTokens,
+      input.outputTokens,
+      input.cacheReadTokens,
+      input.cacheCreationTokens,
+      input.totalTokens,
+      input.costUsd,
+      input.model,
+      createdAt
+    );
+  return result.changes > 0;
+}
+
+export function reconcileStaleRunningSessions(database: Database.Database): number {
+  return database
+    .prepare(
+      `UPDATE sessions
+       SET status = 'stopped', updated_at = CURRENT_TIMESTAMP
+       WHERE status = 'running'`
+    )
+    .run().changes;
+}
+
+/**
+ * Add durable runtime attribution to existing usage ledgers.
+ *
+ * Historical model ids are used only for a best-effort backfill. Ambiguous
+ * routed models prefer the session's current Pi/OpenCode provider; exact
+ * historical attribution cannot be reconstructed after a provider switch.
+ */
+export function migrateUsageHistoryAttribution(database: Database.Database): number {
+  const columns = new Set(
+    (database.prepare('PRAGMA table_info(usage_history)').all() as Array<{ name: string }>).map(
+      ({ name }) => name
+    )
+  );
+  if (!columns.has('provider')) {
+    database.exec(`ALTER TABLE usage_history ADD COLUMN provider TEXT NOT NULL DEFAULT 'unknown'`);
+  }
+  if (!columns.has('turn_id')) {
+    database.exec(`ALTER TABLE usage_history ADD COLUMN turn_id TEXT DEFAULT NULL`);
+  }
+
+  const result = database
+    .prepare(
+      `
+      UPDATE usage_history
+      SET provider = CASE
+        WHEN lower(COALESCE(model, '')) LIKE 'gpt-%'
+          OR lower(COALESCE(model, '')) LIKE '%codex%' THEN 'codex'
+        WHEN lower(COALESCE(model, '')) LIKE 'claude%'
+          OR lower(COALESCE(model, '')) IN ('opus', 'sonnet', 'haiku') THEN 'claude'
+        WHEN lower(COALESCE(model, '')) LIKE 'mistral-%'
+          OR lower(COALESCE(model, '')) LIKE 'devstral-%' THEN 'vibe'
+        WHEN lower(COALESCE(model, '')) LIKE 'glm-%'
+          OR lower(COALESCE(model, '')) LIKE 'z-ai/%'
+          OR lower(COALESCE(model, '')) LIKE 'zai/%'
+          OR instr(COALESCE(model, ''), '/') > 0
+          OR lower(COALESCE(model, '')) LIKE '%opencode%'
+        THEN COALESCE(
+          (
+            SELECT CASE
+              WHEN sessions.cli_provider = 'pi' THEN 'pi'
+              ELSE 'opencode'
+            END
+            FROM sessions
+            WHERE sessions.id = usage_history.session_id
+          ),
+          'opencode'
+        )
+        ELSE COALESCE(
+          (SELECT sessions.cli_provider FROM sessions WHERE sessions.id = usage_history.session_id),
+          'unknown'
+        )
+      END
+      WHERE provider IS NULL OR trim(provider) = '' OR provider = 'unknown'
+    `
+    )
+    .run();
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_usage_history_provider_created
+      ON usage_history(provider, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_history_turn
+      ON usage_history(session_id, provider, turn_id);
+  `);
+
+  return result.changes;
+}
+
+/**
+ * Split the legacy per-user Claude endpoint override into the dedicated Z.AI
+ * provider. Every Claude session owned by a user with that legacy override
+ * necessarily ran through the override, so those sessions and GLM usage rows
+ * can be attributed to Z.AI without guessing.
+ */
+export function migrateLegacyClaudeEndpointToZai(database: Database.Database): {
+  settings: number;
+  sessions: number;
+  usage: number;
+} {
+  const rows = database
+    .prepare('SELECT user_id as userId, settings_json as settingsJson FROM user_settings')
+    .all() as Array<{ userId: string; settingsJson: string | null }>;
+  const updateSettings = database.prepare(
+    'UPDATE user_settings SET settings_json = ? WHERE user_id = ?'
+  );
+  const migrateSessions = database.prepare(
+    `UPDATE sessions
+     SET cli_provider = 'zai', updated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ? AND cli_provider IN ('claude', 'glm')`
+  );
+
+  let settings = 0;
+  let sessions = 0;
+  const migrate = database.transaction(() => {
+    for (const row of rows) {
+      if (!row.settingsJson) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(row.settingsJson) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (!parsed.claudeApi || typeof parsed.claudeApi !== 'object') continue;
+      if (!parsed.zaiApi) parsed.zaiApi = parsed.claudeApi;
+      delete parsed.claudeApi;
+      for (const key of [
+        'cliProviderModels',
+        'cliProviderModelLists',
+        'cliProviderReasoning',
+        'localUsageBudgets',
+      ]) {
+        const providerSettings = parsed[key];
+        if (!providerSettings || typeof providerSettings !== 'object') continue;
+        const values = providerSettings as Record<string, unknown>;
+        if (values.claude !== undefined && values.zai === undefined) values.zai = values.claude;
+        delete values.claude;
+      }
+      if (parsed.defaultCliProvider === 'claude') parsed.defaultCliProvider = 'zai';
+
+      const enabled = Array.isArray(parsed.enabledCliProviders)
+        ? parsed.enabledCliProviders.filter((value): value is string => typeof value === 'string')
+        : ['codex', 'claude', 'opencode', 'pi'];
+      parsed.enabledCliProviders = [...new Set([...enabled, 'claude', 'zai'])];
+      updateSettings.run(JSON.stringify(parsed), row.userId);
+      settings += 1;
+      sessions += migrateSessions.run(row.userId).changes;
+    }
+  });
+  migrate();
+
+  const usage = database
+    .prepare(
+      `UPDATE usage_history
+       SET provider = 'zai'
+       WHERE provider IN ('claude', 'unknown')
+         AND (
+           lower(COALESCE(model, '')) LIKE 'glm-%'
+           OR lower(COALESCE(model, '')) LIKE 'z-ai/glm-%'
+           OR lower(COALESCE(model, '')) LIKE 'zai/glm-%'
+         )`
+    )
+    .run().changes;
+
+  return { settings, sessions, usage };
 }
 
 function runMigrations(db: Database.Database): void {
@@ -76,6 +388,44 @@ function runMigrations(db: Database.Database): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Persisted raster media attached to chat messages. The storage key is an
+    -- opaque backend-generated name; host paths are never stored in message
+    -- payloads or returned to clients. Repeating the same content for another
+    -- message reuses the physical storage key, while the per-message unique
+    -- constraint prevents duplicate cards within one turn.
+    CREATE TABLE IF NOT EXISTS message_media (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      storage_key TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
+      sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+      alt_text TEXT,
+      source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui')),
+      source_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(message_id, sha256)
+    );
+
+    -- Enforce the denormalized ownership columns even for future direct SQL
+    -- writers. This keeps media rows from being rebound across sessions/users.
+    CREATE TRIGGER IF NOT EXISTS trg_message_media_validate_ownership
+    BEFORE INSERT ON message_media
+    WHEN NOT EXISTS (
+      SELECT 1
+      FROM messages m
+      JOIN sessions s ON s.id = m.session_id
+      WHERE m.id = NEW.message_id
+        AND m.session_id = NEW.session_id
+        AND s.user_id = NEW.user_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'message media ownership mismatch');
+    END;
+
     -- User settings table
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -85,6 +435,17 @@ function runMigrations(db: Database.Database): void {
       custom_system_prompt TEXT,
       settings_json TEXT
     );
+
+    -- Durable browser login sessions. Keeping these in SQLite avoids the
+    -- unbounded in-process MemoryStore and preserves logins across restarts.
+    CREATE TABLE IF NOT EXISTS http_sessions (
+      sid TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_http_sessions_expires_at
+      ON http_sessions(expires_at);
 
     -- MCP servers table
     CREATE TABLE IF NOT EXISTS mcp_servers (
@@ -134,6 +495,31 @@ function runMigrations(db: Database.Database): void {
       total_tokens INTEGER NOT NULL DEFAULT 0,
       cost_usd REAL NOT NULL DEFAULT 0,
       model TEXT,
+      provider TEXT NOT NULL DEFAULT 'unknown',
+      turn_id TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Per-subagent breakdown of a provider turn. usage_history stays the single
+    -- source of truth for billable totals (a turn's row already INCLUDES its
+    -- subagents); this table only records who inside the turn spent what, so
+    -- analytics can attribute a turn to the agents that drove it.
+    CREATE TABLE IF NOT EXISTS usage_subagent_turns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      parent_agent_id TEXT,
+      agent_type TEXT,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -179,6 +565,17 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_user_updated ON sessions(user_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_message_media_message_created
+      ON message_media(message_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_message_media_session
+      ON message_media(session_id, id);
+    CREATE INDEX IF NOT EXISTS idx_message_media_owner_hash
+      ON message_media(user_id, sha256);
+    CREATE INDEX IF NOT EXISTS idx_message_media_storage_key
+      ON message_media(storage_key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_message_media_source_id
+      ON message_media(session_id, source, source_id)
+      WHERE source_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mcp_servers_user_id ON mcp_servers(user_id);
     CREATE INDEX IF NOT EXISTS idx_cli_tools_user_id ON cli_tools(user_id);
     CREATE INDEX IF NOT EXISTS idx_usage_history_user_id ON usage_history(user_id);
@@ -188,6 +585,46 @@ function runMigrations(db: Database.Database): void {
     -- use a single index seek instead of a full scan of the user's rows.
     CREATE INDEX IF NOT EXISTS idx_usage_history_user_created ON usage_history(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_usage_history_session_created ON usage_history(session_id, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_subagent_turn_agent
+      ON usage_subagent_turns(session_id, provider, turn_id, agent_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_subagent_user_created
+      ON usage_subagent_turns(user_id, created_at DESC);
+
+    -- Periodic upstream account-quota snapshots. These are deliberately
+    -- separate from usage_history: they describe provider limits and resets,
+    -- not billable LLM turns.
+    CREATE TABLE IF NOT EXISTS usage_limit_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      metric_key TEXT NOT NULL,
+      metric_label TEXT NOT NULL,
+      utilization REAL,
+      used_value REAL,
+      limit_value REAL,
+      remaining_value REAL,
+      unit TEXT,
+      resets_at TEXT,
+      window_seconds INTEGER,
+      source TEXT,
+      reset_detected INTEGER NOT NULL DEFAULT 0,
+      reset_event_at TEXT,
+      recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_limit_snapshots_user_recorded
+      ON usage_limit_snapshots(user_id, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_limit_snapshots_series_recorded
+      ON usage_limit_snapshots(user_id, provider, metric_key, recorded_at DESC);
+
+    -- Some Codex plans expose a single weekly window in primary_window. Older
+    -- builds labelled primary_window as 5h without checking its duration.
+    -- Reclassify those persisted samples so cards and combined charts agree.
+    UPDATE usage_limit_snapshots
+       SET metric_key = 'seven_day',
+           metric_label = 'Weekly · Total'
+     WHERE provider = 'codex'
+       AND metric_key = 'five_hour'
+       AND window_seconds > 86400;
 
     -- Session events table (non-billing telemetry such as live context window
     -- snapshots and context compaction boundaries). Keep this separate from
@@ -286,6 +723,31 @@ function runMigrations(db: Database.Database): void {
     // Column already exists, ignore error
   }
 
+  // Vibe was removed as a first-class provider. Keep existing chats accessible by
+  // moving them to OpenCode, but clear provider-native resume/model state because
+  // those identifiers are not compatible across CLIs.
+  try {
+    db.exec(`
+      UPDATE sessions
+      SET cli_provider = 'opencode',
+          claude_session_id = NULL,
+          cli_model = NULL,
+          cli_reasoning = NULL
+      WHERE cli_provider = 'vibe'
+    `);
+  } catch {
+    // Best effort for older schemas.
+  }
+
+  migrateUsageHistoryAttribution(db);
+  const zaiMigration = migrateLegacyClaudeEndpointToZai(db);
+  if (zaiMigration.settings || zaiMigration.sessions || zaiMigration.usage) {
+    console.log(
+      `[DB] Split legacy Z.AI override: ${zaiMigration.settings} setting(s), ` +
+        `${zaiMigration.sessions} session(s), ${zaiMigration.usage} usage row(s).`
+    );
+  }
+
   // Migration: Add per-session Codex service/profile tier. This is intentionally
   // separate from cli_reasoning so `/fast` can be combined with xhigh effort.
   try {
@@ -325,6 +787,14 @@ function runMigrations(db: Database.Database): void {
   // the selected serial so MCP tools and prompts know which live device to use.
   try {
     db.exec(`ALTER TABLE sessions ADD COLUMN android_device_serial TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Optional Home Assistant light used for physical session status notifications.
+  // Connection credentials stay app-wide; only the entity assignment is per-session.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN home_assistant_entity_id TEXT DEFAULT NULL`);
   } catch {
     // Column already exists, ignore error
   }
@@ -922,7 +1392,11 @@ function initializeBasicAuth(db: Database.Database): void {
       'true'
     );
 
-    // Show the generated credentials (only on first run)
+    // Show the generated credentials only for an interactive first start. CI
+    // migration dry-runs create a disposable database and must not print a
+    // password-shaped value into build logs.
+    if (process.env.WEBUI_SUPPRESS_BOOTSTRAP_CREDENTIAL_LOG === '1') return;
+
     console.log('');
     console.log('╔════════════════════════════════════════════════════════════╗');
     console.log('║  INITIAL BASIC AUTH CREDENTIALS (save these!)              ║');

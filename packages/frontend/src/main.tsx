@@ -27,6 +27,25 @@ function initializeProvider() {
 initializeProvider();
 applyBackgroundAnimation(getStoredBackgroundAnimation());
 
+function initializeClientPerformance() {
+  const root = document.documentElement;
+  const forceGeckoPreview = new URLSearchParams(window.location.search).has('gecko-glass');
+  if (
+    forceGeckoPreview ||
+    (typeof CSS !== 'undefined' && CSS.supports?.('-moz-appearance', 'none'))
+  ) {
+    root.classList.add('plum-engine-gecko');
+  }
+
+  const syncVisibility = () => {
+    root.classList.toggle('plum-page-hidden', document.hidden);
+  };
+  document.addEventListener('visibilitychange', syncVisibility, { passive: true });
+  syncVisibility();
+}
+
+initializeClientPerformance();
+
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || import.meta.env.DEV) {
     return;

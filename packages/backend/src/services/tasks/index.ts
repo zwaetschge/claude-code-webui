@@ -1,7 +1,7 @@
-import { TaskManager } from './TaskManager';
+import { TaskManager } from './TaskManager.js';
 
-export { TaskManager } from './TaskManager';
-export type { TaskRunner, TaskContext } from './TaskManager';
+export { TaskManager } from './TaskManager.js';
+export type { TaskRunner, TaskContext } from './TaskManager.js';
 
 let taskManager: TaskManager | null = null;
 

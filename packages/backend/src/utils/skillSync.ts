@@ -1,13 +1,23 @@
 import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
-const execFileAsync = promisify(execFile);
+import { getActiveSkillNames, getSkillCatalogDir } from './leanSkillCatalog.js';
+import { findStylePresetDirectory } from './stylePresetLibrary.js';
+import { readRetiredSkillNames, resolveSkillAlias } from './skillAliases.js';
+import {
+  importSkillFromBuffer,
+  parseMarkdownFrontmatter,
+  sanitizeSkillName,
+} from './skillImport.js';
 
 const DEFAULT_EXTERNAL_SKILLS_DIRS = ['/mnt/user/AI/Skills', '/mnt/unraid/AI/Skills'];
 const SKILLS_SYNC_INTERVAL_MS = 60_000;
 const lastSyncMap = new Map<string, number>();
+
+interface SyncExternalSkillsOptions {
+  externalDirs?: string[];
+  force?: boolean;
+}
 
 function parseDirList(value?: string): string[] {
   if (!value) return [];
@@ -49,32 +59,84 @@ async function getExternalSkillsDirs(): Promise<string[]> {
   return existing;
 }
 
-async function unzipSkill(zipPath: string, targetDir: string): Promise<void> {
+function externalSkillSyncEnabled(): boolean {
+  const value = process.env.WEBUI_EXTERNAL_SKILL_SYNC?.trim().toLowerCase();
+  return !value || !['0', 'false', 'no', 'off'].includes(value);
+}
+
+async function skillExistsAnywhere(
+  configHome: string,
+  skillName: string,
+  activeTargetDir: string,
+  catalogTargetDir: string
+): Promise<boolean> {
+  return (
+    (await pathExists(path.join(activeTargetDir, skillName, 'SKILL.md'))) ||
+    (await pathExists(path.join(activeTargetDir, `${skillName}.disabled`, 'SKILL.md'))) ||
+    (await pathExists(path.join(catalogTargetDir, skillName, 'SKILL.md'))) ||
+    !!(await findStylePresetDirectory(configHome, skillName))
+  );
+}
+
+async function copySkillDirectory(source: string, destination: string): Promise<void> {
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.cp(source, destination, {
+    recursive: true,
+    force: false,
+    errorOnExist: true,
+  });
+}
+
+async function readExternalDirectorySkillName(
+  skillFile: string,
+  fallbackName: string
+): Promise<string> {
   try {
-    await execFileAsync('unzip', ['-q', zipPath, '-d', targetDir]);
-  } catch (err) {
-    console.warn(`[SKILLS] Failed to unzip ${zipPath}: ${String(err)}`);
+    const content = await fs.readFile(skillFile, 'utf-8');
+    const { frontmatter } = parseMarkdownFrontmatter(content);
+    return sanitizeSkillName(frontmatter.name || fallbackName) || fallbackName;
+  } catch {
+    return fallbackName;
   }
 }
 
-export async function syncExternalSkills(configHome: string): Promise<void> {
+export async function syncExternalSkills(
+  configHome: string,
+  options: SyncExternalSkillsOptions = {}
+): Promise<void> {
+  if (!externalSkillSyncEnabled()) return;
+
   const now = Date.now();
   const lastSync = lastSyncMap.get(configHome);
-  if (lastSync && now - lastSync < SKILLS_SYNC_INTERVAL_MS) {
+  if (!options.force && lastSync && now - lastSync < SKILLS_SYNC_INTERVAL_MS) {
     return;
   }
   lastSyncMap.set(configHome, now);
 
-  const externalDirs = await getExternalSkillsDirs();
+  let externalDirs: string[];
+  if (options.externalDirs) {
+    externalDirs = [];
+    for (const dir of new Set(options.externalDirs.map((entry) => path.resolve(entry)))) {
+      if (await isDirectory(dir)) externalDirs.push(dir);
+    }
+  } else {
+    externalDirs = await getExternalSkillsDirs();
+  }
   if (!externalDirs.length) {
     return;
   }
 
-  const targetDir = path.join(configHome, 'skills');
+  const activeSkills = await getActiveSkillNames(configHome);
+  const retiredSkills = await readRetiredSkillNames(configHome);
+  const activeTargetDir = path.join(configHome, 'skills');
+  const catalogTargetDir = getSkillCatalogDir(configHome);
   try {
-    await fs.mkdir(targetDir, { recursive: true });
+    await Promise.all([
+      fs.mkdir(activeTargetDir, { recursive: true }),
+      fs.mkdir(catalogTargetDir, { recursive: true }),
+    ]);
   } catch (err) {
-    console.warn(`[SKILLS] Unable to create skills dir at ${targetDir}: ${String(err)}`);
+    console.warn(`[SKILLS] Unable to create skill catalog for ${configHome}: ${String(err)}`);
     return;
   }
 
@@ -90,12 +152,56 @@ export async function syncExternalSkills(configHome: string): Promise<void> {
       const entryPath = path.join(externalDir, entry.name);
 
       if (entry.isFile() && entry.name.toLowerCase().endsWith('.skill.zip')) {
-        const skillName = entry.name.replace(/\.skill\.zip$/i, '');
-        const destination = path.join(targetDir, skillName);
-        if (await pathExists(destination)) {
-          continue;
+        const archiveName = sanitizeSkillName(entry.name.replace(/\.skill\.zip$/i, ''));
+        if (!archiveName || retiredSkills.has(archiveName)) continue;
+
+        const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'external-skill-sync-'));
+        try {
+          const result = await importSkillFromBuffer(
+            await fs.readFile(entryPath),
+            entry.name,
+            stagingRoot,
+            { conflict: 'skip' }
+          );
+          if (result.status !== 'imported') continue;
+          const skillName = path.basename(result.skill.dirPath);
+          if (retiredSkills.has(skillName)) continue;
+
+          const archiveCanonicalName = await resolveSkillAlias(configHome, archiveName);
+          if (
+            archiveCanonicalName !== archiveName &&
+            (await skillExistsAnywhere(
+              configHome,
+              archiveCanonicalName,
+              activeTargetDir,
+              catalogTargetDir
+            ))
+          ) {
+            continue;
+          }
+          const canonicalName = await resolveSkillAlias(configHome, skillName);
+          if (
+            canonicalName !== skillName &&
+            (await skillExistsAnywhere(
+              configHome,
+              canonicalName,
+              activeTargetDir,
+              catalogTargetDir
+            ))
+          ) {
+            continue;
+          }
+          if (await skillExistsAnywhere(configHome, skillName, activeTargetDir, catalogTargetDir)) {
+            continue;
+          }
+
+          const targetDir = activeSkills.has(skillName) ? activeTargetDir : catalogTargetDir;
+          await copySkillDirectory(result.skill.dirPath, path.join(targetDir, skillName));
+        } catch (err) {
+          console.warn(`[SKILLS] Failed to import ${entryPath}: ${String(err)}`);
+        } finally {
+          await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
         }
-        await unzipSkill(entryPath, targetDir);
         continue;
       }
 
@@ -106,19 +212,41 @@ export async function syncExternalSkills(configHome: string): Promise<void> {
       if (entry.name.endsWith('.disabled')) {
         continue;
       }
+      if (retiredSkills.has(entry.name)) continue;
 
       const skillFile = path.join(entryPath, 'SKILL.md');
       if (!(await pathExists(skillFile))) {
         continue;
       }
 
-      const destination = path.join(targetDir, entry.name);
-      if (await pathExists(destination)) {
+      const skillName = await readExternalDirectorySkillName(skillFile, entry.name);
+      if (retiredSkills.has(skillName)) continue;
+      const entryCanonicalName = await resolveSkillAlias(configHome, entry.name);
+      if (
+        entryCanonicalName !== entry.name &&
+        (await skillExistsAnywhere(
+          configHome,
+          entryCanonicalName,
+          activeTargetDir,
+          catalogTargetDir
+        ))
+      ) {
+        continue;
+      }
+      const canonicalName = await resolveSkillAlias(configHome, skillName);
+      if (
+        canonicalName !== skillName &&
+        (await skillExistsAnywhere(configHome, canonicalName, activeTargetDir, catalogTargetDir))
+      ) {
+        continue;
+      }
+      if (await skillExistsAnywhere(configHome, skillName, activeTargetDir, catalogTargetDir)) {
         continue;
       }
 
       try {
-        await fs.cp(entryPath, destination, { recursive: true });
+        const targetDir = activeSkills.has(skillName) ? activeTargetDir : catalogTargetDir;
+        await copySkillDirectory(entryPath, path.join(targetDir, skillName));
       } catch (err) {
         console.warn(`[SKILLS] Failed to copy ${entryPath}: ${String(err)}`);
       }

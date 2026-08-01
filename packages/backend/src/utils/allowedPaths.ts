@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { config } from '../config';
+import { config } from '../config.js';
 
 export function isPathInside(parentPath: string, childPath: string): boolean {
   const parent = path.resolve(parentPath);

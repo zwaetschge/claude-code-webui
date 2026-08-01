@@ -9,12 +9,13 @@ import type {
   DockerContainerStats,
   WatchdogAutonomyLevel,
 } from '@plum-code-webui/shared';
-import { getDatabase } from '../../db';
-import { AppError } from '../../middleware/errorHandler';
-import { safeJsonParse } from '../../utils/json';
-import { dockerHost } from '../docker';
-import { discordNotifier } from '../discord';
-import { peerService } from '../session-mesh/PeerService';
+import { getDatabase } from '../../db/index.js';
+import { AppError } from '../../middleware/errorHandler.js';
+import { safeJsonParse } from '../../utils/json.js';
+import { dockerHost } from '../docker/index.js';
+import { discordNotifier } from '../discord/index.js';
+import { homeAssistantStatusLights } from '../home-assistant/index.js';
+import { peerService } from '../session-mesh/PeerService.js';
 
 function defaultWatchdogWorkspace(): string {
   const candidates = [
@@ -280,6 +281,7 @@ export class WatchdogService {
         previousRestartCount: previousSnapshot ? previousSnapshot.restartCount : null,
       });
       if (incident) {
+        homeAssistantStatusLights.notifySession(watchdog.sessionId, 'problem');
         getDatabase()
           .prepare(
             `UPDATE container_watchdogs

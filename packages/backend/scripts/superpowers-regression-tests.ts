@@ -233,6 +233,56 @@ async function main(): Promise<void> {
     'OpenCode upstream bootstrap plugin should stay removed'
   );
 
+  process.env.SUPERPOWERS_ENABLED = 'false';
+  const disabledResult = await syncSuperpowers(claudeHome, { quiet: true });
+  assert.equal(disabledResult.enabled, false);
+  assert.equal(disabledResult.removed, 1, 'only Plum-managed skills should be removed');
+  assert.equal(await exists(markerPath), false, 'managed Superpowers skill should be removed');
+  assert.equal(
+    await exists(path.join(claudeHome, 'skills', 'brainstorming', 'SKILL.md')),
+    true,
+    'user-owned skills must remain installed'
+  );
+  assert.match(
+    await fs.readFile(path.join(codexHome, 'config.toml'), 'utf-8'),
+    /\[plugins\."superpowers@plum-managed"\]\s+enabled = false/,
+    'Codex managed plugin should be disabled'
+  );
+  assert.equal(
+    await exists(path.join(codexHome, 'plugins', 'cache', 'plum-managed', 'superpowers')),
+    false,
+    'disabled Superpowers should remove its managed Codex plugin cache'
+  );
+  assert.equal(
+    await buildSuperpowersBootstrapContext('codex', claudeHome),
+    null,
+    'disabled Superpowers must not inject bootstrap context'
+  );
+
+  process.env.SUPERPOWERS_ENABLED = '1';
+  await syncSuperpowers(claudeHome, { quiet: true });
+  assert.equal(await exists(markerPath), true, 'managed skills should return after re-enabling');
+  assert.match(
+    await fs.readFile(path.join(codexHome, 'config.toml'), 'utf-8'),
+    /\[plugins\."superpowers@plum-managed"\]\s+enabled = true/,
+    'Codex managed plugin should return after re-enabling'
+  );
+
+  delete process.env.SUPERPOWERS_ENABLED;
+  const defaultResult = await syncSuperpowers(claudeHome, { quiet: true });
+  assert.equal(defaultResult.enabled, false, 'Superpowers should default to instance-wide off');
+  assert.equal(await exists(markerPath), false, 'default-off should remove managed skills');
+  assert.equal(
+    await buildSuperpowersBootstrapContext('claude', claudeHome),
+    null,
+    'default-off must not inject bootstrap context'
+  );
+  assert.match(
+    await fs.readFile(path.join(codexHome, 'config.toml'), 'utf-8'),
+    /\[plugins\."superpowers@plum-managed"\]\s+enabled = false/,
+    'default-off should disable the Codex managed plugin'
+  );
+
   console.log('superpowers regression tests passed');
 }
 

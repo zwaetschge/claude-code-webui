@@ -5,14 +5,14 @@ import type {
   DiscordIntegrationSettingsUpdate,
   DiscordTestResult,
 } from '@plum-code-webui/shared';
-import { requireAdmin, requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { auditFromRequest } from '../utils/auditLog';
+import { requireAdmin, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { auditFromRequest } from '../utils/auditLog.js';
 import {
   discordIntegrationService,
   discordNotifier,
   discordOutboxWorker,
-} from '../services/discord';
+} from '../services/discord/index.js';
 
 const router = Router();
 

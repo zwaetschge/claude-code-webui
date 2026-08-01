@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { safeJsonParse } from './json.js';
+import { getActiveSkillNames, getSkillCatalogDir } from './leanSkillCatalog.js';
 
 const MANAGED_MARKER = '.plum-managed-skill.json';
 const MANAGED_SOURCE = 'plum-code-webui';
@@ -8,6 +9,7 @@ const MANAGED_SOURCE = 'plum-code-webui';
 interface ManagedSkillDefinition {
   name: string;
   content: string;
+  retired?: boolean;
 }
 
 interface ManagedSkillMarker {
@@ -107,10 +109,72 @@ const PRODUCTION_UI_REVIEW_SKILL = [
   '',
 ].join('\n');
 
+const CAPABILITY_CATALOG_SKILL = [
+  '---',
+  'name: capability-catalog',
+  "description: Search Plum Code's on-demand skills, style presets, and agents without loading the full catalog into every prompt. Use when a task needs a specialised capability that is not already active.",
+  '---',
+  '',
+  '# Capability Catalog',
+  '',
+  'Plum keeps uncommon workflows and style presets outside the automatic model context. Search them only when the current task needs a specialised capability.',
+  '',
+  '## Search',
+  '',
+  '```bash',
+  'node /app/scripts/capability-catalog.mjs search "<task or capability>"',
+  '```',
+  '',
+  'The result includes the canonical name, aliases, description, skill/style type, active/on-demand state, and source path. Retired names resolve to their consolidated replacement when an alias exists.',
+  '',
+  '## Load one result',
+  '',
+  '```bash',
+  'node /app/scripts/capability-catalog.mjs show <name>',
+  '```',
+  '',
+  'Follow the selected instructions for the current task only. A style preset changes presentation; it is not an implementation workflow or approval gate. Do not load multiple overlapping workflows or styles unless the user explicitly requests that combination.',
+  '',
+  'For native agent delegation or skill authoring, read the matching file in `references/` only when that work is requested.',
+  '',
+  'Use `list` only when the user explicitly asks to browse the complete catalog.',
+  '',
+].join('\n');
+
+const ORACLE_SKILL = [
+  '---',
+  'name: oracle',
+  'description: Use Oracle as an explicit second-model review workflow for difficult debugging, refactoring, and design checks.',
+  '---',
+  '',
+  '# Oracle',
+  '',
+  'Use this capability only when the user asks for a second opinion or the task explicitly requires independent model review.',
+  '',
+  '## Workflow',
+  '',
+  '1. Select the smallest relevant file set and exclude secrets, credentials, auth files, and tokens.',
+  '2. Keep the prompt specific: exact issue, constraints, and expected output.',
+  '3. Prefer reattaching to an existing Oracle session over repeating the same review.',
+  '4. Verify Oracle advice against local code, tests, and repository state before applying it.',
+  '',
+  'Do not invoke Oracle as a routine approval gate. Normal implementation, debugging, and UI verification stay local unless a second model materially improves the requested outcome.',
+  '',
+].join('\n');
+
 const MANAGED_SKILLS: ManagedSkillDefinition[] = [
+  {
+    name: 'capability-catalog',
+    content: CAPABILITY_CATALOG_SKILL,
+  },
   {
     name: 'production-ui-review',
     content: PRODUCTION_UI_REVIEW_SKILL,
+    retired: true,
+  },
+  {
+    name: 'oracle',
+    content: ORACLE_SKILL,
   },
 ];
 
@@ -155,19 +219,43 @@ async function writeManagedSkill(skillDir: string, skill: ManagedSkillDefinition
 export async function syncManagedPlumSkills(
   configHome: string
 ): Promise<ManagedPlumSkillsSyncResult> {
-  const skillsDir = path.join(configHome, 'skills');
-  await fs.mkdir(skillsDir, { recursive: true });
+  const activeSkills = await getActiveSkillNames(configHome);
+  const activeSkillsDir = path.join(configHome, 'skills');
+  const catalogSkillsDir = getSkillCatalogDir(configHome);
+  await Promise.all([
+    fs.mkdir(activeSkillsDir, { recursive: true }),
+    fs.mkdir(catalogSkillsDir, { recursive: true }),
+  ]);
 
   let installed = 0;
   let updated = 0;
   const skipped: string[] = [];
 
   for (const skill of MANAGED_SKILLS) {
+    const skillsDir = activeSkills.has(skill.name) ? activeSkillsDir : catalogSkillsDir;
+    const alternateSkillsDir = skillsDir === activeSkillsDir ? catalogSkillsDir : activeSkillsDir;
     const enabledDir = path.join(skillsDir, skill.name);
-    const disabledDir = path.join(skillsDir, `${skill.name}.disabled`);
+    const alternateDir = path.join(alternateSkillsDir, skill.name);
+    const disabledDir = path.join(activeSkillsDir, `${skill.name}.disabled`);
+
+    if (skill.retired) {
+      for (const candidate of [enabledDir, alternateDir, disabledDir]) {
+        const marker = await readMarker(candidate);
+        if (marker?.source === MANAGED_SOURCE && marker.name === skill.name) {
+          await fs.rm(candidate, { recursive: true, force: true });
+          updated += 1;
+        }
+      }
+      continue;
+    }
 
     if (await pathExists(disabledDir)) {
       skipped.push(`${skill.name}.disabled`);
+      continue;
+    }
+
+    if (!(await pathExists(enabledDir)) && (await pathExists(alternateDir))) {
+      skipped.push(skill.name);
       continue;
     }
 

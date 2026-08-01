@@ -1,7 +1,7 @@
 export type SessionStatus = 'running' | 'stopped' | 'error';
 export type SessionSurface = 'code' | 'task';
 
-export type CLIProvider = 'claude' | 'codex' | 'opencode' | 'vibe';
+export type CLIProvider = 'claude' | 'zai' | 'codex' | 'opencode' | 'pi' | 'kimi';
 export type CodexServiceTier = 'fast';
 export type SessionIconSource = 'upload' | 'project' | 'generated';
 
@@ -96,6 +96,7 @@ export interface Session {
   designStyleSkill: string | null;
   writingStyleSkill: string | null;
   androidDeviceSerial: string | null;
+  homeAssistantEntityId: string | null;
   runtime?: SessionRuntime;
   telemetry?: SessionTelemetry;
   createdAt: string;

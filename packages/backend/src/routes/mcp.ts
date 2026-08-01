@@ -5,11 +5,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { z } from 'zod';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { getDatabase } from '../db';
-import { AppError } from '../middleware/errorHandler';
-import { redactSensitiveText } from '../utils/sanitize';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { getDatabase } from '../db/index.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { redactSensitiveText } from '../utils/sanitize.js';
 import type { McpServer, McpServerType } from '@plum-code-webui/shared';
+import { buildRestrictedChildEnv } from '../utils/childProcessEnv.js';
 
 const router = Router();
 const CLAUDE_SETTINGS_MCP_ID_PREFIX = 'claude-settings:';
@@ -226,7 +227,7 @@ router.get('/:id', requireAuth, (req, res) => {
 });
 
 // Create MCP server
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, requireAdmin, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const parsed = createMcpServerSchema.safeParse(req.body);
 
@@ -273,7 +274,7 @@ router.post('/', requireAuth, (req, res) => {
 });
 
 // Update MCP server
-router.put('/:id', requireAuth, (req, res) => {
+router.put('/:id', requireAuth, requireAdmin, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const parsed = updateMcpServerSchema.safeParse(req.body);
 
@@ -340,7 +341,7 @@ router.put('/:id', requireAuth, (req, res) => {
 });
 
 // Delete MCP server
-router.delete('/:id', requireAuth, (req, res) => {
+router.delete('/:id', requireAuth, requireAdmin, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const serverId = req.params.id;
   if (!serverId) {
@@ -368,7 +369,7 @@ router.delete('/:id', requireAuth, (req, res) => {
 });
 
 // Test MCP server connection
-router.post('/:id/test', requireAuth, async (req, res) => {
+router.post('/:id/test', requireAuth, requireAdmin, async (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const serverId = req.params.id;
   if (!serverId) {
@@ -421,7 +422,7 @@ async function testSubprocessMcp(
 
     const proc = spawn(cmd, cmdArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env },
+      env: buildRestrictedChildEnv(env),
     });
 
     const timeout = setTimeout(() => {

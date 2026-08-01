@@ -49,9 +49,9 @@ export interface SuperpowersSyncResult {
 
 function isSuperpowersEnabled(): boolean {
   const raw = process.env.SUPERPOWERS_ENABLED;
-  if (!raw) return true;
+  if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
-  return !(normalized === '0' || normalized === 'false' || normalized === 'off');
+  return normalized === '1' || normalized === 'true' || normalized === 'on';
 }
 
 function syncIntervalMs(): number {
@@ -153,7 +153,7 @@ async function copyPluginPackage(sourceDir: string, targetDir: string): Promise<
   });
 }
 
-function upsertCodexPluginConfig(toml: string): string {
+function upsertCodexPluginConfig(toml: string, enabled = true): string {
   const lines = toml.split(/\r?\n/);
   const sectionHeader = `[plugins."${CODEX_MANAGED_PLUGIN_ID}"]`;
   const sectionRegex = new RegExp(
@@ -173,16 +173,39 @@ function upsertCodexPluginConfig(toml: string): string {
     const section = lines.slice(start, end);
     const enabledIndex = section.findIndex((line) => /^\s*enabled\s*=/.test(line));
     if (enabledIndex >= 0) {
-      section[enabledIndex] = 'enabled = true';
+      section[enabledIndex] = `enabled = ${enabled}`;
     } else {
-      section.splice(1, 0, 'enabled = true');
+      section.splice(1, 0, `enabled = ${enabled}`);
     }
     return [...lines.slice(0, start), ...section, ...lines.slice(end)].join('\n').trimEnd();
   }
 
+  if (!enabled) return toml.trimEnd();
+
   const block = `${sectionHeader}\nenabled = true`;
   const existing = toml.trimEnd();
   return existing ? `${existing}\n\n${block}` : block;
+}
+
+async function disableCodexSuperpowersPlugin(): Promise<void> {
+  const configFile = path.join(codexHome(), 'config.toml');
+  const current = await readTextFile(configFile);
+  const next = `${upsertCodexPluginConfig(current, false)}\n`;
+  if (current === next || !current.trim()) return;
+  await fs.writeFile(configFile, next, 'utf-8');
+}
+
+async function removeCodexSuperpowersPluginCache(): Promise<void> {
+  await fs.rm(
+    path.join(
+      codexHome(),
+      'plugins',
+      'cache',
+      CODEX_MANAGED_MARKETPLACE,
+      CODEX_MANAGED_PLUGIN_NAME
+    ),
+    { recursive: true, force: true }
+  );
 }
 
 async function syncCodexSuperpowersPlugin(
@@ -386,12 +409,41 @@ async function pruneRemovedManagedSkills(
   return removed;
 }
 
+async function removeManagedSkills(targetSkillsDir: string): Promise<number> {
+  let removed = 0;
+  let entries: import('fs').Dirent[];
+  try {
+    entries = await fs.readdir(targetSkillsDir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const target = path.join(targetSkillsDir, entry.name);
+    if (!(await readMarker(target))) continue;
+    await fs.rm(target, { recursive: true, force: true });
+    removed += 1;
+  }
+  return removed;
+}
+
 export async function syncSuperpowers(
   configHome = resolveConfigHome(),
   opts: { quiet?: boolean } = {}
 ): Promise<SuperpowersSyncResult> {
   if (!isSuperpowersEnabled()) {
-    return { enabled: false, installed: 0, updated: 0, skipped: [], removed: 0 };
+    const removed = await removeManagedSkills(path.join(configHome, 'skills'));
+    await Promise.all([
+      disableCodexSuperpowersPlugin(),
+      removeCodexSuperpowersPluginCache(),
+      removeOpenCodeSuperpowersPlugin(sourceDirFor(configHome)),
+      fs.rm(sourceDirFor(configHome), { recursive: true, force: true }),
+    ]);
+    if (!opts.quiet) {
+      console.log(`[superpowers] disabled: ${removed} managed skills removed`);
+    }
+    return { enabled: false, installed: 0, updated: 0, skipped: [], removed };
   }
 
   const sourceDir = await ensureSource(configHome);
@@ -473,13 +525,6 @@ function providerSkillInstructions(provider: CLIProvider): string {
         "Use OpenCode's native `skill` tool to list/load skills. When upstream text says `superpowers:<name>`, use the installed skill named `<name>`.",
         'Persist project instructions, handoff notes, and agent/subagent guidance in workspace `AGENTS.md`; treat `CLAUDE.md` as legacy compatibility only.',
         'Tool mapping for OpenCode: todos -> `todowrite`; subagents -> `task` with `subagent_type: "general"`; read files -> `read`; create/edit/delete files -> `apply_patch`; shell -> `bash`; search -> `grep`/`glob`; fetch URL -> `webfetch`.',
-      ].join('\n');
-    case 'vibe':
-      return [
-        'Mistral Vibe discovers these skills through `skill_paths` in `config.toml`, pointing at `~/.claude/skills`.',
-        "Use Vibe's skill mechanism when available. When upstream text says `superpowers:<name>`, use the installed skill named `<name>`.",
-        'Persist project instructions, handoff notes, and agent/subagent guidance in workspace `AGENTS.md`; treat `CLAUDE.md` as legacy compatibility only.',
-        'Tool mapping for Vibe: todos -> `todo`; subagents -> `task`; read files -> `read_file`; edit/write files -> `search_replace`/`write_file`; shell -> `bash`; search -> `grep`; fetch/search web -> `web_fetch`/`web_search`.',
       ].join('\n');
     case 'claude':
     default:

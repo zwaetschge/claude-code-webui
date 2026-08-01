@@ -7,15 +7,15 @@
  * Codex is the primary admin provider going forward. Anthropic is restricting
  * `claude -p` and moving to a credit system, so Claude is treated as a fallback.
  *
- * Order of preference: codex → opencode → vibe → claude.
- * Override via env `ADMIN_LLM_PROVIDER=codex|opencode|vibe|claude`.
+ * Order of preference: codex → opencode → claude.
+ * Override via env `ADMIN_LLM_PROVIDER=codex|opencode|claude`.
  */
 
 import { spawn } from 'child_process';
-import { isProviderAvailable, type CLIProvider } from '../services/cli-providers';
-import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from './codexDefaults';
+import { isProviderAvailable, type CLIProvider } from '../services/cli-providers.js';
+import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from './codexDefaults.js';
 
-const DEFAULT_ORDER: CLIProvider[] = ['codex', 'opencode', 'vibe', 'claude'];
+const DEFAULT_ORDER: CLIProvider[] = ['codex', 'opencode', 'claude'];
 
 interface RunOpts {
   cwd?: string;
@@ -41,7 +41,7 @@ function buildRunner(provider: CLIProvider): ProviderRunner {
       // --ephemeral skips persisting to ~/.codex/sessions/ so admin calls
       // (commit messages, summaries, etc.) don't pollute the resume picker.
       return {
-        command: '/home/node/.npm-global/bin/codex',
+        command: 'codex',
         args: (prompt, opts) => [
           'exec',
           '--skip-git-repo-check',
@@ -60,12 +60,6 @@ function buildRunner(provider: CLIProvider): ProviderRunner {
       return {
         command: 'opencode',
         args: (prompt) => ['run', prompt],
-      };
-    case 'vibe':
-      // Vibe takes the prompt as a positional arg in non-interactive mode.
-      return {
-        command: 'vibe',
-        args: (prompt) => ['--trust', prompt],
       };
     case 'claude':
     default:
@@ -102,7 +96,7 @@ export async function runAdminLLM(prompt: string, opts: RunOpts = {}): Promise<A
   const provider = await pickProvider();
   if (!provider) {
     throw new Error(
-      'No admin LLM provider available (codex/opencode/vibe/claude). Run a CLI login first.'
+      'No admin LLM provider available (codex/opencode/claude). Run a CLI login first.'
     );
   }
 

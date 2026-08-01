@@ -22,6 +22,13 @@ export function ProviderLogo({ provider, className, alt }: ProviderLogoProps) {
     );
   }
 
+  if (provider === 'zai') {
+    const resolvedAlt = alt === undefined ? 'Z.AI' : alt;
+    return (
+      <img src="/logos/zai.png" alt={resolvedAlt} className={cn('object-contain', className)} />
+    );
+  }
+
   if (provider === 'codex') {
     const resolvedAlt = alt === undefined ? 'Codex' : alt;
     return (
@@ -40,10 +47,26 @@ export function ProviderLogo({ provider, className, alt }: ProviderLogoProps) {
     );
   }
 
-  if (provider === 'vibe') {
-    const resolvedAlt = alt === undefined ? 'Mistral Vibe' : alt;
+  if (provider === 'pi') {
+    const resolvedAlt = alt === undefined ? 'Pi' : alt;
     return (
-      <img src="/logos/mistral.svg" alt={resolvedAlt} className={cn('object-contain', className)} />
+      <span
+        aria-label={resolvedAlt || undefined}
+        aria-hidden={resolvedAlt ? undefined : true}
+        className={cn(
+          'inline-flex items-center justify-center rounded-full border border-current/30 font-serif font-semibold leading-none',
+          className
+        )}
+      >
+        π
+      </span>
+    );
+  }
+
+  if (provider === 'kimi') {
+    const resolvedAlt = alt === undefined ? 'Kimi' : alt;
+    return (
+      <img src="/logos/kimi.png" alt={resolvedAlt} className={cn('object-contain', className)} />
     );
   }
 

@@ -1,9 +1,9 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { dockerHost } from '../services/docker';
-import { watchdogService } from '../services/watchdogs/WatchdogService';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { dockerHost } from '../services/docker/index.js';
+import { watchdogService } from '../services/watchdogs/WatchdogService.js';
 
 const router = Router();
 

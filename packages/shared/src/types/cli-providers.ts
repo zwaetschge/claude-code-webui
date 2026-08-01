@@ -16,7 +16,15 @@ export interface ProviderCapabilities {
   allowedDirectories: boolean;
 }
 
-export type ProviderFamilyLabel = 'Codex' | 'Claude' | 'OpenCode' | 'Vibe' | 'Other';
+export type ProviderFamilyLabel =
+  | 'Codex'
+  | 'Claude'
+  | 'Z.AI'
+  | 'Kimi'
+  | 'OpenCode'
+  | 'Pi'
+  | 'Vibe'
+  | 'Other';
 
 export interface CliProviderUpdateResult {
   provider: CLIProvider;
@@ -43,4 +51,42 @@ export function getProviderLabelForModel(model?: string | null): ProviderFamilyL
   }
   if (value.includes('/') || value.includes('opencode')) return 'OpenCode';
   return 'Other';
+}
+
+/**
+ * Resolve the analytics provider from the persisted runtime attribution first.
+ *
+ * Model-only inference remains available for historical rows, but it cannot
+ * distinguish Pi from OpenCode because both harnesses can run the same routed
+ * model id (for example `z-ai/glm-5.1`). New usage rows therefore persist the
+ * CLI provider that actually executed the turn and consumers must prefer it.
+ */
+export function getProviderLabelForUsage(
+  provider?: string | null,
+  model?: string | null
+): ProviderFamilyLabel {
+  switch ((provider || '').trim().toLowerCase()) {
+    case 'codex':
+      return 'Codex';
+    case 'claude':
+      return 'Claude';
+    case 'zai':
+    case 'z-ai':
+      return 'Z.AI';
+    case 'kimi':
+      return 'Kimi';
+    case 'opencode':
+      return 'OpenCode';
+    case 'pi':
+      return 'Pi';
+    case 'vibe':
+      return 'Vibe';
+    default:
+      return getProviderLabelForModel(model);
+  }
+}
+
+/** Collision-free key for timeline series where two harnesses use one model id. */
+export function getUsageModelKey(provider?: string | null, model?: string | null): string {
+  return `${getProviderLabelForUsage(provider, model)}\u001f${model || 'Unknown'}`;
 }

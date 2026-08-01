@@ -4,14 +4,14 @@ import type {
   DiscordAlertSeverity,
   DiscordOutboxItem,
 } from '@plum-code-webui/shared';
-import { getDatabase } from '../../db';
+import { getDatabase } from '../../db/index.js';
 import {
   redactDiscordField,
   redactDiscordMetadata,
   redactDiscordText,
   redactDiscordTitle,
-} from './discordRedaction';
-import { discordIntegrationService } from './DiscordIntegrationService';
+} from './discordRedaction.js';
+import { discordIntegrationService } from './DiscordIntegrationService.js';
 
 const COLOR_BY_SEVERITY: Record<DiscordAlertSeverity, number> = {
   info: 0x60a5fa,

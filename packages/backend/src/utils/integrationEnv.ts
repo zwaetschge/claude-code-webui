@@ -1,4 +1,4 @@
-import { getAppConfig } from '../db';
+import { getAppConfig } from '../db/index.js';
 
 export function buildIntegrationEnv(): Record<string, string> {
   const env: Record<string, string> = {};

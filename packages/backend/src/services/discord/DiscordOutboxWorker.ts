@@ -1,5 +1,5 @@
-import { getDatabase } from '../../db';
-import { discordIntegrationService } from './DiscordIntegrationService';
+import { getDatabase } from '../../db/index.js';
+import { discordIntegrationService } from './DiscordIntegrationService.js';
 
 const MAX_ATTEMPTS = 5;
 const DEFAULT_INTERVAL_MS = 15_000;

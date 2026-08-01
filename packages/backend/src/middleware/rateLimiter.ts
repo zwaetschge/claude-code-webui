@@ -16,7 +16,7 @@ interface RateLimitEntry {
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
 // Cleanup old entries periodically
-setInterval(() => {
+const rateLimitCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateLimitStore) {
     if (entry.resetTime < now) {
@@ -24,6 +24,7 @@ setInterval(() => {
     }
   }
 }, 60000); // Cleanup every minute
+rateLimitCleanupTimer.unref();
 
 /**
  * Get client identifier for rate limiting. Relies on req.ip, which respects

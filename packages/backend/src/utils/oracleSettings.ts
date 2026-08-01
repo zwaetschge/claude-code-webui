@@ -1,6 +1,6 @@
 import type { OracleBrowserMode, OracleBrowserSettings } from '@plum-code-webui/shared';
-import { getDatabase } from '../db';
-import { safeJsonParse } from './json';
+import { getDatabase } from '../db/index.js';
+import { safeJsonParse } from './json.js';
 
 export const DEFAULT_ORACLE_CHATGPT_URL = 'https://chatgpt.com/';
 

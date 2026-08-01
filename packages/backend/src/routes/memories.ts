@@ -2,9 +2,9 @@ import { Router } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { requireAuth } from '../middleware/auth';
-import { asyncHandler, AppError } from '../middleware/errorHandler';
-import { isAllowedBasePath, isPathInside } from '../utils/allowedPaths';
+import { requireAuth } from '../middleware/auth.js';
+import { asyncHandler, AppError } from '../middleware/errorHandler.js';
+import { isAllowedBasePath, isPathInside } from '../utils/allowedPaths.js';
 
 const router = Router();
 

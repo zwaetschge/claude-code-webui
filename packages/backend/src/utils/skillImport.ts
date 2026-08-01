@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { findSkillDirectory, getSkillCatalogDir, registerActiveSkill } from './leanSkillCatalog.js';
+import { readRetiredSkillNames, resolveSkillAlias } from './skillAliases.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -75,18 +77,37 @@ async function pathExists(p: string): Promise<boolean> {
 // deep (e.g. `auto-researcher/SKILL.md`). Anything deeper is a malformed
 // archive and gets rejected.
 async function findSkillRoot(startDir: string): Promise<string> {
-  if (await pathExists(path.join(startDir, 'SKILL.md'))) {
-    return startDir;
-  }
+  const roots: string[] = [];
+  if (await pathExists(path.join(startDir, 'SKILL.md'))) roots.push(startDir);
   const entries = await fs.readdir(startDir, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const sub = path.join(startDir, entry.name);
-    if (await pathExists(path.join(sub, 'SKILL.md'))) {
-      return sub;
+    if (await pathExists(path.join(sub, 'SKILL.md'))) roots.push(sub);
+  }
+  if (roots.length === 0) {
+    throw new Error('Archive does not contain SKILL.md at root or one level deep');
+  }
+  if (roots.length > 1) {
+    throw new Error('Archive must contain exactly one skill root');
+  }
+  return roots[0]!;
+}
+
+async function validateArchiveEntries(zipPath: string): Promise<void> {
+  const { stdout } = await execFileAsync('unzip', ['-Z1', zipPath]);
+  for (const rawEntry of stdout.split(/\r?\n/)) {
+    if (!rawEntry) continue;
+    const entry = rawEntry.replace(/\\/g, '/');
+    const segments = entry.split('/').filter(Boolean);
+    if (
+      entry.startsWith('/') ||
+      /^[a-zA-Z]:\//.test(entry) ||
+      segments.some((segment) => segment === '..')
+    ) {
+      throw new Error(`Refusing zip with escaping entry: ${rawEntry}`);
     }
   }
-  throw new Error('Archive does not contain SKILL.md at root or one level deep');
 }
 
 // Derive a usable skill name from the original filename when frontmatter
@@ -103,6 +124,10 @@ function deriveNameFromFilename(originalname: string): string {
 export interface ImportOptions {
   conflict: 'skip' | 'overwrite';
 }
+
+export type CatalogSkillImportResult =
+  | { status: 'imported'; skill: ImportedSkill }
+  | { status: 'skipped'; reason: string; skillName?: string };
 
 /**
  * Import a single skill into `skillsDir` from a buffer. Handles both raw
@@ -129,6 +154,7 @@ export async function importSkillFromBuffer(
     if (isArchive) {
       const tempZip = path.join(tempBase, 'archive.zip');
       await fs.writeFile(tempZip, buffer);
+      await validateArchiveEntries(tempZip);
       const extractDir = path.join(tempBase, 'extracted');
       await fs.mkdir(extractDir);
       // -j would flatten paths but lose subdir context; we want the natural
@@ -198,5 +224,83 @@ export async function importSkillFromBuffer(
     };
   } finally {
     await fs.rm(tempBase, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Validate an uploaded skill against the whole catalog before mutating it.
+ * The archive is first materialized in an isolated staging root so aliases,
+ * tombstones, styles, and active/on-demand conflicts can be evaluated using
+ * the skill's internal frontmatter name rather than its upload filename.
+ */
+export async function importSkillIntoCatalog(
+  buffer: Buffer,
+  originalname: string,
+  configHome: string,
+  options: ImportOptions
+): Promise<CatalogSkillImportResult> {
+  const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-catalog-import-'));
+  try {
+    const staged = await importSkillFromBuffer(buffer, originalname, stagingRoot, {
+      conflict: 'skip',
+    });
+    if (staged.status !== 'imported') return staged;
+
+    const skillName = path.basename(staged.skill.dirPath);
+    const retired = await readRetiredSkillNames(configHome);
+    if (retired.has(skillName)) {
+      return { status: 'skipped', reason: 'retired_name', skillName };
+    }
+
+    const canonicalName = await resolveSkillAlias(configHome, skillName);
+    if (canonicalName !== skillName && (await findSkillDirectory(configHome, canonicalName))) {
+      return {
+        status: 'skipped',
+        reason: `consolidated_as:${canonicalName}`,
+        skillName,
+      };
+    }
+
+    const runtimePaths = [
+      path.join(configHome, 'skills', skillName),
+      path.join(configHome, 'skills', `${skillName}.disabled`),
+      path.join(getSkillCatalogDir(configHome), skillName),
+    ];
+    const stylePaths = [
+      path.join(configHome, 'style-library', 'design', skillName),
+      path.join(configHome, 'style-library', 'writing', skillName),
+    ];
+    const existingRuntimePaths: string[] = [];
+    for (const candidate of runtimePaths) {
+      if (await pathExists(path.join(candidate, 'SKILL.md'))) existingRuntimePaths.push(candidate);
+    }
+    const styleConflict = await Promise.all(
+      stylePaths.map((candidate) => pathExists(path.join(candidate, 'SKILL.md')))
+    ).then((results) => results.some(Boolean));
+
+    if (styleConflict) {
+      return { status: 'skipped', reason: 'style_preset_conflict', skillName };
+    }
+    if (existingRuntimePaths.length > 0 && options.conflict === 'skip') {
+      return { status: 'skipped', reason: 'already_exists', skillName };
+    }
+    for (const candidate of existingRuntimePaths) {
+      await fs.rm(candidate, { recursive: true, force: true });
+    }
+
+    const destination = path.join(configHome, 'skills', skillName);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.cp(staged.skill.dirPath, destination, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+    await registerActiveSkill(configHome, skillName);
+    return {
+      status: 'imported',
+      skill: { ...staged.skill, dirPath: destination },
+    };
+  } finally {
+    await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
   }
 }

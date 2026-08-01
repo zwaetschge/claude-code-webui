@@ -46,6 +46,7 @@ import {
   Network,
   Link2,
   SendHorizontal,
+  Lightbulb,
 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -66,6 +67,11 @@ import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { ToolDetailDialog } from '@/components/session/ToolDetailDialog';
 import { AndroidDevicePanel } from '@/components/session/AndroidDevicePanel';
 import { SessionStyleLibraryPanel } from '@/components/session/SessionStyleLibraryPanel';
+import { TaskWorkbenchHeader, TodoFloatingStrip } from '@/components/session/TaskWorkbench';
+import {
+  getActiveTodoPresentation,
+  getTaskWorkbenchState,
+} from '@/components/session/taskWorkbenchState';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import {
   useSessionStore,
@@ -96,6 +102,9 @@ import type {
   ActiveFollowupMode,
   SessionDelegation,
   SessionPeerLink,
+  HomeAssistantIntegrationSettings,
+  HomeAssistantLightEntity,
+  HomeAssistantStatus,
 } from '@plum-code-webui/shared';
 import { normalizeUsageSnapshot } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
@@ -285,37 +294,19 @@ function ChatQuickTimeline({
           title={`${marker.time} · ${marker.title}`}
           onClick={() => onJump(marker.index)}
         >
-          <span>{marker.time}</span>
+          <span className="chat-quick-timeline-label">
+            <time>{marker.time}</time>
+            <strong>{marker.title}</strong>
+          </span>
         </button>
       ))}
     </nav>
   );
 }
 
-function TimelineContinuation({
-  timestamp,
-  icon,
-  label,
-  children,
-}: {
-  timestamp: number;
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  const time = formatTimelineTime(timestamp);
+function TimelineContinuation({ children }: { children: ReactNode }) {
   return (
     <div className="timeline-continuation">
-      <div className="timeline-continuation-rail">
-        {time && (
-          <span className="rail-time" title={new Date(timestamp).toLocaleString()}>
-            {time}
-          </span>
-        )}
-        <span className="timeline-continuation-marker" aria-label={label} title={label}>
-          {icon}
-        </span>
-      </div>
       <div className="timeline-continuation-body">{children}</div>
     </div>
   );
@@ -488,8 +479,10 @@ export function SessionPage() {
     name: string;
     icon: string;
     available: boolean;
+    enabled?: boolean;
     models?: string[];
     modelLabels?: Record<string, string>;
+    defaultModel?: string;
   }
   const { data: cliProviders } = useQuery({
     queryKey: ['cli-providers'],
@@ -504,6 +497,27 @@ export function SessionPage() {
     queryFn: async () => {
       const response = await api.get<ApiResponse<UserSettings>>('/api/settings');
       return response.data.data;
+    },
+  });
+
+  const { data: homeAssistantSettings } = useQuery({
+    queryKey: ['home-assistant-settings'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<HomeAssistantIntegrationSettings>>(
+        '/api/home-assistant/settings'
+      );
+      return response.data.data;
+    },
+  });
+
+  const { data: homeAssistantLights = [] } = useQuery({
+    queryKey: ['home-assistant-lights'],
+    enabled: Boolean(homeAssistantSettings?.configured),
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<HomeAssistantLightEntity[]>>(
+        '/api/home-assistant/lights'
+      );
+      return response.data.data || [];
     },
   });
 
@@ -930,22 +944,6 @@ export function SessionPage() {
             footerActiveAgents.length > 0) &&
             !footerStreamingContent && (
               <div className="turn-asst pl-thinking-turn animate-fade-in">
-                <div className="ai-rail">
-                  <div className="ai-mark pl-thinking-mark" title={deps.providerLabel}>
-                    {footerActiveAgent || footerActiveAgents.length > 0 ? (
-                      <>
-                        <Brain className="h-4 w-4" />
-                        <span className="pl-thinking-ping" />
-                      </>
-                    ) : (
-                      <>
-                        <ProviderLogo provider={deps.uiProvider} className="h-5 w-5" />
-                        <span className="pl-thinking-ping" />
-                      </>
-                    )}
-                  </div>
-                  <div className="ai-thread" />
-                </div>
                 <div className="ai-body">
                   <div
                     className={cn('pl-thinking-body', footerHasAgentActivity && 'is-clickable')}
@@ -962,6 +960,14 @@ export function SessionPage() {
                       }
                     }}
                   >
+                    <span className="pl-thinking-inline-mark" aria-hidden="true">
+                      {footerActiveAgent || footerActiveAgents.length > 0 ? (
+                        <Brain className="h-3.5 w-3.5" />
+                      ) : (
+                        <ProviderLogo provider={deps.uiProvider} className="h-4 w-4" />
+                      )}
+                      <span className="pl-thinking-ping" />
+                    </span>
                     <div className="pl-thinking-title">
                       {footerActiveAgent ? (
                         footerActiveAgents.length > 1 ? (
@@ -1003,12 +1009,6 @@ export function SessionPage() {
 
           {footerStreamingContent && (
             <div className="turn-asst animate-fade-in">
-              <div className="ai-rail">
-                <div className="ai-mark" title={deps.providerLabel}>
-                  <ProviderLogo provider={deps.uiProvider} className="h-4 w-4" />
-                </div>
-                <div className="ai-thread" />
-              </div>
               <div className="ai-body">
                 <StreamingContent
                   content={footerStreamingContent}
@@ -1120,7 +1120,12 @@ export function SessionPage() {
     (sessionRuntime?.queueDepth ?? 0) > 0 ||
     (sessionRuntime?.queueItems?.length ?? 0) > 0;
   const isActive = hasLiveRunActivity || hasQueuedRunWork;
-  const supportsActiveFollowups = sessionProvider === 'codex' || sessionProvider === 'opencode';
+  const supportsActiveFollowups =
+    sessionProvider === 'claude' ||
+    sessionProvider === 'zai' ||
+    sessionProvider === 'codex' ||
+    sessionProvider === 'opencode' ||
+    sessionProvider === 'pi';
   const supportsSteeredFollowups = sessionProvider === 'codex';
   const composerActiveFollowupMode: ActiveFollowupMode | undefined = supportsActiveFollowups
     ? supportsSteeredFollowups
@@ -1130,7 +1135,11 @@ export function SessionPage() {
   const activeSendFollowupMode: ActiveFollowupMode | undefined =
     supportsActiveFollowups && isActive ? composerActiveFollowupMode : undefined;
   const composerQueuesWhileActive =
-    sessionProvider === 'opencode' || (supportsSteeredFollowups && activeFollowupMode === 'queue');
+    sessionProvider === 'claude' ||
+    sessionProvider === 'zai' ||
+    sessionProvider === 'opencode' ||
+    sessionProvider === 'pi' ||
+    (supportsSteeredFollowups && activeFollowupMode === 'queue');
   const composerSteersWhileActive = supportsSteeredFollowups && activeFollowupMode === 'steer';
   const canInterruptActiveRun =
     hasLiveRunActivity ||
@@ -1240,36 +1249,44 @@ export function SessionPage() {
   const configuredModelsForProvider = settings?.cliProviderModelLists?.[sessionProvider] || [];
   const rawSelectedModel = session?.cliModel || '';
   const selectedModel =
-    sessionProvider === 'opencode' &&
+    (sessionProvider === 'opencode' || sessionProvider === 'pi') &&
     rawSelectedModel &&
     configuredModelsForProvider.length > 0 &&
     !configuredModelsForProvider.includes(rawSelectedModel)
       ? ''
       : rawSelectedModel;
-  const resolvedOpenCodeDefaultModel = (() => {
-    if (sessionProvider !== 'opencode') return '';
-    return configuredModelsForProvider[0] || CLI_PROVIDER_DEFAULT_MODEL.opencode;
+  const currentProviderInfo = cliProviders?.find((provider) => provider.id === sessionProvider);
+  const providerDefaultModel =
+    currentProviderInfo?.defaultModel || CLI_PROVIDER_DEFAULT_MODEL[sessionProvider];
+  const resolvedSharedProviderDefaultModel = (() => {
+    if (sessionProvider !== 'opencode' && sessionProvider !== 'pi') return '';
+    return configuredModelsForProvider[0] || providerDefaultModel;
   })();
   const resolvedDefaultModel =
     selectedModel ||
-    (sessionProvider === 'opencode'
-      ? resolvedOpenCodeDefaultModel
-      : CLI_PROVIDER_DEFAULT_MODEL[sessionProvider]);
+    (sessionProvider === 'opencode' || sessionProvider === 'pi'
+      ? resolvedSharedProviderDefaultModel
+      : providerDefaultModel);
   const modelSelectValue = selectedModel || '__default__';
-  const currentProviderInfo = cliProviders?.find((provider) => provider.id === sessionProvider);
   const modelLabels = useMemo(() => {
     return currentProviderInfo?.modelLabels || {};
   }, [currentProviderInfo]);
   // Compact label shown next to the assistant name in each turn (template's `asst-model`).
   const asstModelLabel = (() => {
-    const raw = selectedModel || resolvedDefaultModel || '';
+    const runtimeModel = session?.runtime?.model;
+    const raw =
+      runtimeModel && runtimeModel !== 'unknown'
+        ? runtimeModel
+        : selectedModel || resolvedDefaultModel || '';
     const labelled = modelLabels[raw];
     return (labelled || raw).toString();
   })();
   const modelOptions = useMemo(() => {
     const configuredModels = settings?.cliProviderModelLists?.[sessionProvider] || [];
-    if (sessionProvider === 'opencode') {
-      return Array.from(new Set(configuredModels));
+    if (sessionProvider === 'opencode' || sessionProvider === 'pi') {
+      return Array.from(
+        new Set(configuredModels.length > 0 ? configuredModels : currentProviderInfo?.models || [])
+      );
     }
 
     const options = new Set<string>();
@@ -1283,21 +1300,19 @@ export function SessionPage() {
     if (selectedModel) {
       options.add(selectedModel);
     }
-    const defaultModel = CLI_PROVIDER_DEFAULT_MODEL[sessionProvider];
-    if (defaultModel) {
-      options.add(defaultModel);
-    }
     return Array.from(options);
   }, [currentProviderInfo, sessionProvider, selectedModel, settings?.cliProviderModelLists]);
   const showDefaultModelOption =
-    sessionProvider !== 'opencode' || configuredModelsForProvider.length > 0;
+    sessionProvider === 'pi' ||
+    sessionProvider !== 'opencode' ||
+    configuredModelsForProvider.length > 0;
   const selectedReasoning = session?.cliReasoning || '';
   const reasoningSelectValue = selectedReasoning || '__default__';
   const selectedServiceTier = session?.cliServiceTier || '';
   const serviceTierSelectValue = selectedServiceTier || '__default__';
   const fastModeActive = sessionProvider === 'codex' && serviceTierSelectValue === 'fast';
   const reasoningOptions = useMemo(() => {
-    if (sessionProvider === 'claude') {
+    if (sessionProvider === 'claude' || sessionProvider === 'zai') {
       return [
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
@@ -1305,16 +1320,7 @@ export function SessionPage() {
         { value: 'max', label: 'Max' },
       ];
     }
-    if (sessionProvider === 'vibe') {
-      return [
-        { value: 'off', label: 'Off' },
-        { value: 'low', label: 'Low' },
-        { value: 'medium', label: 'Medium' },
-        { value: 'high', label: 'High' },
-        { value: 'max', label: 'Max' },
-      ];
-    }
-    if (sessionProvider === 'opencode') {
+    if (sessionProvider === 'opencode' || sessionProvider === 'pi') {
       return [
         { value: 'minimal', label: 'Minimal' },
         { value: 'low', label: 'Low' },
@@ -1361,6 +1367,48 @@ export function SessionPage() {
   });
 
   const queryClient = useQueryClient();
+
+  const homeAssistantLightMutation = useMutation({
+    mutationFn: async (entityId: string | null) => {
+      const response = await api.put<ApiResponse<{ entityId: string | null }>>(
+        `/api/home-assistant/sessions/${id}/light`,
+        { entityId }
+      );
+      return response.data.data;
+    },
+    onSuccess: (data) => {
+      if (!id || !data) return;
+      const update = { homeAssistantEntityId: data.entityId };
+      queryClient.setQueryData<Session>(['session', id], (current) =>
+        current ? { ...current, ...update } : current
+      );
+      useSessionStore.getState().updateSession(id, update);
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      toast({
+        title: data.entityId ? 'Status light connected' : 'Status light disconnected',
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Light assignment failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const homeAssistantPreviewMutation = useMutation({
+    mutationFn: async (status: HomeAssistantStatus) => {
+      await api.post(`/api/home-assistant/sessions/${id}/test`, { status });
+      return status;
+    },
+    onSuccess: (status) => {
+      toast({ title: `Testing ${status} light pattern` });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Light preview failed', description: error.message, variant: 'destructive' });
+    },
+  });
 
   const providerMutation = useMutation({
     mutationFn: async (provider: CLIProvider) => {
@@ -2674,17 +2722,22 @@ export function SessionPage() {
       SESSION_MODE_OPTIONS[1]!;
     const ActiveModeIcon = activeMode.icon;
     const providerOptions =
-      cliProviders?.map((provider) => ({
-        id: provider.id,
-        name: provider.name,
-        available: provider.available,
-      })) ?? [];
+      cliProviders
+        ?.filter((provider) => provider.enabled !== false || provider.id === sessionProvider)
+        .map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          enabled: provider.enabled !== false,
+          available: provider.available,
+        })) ?? [];
     const currentProvider = providerOptions.find((option) => option.id === sessionProvider);
     const modelLabel =
       modelSelectValue === '__default__'
         ? `Default${resolvedDefaultModel ? ` · ${modelLabels[resolvedDefaultModel] || resolvedDefaultModel}` : ''}`
         : modelLabels[modelSelectValue] || modelSelectValue;
-    const showReasoningControls = ['claude', 'codex', 'opencode', 'vibe'].includes(sessionProvider);
+    const showReasoningControls = ['claude', 'zai', 'codex', 'opencode', 'pi'].includes(
+      sessionProvider
+    );
     const reasoningValueLabel =
       reasoningSelectValue === '__default__'
         ? 'Default'
@@ -2756,7 +2809,11 @@ export function SessionPage() {
                 {providerOptions.map((provider) => (
                   <option key={provider.id} value={provider.id} disabled={!provider.available}>
                     {provider.name}
-                    {!provider.available ? ' (not installed)' : ''}
+                    {!provider.enabled
+                      ? ' (disabled)'
+                      : !provider.available
+                        ? ' (not configured)'
+                        : ''}
                   </option>
                 ))}
               </select>
@@ -2796,7 +2853,8 @@ export function SessionPage() {
         {showReasoningControls &&
           renderRuntimeField({
             id: fieldId('reasoning'),
-            label: sessionProvider === 'claude' ? 'Effort' : 'Reasoning',
+            label:
+              sessionProvider === 'claude' || sessionProvider === 'zai' ? 'Effort' : 'Reasoning',
             value: reasoningValueLabel,
             icon: <Brain className="h-3.5 w-3.5" />,
             children: (
@@ -2842,6 +2900,63 @@ export function SessionPage() {
             ),
           })}
 
+        {homeAssistantSettings?.configured &&
+          renderRuntimeField({
+            id: fieldId('home-assistant-light'),
+            label: 'Status Light',
+            value:
+              homeAssistantLights.find((light) => light.entityId === session.homeAssistantEntityId)
+                ?.name ||
+              (session.homeAssistantEntityId ? session.homeAssistantEntityId : 'No light'),
+            icon: <Lightbulb className="h-3.5 w-3.5" />,
+            children: (
+              <select
+                id={fieldId('home-assistant-light')}
+                className="session-runtime-select"
+                value={session.homeAssistantEntityId || ''}
+                onChange={(event) => homeAssistantLightMutation.mutate(event.target.value || null)}
+                aria-label="Home Assistant status light"
+                disabled={homeAssistantLightMutation.isPending}
+              >
+                <option value="">No light</option>
+                {homeAssistantLights.map((light) => (
+                  <option key={light.entityId} value={light.entityId} disabled={!light.available}>
+                    {light.name}
+                    {!light.available
+                      ? ' (unavailable)'
+                      : light.colorCapable
+                        ? ''
+                        : ' (pulse only)'}
+                  </option>
+                ))}
+              </select>
+            ),
+          })}
+
+        {session.homeAssistantEntityId && homeAssistantSettings?.configured && (
+          <div className="session-runtime-actions" aria-label="Test status light patterns">
+            {(
+              [
+                ['success', 'Done', 'text-emerald-500'],
+                ['problem', 'Problem', 'text-red-500'],
+                ['question', 'Question', 'text-blue-500'],
+              ] as const
+            ).map(([status, label, color]) => (
+              <button
+                key={status}
+                type="button"
+                className="session-runtime-action"
+                onClick={() => homeAssistantPreviewMutation.mutate(status)}
+                disabled={homeAssistantPreviewMutation.isPending}
+                title={`Test ${label.toLowerCase()} light pattern`}
+              >
+                <Circle className={cn('h-3.5 w-3.5 fill-current', color)} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {variant === 'sidebar' && (
           <div className="session-runtime-actions">
             <button
@@ -2869,13 +2984,7 @@ export function SessionPage() {
     );
   };
 
-  const activeTodo =
-    currentTodos.find((todo) => todo.status === 'in_progress') ??
-    currentTodos.find((todo) => todo.status === 'pending');
-  const activeTodoText =
-    activeTodo?.status === 'in_progress' && activeTodo.activeForm
-      ? activeTodo.activeForm
-      : activeTodo?.content;
+  const { todo: activeTodo, text: activeTodoText } = getActiveTodoPresentation(currentTodos);
   const activeAgentLabel = currentActiveAgent
     ? getAgentDisplay(currentActiveAgent.agentType)
     : currentAgentRuns.find((agent) => agent.status === 'started')?.agentType ||
@@ -2898,155 +3007,25 @@ export function SessionPage() {
       ? `${getAgentDisplay(session.runtime.currentAgentType)} running`
       : undefined);
   const queuedDepth = currentQueue?.depth ?? session.runtime?.queueDepth ?? 0;
-  const taskHeaderTone =
-    session.status === 'error'
-      ? 'error'
-      : isActive
-        ? 'working'
-        : pendingTasksCount > 0
-          ? 'ready'
-          : 'idle';
-  const taskHeaderStatusLabel =
-    session.status === 'error'
-      ? 'Needs attention'
-      : isActive
-        ? composerSteersWhileActive
-          ? 'Steering'
-          : 'Working'
-        : pendingTasksCount > 0
-          ? 'Ready'
-          : 'Idle';
-  const taskHeaderDetail =
-    currentActivity.message ||
-    activeToolLabel ||
-    runtimeActivityDetail ||
-    (activeAgentLabel ? `${activeAgentLabel} running` : undefined) ||
-    activeTodoText ||
-    session.lastMessage ||
-    'No active task yet';
-  const taskProgressLabel =
-    totalTasksCount > 0
-      ? `${completedTasksCount}/${totalTasksCount} done`
-      : canUseCodexGoal
-        ? 'No plan yet'
-        : 'No task list';
-  const taskComposerStatusLabel = isActive
-    ? composerSteersWhileActive
-      ? 'Steering active run'
-      : composerQueuesWhileActive
-        ? queuedDepth > 0
-          ? `${queuedDepth} queued`
-          : 'Follow-up queue'
-        : 'Run active'
-    : selectedCliTool
-      ? selectedToolName || 'Tool selected'
-      : '';
-  const taskComposerStatusDetail =
-    activeTodoText ||
-    currentActivity.message ||
-    runtimeActivityDetail ||
-    (activeAgentLabel ? `${activeAgentLabel} running` : undefined) ||
-    (isActive && composerQueuesWhileActive ? 'Waiting behind current run.' : undefined) ||
-    (isActive && composerSteersWhileActive ? 'Updating current run.' : undefined) ||
-    '';
-
-  const renderTaskWorkbenchHeader = () => {
-    if (!isTaskSurface) return null;
-
-    return (
-      <div className="task-workbench-topbar-inner">
-        <div className="task-workbench-heading">
-          <span className={cn('task-workbench-status-dot', `is-${taskHeaderTone}`)} />
-          <div className="task-workbench-titleblock">
-            <span className="task-workbench-eyebrow">Task mode</span>
-            <h1>{session.name}</h1>
-          </div>
-        </div>
-
-        <div className="task-workbench-state" title={taskHeaderDetail}>
-          <span className="task-workbench-state-label">{taskHeaderStatusLabel}</span>
-          <strong>{taskHeaderDetail}</strong>
-        </div>
-
-        <div className="task-workbench-metrics" aria-label="Task status">
-          <span>
-            <ListTodo className="h-3.5 w-3.5" />
-            {taskProgressLabel}
-          </span>
-          {queuedDepth > 0 && (
-            <span>
-              <MessageSquare className="h-3.5 w-3.5" />
-              {queuedDepth} queued
-            </span>
-          )}
-          {visibleUsage && (
-            <span>
-              <Brain className="h-3.5 w-3.5" />
-              {Math.round(visibleUsage.contextUsedPercent)}%
-            </span>
-          )}
-        </div>
-
-        <div className="task-workbench-actions">
-          <button
-            type="button"
-            className="task-workbench-action"
-            onClick={() => openRunCockpitSection(isActive ? 'overview' : 'turns')}
-            title="Open run view"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Run</span>
-          </button>
-          <button
-            type="button"
-            className="task-workbench-action"
-            onClick={() => openRightPanel('tasks')}
-            title="Open goal and tasks"
-          >
-            <ListTodo className="h-3.5 w-3.5" />
-            <span>Tasks</span>
-          </button>
-          <button
-            type="button"
-            className={cn('task-workbench-action', canInterruptActiveRun && 'is-danger')}
-            onClick={canInterruptActiveRun ? handleInterrupt : handleRestart}
-            title={canInterruptActiveRun ? 'Stop active run' : 'Restart session'}
-          >
-            {canInterruptActiveRun ? (
-              <Square className="h-3.5 w-3.5" />
-            ) : (
-              <RotateCcw className="h-3.5 w-3.5" />
-            )}
-            <span>{canInterruptActiveRun ? 'Stop' : 'Restart'}</span>
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderTodoStrip = (mode: 'desktop' | 'mobile') => {
-    if (!activeTodo || pendingTasksCount === 0) return null;
-    return (
-      <button
-        type="button"
-        className={cn('todo-floating-strip', mode === 'desktop' ? 'hidden md:flex' : 'md:hidden')}
-        onClick={() => {
-          if (mode === 'desktop') openRightPanel('tasks');
-          else setMobileSheetPanel('tasks');
-        }}
-      >
-        <span
-          className={cn('todo-floating-dot', activeTodo.status === 'in_progress' && 'is-running')}
-        />
-        <span className="truncate">
-          {activeTodo.status === 'in_progress' && activeTodo.activeForm
-            ? activeTodo.activeForm
-            : activeTodo.content}
-        </span>
-        <span className="todo-floating-count">{pendingTasksCount}</span>
-      </button>
-    );
-  };
+  const taskWorkbenchState = getTaskWorkbenchState({
+    sessionStatus: session.status,
+    isActive,
+    pendingTasksCount,
+    completedTasksCount,
+    totalTasksCount,
+    canUseCodexGoal,
+    composerSteersWhileActive,
+    composerQueuesWhileActive,
+    queuedDepth,
+    activityMessage: currentActivity.message,
+    activeToolLabel,
+    runtimeActivityDetail,
+    activeAgentLabel,
+    activeTodoText,
+    lastMessage: session.lastMessage,
+    hasSelectedTool: Boolean(selectedCliTool),
+    selectedToolName: selectedToolName || undefined,
+  });
 
   const renderSideMenuItem = ({
     id: itemId,
@@ -3385,7 +3364,19 @@ export function SessionPage() {
             isTaskSurface ? 'task-workbench-topbar' : 'is-empty'
           )}
         >
-          {renderTaskWorkbenchHeader()}
+          {isTaskSurface && (
+            <TaskWorkbenchHeader
+              sessionName={session.name}
+              state={taskWorkbenchState}
+              queuedDepth={queuedDepth}
+              contextUsedPercent={visibleUsage?.contextUsedPercent}
+              canInterruptActiveRun={canInterruptActiveRun}
+              onOpenRun={() => openRunCockpitSection(isActive ? 'overview' : 'turns')}
+              onOpenTasks={() => openRightPanel('tasks')}
+              onInterrupt={handleInterrupt}
+              onRestart={handleRestart}
+            />
+          )}
         </div>
 
         {/* Main Content - Chat or Editor */}
@@ -3521,17 +3512,7 @@ export function SessionPage() {
                       }
                     } else if (item.type === 'tool') {
                       content = (
-                        <TimelineContinuation
-                          timestamp={item.timestamp}
-                          label={isTaskSurface ? 'Work update' : 'Tool action'}
-                          icon={
-                            isTaskSurface ? (
-                              <ListTodo className="h-3.5 w-3.5" />
-                            ) : (
-                              <Terminal className="h-3.5 w-3.5" />
-                            )
-                          }
-                        >
+                        <TimelineContinuation>
                           {isTaskSurface ? (
                             <div className={cn('task-progress-card', `is-${item.data.status}`)}>
                               <span className="task-progress-dot" />
@@ -3558,11 +3539,7 @@ export function SessionPage() {
                     } else {
                       const img = item.data;
                       content = (
-                        <TimelineContinuation
-                          timestamp={item.timestamp}
-                          label="Generated image"
-                          icon={<Image className="h-3.5 w-3.5" />}
-                        >
+                        <TimelineContinuation>
                           <Card className="p-3 sm:p-4 bg-muted/40 border-border/60">
                             <div className="flex items-center gap-2 mb-3">
                               <div className="p-1.5 rounded-full bg-muted/60">
@@ -3651,7 +3628,12 @@ export function SessionPage() {
                   <span>Response saved</span>
                 </div>
               )}
-              {renderTodoStrip('desktop')}
+              <TodoFloatingStrip
+                todo={activeTodo}
+                pendingTasksCount={pendingTasksCount}
+                mode="desktop"
+                onOpenTasks={() => openRightPanel('tasks')}
+              />
               <ChatInput
                 sessionId={id || ''}
                 onSendMessage={handleSendMessage}
@@ -3668,8 +3650,8 @@ export function SessionPage() {
                 queuesWhileActive={composerQueuesWhileActive}
                 steersWhileActive={composerSteersWhileActive}
                 surface={sessionSurface}
-                activeStatusLabel={taskComposerStatusLabel}
-                activeStatusDetail={taskComposerStatusDetail}
+                activeStatusLabel={taskWorkbenchState.composerStatusLabel}
+                activeStatusDetail={taskWorkbenchState.composerStatusDetail}
                 activeFollowupMode={composerActiveFollowupMode}
                 onActiveFollowupModeChange={
                   supportsSteeredFollowups ? handleActiveFollowupModeChange : undefined

@@ -2,8 +2,16 @@ import type { CLIProvider as CLIProviderType } from '@plum-code-webui/shared';
 export type { CLIProvider } from '@plum-code-webui/shared';
 type CLIProvider = CLIProviderType;
 
-export type UiProvider = 'plum' | 'claude' | 'codex' | 'opencode' | 'vibe';
-export type UsageLimitProvider = CLIProvider | 'z-ai' | 'opencode-go';
+export type UiProvider = 'plum' | 'claude' | 'zai' | 'codex' | 'opencode' | 'pi' | 'kimi';
+export const ACCOUNT_USAGE_LIMIT_PROVIDERS = [
+  'codex',
+  'claude',
+  'zai',
+  'kimi',
+  'alibaba',
+] as const;
+export type AccountUsageLimitProvider = (typeof ACCOUNT_USAGE_LIMIT_PROVIDERS)[number];
+export type UsageLimitProvider = AccountUsageLimitProvider | 'z-ai' | 'opencode-go';
 
 export const DEFAULT_UI_PROVIDER: UiProvider = 'plum';
 export const UI_PROVIDER_STORAGE_KEY = 'ui-provider';
@@ -35,6 +43,14 @@ export const UI_PROVIDER_META: Record<
     loginCta: 'Continue with Claude',
     description: 'Built for Anthropic Claude Code CLI workflows.',
   },
+  zai: {
+    id: 'zai',
+    label: 'Z.AI',
+    productName: 'Z.AI Code',
+    tagline: 'GLM Coding Plan',
+    loginCta: 'Continue with Z.AI',
+    description: 'Claude Code transport backed by the Z.AI GLM Coding Plan.',
+  },
   codex: {
     id: 'codex',
     label: 'Codex',
@@ -51,62 +67,83 @@ export const UI_PROVIDER_META: Record<
     loginCta: 'Continue with OpenCode',
     description: 'OpenCode CLI with 75+ LLM providers. Default: GLM 5.1.',
   },
-  vibe: {
-    id: 'vibe',
-    label: 'Vibe',
-    productName: 'Mistral Vibe',
-    tagline: 'Mistral',
-    loginCta: 'Continue with Mistral Vibe',
-    description: 'Mistral Vibe CLI with Devstral/Codestral coding models.',
+  pi: {
+    id: 'pi',
+    label: 'Pi',
+    productName: 'Pi',
+    tagline: 'Agent Harness',
+    loginCta: 'Continue with Pi',
+    description: 'Pi agent harness using the same provider connections as OpenCode.',
+  },
+  kimi: {
+    id: 'kimi',
+    label: 'Kimi',
+    productName: 'Kimi Code',
+    tagline: 'Coding Plan',
+    loginCta: 'Continue with Kimi',
+    description: 'Kimi Code CLI with native persistent ACP chat sessions.',
   },
 };
 
 export const CLI_PROVIDER_LABEL: Record<CLIProvider, string> = {
   claude: 'Claude Code',
+  zai: 'Z.AI Code',
   codex: 'Codex',
   opencode: 'OpenCode',
-  vibe: 'Mistral Vibe',
+  pi: 'Pi',
+  kimi: 'Kimi Code',
 };
 
 export const CLI_PROVIDER_ICON: Record<CLIProvider, string> = {
   claude: 'C',
+  zai: 'Z',
   codex: 'O',
   opencode: '⚡',
-  vibe: 'M',
+  pi: 'π',
+  kimi: '🌙',
 };
 
 export const CLI_PROVIDER_DEFAULT_MODEL: Record<CLIProvider, string> = {
   claude: 'sonnet',
+  zai: 'opus',
   codex: 'gpt-5.5',
   opencode: 'z-ai/glm-5.1',
-  vibe: 'mistral-vibe-cli-latest',
+  pi: 'z-ai/glm-5.1',
+  kimi: 'kimi-code/kimi-for-coding',
 };
 
 export const UI_PROVIDER_THEME_COLOR: Record<UiProvider, string> = {
   plum: '#020403',
   claude: '#141413',
+  zai: '#0f766e',
   codex: '#000000',
   opencode: '#160d2b',
-  vibe: '#1e1e1e',
+  pi: '#0e1716',
+  kimi: '#2582ed',
 };
 
 export const USAGE_PROVIDER_LABEL: Record<UsageLimitProvider, string> = {
-  ...CLI_PROVIDER_LABEL,
+  claude: CLI_PROVIDER_LABEL.claude,
+  zai: CLI_PROVIDER_LABEL.zai,
+  codex: CLI_PROVIDER_LABEL.codex,
+  kimi: CLI_PROVIDER_LABEL.kimi,
+  alibaba: 'Alibaba Token Plan',
   'z-ai': 'Z.ai Coding Plan',
   'opencode-go': 'OpenCode Go',
 };
 
 export const USAGE_PROVIDER_SHORT_LABEL: Record<UsageLimitProvider, string> = {
   claude: 'Claude',
+  zai: 'Z.AI',
   codex: 'Codex',
-  opencode: 'OpenCode',
-  vibe: 'Vibe',
+  kimi: 'Kimi',
+  alibaba: 'Token Plan',
   'z-ai': 'Z.ai',
   'opencode-go': 'OpenCode Go',
 };
 
 export const CLI_PROVIDER_LIMIT_LABELS: Record<
-  UsageLimitProvider,
+  AccountUsageLimitProvider,
   {
     session: { title: string; subtitle?: string };
     weeklyAll?: { title: string; subtitle?: string };
@@ -118,54 +155,58 @@ export const CLI_PROVIDER_LIMIT_LABELS: Record<
     weeklyAll: { title: 'Weekly', subtitle: 'All' },
     weeklySonnet: { title: 'Weekly', subtitle: 'Sonnet' },
   },
+  zai: {
+    session: { title: '5h', subtitle: 'Tokens' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Tokens' },
+  },
   codex: {
     // Codex limits come from /backend-api/codex/usage:
-    //   primary_window  → 5h "session" budget
-    //   secondary_window → 7d weekly budget
+    // windows are assigned from limit_window_seconds rather than position,
+    // because some plans expose a weekly-only primary_window.
     // Codex has no per-model split (no Sonnet equivalent) — the sevenDaySonnet
     // field is intentionally null and the third bar is hidden.
     session: { title: '5h', subtitle: 'Session' },
     weeklyAll: { title: 'Weekly', subtitle: 'Total' },
   },
-  opencode: {
-    session: { title: '24h', subtitle: 'Local' },
-    weeklyAll: { title: 'Weekly', subtitle: 'Local' },
+  kimi: {
+    session: { title: '5h', subtitle: 'Coding Plan' },
+    weeklyAll: { title: 'Weekly', subtitle: 'Coding Plan' },
   },
-  vibe: {
-    session: { title: '24h', subtitle: 'Local' },
-    weeklyAll: { title: 'Weekly', subtitle: 'Local' },
-  },
-  'z-ai': {
-    session: { title: '5h', subtitle: 'Tokens' },
-    weeklyAll: { title: 'Weekly', subtitle: 'Tokens' },
-  },
-  'opencode-go': {
-    session: { title: 'Rolling', subtitle: 'Go quota' },
-    weeklyAll: { title: 'Weekly', subtitle: 'Go quota' },
+  alibaba: {
+    // A prepaid token allotment has no short rolling window — only the plan
+    // period, which is reported through the weekly slot.
+    session: { title: 'Plan', subtitle: 'Tokens' },
+    weeklyAll: { title: 'Plan period', subtitle: 'Tokens' },
   },
 };
 
 const CLI_TO_UI: Record<CLIProvider, UiProvider> = {
   claude: 'claude',
+  zai: 'zai',
   codex: 'codex',
   opencode: 'opencode',
-  vibe: 'vibe',
+  pi: 'pi',
+  kimi: 'kimi',
 };
 
 const UI_TO_CLI: Record<UiProvider, CLIProvider> = {
   plum: 'codex',
   claude: 'claude',
+  zai: 'zai',
   codex: 'codex',
   opencode: 'opencode',
-  vibe: 'vibe',
+  pi: 'pi',
+  kimi: 'kimi',
 };
 
 export function normalizeUiProvider(value?: string | null): UiProvider {
   const key = (value || '').toLowerCase();
   if (key === 'plum') return 'plum';
   if (key === 'codex') return 'codex';
+  if (key === 'zai' || key === 'z-ai') return 'zai';
   if (key === 'opencode') return 'opencode';
-  if (key === 'vibe') return 'vibe';
+  if (key === 'pi') return 'pi';
+  if (key === 'kimi') return 'kimi';
   return 'plum';
 }
 
@@ -182,18 +223,21 @@ export function toCliProvider(uiProvider?: UiProvider | null): CLIProvider {
 export function getUsageLimitProviderForModel(
   cliProvider: CLIProvider,
   model?: string | null
-): UsageLimitProvider {
+): AccountUsageLimitProvider | null {
   const value = (model || '').trim().toLowerCase();
-  if (cliProvider !== 'opencode') {
+  if (cliProvider === 'kimi') return 'kimi';
+  if (cliProvider !== 'opencode' && cliProvider !== 'pi') {
     return cliProvider;
   }
+  // The Alibaba Token Plan is a prepaid allotment shared by every model routed
+  // through it, so the plan — not the model — is the limit that matters.
+  if (value.startsWith('alibaba-token-plan/')) {
+    return 'alibaba';
+  }
   if (value.startsWith('z-ai/') || value.startsWith('zai/') || value.startsWith('glm-')) {
-    return 'z-ai';
+    return 'zai';
   }
-  if (value.startsWith('opencode-go/')) {
-    return 'opencode-go';
-  }
-  return 'opencode';
+  return null;
 }
 
 export function getStoredUiProvider(): UiProvider {
@@ -223,9 +267,10 @@ export function applyProviderClass(_provider: UiProvider): void {
   root.classList.remove(
     'provider-plum',
     'provider-claude',
+    'provider-zai',
     'provider-codex',
     'provider-opencode',
-    'provider-vibe'
+    'provider-pi'
   );
   root.classList.add(`provider-${visualProvider}`);
   root.setAttribute('data-provider', visualProvider);

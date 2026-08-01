@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth';
-import { asyncHandler } from '../middleware/errorHandler';
-import { commandService } from '../services/commands';
+import { requireAuth } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import { commandService } from '../services/commands.js';
 
 const router = Router();
 

@@ -5,9 +5,9 @@ import type {
   DiscordIntegrationSettings,
   DiscordMaintenancePolicy,
 } from '@plum-code-webui/shared';
-import { getAppConfig, getDatabase, setAppConfig } from '../../db';
-import { AppError } from '../../middleware/errorHandler';
-import { safeDecrypt, safeEncrypt } from '../../utils/encryption';
+import { getAppConfig, getDatabase, setAppConfig } from '../../db/index.js';
+import { AppError } from '../../middleware/errorHandler.js';
+import { safeDecrypt, safeEncrypt } from '../../utils/encryption.js';
 
 const CONFIG_KEYS = {
   enabled: 'discord_alerts_enabled',

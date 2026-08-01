@@ -192,7 +192,7 @@ function expandHome(value: string): string {
 }
 
 function augmentedPath(): string {
-  const extra = ['/home/node/.npm-global/bin', '/usr/local/bin', '/usr/bin'];
+  const extra = ['/home/node/.npm-global/bin', '/opt/plum-cli/bin', '/usr/local/bin', '/usr/bin'];
   const current = process.env.PATH || '';
   const parts = current.split(':').filter(Boolean);
   for (const item of extra) {
@@ -218,6 +218,7 @@ export function resolveOpenCodeBinary(command = process.env.CLI_PROVIDER_OPENCOD
     ? [expandHome(requested)]
     : [
         `/home/node/.npm-global/bin/${requested}`,
+        `/opt/plum-cli/bin/${requested}`,
         `/usr/local/bin/${requested}`,
         `/usr/bin/${requested}`,
       ];

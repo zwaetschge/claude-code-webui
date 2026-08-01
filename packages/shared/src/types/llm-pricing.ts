@@ -20,7 +20,7 @@ export interface ModelCostEstimate {
   known: boolean;
 }
 
-export const LLM_PRICING_RATE_CARD_VERSION = '2026-07-06-standard-api-equivalent-v6';
+export const LLM_PRICING_RATE_CARD_VERSION = '2026-07-27-standard-api-equivalent-v8';
 
 export const DEFAULT_MODEL_PRICING: ModelPricing = {
   input: 5,
@@ -50,7 +50,8 @@ function normalizeProviderModelId(provider: string | null, id: string, raw: stri
     provider === 'zhipuai' ||
     provider === 'deepseek' ||
     provider === 'opencode' ||
-    provider === 'opencode-go'
+    provider === 'opencode-go' ||
+    provider === 'alibaba-token-plan'
   ) {
     return id;
   }
@@ -219,13 +220,26 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   }
 
   // Anthropic, USD per 1M tokens. Cache write uses the 5 minute write rate.
-  if (/^claude-opus-4[.-](5|6|7|8)(?:\b|-|$)/.test(id) || id === 'opus') {
-    return price(5, 25, 0.5, 6.25, 'Anthropic API pricing, 2026-06-01', 'Claude Opus 4.5+');
+  if (/^claude-fable-5(?:\b|-|$)/.test(id) || id === 'fable') {
+    return price(10, 50, 1, 12.5, 'Anthropic API pricing, 2026-07-25', 'Claude Fable 5');
+  }
+  if (/^claude-opus-(?:5|4[.-](5|6|7|8))(?:\b|-|$)/.test(id) || id === 'opus') {
+    return price(5, 25, 0.5, 6.25, 'Anthropic API pricing, 2026-07-25', 'Claude Opus 5/4.5+');
   }
   if (/^claude-opus-4(?:$|-202|[.-](?:0|1)(?:\b|-|$))/.test(id)) {
     return price(15, 75, 1.5, 18.75, 'Anthropic API pricing, 2026-06-01', 'Claude Opus 4/4.1');
   }
-  if (/^claude-sonnet-4(?:$|[.-])/.test(id) || id === 'sonnet') {
+  if (/^claude-sonnet-5(?:\b|-|$)/.test(id) || id === 'sonnet') {
+    return price(
+      2,
+      10,
+      0.2,
+      2.5,
+      'Anthropic introductory API pricing through 2026-08-31',
+      'Claude Sonnet 5'
+    );
+  }
+  if (/^claude-sonnet-4(?:$|[.-])/.test(id)) {
     return price(3, 15, 0.3, 3.75, 'Anthropic API pricing, 2026-06-01', 'Claude Sonnet 4');
   }
   if (/^claude-3[.-]5-sonnet/.test(id)) {
@@ -242,6 +256,21 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
   // analytics use API-equivalent spend so Go-routed Kimi rows stay priced.
   if (id === 'kimi-k2.7-code' || id === 'kimi-k2.7-code-highspeed' || id === 'kimi-k2.7') {
     return price(0.95, 4, 0.19, 0, 'Kimi K2.7 Code API pricing, 2026-06-17', 'Kimi K2.7 Code');
+  }
+
+  // Alibaba Token Plan is Credits-based and does not publish a separate
+  // pay-as-you-go USD rate for Qwen3.8 Max Preview yet. Use the official
+  // Qwen3.7 Max list price as a clearly labelled API-equivalent proxy until
+  // Alibaba publishes a model-specific rate.
+  if (id === 'qwen3.8-max-preview') {
+    return price(
+      2.5,
+      7.5,
+      0.5,
+      3.125,
+      'Alibaba Model Studio Qwen3.7 Max list-price proxy, 2026-07-27',
+      'Qwen3.8 Max Preview (Qwen3.7 Max proxy)'
+    );
   }
 
   // Z.AI, USD per 1M tokens.

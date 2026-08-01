@@ -4,6 +4,20 @@ import type { SkillLibraryItem, SkillLibraryKind, WritingStyleType } from '@plum
 import { readDesignMdFromSkillDir, toDesignMdSummary, type DesignMdDocument } from './designMd.js';
 import { syncManagedPlumSkills } from './managedPlumSkills.js';
 import { syncExternalSkills } from './skillSync.js';
+import { aliasesByTarget } from './skillAliases.js';
+import {
+  ensureLeanSkillCatalog,
+  findSkillDirectory,
+  getSkillCatalogDir,
+  unregisterSkills,
+} from './leanSkillCatalog.js';
+import {
+  classifyStylePresetName,
+  ensureStylePresetLibrary,
+  listStylePresetDirectories,
+  readStylePresetPolicy,
+  type StylePresetKind,
+} from './stylePresetLibrary.js';
 
 interface ParsedSkill extends Omit<SkillLibraryItem, 'designMd'> {
   content: string;
@@ -15,59 +29,6 @@ interface ListSkillLibraryOptions {
   enabledOnly?: boolean;
   syncExternal?: boolean;
 }
-
-const DESIGN_STYLE_NAMES = new Set([
-  'dragonball-z-design',
-  'material-3-design',
-  'windows95-design',
-]);
-
-const WRITING_STYLE_NAMES = new Set([
-  '20min-satirist',
-  'absurdist-lens',
-  'bender',
-  'caveman',
-  'claptrap',
-  'deep-thought',
-  'dr-perry-cox',
-  'dr-zoidberg',
-  'drunk-texter',
-  'dschungel-george',
-  'eliza',
-  'funnybot',
-  'graf-zitronenbaum',
-  'heisenberg',
-  'human-voice',
-  'karen',
-  'kevingpt',
-  'michael-scott-boss-mode',
-  'michael-scott-roleplay',
-  'nikola-tesla',
-  'prison-mike',
-  'ricks-ship',
-  'roman-prosa-engine',
-  'schlaubi-schlumpf',
-  'severus-snape',
-  'shadowheart',
-  'sleep-mystery',
-  'spock',
-  'succubus-persona',
-  'swiss-business-email',
-  'swiss-writing-conventions',
-  'thaddaeus-gewerkschaftsfuehrer',
-  'towelie',
-  'truman-burbank',
-  'vale-persona',
-  'vale-proxy',
-]);
-
-const AUTHOR_WRITING_STYLE_NAMES = new Set([
-  'author-style-stephen-king',
-  'author-style-hemingway',
-  'author-style-jane-austen',
-  'author-style-george-orwell',
-  'author-style-ursula-k-le-guin',
-]);
 
 const PROSE_WRITING_STYLE_NAMES = new Set([
   'human-voice',
@@ -131,15 +92,11 @@ export function classifySkillLibraryKind(
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '');
 
-  if (normalizedBase.startsWith('design-') || DESIGN_STYLE_NAMES.has(normalizedBase)) {
-    return 'design';
-  }
+  const presetKind = classifyStylePresetName(normalizedBase);
+  if (presetKind) return presetKind;
 
   if (
-    WRITING_STYLE_NAMES.has(normalizedBase) ||
-    AUTHOR_WRITING_STYLE_NAMES.has(normalizedBase) ||
     normalizedBase.startsWith('author-style-') ||
-    haystack.includes('persona') ||
     haystack.includes('roleplay') ||
     haystack.includes('embody') ||
     haystack.includes('verkorpere') ||
@@ -170,7 +127,6 @@ export function classifyWritingStyleType(
 
   if (
     normalizedBase.startsWith('author-style-') ||
-    AUTHOR_WRITING_STYLE_NAMES.has(normalizedBase) ||
     haystack.includes('style-type: author') ||
     haystack.includes('author style') ||
     haystack.includes('authorial') ||
@@ -202,7 +158,9 @@ function safeSkillBaseName(name: string): string | null {
 async function readSkillFromDir(
   skillsDir: string,
   entryName: string,
-  source: 'user' | 'project'
+  source: 'user' | 'project',
+  runtimeEnabled?: boolean,
+  overrides: { kind?: SkillLibraryKind; entryType?: 'skill' | 'style' } = {}
 ): Promise<ParsedSkill | null> {
   const isDisabled = entryName.endsWith('.disabled');
   const baseName = entryName.replace(/\.disabled$/, '');
@@ -215,9 +173,9 @@ async function readSkillFromDir(
     const name = frontmatter.name || baseName;
     const description = compactDescription(frontmatter.description, body);
     const designMd = (await readDesignMdFromSkillDir(skillDir)) ?? undefined;
-    const libraryKind = designMd
-      ? 'design'
-      : classifySkillLibraryKind(baseName, name, description, body);
+    const libraryKind =
+      overrides.kind ||
+      (designMd ? 'design' : classifySkillLibraryKind(baseName, name, description, body));
     const writingStyleType =
       libraryKind === 'writing'
         ? classifyWritingStyleType(baseName, name, description, content)
@@ -232,11 +190,12 @@ async function readSkillFromDir(
       model: frontmatter.model || undefined,
       dirPath: skillDir,
       source,
-      enabled: !isDisabled,
+      enabled: runtimeEnabled ?? !isDisabled,
       libraryKind,
       writingStyleType,
       designMd,
       content: body,
+      entryType: overrides.entryType || 'skill',
     };
   } catch {
     return null;
@@ -251,36 +210,88 @@ export async function listSkillLibrary(
     await syncExternalSkills(configHome);
   }
   await syncManagedPlumSkills(configHome);
-
-  const skillsDir = path.join(configHome, 'skills');
-  let entries: import('fs').Dirent[];
-  try {
-    entries = await fs.readdir(skillsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
+  await ensureLeanSkillCatalog(configHome);
+  const styleMigration = await ensureStylePresetLibrary(configHome);
+  await unregisterSkills(
+    configHome,
+    styleMigration.moved.map((preset) => preset.baseName)
+  );
 
   const skills: SkillLibraryItem[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const parsed = await readSkillFromDir(skillsDir, entry.name, 'user');
-    if (!parsed) continue;
-    if (options.enabledOnly && !parsed.enabled) continue;
-    if (options.kind && parsed.libraryKind !== options.kind) continue;
-    skills.push({
-      id: parsed.id,
-      baseName: parsed.baseName,
-      name: parsed.name,
-      description: parsed.description,
-      allowedTools: parsed.allowedTools,
-      model: parsed.model,
-      dirPath: parsed.dirPath,
-      source: parsed.source,
-      enabled: parsed.enabled,
-      libraryKind: parsed.libraryKind,
-      writingStyleType: parsed.writingStyleType,
-      designMd: parsed.designMd ? toDesignMdSummary(parsed.designMd) : undefined,
-    });
+  const aliasIndex = await aliasesByTarget(configHome);
+  const roots = [
+    { dirPath: path.join(configHome, 'skills'), enabled: true },
+    { dirPath: getSkillCatalogDir(configHome), enabled: false },
+  ];
+  const seen = new Set<string>();
+
+  for (const root of roots) {
+    let entries: import('fs').Dirent[];
+    try {
+      entries = await fs.readdir(root.dirPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const parsed = await readSkillFromDir(root.dirPath, entry.name, 'user', root.enabled);
+      if (!parsed || seen.has(parsed.baseName)) continue;
+      seen.add(parsed.baseName);
+      if (options.enabledOnly && !parsed.enabled) continue;
+      if (options.kind && parsed.libraryKind !== options.kind) continue;
+      skills.push({
+        id: parsed.id,
+        baseName: parsed.baseName,
+        name: parsed.name,
+        description: parsed.description,
+        allowedTools: parsed.allowedTools,
+        model: parsed.model,
+        dirPath: parsed.dirPath,
+        source: parsed.source,
+        enabled: parsed.enabled,
+        libraryKind: parsed.libraryKind,
+        writingStyleType: parsed.writingStyleType,
+        designMd: parsed.designMd ? toDesignMdSummary(parsed.designMd) : undefined,
+        entryType: parsed.entryType,
+        aliases: aliasIndex.get(parsed.baseName),
+      });
+    }
+  }
+
+  if (!options.kind || options.kind === 'design' || options.kind === 'writing') {
+    const requestedKind =
+      options.kind === 'design' || options.kind === 'writing'
+        ? (options.kind as StylePresetKind)
+        : undefined;
+    for (const preset of await listStylePresetDirectories(configHome, requestedKind)) {
+      const parsed = await readSkillFromDir(
+        path.dirname(preset.dirPath),
+        path.basename(preset.dirPath),
+        'user',
+        false,
+        { kind: preset.kind, entryType: 'style' }
+      );
+      if (!parsed || seen.has(parsed.baseName)) continue;
+      seen.add(parsed.baseName);
+      if (options.enabledOnly) continue;
+      skills.push({
+        id: `style-${parsed.baseName}`,
+        baseName: parsed.baseName,
+        name: parsed.name,
+        description: parsed.description,
+        allowedTools: parsed.allowedTools,
+        model: parsed.model,
+        dirPath: parsed.dirPath,
+        source: parsed.source,
+        enabled: false,
+        libraryKind: preset.kind,
+        writingStyleType: parsed.writingStyleType,
+        designMd: parsed.designMd ? toDesignMdSummary(parsed.designMd) : undefined,
+        entryType: 'style',
+        aliases: aliasIndex.get(parsed.baseName),
+      });
+    }
   }
 
   return skills.sort((a, b) => a.name.localeCompare(b.name));
@@ -291,20 +302,38 @@ export async function readSkillLibraryItem(
   baseName: string,
   options: { includeDisabled?: boolean; syncExternal?: boolean } = {}
 ): Promise<ParsedSkill | null> {
-  const safeName = safeSkillBaseName(baseName);
-  if (!safeName) return null;
+  const requestedName = safeSkillBaseName(baseName);
+  if (!requestedName) return null;
 
-  if (options.syncExternal) {
+  if (options.syncExternal !== false) {
     await syncExternalSkills(configHome);
   }
+  await syncManagedPlumSkills(configHome);
+  await ensureLeanSkillCatalog(configHome);
+  const styleMigration = await ensureStylePresetLibrary(configHome);
+  await unregisterSkills(
+    configHome,
+    styleMigration.moved.map((preset) => preset.baseName)
+  );
 
-  const skillsDir = path.join(configHome, 'skills');
-  const enabled = await readSkillFromDir(skillsDir, safeName, 'user');
-  if (enabled) return enabled;
-
-  if (options.includeDisabled) {
-    return readSkillFromDir(skillsDir, `${safeName}.disabled`, 'user');
+  const location = await findSkillDirectory(configHome, requestedName);
+  if (!location) return null;
+  if (!location.enabled && options.includeDisabled === false) return null;
+  const parsed = await readSkillFromDir(
+    path.dirname(location.dirPath),
+    path.basename(location.dirPath),
+    'user',
+    location.enabled,
+    location.runtimeConfigurable
+      ? { entryType: 'skill' }
+      : {
+          kind: location.dirPath.includes(`${path.sep}design${path.sep}`) ? 'design' : 'writing',
+          entryType: 'style',
+        }
+  );
+  if (parsed?.entryType === 'style') {
+    const policy = await readStylePresetPolicy(configHome, parsed.libraryKind as StylePresetKind);
+    if (policy.trim()) parsed.content = `${policy.trim()}\n\n${parsed.content}`;
   }
-
-  return null;
+  return parsed;
 }

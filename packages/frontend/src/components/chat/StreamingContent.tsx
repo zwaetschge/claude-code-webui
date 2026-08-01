@@ -16,6 +16,8 @@ import { UI_PROVIDER_META, type UiProvider } from '@/lib/providers';
 import { MemoizedMarkdown } from './MemoizedMarkdown';
 import { ProviderLoader } from './providerAnimations/ProviderLoader';
 import { StreamingCursor, streamingContentClass } from './providerAnimations/StreamingCursor';
+import { normalizeClaudeDisplayContent } from '@/lib/claudeDisplay';
+import { ProviderToolNotice } from './ProviderToolNotice';
 import 'katex/dist/katex.min.css';
 
 interface StreamingContentProps {
@@ -272,9 +274,9 @@ function parseClaudeOutput(content: string): {
 type ParsedStreamingOutput = ReturnType<typeof parseClaudeOutput>;
 
 function parseProviderOutput(content: string, provider: UiProvider): ParsedStreamingOutput {
-  // Codex/OpenCode/Vibe stream clean assistant deltas through the backend. The
+  // Codex/OpenCode stream clean assistant deltas through the backend. The
   // heavy terminal-screen parser exists for legacy Claude CLI output only.
-  if (provider !== 'claude') {
+  if (provider !== 'claude' && provider !== 'zai') {
     const cleanContent = stripAnsi(content);
     return cleanContent.trim() ? { type: 'response', message: cleanContent } : { type: 'empty' };
   }
@@ -621,9 +623,13 @@ function LiveStreamingText({ message }: { message: string }) {
 // Very long partial streams render as plain text until the final persisted
 // message arrives; that avoids reparsing a large markdown document every flush.
 function ClaudeResponse({ message, provider }: { message: string; provider: UiProvider }) {
-  const shouldUsePlainText = message.length > LIVE_MARKDOWN_CHAR_LIMIT;
-  const visibleMessage = useWordRevealText(message);
-  const isRevealing = visibleMessage.length < message.length;
+  const normalized =
+    provider === 'claude' || provider === 'zai'
+      ? normalizeClaudeDisplayContent(message)
+      : { message, providerTools: [], providerToolComplete: false };
+  const shouldUsePlainText = normalized.message.length > LIVE_MARKDOWN_CHAR_LIMIT;
+  const visibleMessage = useWordRevealText(normalized.message);
+  const isRevealing = visibleMessage.length < normalized.message.length;
 
   return (
     <div className="flex gap-3">
@@ -637,15 +643,20 @@ function ClaudeResponse({ message, provider }: { message: string; provider: UiPr
           isRevealing && 'is-revealing'
         )}
       >
-        {shouldUsePlainText ? (
-          <LiveStreamingText message={visibleMessage} />
-        ) : (
-          <MemoizedMarkdown
-            content={visibleMessage}
-            animateWords
-            className="prose prose-sm dark:prose-invert max-w-none"
-          />
-        )}
+        {visibleMessage &&
+          (shouldUsePlainText ? (
+            <LiveStreamingText message={visibleMessage} />
+          ) : (
+            <MemoizedMarkdown
+              content={visibleMessage}
+              animateWords
+              className="prose prose-sm dark:prose-invert max-w-none"
+            />
+          ))}
+        <ProviderToolNotice
+          tools={normalized.providerTools}
+          complete={normalized.providerToolComplete}
+        />
         <StreamingCursor provider={provider} />
       </div>
     </div>

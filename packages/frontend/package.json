@@ -7,6 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "test:pi-settings": "node scripts/pi-settings-tab-tests.mjs",
+    "test:recent-sessions": "node scripts/recent-sessions-limit-tests.mjs",
+    "test:session-list-polling": "node scripts/session-list-polling-tests.mjs",
+    "test:analytics-model-breakdown": "node scripts/analytics-model-breakdown-tests.mjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
@@ -45,8 +49,6 @@
     "remark-math": "^6.0.0",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^2.6.0",
-    "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

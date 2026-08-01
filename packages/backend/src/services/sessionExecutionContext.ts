@@ -21,6 +21,8 @@ const AUTONOMOUS_EXECUTION_RULES = [
   '- Do not repeatedly request confirmation for scope or actions the user already authorized. Do not turn progress updates, plans, checklists, skills, reviews, or safety analysis into gates unless the task truly requires them.',
   '- Timebox exploration and review. Re-check the requested outcome after each milestone and cut work that does not materially improve it.',
   '- More reasoning effort means better prioritization and decisions; it does not mean broader scope, more workflow layers, more edge cases, or more questions.',
+  '- To publish a local image or QR code in chat, include a Markdown image or link that references its absolute PNG, JPEG, WebP, or GIF path inside the current workspace.',
+  '- Never claim that a local image or QR code is visible or sent unless the response includes that workspace file reference.',
   '',
   ...VALE_DECISION_PROXY_RULES,
 ];

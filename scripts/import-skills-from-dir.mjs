@@ -21,6 +21,18 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_ACTIVE_SKILLS = [
+  'api-design',
+  'capability-catalog',
+  'debugging-playbook',
+  'devops-deploy',
+  'documentation-writer',
+  'frontend-design',
+  'performance-tuning',
+  'refactor-guide',
+  'security-review',
+  'testing-playbook',
+];
 
 function parseFrontmatter(content) {
   const frontmatter = {};
@@ -60,21 +72,117 @@ function deriveFromFilename(name) {
 }
 
 async function pathExists(p) {
-  try { await fs.access(p); return true; } catch { return false; }
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readCatalogPolicy(configHome) {
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(path.join(configHome, 'skill-aliases.json'), 'utf-8')
+    );
+    const source = parsed && typeof parsed === 'object' && parsed.aliases ? parsed.aliases : parsed;
+    const aliases = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+    const retired = new Set(Array.isArray(parsed?.retired) ? parsed.retired.map(sanitizeName) : []);
+    return { aliases, retired };
+  } catch {
+    return { aliases: {}, retired: new Set() };
+  }
+}
+
+function resolveAlias(aliases, requestedName) {
+  let current = requestedName;
+  const seen = new Set();
+  for (let depth = 0; depth < 8; depth += 1) {
+    const target = typeof aliases[current] === 'string' ? sanitizeName(aliases[current]) : '';
+    if (!target || seen.has(target)) break;
+    seen.add(current);
+    current = target;
+  }
+  return current;
 }
 
 async function findSkillRoot(start) {
-  if (await pathExists(path.join(start, 'SKILL.md'))) return start;
+  const roots = [];
+  if (await pathExists(path.join(start, 'SKILL.md'))) roots.push(start);
   const entries = await fs.readdir(start, { withFileTypes: true });
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const sub = path.join(start, e.name);
-    if (await pathExists(path.join(sub, 'SKILL.md'))) return sub;
+    if (await pathExists(path.join(sub, 'SKILL.md'))) roots.push(sub);
   }
-  throw new Error('Archive missing SKILL.md');
+  if (roots.length === 0) throw new Error('Archive missing SKILL.md');
+  if (roots.length > 1) throw new Error('Archive must contain exactly one skill root');
+  return roots[0];
 }
 
-async function importOne(filePath, skillsDir, conflict) {
+async function validateArchiveEntries(zipPath) {
+  const { stdout } = await execFileAsync('unzip', ['-Z1', zipPath]);
+  const entries = [];
+  for (const rawEntry of stdout.split(/\r?\n/)) {
+    if (!rawEntry) continue;
+    const entry = rawEntry.replace(/\\/g, '/');
+    const segments = entry.split('/').filter(Boolean);
+    if (
+      entry.startsWith('/') ||
+      /^[a-zA-Z]:\//.test(entry) ||
+      segments.some((segment) => segment === '..')
+    ) {
+      throw new Error(`zip-slip entry: ${rawEntry}`);
+    }
+    entries.push(rawEntry);
+  }
+  return entries;
+}
+
+async function catalogLocations(configHome, skillName) {
+  const runtime = [
+    path.join(configHome, 'skills', skillName),
+    path.join(configHome, 'skills', `${skillName}.disabled`),
+    path.join(configHome, 'skill-catalog', skillName),
+  ];
+  const styles = [
+    path.join(configHome, 'style-library', 'design', skillName),
+    path.join(configHome, 'style-library', 'writing', skillName),
+  ];
+  const existingRuntime = [];
+  const existingStyles = [];
+  for (const candidate of runtime) {
+    if (await pathExists(path.join(candidate, 'SKILL.md'))) existingRuntime.push(candidate);
+  }
+  for (const candidate of styles) {
+    if (await pathExists(path.join(candidate, 'SKILL.md'))) existingStyles.push(candidate);
+  }
+  return { runtime: existingRuntime, styles: existingStyles };
+}
+
+async function registerActiveSkill(configHome, skillName) {
+  const statePath = path.join(configHome, 'integrations', 'skill-catalog-state.json');
+  let activeSkills = [...DEFAULT_ACTIVE_SKILLS];
+  try {
+    const parsed = JSON.parse(await fs.readFile(statePath, 'utf-8'));
+    if (parsed?.version === 1 && Array.isArray(parsed.activeSkills)) {
+      activeSkills = parsed.activeSkills.map(sanitizeName).filter(Boolean);
+    }
+  } catch {
+    // First catalog import.
+  }
+  activeSkills = [...new Set([...activeSkills, skillName])].sort();
+  await fs.mkdir(path.dirname(statePath), { recursive: true });
+  const tempPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(
+    tempPath,
+    `${JSON.stringify({ version: 1, activeSkills }, null, 2)}\n`,
+    'utf-8'
+  );
+  await fs.rename(tempPath, statePath);
+}
+
+async function importOne(filePath, configHome, conflict, catalogPolicy) {
   const originalname = path.basename(filePath);
   const lower = originalname.toLowerCase();
   const isArchive = lower.endsWith('.skill') || lower.endsWith('.zip');
@@ -85,6 +193,7 @@ async function importOne(filePath, skillsDir, conflict) {
     if (isArchive) {
       const tempZip = path.join(tempBase, 'archive.zip');
       await fs.copyFile(filePath, tempZip);
+      await validateArchiveEntries(tempZip);
       const extractDir = path.join(tempBase, 'extracted');
       await fs.mkdir(extractDir);
       await execFileAsync('unzip', ['-q', tempZip, '-d', extractDir]);
@@ -108,23 +217,48 @@ async function importOne(filePath, skillsDir, conflict) {
     const skillMd = path.join(stagingDir, 'SKILL.md');
     const content = await fs.readFile(skillMd, 'utf-8');
     const { frontmatter } = parseFrontmatter(content);
-    const rawName = (frontmatter.name && frontmatter.name.trim()) || deriveFromFilename(originalname);
+    const rawName =
+      (frontmatter.name && frontmatter.name.trim()) || deriveFromFilename(originalname);
     if (!rawName) return { status: 'skipped', reason: 'no_name' };
     const skillName = sanitizeName(rawName);
-    if (!skillName) return { status: 'skipped', reason: 'empty_after_sanitize', skillName: rawName };
+    if (!skillName)
+      return { status: 'skipped', reason: 'empty_after_sanitize', skillName: rawName };
 
-    const destDir = path.join(skillsDir, skillName);
-    const destDisabled = path.join(skillsDir, `${skillName}.disabled`);
-    const exists = (await pathExists(destDir)) || (await pathExists(destDisabled));
-    if (exists && conflict === 'skip') {
+    if (catalogPolicy.retired.has(skillName)) {
+      return { status: 'skipped', reason: 'retired_name', skillName };
+    }
+    const canonicalName = resolveAlias(catalogPolicy.aliases, skillName);
+    if (canonicalName !== skillName) {
+      const canonicalLocations = await catalogLocations(configHome, canonicalName);
+      if (canonicalLocations.runtime.length > 0 || canonicalLocations.styles.length > 0) {
+        return {
+          status: 'skipped',
+          reason: `consolidated_as:${canonicalName}`,
+          skillName,
+        };
+      }
+    }
+
+    const existing = await catalogLocations(configHome, skillName);
+    if (existing.styles.length > 0) {
+      return { status: 'skipped', reason: 'style_preset_conflict', skillName };
+    }
+    if (existing.runtime.length > 0 && conflict === 'skip') {
       return { status: 'skipped', reason: 'already_exists', skillName };
     }
-    if (exists) {
-      await fs.rm(destDir, { recursive: true, force: true });
-      await fs.rm(destDisabled, { recursive: true, force: true });
+    for (const candidate of existing.runtime) {
+      await fs.rm(candidate, { recursive: true, force: true });
     }
+
+    const skillsDir = path.join(configHome, 'skills');
+    const destDir = path.join(skillsDir, skillName);
     await fs.mkdir(skillsDir, { recursive: true });
-    await fs.cp(stagingDir, destDir, { recursive: true });
+    await fs.cp(stagingDir, destDir, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+    await registerActiveSkill(configHome, skillName);
     return { status: 'imported', skillName, name: frontmatter.name || skillName };
   } finally {
     await fs.rm(tempBase, { recursive: true, force: true }).catch(() => {});
@@ -146,7 +280,28 @@ async function peekName(filePath) {
           }
         }
       }
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
+  }
+  if (lower.endsWith('.skill') || lower.endsWith('.zip')) {
+    try {
+      const entries = await validateArchiveEntries(filePath);
+      const skillRoots = entries.filter((entry) => {
+        const segments = entry.replace(/\\/g, '/').split('/').filter(Boolean);
+        return (
+          segments.length >= 1 &&
+          segments.length <= 2 &&
+          segments[segments.length - 1] === 'SKILL.md'
+        );
+      });
+      if (skillRoots.length !== 1) return deriveFromFilename(originalname);
+      const { stdout } = await execFileAsync('unzip', ['-p', filePath, skillRoots[0]]);
+      const { frontmatter } = parseFrontmatter(stdout);
+      if (frontmatter.name?.trim()) return frontmatter.name.trim();
+    } catch {
+      /* importOne will report the detailed archive error */
+    }
   }
   return deriveFromFilename(originalname);
 }
@@ -154,13 +309,19 @@ async function peekName(filePath) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length < 1 || args[0].startsWith('-')) {
-    console.error('Usage: node scripts/import-skills-from-dir.mjs <source-dir> [--config-home <path>] [--overwrite]');
+    console.error(
+      'Usage: node scripts/import-skills-from-dir.mjs <source-dir> [--config-home <path>] [--overwrite]'
+    );
     process.exit(2);
   }
   const sourceDir = path.resolve(args[0]);
   const cfgIdx = args.indexOf('--config-home');
-  const configHome = cfgIdx >= 0 ? path.resolve(args[cfgIdx + 1]) : path.join(process.env.HOME ?? '/home/node', '.claude');
+  const configHome =
+    cfgIdx >= 0
+      ? path.resolve(args[cfgIdx + 1])
+      : path.join(process.env.HOME ?? '/home/node', '.claude');
   const conflict = args.includes('--overwrite') ? 'overwrite' : 'skip';
+  const catalogPolicy = await readCatalogPolicy(configHome);
 
   const skillsDir = path.join(configHome, 'skills');
   console.log(`[import] source=${sourceDir}`);
@@ -175,7 +336,12 @@ async function main() {
     if (!(lower.endsWith('.md') || lower.endsWith('.skill') || lower.endsWith('.zip'))) continue;
     const fp = path.join(sourceDir, e.name);
     const s = await fs.stat(fp);
-    files.push({ filePath: fp, originalname: e.name, size: s.size, isArchive: !lower.endsWith('.md') });
+    files.push({
+      filePath: fp,
+      originalname: e.name,
+      size: s.size,
+      isArchive: !lower.endsWith('.md'),
+    });
   }
   console.log(`[import] found ${files.length} candidate files`);
 
@@ -186,7 +352,10 @@ async function main() {
     const key = sanitizeName(peeked);
     if (!key) continue;
     const existing = byName.get(key);
-    if (!existing) { byName.set(key, f); continue; }
+    if (!existing) {
+      byName.set(key, f);
+      continue;
+    }
     if (existing.isArchive !== f.isArchive) {
       if (f.isArchive) byName.set(key, f);
       continue;
@@ -200,7 +369,7 @@ async function main() {
   const errors = [];
   for (const f of byName.values()) {
     try {
-      const r = await importOne(f.filePath, skillsDir, conflict);
+      const r = await importOne(f.filePath, configHome, conflict, catalogPolicy);
       if (r.status === 'imported') imported.push(r.name);
       else skipped.push({ name: r.skillName ?? f.originalname, reason: r.reason });
     } catch (err) {

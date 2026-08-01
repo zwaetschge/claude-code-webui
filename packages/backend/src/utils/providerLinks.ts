@@ -17,11 +17,6 @@ const CLAUDE_SKILLS_DIR = '/home/node/.claude/skills';
 const CLAUDE_AGENTS_DIR = '/home/node/.claude/agents';
 const OPENCODE_CONFIG_PATH = '/home/node/.opencode/config/opencode.json';
 const OPENCODE_AGENTS_DIR = '/home/node/.opencode/config/agents';
-const VIBE_AGENTS_DIR = '/home/node/.vibe/agents';
-const VIBE_PROMPTS_DIR = '/home/node/.vibe/prompts';
-const VIBE_CONFIG_PATH = '/home/node/.vibe/config.toml';
-const VIBE_MANAGED_BLOCK_START = '# >>> webui-managed provider links >>>';
-const VIBE_MANAGED_BLOCK_END = '# <<< webui-managed provider links <<<';
 const ZAI_VISION_MCP_NAME = 'zai-vision';
 const ZAI_VISION_MCP_MARKER = 'zai-vision-v1';
 
@@ -39,20 +34,6 @@ const OPENCODE_TOOL_MAP: Record<string, string> = {
   WebFetch: 'webfetch',
   TodoWrite: 'todowrite',
   Task: 'task',
-};
-
-// Claude Code tool names (PascalCase) → Vibe tool names.
-const VIBE_TOOL_MAP: Record<string, string> = {
-  AskUserQuestion: 'ask_user_question',
-  Bash: 'bash',
-  Edit: 'search_replace',
-  Grep: 'grep',
-  Read: 'read_file',
-  Task: 'task',
-  TodoWrite: 'todo',
-  WebFetch: 'web_fetch',
-  WebSearch: 'web_search',
-  Write: 'write_file',
 };
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/;
@@ -77,9 +58,7 @@ interface ClaudeSettings {
 
 export interface ProviderLinksSyncResult {
   opencodeAgents: { converted: number; skipped: number };
-  vibeAgents: { converted: number; skipped: number };
   opencodeConfig: { updated: boolean; mcpCount: number };
-  vibeConfig: { updated: boolean; mcpCount: number };
 }
 
 interface OpenCodeConfigProviderBlock {
@@ -122,48 +101,6 @@ function firstBodyLine(body: string): string {
       .map((line) => line.trim())
       .find((line) => line.length > 0 && !line.startsWith('#')) || ''
   );
-}
-
-function safeName(value: string): string {
-  const safe = value
-    .trim()
-    .replace(/\.[^.]+$/, '')
-    .replace(/[^A-Za-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return safe || 'agent';
-}
-
-function titleFromName(value: string): string {
-  return safeName(value)
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function addVibeAllowlistName(names: Set<string>, value: string | undefined): void {
-  if (!value) return;
-  const name = safeName(value);
-  if (!name) return;
-  names.add(name);
-  names.add(name.toLowerCase());
-}
-
-function getVibeTaskAllowlist(): string[] {
-  const names = new Set<string>(['explore']);
-  if (!fs.existsSync(CLAUDE_AGENTS_DIR)) return Array.from(names).sort();
-
-  for (const file of fs.readdirSync(CLAUDE_AGENTS_DIR).filter((entry) => entry.endsWith('.md'))) {
-    addVibeAllowlistName(names, file);
-    try {
-      const source = fs.readFileSync(path.join(CLAUDE_AGENTS_DIR, file), 'utf8');
-      const parsed = parseFrontmatter(source);
-      addVibeAllowlistName(names, parsed?.fields.name);
-    } catch {
-      // Ignore unreadable custom agents; conversion logs the actual failure elsewhere.
-    }
-  }
-  return Array.from(names).sort();
 }
 
 function readClaudeSettings(claudeSettingsPath?: string): ClaudeSettings | null {
@@ -464,67 +401,12 @@ function toOpencodeAgent(claudeSource: string): string | null {
   return lines.join('\n');
 }
 
-function tomlString(value: string): string {
-  return JSON.stringify(value);
-}
-
-function tomlArray(values: string[]): string {
-  return `[${values.map(tomlString).join(', ')}]`;
-}
-
-function tomlInlineTable(values: Record<string, string>): string {
-  const entries = Object.entries(values)
-    .filter(([, value]) => typeof value === 'string')
-    .map(([key, value]) => `${tomlString(key)} = ${tomlString(value)}`);
-  return `{ ${entries.join(', ')} }`;
-}
-
-function toVibeAgent(
-  fileName: string,
-  claudeSource: string
-): { agentFile: string; agentToml: string; promptFile: string; prompt: string } | null {
-  const parsed = parseFrontmatter(claudeSource);
-  if (!parsed) return null;
-
-  const { fields, body } = parsed;
-  const agentName = safeName(fields.name || fileName);
-  const promptId = `webui-agent-${agentName}`;
-  const rawTools = parseToolList(fields.tools);
-  const enabledTools = Array.from(
-    new Set(
-      rawTools
-        .map((tool) => VIBE_TOOL_MAP[tool])
-        .filter((tool): tool is string => Boolean(tool))
-        .concat('skill')
-    )
-  );
-  const mutates = rawTools.some((tool) => ['Bash', 'Edit', 'Write'].includes(tool));
-  const description = fields.description || firstBodyLine(body) || fields.name || agentName;
-  const lines = [
-    `display_name = ${tomlString(fields.name || titleFromName(agentName))}`,
-    `description = ${tomlString(description)}`,
-    `safety = ${tomlString(mutates ? 'destructive' : 'safe')}`,
-    'agent_type = "subagent"',
-    `system_prompt_id = ${tomlString(promptId)}`,
-  ];
-  if (enabledTools.length > 0) {
-    lines.push(`enabled_tools = ${tomlArray(enabledTools)}`);
-  }
-
-  return {
-    agentFile: `${agentName}.toml`,
-    agentToml: `${lines.join('\n')}\n`,
-    promptFile: `${promptId}.md`,
-    prompt: body.trimStart(),
-  };
-}
-
-export function syncOpencodeAgents(opts: { quiet?: boolean } = {}): {
+export function syncOpencodeAgents(opts: { quiet?: boolean; destinationDir?: string } = {}): {
   converted: number;
   skipped: number;
 } {
   const srcDir = CLAUDE_AGENTS_DIR;
-  const dstDir = OPENCODE_AGENTS_DIR;
+  const dstDir = opts.destinationDir || OPENCODE_AGENTS_DIR;
 
   if (!fs.existsSync(srcDir)) return { converted: 0, skipped: 0 };
 
@@ -577,64 +459,6 @@ export function syncOpencodeAgents(opts: { quiet?: boolean } = {}): {
   return { converted, skipped };
 }
 
-export function syncVibeAgents(opts: { quiet?: boolean } = {}): {
-  converted: number;
-  skipped: number;
-} {
-  const srcDir = CLAUDE_AGENTS_DIR;
-  if (!fs.existsSync(srcDir)) return { converted: 0, skipped: 0 };
-
-  fs.mkdirSync(VIBE_AGENTS_DIR, { recursive: true });
-  fs.mkdirSync(VIBE_PROMPTS_DIR, { recursive: true });
-
-  const entries = fs.readdirSync(srcDir).filter((f) => f.endsWith('.md'));
-  const agentNames = new Set<string>();
-  const promptNames = new Set<string>();
-  let converted = 0;
-  let skipped = 0;
-
-  for (const file of entries) {
-    try {
-      const source = fs.readFileSync(path.join(srcDir, file), 'utf8');
-      const output = toVibeAgent(file, source);
-      if (!output) {
-        skipped += 1;
-        continue;
-      }
-      writeIfChanged(path.join(VIBE_AGENTS_DIR, output.agentFile), output.agentToml);
-      writeIfChanged(path.join(VIBE_PROMPTS_DIR, output.promptFile), output.prompt);
-      agentNames.add(output.agentFile);
-      promptNames.add(output.promptFile);
-      converted += 1;
-    } catch (err) {
-      console.error(`[init] Failed to convert Vibe agent ${file}:`, err);
-      skipped += 1;
-    }
-  }
-
-  for (const [dir, names, suffix] of [
-    [VIBE_AGENTS_DIR, agentNames, '.toml'],
-    [VIBE_PROMPTS_DIR, promptNames, '.md'],
-  ] as const) {
-    for (const existing of fs.readdirSync(dir)) {
-      if (existing.startsWith('webui-agent-') || existing.endsWith(suffix)) {
-        if (!names.has(existing) && existing.startsWith('webui-agent-')) {
-          try {
-            fs.unlinkSync(path.join(dir, existing));
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    }
-  }
-
-  if (!opts.quiet) {
-    console.log(`[init] Vibe agents synced: ${converted} converted, ${skipped} skipped`);
-  }
-  return { converted, skipped };
-}
-
 function toOpenCodeMcpConfig(server: ClaudeMcpServer): Record<string, unknown> | null {
   if (server.url) {
     const entry: Record<string, unknown> = {
@@ -666,9 +490,11 @@ export function syncOpenCodeConfig(
     quiet?: boolean;
     claudeSettingsPath?: string;
     userId?: string;
+    configPath?: string;
   } = {}
 ): { updated: boolean; mcpCount: number } {
-  const config = readJsonObject(OPENCODE_CONFIG_PATH);
+  const configPath = opts.configPath || OPENCODE_CONFIG_PATH;
+  const config = readJsonObject(configPath);
   if (!config.$schema) {
     config.$schema = 'https://opencode.ai/config.json';
   }
@@ -696,7 +522,7 @@ export function syncOpenCodeConfig(
   applyWebuiOpenCodeProviderConfig(config, opts.userId, storedProviders);
 
   const next = `${JSON.stringify(config, null, 2)}\n`;
-  const updated = writeIfChanged(OPENCODE_CONFIG_PATH, next);
+  const updated = writeIfChanged(configPath, next);
   if (!opts.quiet) {
     console.log(
       `[init] OpenCode config synced: ${mcpCount} MCP servers, skills path ${updated ? 'updated' : 'ok'}`
@@ -705,163 +531,30 @@ export function syncOpenCodeConfig(
   return { updated, mcpCount };
 }
 
-function renderVibeMcpServers(servers: Record<string, ClaudeMcpServer>): string {
-  const blocks: string[] = [];
-  for (const [name, server] of Object.entries(servers)) {
-    const lines: string[] = ['[[mcp_servers]]', `name = ${tomlString(name)}`];
-    if (server.url) {
-      lines.push('transport = "http"');
-      lines.push(`url = ${tomlString(server.url)}`);
-      if (server.headers && Object.keys(server.headers).length > 0) {
-        lines.push(`headers = ${tomlInlineTable(server.headers)}`);
-      }
-    } else if (server.command) {
-      lines.push('transport = "stdio"');
-      lines.push(`command = ${tomlString(server.command)}`);
-      lines.push(`args = ${tomlArray(server.args || [])}`);
-      if (server.env && Object.keys(server.env).length > 0) {
-        lines.push(`env = ${tomlInlineTable(server.env)}`);
-      }
-    } else {
-      continue;
-    }
-    blocks.push(lines.join('\n'));
-  }
-  return blocks.join('\n\n');
-}
-
-function replaceOrAddTopLevelArray(raw: string, key: string, values: string[]): string {
-  const line = `${key} = ${tomlArray(values)}`;
-  const re = new RegExp(`^\\s*${key}\\s*=\\s*\\[[^\\n]*\\]\\s*$`, 'm');
-  if (re.test(raw)) return raw.replace(re, line);
-
-  const firstTable = raw.search(/^\s*\[/m);
-  if (firstTable === -1) return `${raw.trimEnd()}\n${line}\n`;
-  return `${raw.slice(0, firstTable).trimEnd()}\n${line}\n\n${raw.slice(firstTable).trimStart()}`;
-}
-
-function findMatchingBracket(source: string, openIndex: number): number {
-  let inString = false;
-  let escaped = false;
-  let depth = 0;
-  for (let i = openIndex; i < source.length; i += 1) {
-    const char = source[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (char === '[') depth += 1;
-    if (char === ']') {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-}
-
-function replaceOrAddVibeTaskAllowlist(raw: string, values: string[]): string {
-  const allowlistLine = `allowlist = ${tomlArray(values)}`;
-  const header = raw.match(/^\s*\[tools\.task\]\s*$/m);
-  if (!header || header.index === undefined) {
-    return `${raw.trimEnd()}\n\n[tools.task]\npermission = "ask"\n${allowlistLine}\ndenylist = []\nsensitive_patterns = []\n`;
-  }
-
-  const start = header.index;
-  const headerEnd = start + header[0].length;
-  const rest = raw.slice(headerEnd);
-  const nextTableRel = rest.search(/\n\s*\[/);
-  const end = nextTableRel === -1 ? raw.length : headerEnd + nextTableRel;
-  const block = raw.slice(start, end);
-  const allowMatch = block.match(/^\s*allowlist\s*=\s*\[/m);
-
-  if (!allowMatch || allowMatch.index === undefined) {
-    const insertAt = start + block.indexOf('\n') + 1;
-    return `${raw.slice(0, insertAt)}${allowlistLine}\n${raw.slice(insertAt)}`;
-  }
-
-  const allowStart = start + allowMatch.index;
-  const openIndex = raw.indexOf('[', allowStart);
-  const closeIndex = findMatchingBracket(raw, openIndex);
-  if (closeIndex === -1) return raw;
-  const lineEnd = raw.indexOf('\n', closeIndex);
-  const replaceEnd = lineEnd === -1 ? closeIndex + 1 : lineEnd + 1;
-  return `${raw.slice(0, allowStart)}${allowlistLine}\n${raw.slice(replaceEnd)}`;
-}
-
-export function applyVibeProviderLinks(
-  raw: string,
-  opts: { claudeSettingsPath?: string } = {}
-): { content: string; mcpCount: number } {
-  let next = raw || '';
-  const startIdx = next.indexOf(VIBE_MANAGED_BLOCK_START);
-  const endIdx = next.indexOf(VIBE_MANAGED_BLOCK_END);
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    next = `${next.slice(0, startIdx).trimEnd()}\n${next
-      .slice(endIdx + VIBE_MANAGED_BLOCK_END.length)
-      .trimStart()}`;
-  }
-
-  // Vibe defaults ship with `mcp_servers = []`, which conflicts with
-  // `[[mcp_servers]]` array tables. Drop only that empty top-level assignment.
-  next = next.replace(/^\s*mcp_servers\s*=\s*\[\]\s*$/m, '');
-  next = replaceOrAddTopLevelArray(next, 'skill_paths', [CLAUDE_SKILLS_DIR]);
-  next = replaceOrAddTopLevelArray(next, 'agent_paths', [VIBE_AGENTS_DIR]);
-  next = replaceOrAddVibeTaskAllowlist(next, getVibeTaskAllowlist());
-
-  const servers = getClaudeMcpServers(opts.claudeSettingsPath);
-  const renderedServers = renderVibeMcpServers(servers);
-  const sections = [
-    VIBE_MANAGED_BLOCK_START,
-    '# Managed by plum-code-webui. Custom Vibe config outside this block is preserved.',
-    renderedServers,
-    VIBE_MANAGED_BLOCK_END,
-  ].filter((section) => section.trim().length > 0);
-  next = `${next.trimEnd()}\n\n${sections.join('\n')}\n`;
-  return { content: next, mcpCount: Object.keys(servers).length };
-}
-
-export function syncVibeConfig(
+export function syncProviderLinks(
   opts: {
     quiet?: boolean;
-    claudeSettingsPath?: string;
+    userId?: string;
+    opencodeConfigPath?: string;
+    opencodeAgentsDir?: string;
   } = {}
-): { updated: boolean; mcpCount: number } {
-  let raw = '';
-  try {
-    raw = fs.readFileSync(VIBE_CONFIG_PATH, 'utf8');
-  } catch {
-    raw = '';
-  }
-  const { content, mcpCount } = applyVibeProviderLinks(raw, opts);
-  const updated = writeIfChanged(VIBE_CONFIG_PATH, content);
-  if (!opts.quiet) {
-    console.log(`[init] Vibe config synced: ${mcpCount} MCP servers ${updated ? 'updated' : 'ok'}`);
-  }
-  return { updated, mcpCount };
-}
-
-export function syncProviderLinks(opts: { quiet?: boolean } = {}): ProviderLinksSyncResult {
-  const opencodeAgents = syncOpencodeAgents({ quiet: true });
-  const vibeAgents = syncVibeAgents({ quiet: true });
-  const opencodeConfig = syncOpenCodeConfig({ quiet: true });
-  const vibeConfig = syncVibeConfig({ quiet: true });
+): ProviderLinksSyncResult {
+  const opencodeAgents = syncOpencodeAgents({
+    quiet: true,
+    destinationDir: opts.opencodeAgentsDir,
+  });
+  const opencodeConfig = syncOpenCodeConfig({
+    quiet: true,
+    userId: opts.userId,
+    configPath: opts.opencodeConfigPath,
+  });
 
   if (!opts.quiet) {
     console.log(
       `[init] Provider links synced: OpenCode agents ${opencodeAgents.converted}/${opencodeAgents.skipped}, ` +
-        `Vibe agents ${vibeAgents.converted}/${vibeAgents.skipped}, ` +
-        `MCP OpenCode=${opencodeConfig.mcpCount}, Vibe=${vibeConfig.mcpCount}`
+        `MCP OpenCode=${opencodeConfig.mcpCount}`
     );
   }
 
-  return { opencodeAgents, vibeAgents, opencodeConfig, vibeConfig };
+  return { opencodeAgents, opencodeConfig };
 }

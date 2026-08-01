@@ -4,20 +4,38 @@
 // vocarium_audio.py helper; this file is only the JSON-RPC bridge.
 
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 const HELPER_CANDIDATES = [
   process.env.VOCARIUM_HELPER,
-  '/home/node/.claude/skills/vocarium-audio-api/scripts/vocarium_audio.py',
-  '/root/.claude/skills/vocarium-audio-api/scripts/vocarium_audio.py',
-  '/root/.codex/skills/vocarium-audio-api/scripts/vocarium_audio.py',
+  '/app/scripts/vocarium-audio.py',
+  fileURLToPath(new URL('../vocarium-audio.py', import.meta.url)),
 ].filter(Boolean);
 
 const HELPER = HELPER_CANDIDATES.find((path) => existsSync(path)) || HELPER_CANDIDATES[0];
 const PYTHON = process.env.PYTHON || 'python3';
 const DEFAULT_TIMEOUT_MS = Number(process.env.VOCARIUM_MCP_TIMEOUT_MS || 900_000);
+const MAINTENANCE_ENABLED = /^(1|true|yes|on)$/i.test(
+  process.env.VOCARIUM_MAINTENANCE_ENABLED || ''
+);
+const MAINTENANCE_TOOLS = new Set([
+  'vocarium_stack_status',
+  'vocarium_tts_worker_smoke',
+  'vocarium_podcast_smoke',
+  'vocarium_integration_check',
+]);
+
+function runtimeUser() {
+  const configured = String(process.env.VOCARIUM_USER || '').trim();
+  if (configured && configured.toLowerCase() !== 'api') return configured;
+  const sessionId = String(process.env.WEBUI_SESSION_ID || '').trim();
+  if (!sessionId) return 'plum-cli';
+  const digest = createHash('sha256').update(sessionId).digest('hex').slice(0, 16);
+  return `plum-session-${digest}`;
+}
 
 const log = (...args) => console.error('[mcp-vocarium]', ...args);
 
@@ -34,7 +52,10 @@ function fail(id, code, message, data) {
 }
 
 function outputPath(kind, format = 'wav') {
-  const safeFormat = String(format || 'wav').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'wav';
+  const safeFormat =
+    String(format || 'wav')
+      .replace(/[^a-z0-9]/gi, '')
+      .toLowerCase() || 'wav';
   return `/tmp/vocarium-${kind}-${Date.now()}-${randomBytes(4).toString('hex')}.${safeFormat}`;
 }
 
@@ -90,11 +111,14 @@ function runHelper(argv, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       VOCARIUM_API_URL: process.env.VOCARIUM_API_URL || 'http://localhost:8280',
       VOCARIUM_API_CONTAINER: process.env.VOCARIUM_API_CONTAINER || 'vocarium-api',
       VOCARIUM_TTS_CONTAINER: process.env.VOCARIUM_TTS_CONTAINER || 'qwen3-tts',
-      VOCARIUM_USER: process.env.VOCARIUM_USER || 'api',
+      VOCARIUM_USER: runtimeUser(),
       VOCARIUM_STACK_DIR: process.env.VOCARIUM_STACK_DIR || '/mnt/user/AI/plum-code/voxtral',
-      GPUTASKS_URL: process.env.GPUTASKS_URL || 'http://192.168.1.126:3080',
+      GPUTASKS_URL: process.env.GPUTASKS_URL || 'http://host.docker.internal:3080',
       GPUTASKS_CONTAINER: process.env.GPUTASKS_CONTAINER || 'gpu-task-manager',
-      VOCARIUM_MCP_SERVER: process.env.VOCARIUM_MCP_SERVER || '/app/scripts/mcp-servers/vocarium.mjs',
+      VOCARIUM_MCP_SERVER:
+        process.env.VOCARIUM_MCP_SERVER || '/app/scripts/mcp-servers/vocarium.mjs',
+      VOCARIUM_TRANSPORT: process.env.VOCARIUM_TRANSPORT || 'auto',
+      VOCARIUM_MAINTENANCE_ENABLED: MAINTENANCE_ENABLED ? '1' : '0',
     };
 
     const proc = spawn(PYTHON, [HELPER, ...argv], { env });
@@ -119,7 +143,7 @@ function runHelper(argv, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       const out = Buffer.concat(stdout).toString('utf8');
       const err = Buffer.concat(stderr).toString('utf8');
       resolve({
-        returncode: timedOut ? 124 : code ?? 0,
+        returncode: timedOut ? 124 : (code ?? 0),
         stdout: out,
         stderr: timedOut ? `${err}\nTimed out after ${timeoutMs} ms`.trim() : err,
       });
@@ -144,7 +168,7 @@ async function helperResult(label, argv, options) {
   return payload;
 }
 
-const TOOLS = [
+const ALL_TOOLS = [
   {
     name: 'vocarium_health',
     description: 'Check Vocarium API, queue, resource, music, and SFX health.',
@@ -152,7 +176,8 @@ const TOOLS = [
   },
   {
     name: 'vocarium_stack_status',
-    description: 'Run docker compose ps in the Vocarium stack directory.',
+    description:
+      'Administrative: run docker compose ps in the configured Vocarium stack directory.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -200,7 +225,7 @@ const TOOLS = [
   },
   {
     name: 'vocarium_tts_worker_smoke',
-    description: 'Smoke-test the direct qwen3-tts worker.',
+    description: 'Administrative: smoke-test the direct qwen3-tts worker.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -264,7 +289,7 @@ const TOOLS = [
   },
   {
     name: 'vocarium_podcast_smoke',
-    description: 'Create and delete temporary Podcast Studio records to verify gateway behavior.',
+    description: 'Administrative: create and delete temporary Podcast Studio records.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -275,7 +300,8 @@ const TOOLS = [
   },
   {
     name: 'vocarium_integration_check',
-    description: 'Verify helper syntax, MCP syntax, MCP handshake, and local config references.',
+    description:
+      'Administrative: verify helper syntax, MCP handshake, and local config references.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -285,7 +311,14 @@ const TOOLS = [
   },
 ];
 
+const TOOLS = ALL_TOOLS.filter((tool) => MAINTENANCE_ENABLED || !MAINTENANCE_TOOLS.has(tool.name));
+
 async function runTool(name, args = {}) {
+  if (MAINTENANCE_TOOLS.has(name) && !MAINTENANCE_ENABLED) {
+    throw new Error(
+      `${name} is an administrative maintenance tool; set VOCARIUM_MAINTENANCE_ENABLED=1 in the server environment to expose it`
+    );
+  }
   switch (name) {
     case 'vocarium_health':
       return helperResult('Vocarium health', ['health'], { timeoutMs: 60_000 });
@@ -361,7 +394,11 @@ async function runTool(name, args = {}) {
     }
     case 'vocarium_integration_check': {
       const argv = ['integration-check'];
-      addFlag(argv, '--mcp-path', args.mcp_path || process.env.VOCARIUM_MCP_SERVER || '/app/scripts/mcp-servers/vocarium.mjs');
+      addFlag(
+        argv,
+        '--mcp-path',
+        args.mcp_path || process.env.VOCARIUM_MCP_SERVER || '/app/scripts/mcp-servers/vocarium.mjs'
+      );
       return helperResult('Vocarium integration check', argv, { timeoutMs: 60_000 });
     }
     default:

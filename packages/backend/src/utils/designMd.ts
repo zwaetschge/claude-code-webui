@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import type { DesignMdScalar, DesignMdSummary, DesignMdTokens } from '@plum-code-webui/shared';
 import { sanitizeSkillName } from './skillImport.js';
+import { findSkillDirectory } from './leanSkillCatalog.js';
 
 export interface DesignMdFinding {
   code: string;
@@ -364,15 +365,6 @@ function buildDesignSkillMarkdown(baseName: string, document: DesignMdDocument):
   ].join('\n');
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function designSkillNameFromDocument(
   document: DesignMdDocument,
   originalname: string
@@ -405,18 +397,16 @@ export async function importDesignMdPreset(
     return { status: 'skipped', reason: 'name_sanitized_to_empty', skillName: document.name };
   }
 
-  const skillsDir = path.join(configHome, 'skills');
-  const destDir = path.join(skillsDir, baseName);
-  const disabledDir = path.join(skillsDir, `${baseName}.disabled`);
-  const destExists = (await pathExists(destDir)) || (await pathExists(disabledDir));
+  const existing = await findSkillDirectory(configHome, baseName);
+  const destDir = existing?.dirPath || path.join(configHome, 'style-library', 'design', baseName);
+  const destExists = !!existing;
 
   if (destExists && options.conflict === 'skip') {
     return { status: 'skipped', reason: 'already_exists', skillName: baseName };
   }
 
   if (destExists) {
-    await fs.rm(destDir, { recursive: true, force: true });
-    await fs.rm(disabledDir, { recursive: true, force: true });
+    await fs.rm(existing?.dirPath || destDir, { recursive: true, force: true });
   }
 
   await fs.mkdir(destDir, { recursive: true });

@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { z } from 'zod';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, type AuthenticatedRequest } from '../middleware/auth.js';
 import type { ApiResponse, CliProviderUpdateResponse } from '@plum-code-webui/shared';
 import {
   CLI_PROVIDERS,
@@ -21,6 +21,12 @@ import {
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { rateLimiters } from '../middleware/rateLimiter.js';
 import { CLI_UPDATE_PROVIDERS, runCliUpdates } from '../services/cli-updates.js';
+import {
+  getEnabledCliProvidersForUser,
+  getZaiApiConfigForUser,
+  getClaudeApiModelLabels,
+} from './settings.js';
+import { getPiModelsForUser } from '../utils/piConfig.js';
 
 const router = Router();
 
@@ -67,11 +73,6 @@ function countMcpServers(provider: CLIProvider): number {
       const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as { mcp?: unknown };
       return parsed.mcp && typeof parsed.mcp === 'object' ? Object.keys(parsed.mcp).length : 0;
     }
-    if (provider === 'vibe') {
-      const configPath = path.join(os.homedir(), '.vibe', 'config.toml');
-      const raw = fs.readFileSync(configPath, 'utf-8');
-      return (raw.match(/^\s*\[\[mcp_servers\]\]/gm) || []).length;
-    }
     const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
     const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { mcpServers?: unknown };
     return parsed.mcpServers && typeof parsed.mcpServers === 'object'
@@ -102,24 +103,52 @@ function getCodexModelsCacheInfo() {
   }
 }
 
+function getProviderModelsForUser(
+  provider: CLIProvider,
+  userId: string,
+  zaiConfig: ReturnType<typeof getZaiApiConfigForUser>
+): string[] {
+  if (provider === 'pi') return getPiModelsForUser(userId);
+  if (provider !== 'zai') return getCliModels(provider);
+
+  const configuredLabels = getClaudeApiModelLabels(zaiConfig);
+  const configuredAliases = (['opus', 'sonnet', 'haiku'] as const).filter(
+    (alias) => configuredLabels?.[alias]
+  );
+  return configuredAliases.length > 0 ? configuredAliases : getCliModels('zai');
+}
+
 // Get all CLI providers (with availability status)
-router.get('/', requireAuth, async (_req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     const availableProviders = await getAvailableProviders();
     const availableIds = new Set(availableProviders.map((p) => p.id));
+    const userId = (req as AuthenticatedRequest).userId;
+    const enabledIds = new Set(getEnabledCliProvidersForUser(userId));
+    const zaiConfig = getZaiApiConfigForUser(userId);
 
     const labels = getModelDisplayLabels();
+    const zaiModelLabels = getClaudeApiModelLabels(zaiConfig);
     const providers = Object.values(CLI_PROVIDERS).map((provider) => {
-      const models = getCliModels(provider.id);
+      const models = getProviderModelsForUser(provider.id, userId, zaiConfig);
       const providerLabels: Record<string, string> = {};
       for (const m of models) {
         if (labels[m]) providerLabels[m] = labels[m];
       }
+      if (provider.defaultModel && labels[provider.defaultModel]) {
+        providerLabels[provider.defaultModel] = labels[provider.defaultModel]!;
+      }
+      if (provider.id === 'zai' && zaiModelLabels) {
+        Object.assign(providerLabels, zaiModelLabels);
+      }
+      const enabled = enabledIds.has(provider.id);
       return {
         ...provider,
         models,
         modelLabels: providerLabels,
-        available: availableIds.has(provider.id),
+        enabled,
+        available:
+          enabled && availableIds.has(provider.id) && (provider.id !== 'zai' || zaiConfig !== null),
       };
     });
 
@@ -138,13 +167,18 @@ router.get('/', requireAuth, async (_req, res) => {
 });
 
 // Get available CLI providers only
-router.get('/available', requireAuth, async (_req, res) => {
+router.get('/available', requireAuth, async (req, res) => {
   try {
-    const providers = await getAvailableProviders();
+    const userId = (req as AuthenticatedRequest).userId;
+    const enabledIds = new Set(getEnabledCliProvidersForUser(userId));
+    const zaiConfig = getZaiApiConfigForUser(userId);
+    const providers = (await getAvailableProviders()).filter(
+      (provider) => enabledIds.has(provider.id) && (provider.id !== 'zai' || zaiConfig !== null)
+    );
 
     const providersWithModels = providers.map((provider) => ({
       ...provider,
-      models: getCliModels(provider.id),
+      models: getProviderModelsForUser(provider.id, userId, zaiConfig),
     }));
 
     const response: ApiResponse<CLIProviderConfig[]> = {
@@ -161,10 +195,12 @@ router.get('/available', requireAuth, async (_req, res) => {
   }
 });
 
-router.get('/diagnostics', requireAuth, async (_req, res) => {
+router.get('/diagnostics', requireAuth, async (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const zaiConfig = getZaiApiConfigForUser(userId);
   const diagnostics = await Promise.all(
     Object.values(CLI_PROVIDERS).map(async (provider) => {
-      const models = getCliModels(provider.id);
+      const models = getProviderModelsForUser(provider.id, userId, zaiConfig);
       const binaryPath = getCommandPath(provider.command);
       const credentialsPath = expandHome(provider.credentialsPath);
       const available = await isProviderAvailable(provider.id);
@@ -203,9 +239,14 @@ router.get('/:id', requireAuth, (req, res) => {
     return res.status(404).json(response);
   }
 
+  const userId = (req as AuthenticatedRequest).userId;
+  const zaiConfig = getZaiApiConfigForUser(userId);
   const response: ApiResponse<CLIProviderConfig> = {
     success: true,
-    data: { ...provider, models: getCliModels(id as CLIProvider) },
+    data: {
+      ...provider,
+      models: getProviderModelsForUser(id as CLIProvider, userId, zaiConfig),
+    },
   };
   res.json(response);
 });
@@ -223,6 +264,8 @@ router.get('/:id/models', requireAuth, (req, res) => {
     return res.status(404).json(response);
   }
 
+  const userId = (req as AuthenticatedRequest).userId;
+  const zaiConfig = getZaiApiConfigForUser(userId);
   const response: ApiResponse<{
     provider: string;
     models: string[];
@@ -231,7 +274,7 @@ router.get('/:id/models', requireAuth, (req, res) => {
     success: true,
     data: {
       provider: id!,
-      models: getCliModels(id as CLIProvider),
+      models: getProviderModelsForUser(id as CLIProvider, userId, zaiConfig),
       defaultModel: provider.defaultModel,
     },
   };
@@ -247,16 +290,25 @@ router.post(
   requireAuth,
   requireAdmin,
   rateLimiters.strict,
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     resetDiscovery();
     const codexRefreshed = await refreshCodexModelsCache();
 
     const labels = getModelDisplayLabels();
+    const userId = (req as AuthenticatedRequest).userId;
+    const zaiConfig = getZaiApiConfigForUser(userId);
+    const zaiModelLabels = getClaudeApiModelLabels(zaiConfig);
     const providers = Object.values(CLI_PROVIDERS).map((provider) => {
-      const models = getCliModels(provider.id);
+      const models = getProviderModelsForUser(provider.id, userId, zaiConfig);
       const providerLabels: Record<string, string> = {};
       for (const m of models) {
         if (labels[m]) providerLabels[m] = labels[m];
+      }
+      if (provider.defaultModel && labels[provider.defaultModel]) {
+        providerLabels[provider.defaultModel] = labels[provider.defaultModel]!;
+      }
+      if (provider.id === 'zai' && zaiModelLabels) {
+        Object.assign(providerLabels, zaiModelLabels);
       }
       return { id: provider.id, models, modelLabels: providerLabels };
     });
@@ -285,9 +337,13 @@ router.post(
     const providers: CLIProvider[] | undefined = parsed.data.providers?.length
       ? [...parsed.data.providers]
       : undefined;
+    const updateResult = await runCliUpdates(providers);
+    if (updateResult.results.some((result) => result.status === 'updated')) {
+      resetDiscovery();
+    }
     const response: ApiResponse<CliProviderUpdateResponse> = {
       success: true,
-      data: await runCliUpdates(providers),
+      data: updateResult,
     };
     res.json(response);
   })

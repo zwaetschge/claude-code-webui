@@ -18,6 +18,12 @@ import { getSessionRunState } from '@/lib/sessionRunState';
 import { cn } from '@/lib/utils';
 import { normalizeUsageSnapshot } from '@plum-code-webui/shared';
 
+// Socket events and mutation invalidations keep the session shell current during
+// normal use. This slower poll is only a recovery path for missed events or
+// changes made in another browser, and avoids transferring the full session list
+// every four seconds on read-only pages such as Settings.
+const SESSION_LIST_FALLBACK_INTERVAL_MS = 30_000;
+
 function selectFreshestUsage(
   storeUsage: UsageSnapshot | undefined,
   telemetryUsage: UsageSnapshot | null | undefined
@@ -44,23 +50,38 @@ function selectFreshestUsage(
 export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { backgroundAnimation, setBackgroundAnimation } = useAppearanceStore();
-  const {
-    sessions,
-    activeSessionId,
-    setSessions,
-    usage,
-    activity,
-    activeAgent,
-    agentRuns,
-    streamingContent,
-    toolExecutions,
-    queueState,
-  } = useSessionStore();
   const location = useLocation();
   // Session page manages its own scroll + floating chat bars, so it renders
   // edge-to-edge inside <main>. Every other page uses the default padded scroll.
   const isFullBleed = location.pathname.startsWith('/session/');
   const routeSessionId = location.pathname.match(/^\/session\/([^/]+)/)?.[1] ?? null;
+  const sessions = useSessionStore((state) => state.sessions);
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const setSessions = useSessionStore((state) => state.setSessions);
+  const headerSessionId = routeSessionId ?? activeSessionId;
+  const storeUsage = useSessionStore((state) =>
+    headerSessionId ? state.usage[headerSessionId] : undefined
+  );
+  const sessionActivity = useSessionStore((state) =>
+    headerSessionId ? state.activity[headerSessionId] : undefined
+  );
+  const sessionActiveAgent = useSessionStore((state) =>
+    headerSessionId ? state.activeAgent[headerSessionId] : undefined
+  );
+  const sessionAgentRuns = useSessionStore((state) =>
+    headerSessionId ? state.agentRuns[headerSessionId] : undefined
+  );
+  // Subscribe to streaming presence, not the growing text. The shell only
+  // needs a run-state dot; full chunks belong to SessionPage.
+  const sessionHasStreamingContent = useSessionStore((state) =>
+    headerSessionId ? Boolean(state.streamingContent[headerSessionId]) : false
+  );
+  const sessionToolExecutions = useSessionStore((state) =>
+    headerSessionId ? state.toolExecutions[headerSessionId] : undefined
+  );
+  const sessionQueue = useSessionStore((state) =>
+    headerSessionId ? state.queueState[headerSessionId] : undefined
+  );
 
   const { data: settings } = useQuery({
     queryKey: ['settings'],
@@ -93,8 +114,9 @@ export function Layout() {
       }
       return [];
     },
-    refetchInterval: 4000,
-    refetchIntervalInBackground: true,
+    staleTime: SESSION_LIST_FALLBACK_INTERVAL_MS,
+    refetchInterval: SESSION_LIST_FALLBACK_INTERVAL_MS,
+    refetchIntervalInBackground: false,
   });
 
   const { data: routeSession } = useQuery({
@@ -119,13 +141,12 @@ export function Layout() {
     ? toUiProvider(activeSession.cliProvider)
     : 'plum';
   const headerTitle = activeSession?.name ?? activeMeta.productName;
-  const headerUsageSessionId = routeSessionId ?? activeSessionId;
   const headerTelemetryUsage = routeSession?.telemetry?.usage ?? null;
-  const headerUsage = headerUsageSessionId
+  const headerUsage = headerSessionId
     ? normalizeUsageSnapshot(
         activeSession?.cliProvider === 'codex' && headerTelemetryUsage
           ? headerTelemetryUsage
-          : selectFreshestUsage(usage[headerUsageSessionId], headerTelemetryUsage)
+          : selectFreshestUsage(storeUsage, headerTelemetryUsage)
       )
     : undefined;
   const headerContextStats = routeSession?.telemetry
@@ -137,21 +158,21 @@ export function Layout() {
   const headerRunState = useMemo(() => {
     if (!activeSession) return null;
     return getSessionRunState(activeSession, {
-      activity: activity[activeSession.id],
-      activeAgent: activeAgent[activeSession.id],
-      agentRuns: agentRuns[activeSession.id],
-      streamingContent: streamingContent[activeSession.id],
-      tools: toolExecutions[activeSession.id],
-      queue: queueState[activeSession.id],
+      activity: sessionActivity,
+      activeAgent: sessionActiveAgent,
+      agentRuns: sessionAgentRuns,
+      streamingContent: sessionHasStreamingContent ? 'streaming' : undefined,
+      tools: sessionToolExecutions,
+      queue: sessionQueue,
     });
   }, [
-    activeAgent,
     activeSession,
-    activity,
-    agentRuns,
-    queueState,
-    streamingContent,
-    toolExecutions,
+    sessionActiveAgent,
+    sessionActivity,
+    sessionAgentRuns,
+    sessionHasStreamingContent,
+    sessionQueue,
+    sessionToolExecutions,
   ]);
 
   // Close mobile menu on navigation

@@ -3,11 +3,21 @@ import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import * as pty from 'node-pty';
 import os from 'os';
-import path from 'path';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError } from '../middleware/errorHandler';
-import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
-import { getCliEnv } from '../utils/cliPaths';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers.js';
+import { getCliEnv } from '../utils/cliPaths.js';
+import {
+  ensureOpenCodeTenantDirectories,
+  resolveOpenCodeTenantPaths,
+} from '../services/opencode/tenantPaths.js';
+import {
+  extractCliDeviceCode,
+  extractCliLoginUrl,
+  resolveCliLoginInvocation,
+  stripCliLoginAnsi,
+} from '../utils/cliLoginOutput.js';
+import { getRunnerAccessDecision } from '../utils/runnerAccess.js';
 
 const router = Router();
 
@@ -21,6 +31,7 @@ interface LoginSession {
   status: LoginStatus;
   output: string;
   loginUrl?: string;
+  verificationCode?: string;
   error?: string;
   exitCode?: number | null;
   createdAt: number;
@@ -35,7 +46,6 @@ const OUTPUT_LIMIT = 8000;
 // are applied against the active (non-terminated) sessions.
 const MAX_LOGIN_SESSIONS_PER_USER = 2;
 const MAX_LOGIN_SESSIONS_TOTAL = 10;
-const URL_REGEX = /(https?:\/\/[^\s"'"'<>]+)/i;
 const CODE_PROMPT_REGEX = /(enter|paste|type).*(code|verification|authorization)|device.*code/i;
 const ALREADY_LOGGED_REGEX = /already\s+logged\s+in|already\s+signed\s+in/i;
 const LOGIN_SUCCESS_REGEX =
@@ -43,22 +53,16 @@ const LOGIN_SUCCESS_REGEX =
 
 const loginSessions = new Map<string, LoginSession>();
 
-function stripAnsi(value: string): string {
-  return value.replace(
-    /\x1B\[[0-9;]*[a-zA-Z]|\x1B\[\?[0-9;]*[a-zA-Z]|\x1B\[[<>=][^\x1B]*[a-zA-Z]/g,
-    ''
-  );
-}
-
 function appendOutput(session: LoginSession, chunk: string): void {
-  const cleaned = stripAnsi(chunk);
+  const cleaned = stripCliLoginAnsi(chunk);
   session.output = (session.output + cleaned).slice(-OUTPUT_LIMIT);
 
   if (!session.loginUrl) {
-    const match = session.output.match(URL_REGEX);
-    if (match) {
-      session.loginUrl = match[1];
-    }
+    session.loginUrl = extractCliLoginUrl(session.output) || undefined;
+  }
+
+  if (!session.verificationCode) {
+    session.verificationCode = extractCliDeviceCode(session.output) || undefined;
   }
 
   if (
@@ -109,7 +113,7 @@ function waitForCompletion(session: LoginSession, timeoutMs: number): Promise<vo
   });
 }
 
-setInterval(() => {
+const loginSessionCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const session of loginSessions.values()) {
     if (now - session.createdAt > LOGIN_TTL_MS) {
@@ -122,6 +126,7 @@ setInterval(() => {
     }
   }
 }, 60 * 1000);
+loginSessionCleanupTimer.unref();
 
 const startSchema = z.object({
   provider: z.string().optional(),
@@ -133,138 +138,153 @@ const codeSchema = z.object({
   code: z.string().min(1).max(256),
 });
 
-// Per-provider login invocation. Claude drives its OAuth flow from inside its
-// TUI via the /login slash command, so we spawn the CLI with ["/login"] as the
-// first "prompt". OpenCode ships a dedicated `auth login` subcommand that walks
-// the user through provider selection and credential entry. Codex uses its
-// `login --device-auth` flow so browser/device-code auth can be driven from the
-// WebUI as well.
-const LOGIN_INVOCATION: Partial<Record<CLIProvider, readonly string[]>> = {
-  claude: ['/login'],
-  codex: ['login', '--device-auth'],
-  opencode: ['auth', 'login'],
-};
-
-router.post('/:provider/start', requireAuth, async (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const provider = (req.params.provider || '').toLowerCase() as CLIProvider;
-
-  const invocationArgs = LOGIN_INVOCATION[provider];
-  if (!invocationArgs) {
-    throw new AppError(
-      `CLI login is not supported for provider '${provider}'.`,
-      400,
-      'UNSUPPORTED_PROVIDER'
-    );
-  }
-
-  const parsed = startSchema.safeParse(req.body || {});
-  if (!parsed.success) {
-    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
-  }
-
-  let activeForUser = 0;
-  let activeTotal = 0;
-  for (const existing of loginSessions.values()) {
-    if (existing.proc && existing.status !== 'completed' && existing.status !== 'error') {
-      activeTotal += 1;
-      if (existing.userId === userId) activeForUser += 1;
-    }
-  }
-  if (activeForUser >= MAX_LOGIN_SESSIONS_PER_USER) {
-    throw new AppError(
-      'You already have a CLI login in progress. Finish or wait for it to expire before starting another.',
-      429,
-      'LOGIN_CAP_USER'
-    );
-  }
-  if (activeTotal >= MAX_LOGIN_SESSIONS_TOTAL) {
-    throw new AppError(
-      'Too many concurrent CLI logins on this server. Try again shortly.',
-      429,
-      'LOGIN_CAP_GLOBAL'
-    );
-  }
-
-  const config = CLI_PROVIDERS[provider];
-  const command = config?.command || provider;
-  const loginId = nanoid();
-  const session: LoginSession = {
-    id: loginId,
-    userId,
-    provider,
-    proc: null,
-    status: 'starting',
-    output: '',
-    createdAt: Date.now(),
-    waiters: [],
+function serializeLoginSession(session: LoginSession) {
+  return {
+    id: session.id,
+    provider: session.provider,
+    status: session.status,
+    loginUrl: session.loginUrl || null,
+    verificationCode: session.verificationCode || null,
+    output: session.output,
+    error: session.error || null,
   };
+}
 
-  try {
-    const env = {
-      ...getCliEnv(),
-      HOME: os.homedir(),
-      TERM: 'xterm-256color',
-      FORCE_COLOR: '1',
-    } as Record<string, string>;
+router.post(
+  '/:provider/start',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const provider = (req.params.provider || '').toLowerCase() as CLIProvider;
 
-    // Provider-specific env
-    if (provider === 'claude') {
-      const configOverride = process.env.WEBUI_CONFIG_HOME || process.env.CLAUDE_CONFIG_HOME;
-      if (configOverride) {
-        env.CLAUDE_CONFIG_HOME = configOverride;
-      }
-    } else if (provider === 'codex') {
-      env.CODEX_HOME = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
-    } else if (provider === 'opencode') {
-      // Point OpenCode at the same XDG paths the session spawner uses, so login
-      // writes auth.json into the mounted volume and the resulting credentials
-      // are visible to later runs (see Dockerfile symlinks into ~/.opencode).
-      env.OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
-      env.OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+    const runnerAccess = getRunnerAccessDecision(userId);
+    if (!runnerAccess.allowed) {
+      throw new AppError(
+        runnerAccess.reason || 'CLI runner access is not allowed for this account.',
+        403,
+        'RUNNER_ACCESS_DENIED'
+      );
     }
 
-    const loginArgs = [...invocationArgs];
+    // Claude and OpenCode expose dedicated auth commands. Codex uses its
+    // headless device-code flow so the browser interaction can stay in Plum.
+    const invocationArgs = resolveCliLoginInvocation(provider);
+    if (!invocationArgs) {
+      throw new AppError(
+        `CLI login is not supported for provider '${provider}'.`,
+        400,
+        'UNSUPPORTED_PROVIDER'
+      );
+    }
 
-    const proc = pty.spawn(command, loginArgs, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
-      cwd: os.homedir(),
-      env,
+    const parsed = startSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+    }
+
+    let activeForUser = 0;
+    let activeTotal = 0;
+    for (const existing of loginSessions.values()) {
+      if (existing.proc && existing.status !== 'completed' && existing.status !== 'error') {
+        activeTotal += 1;
+        if (existing.userId === userId) activeForUser += 1;
+      }
+    }
+    if (activeForUser >= MAX_LOGIN_SESSIONS_PER_USER) {
+      throw new AppError(
+        'You already have a CLI login in progress. Finish or wait for it to expire before starting another.',
+        429,
+        'LOGIN_CAP_USER'
+      );
+    }
+    if (activeTotal >= MAX_LOGIN_SESSIONS_TOTAL) {
+      throw new AppError(
+        'Too many concurrent CLI logins on this server. Try again shortly.',
+        429,
+        'LOGIN_CAP_GLOBAL'
+      );
+    }
+
+    const config = CLI_PROVIDERS[provider];
+    const command = config?.command || provider;
+    const loginId = nanoid();
+    const session: LoginSession = {
+      id: loginId,
+      userId,
+      provider,
+      proc: null,
+      status: 'starting',
+      output: '',
+      createdAt: Date.now(),
+      waiters: [],
+    };
+
+    try {
+      const env = {
+        ...getCliEnv(),
+        HOME: os.homedir(),
+        TERM: 'xterm-256color',
+        FORCE_COLOR: '1',
+      } as Record<string, string>;
+
+      // Provider-specific env
+      if (provider === 'claude') {
+        const configOverride = process.env.WEBUI_CONFIG_HOME || process.env.CLAUDE_CONFIG_HOME;
+        if (configOverride) {
+          env.CLAUDE_CONFIG_HOME = configOverride;
+        }
+      } else if (provider === 'codex') {
+        env.CODEX_HOME = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+      } else if (provider === 'opencode') {
+        // Keep OpenCode OAuth/account state in the same per-user tenant used by
+        // that user's server. A login can never replace another user's auth.json.
+        const tenantPaths = resolveOpenCodeTenantPaths(userId);
+        ensureOpenCodeTenantDirectories(tenantPaths);
+        env.OPENCODE_CONFIG_DIR = tenantPaths.configDir;
+        env.OPENCODE_DATA_DIR = tenantPaths.dataDir;
+      } else if (provider === 'kimi') {
+        // Kimi Code CLI keeps OAuth + provider state under ~/.kimi-code by
+        // default. The device-code login prints the verification URL + user code
+        // to the TTY (merged stdout/stderr) and self-polls until the browser
+        // authorization completes; no manual code entry is required.
+      }
+
+      const loginArgs = [...invocationArgs];
+
+      const proc = pty.spawn(command, loginArgs, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 30,
+        cwd: os.homedir(),
+        env,
+      });
+
+      session.proc = proc;
+      loginSessions.set(loginId, session);
+
+      proc.onData((data: string) => {
+        appendOutput(session, data);
+      });
+
+      proc.onExit(({ exitCode }) => {
+        finalizeSession(session, exitCode);
+      });
+    } catch (error) {
+      session.status = 'error';
+      session.error = error instanceof Error ? error.message : 'Failed to start CLI login';
+      loginSessions.set(loginId, session);
+    }
+
+    // Wait a bit for the process to start and output the URL
+    const waitTime = 600;
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
+
+    res.json({
+      success: true,
+      data: serializeLoginSession(session),
     });
-
-    session.proc = proc;
-    loginSessions.set(loginId, session);
-
-    proc.onData((data: string) => {
-      appendOutput(session, data);
-    });
-
-    proc.onExit(({ exitCode }) => {
-      finalizeSession(session, exitCode);
-    });
-  } catch (error) {
-    session.status = 'error';
-    session.error = error instanceof Error ? error.message : 'Failed to start CLI login';
-    loginSessions.set(loginId, session);
-  }
-
-  // Wait a bit for the process to start and output the URL
-  const waitTime = 600;
-  await new Promise((resolve) => setTimeout(resolve, waitTime));
-
-  res.json({
-    success: true,
-    data: {
-      id: session.id,
-      status: session.status,
-      loginUrl: session.loginUrl || null,
-      output: session.output,
-      error: session.error || null,
-    },
-  });
-});
+  })
+);
 
 router.get('/:id', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
@@ -276,17 +296,52 @@ router.get('/:id', requireAuth, (req, res) => {
 
   res.json({
     success: true,
-    data: {
-      id: session.id,
-      status: session.status,
-      loginUrl: session.loginUrl || null,
-      output: session.output,
-      error: session.error || null,
-    },
+    data: serializeLoginSession(session),
   });
 });
 
-router.post('/:id/code', requireAuth, async (req, res) => {
+router.post(
+  '/:id/code',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const session = loginSessions.get(req.params.id!);
+
+    if (!session || session.userId !== userId) {
+      throw new AppError('Login session not found', 404, 'NOT_FOUND');
+    }
+
+    const parsed = codeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+    }
+
+    if (!session.proc) {
+      res.json({
+        success: true,
+        data: serializeLoginSession(session),
+      });
+      return;
+    }
+
+    const code = parsed.data.code.trim();
+    session.proc.write(code + '\r');
+
+    try {
+      await waitForCompletion(session, 60 * 1000);
+    } catch (error) {
+      session.status = 'error';
+      session.error = error instanceof Error ? error.message : 'Login timed out';
+    }
+
+    res.json({
+      success: true,
+      data: serializeLoginSession(session),
+    });
+  })
+);
+
+router.delete('/:id', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const session = loginSessions.get(req.params.id!);
 
@@ -294,44 +349,14 @@ router.post('/:id/code', requireAuth, async (req, res) => {
     throw new AppError('Login session not found', 404, 'NOT_FOUND');
   }
 
-  const parsed = codeSchema.safeParse(req.body);
-  if (!parsed.success) {
-    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
-  }
-
-  if (!session.proc) {
-    return res.json({
-      success: true,
-      data: {
-        id: session.id,
-        status: session.status,
-        loginUrl: session.loginUrl || null,
-        output: session.output,
-        error: session.error || null,
-      },
-    });
-  }
-
-  const code = parsed.data.code.trim();
-  session.proc.write(code + '\r');
-
   try {
-    await waitForCompletion(session, 60 * 1000);
-  } catch (error) {
-    session.status = 'error';
-    session.error = error instanceof Error ? error.message : 'Login timed out';
+    session.proc?.kill();
+  } catch {
+    // The process may already have exited between the lookup and cancellation.
   }
+  loginSessions.delete(session.id);
 
-  res.json({
-    success: true,
-    data: {
-      id: session.id,
-      status: session.status,
-      loginUrl: session.loginUrl || null,
-      output: session.output,
-      error: session.error || null,
-    },
-  });
+  res.json({ success: true, data: { id: session.id, cancelled: true } });
 });
 
 export default router;

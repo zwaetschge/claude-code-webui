@@ -7,9 +7,11 @@ export function resolveContextWindow(model: string | null | undefined): number {
 
   const id = model.toLowerCase();
 
-  // Anthropic's current 4.x/5.x Claude families use the 1M-token window.
-  if (id === 'opus' || id === 'sonnet' || id === 'haiku') return 1_000_000;
-  if (/(opus|sonnet|haiku)-?(4|5)/.test(id)) return 1_000_000;
+  // Anthropic's current Fable, Opus, and Sonnet families use the 1M-token
+  // window. Haiku 4.5 remains at 200k.
+  if (id === 'fable' || id === 'opus' || id === 'sonnet') return 1_000_000;
+  if (/(fable|opus|sonnet)-?(4|5)/.test(id)) return 1_000_000;
+  if (id === 'haiku' || /haiku-?4[.-]?5/.test(id)) return 200_000;
 
   // Codex / GPT-5.x windows observed in live session logs.
   if (id.startsWith('gpt-5.6')) return 1_050_000;

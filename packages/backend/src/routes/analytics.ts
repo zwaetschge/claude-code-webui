@@ -1,7 +1,13 @@
 import { Router, Request, Response } from 'express';
-import { estimateModelCost, getProviderLabelForModel } from '@plum-code-webui/shared';
-import { getDatabase } from '../db';
-import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import {
+  estimateModelCost,
+  getProviderLabelForUsage,
+  getUsageModelKey,
+} from '@plum-code-webui/shared';
+import { getDatabase, insertUsageHistoryTurn } from '../db/index.js';
+import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
+import { nanoid } from 'nanoid';
+import type { CLIProvider } from '../services/cli-providers.js';
 import {
   fetchCodexUsage,
   getCodexAuth,
@@ -9,7 +15,7 @@ import {
   mapCodexUsage,
   refreshCodexToken,
   type MappedCodexWindow,
-} from '../utils/codexUsage';
+} from '../utils/codexUsage.js';
 
 const router = Router();
 
@@ -236,6 +242,7 @@ async function resolveAnalyticsWindow(
 
 type ModelSummaryRow = {
   model: string | null;
+  provider: string | null;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -272,7 +279,7 @@ function enrichModelRow(row: ModelSummaryRow) {
   return {
     ...row,
     cost: apiEquivalentCost,
-    provider: getProviderLabelForModel(row.model),
+    provider: getProviderLabelForUsage(row.provider, row.model),
     api_equivalent_cost: apiEquivalentCost,
     theoretical_cost: apiEquivalentCost,
     recorded_cost: row.cost,
@@ -331,6 +338,7 @@ router.get('/summary', async (req: Request, res: Response) => {
         `
       SELECT
         model,
+        provider,
         COALESCE(SUM(input_tokens), 0) as input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
@@ -342,7 +350,7 @@ router.get('/summary', async (req: Request, res: Response) => {
         MAX(created_at) as last_seen
       FROM usage_history
       WHERE user_id = ? ${dateFilter.sql}
-      GROUP BY model
+      GROUP BY provider, model
       ORDER BY cost DESC
     `
       )
@@ -610,6 +618,98 @@ router.get('/summary', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Per-subagent usage inside the selected window.
+ *
+ * These tokens are a SUBSET of /summary — a turn's usage_history row already
+ * includes everything its subagents spent. `parentShare` says how much of the
+ * window's total was driven by spawned agents rather than the top-level turn.
+ */
+router.get('/subagents', async (req: Request, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const db = getDatabase();
+
+  try {
+    const window = await resolveAnalyticsWindow(req.query.period, req.query.tz, req.query.offset);
+    const dateFilter = buildDateFilter(window);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
+
+    const agents = db
+      .prepare(
+        `
+      SELECT
+        agent_id as agentId,
+        MAX(agent_type) as agentType,
+        MAX(model) as model,
+        MAX(parent_agent_id) as parentAgentId,
+        provider,
+        COUNT(*) as turns,
+        COUNT(DISTINCT session_id) as sessions,
+        COALESCE(SUM(input_tokens), 0) as inputTokens,
+        COALESCE(SUM(output_tokens), 0) as outputTokens,
+        COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
+        COALESCE(SUM(total_tokens), 0) as totalTokens,
+        COALESCE(SUM(cost_usd), 0) as costUsd,
+        MAX(created_at) as lastUsedAt
+      FROM usage_subagent_turns
+      WHERE user_id = ? ${dateFilter.sql}
+      GROUP BY agent_id, provider
+      ORDER BY totalTokens DESC
+      LIMIT ?
+    `
+      )
+      .all(authReq.userId, ...dateFilter.params, limit);
+
+    const totals = db
+      .prepare(
+        `
+      SELECT
+        COALESCE(SUM(total_tokens), 0) as totalTokens,
+        COALESCE(SUM(cost_usd), 0) as costUsd,
+        COUNT(DISTINCT agent_id) as agentCount,
+        COUNT(DISTINCT turn_id) as turnCount
+      FROM usage_subagent_turns
+      WHERE user_id = ? ${dateFilter.sql}
+    `
+      )
+      .get(authReq.userId, ...dateFilter.params) as {
+      totalTokens: number;
+      costUsd: number;
+      agentCount: number;
+      turnCount: number;
+    };
+
+    const overall = db
+      .prepare(
+        `SELECT COALESCE(SUM(total_tokens), 0) as totalTokens
+         FROM usage_history
+         WHERE user_id = ? ${dateFilter.sql}`
+      )
+      .get(authReq.userId, ...dateFilter.params) as { totalTokens: number };
+
+    res.json({
+      success: true,
+      data: {
+        period: window.period,
+        agents,
+        totals: {
+          ...totals,
+          windowTotalTokens: overall.totalTokens,
+          parentSharePercent:
+            overall.totalTokens > 0
+              ? Math.round((totals.totalTokens / overall.totalTokens) * 100)
+              : 0,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching subagent analytics:', error);
+    res
+      .status(500)
+      .json({ success: false, error: { message: 'Failed to fetch subagent analytics' } });
+  }
+});
+
 // Get usage over time (for charts)
 router.get('/timeline', async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
@@ -652,6 +752,7 @@ router.get('/timeline', async (req: Request, res: Response) => {
       SELECT
         strftime('${dateFormat}', created_at, ?) as date,
         model,
+        provider,
         COALESCE(SUM(input_tokens), 0) as input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
@@ -660,13 +761,14 @@ router.get('/timeline', async (req: Request, res: Response) => {
         COUNT(*) as requests
       FROM usage_history
       WHERE user_id = ? ${dateFilter.sql}
-      GROUP BY strftime('${dateFormat}', created_at, ?), model
+      GROUP BY strftime('${dateFormat}', created_at, ?), provider, model
       ORDER BY date ASC
     `
       )
       .all(tzModifier, authReq.userId, ...dateFilter.params, tzModifier) as Array<{
       date: string;
       model: string | null;
+      provider: string | null;
       input_tokens: number;
       output_tokens: number;
       cache_read_tokens: number;
@@ -688,7 +790,7 @@ router.get('/timeline', async (req: Request, res: Response) => {
     >();
     const costByDate = new Map<string, number>();
     for (const row of providerRows) {
-      const provider = getProviderLabelForModel(row.model);
+      const provider = getProviderLabelForUsage(row.provider, row.model);
       const model = row.model || 'Unknown';
       const apiEquivalentCost = estimateApiEquivalentCost(row).cost;
       const current = providersByDate.get(row.date) || {};
@@ -700,7 +802,8 @@ router.get('/timeline', async (req: Request, res: Response) => {
       providersByDate.set(row.date, current);
 
       const currentModels = modelsByDate.get(row.date) || {};
-      const modelEntry = currentModels[model] || {
+      const modelKey = getUsageModelKey(provider, model);
+      const modelEntry = currentModels[modelKey] || {
         model,
         provider,
         tokens: 0,
@@ -710,7 +813,7 @@ router.get('/timeline', async (req: Request, res: Response) => {
       modelEntry.tokens += row.total_tokens;
       modelEntry.cost += apiEquivalentCost;
       modelEntry.requests += row.requests;
-      currentModels[model] = modelEntry;
+      currentModels[modelKey] = modelEntry;
       modelsByDate.set(row.date, currentModels);
 
       costByDate.set(row.date, (costByDate.get(row.date) || 0) + apiEquivalentCost);
@@ -895,6 +998,8 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
         `
       SELECT
         id,
+        provider,
+        turn_id,
         input_tokens,
         output_tokens,
         cache_read_tokens,
@@ -912,6 +1017,8 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
       .all(sessionId, authReq.userId) as Array<
       TokenCostRow & {
         id: number;
+        provider: string;
+        turn_id: string | null;
         total_tokens: number;
         cost: number;
         created_at: string;
@@ -1022,6 +1129,7 @@ router.post('/record', async (req: Request, res: Response) => {
     cacheCreationTokens,
     totalTokens,
     model,
+    turnId: requestedTurnId,
   } = req.body;
   const normalizedTokens = {
     inputTokens: inputTokens || 0,
@@ -1038,26 +1146,36 @@ router.post('/record', async (req: Request, res: Response) => {
   const costUsd = estimateModelCost(model, normalizedTokens, null).cost;
 
   try {
-    const id = db
-      .prepare(
-        `
-      INSERT INTO usage_history (user_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-      )
-      .run(
-        authReq.userId,
-        sessionId,
-        normalizedTokens.inputTokens,
-        normalizedTokens.outputTokens,
-        normalizedTokens.cacheReadTokens,
-        normalizedTokens.cacheCreationTokens,
-        normalizedTotalTokens,
-        costUsd || 0,
-        model || 'unknown'
-      );
+    const session = db
+      .prepare('SELECT cli_provider as provider FROM sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, authReq.userId) as { provider: CLIProvider | null } | undefined;
+    if (!session) {
+      return res.status(404).json({ success: false, error: { message: 'Session not found' } });
+    }
 
-    res.json({ success: true, data: { id: id.lastInsertRowid } });
+    const turnId =
+      typeof requestedTurnId === 'string' && requestedTurnId.trim()
+        ? requestedTurnId.trim()
+        : nanoid();
+    const provider = session.provider || 'codex';
+    const inserted = insertUsageHistoryTurn(db, {
+      userId: authReq.userId,
+      sessionId,
+      provider,
+      turnId,
+      inputTokens: normalizedTokens.inputTokens,
+      outputTokens: normalizedTokens.outputTokens,
+      cacheReadTokens: normalizedTokens.cacheReadTokens,
+      cacheCreationTokens: normalizedTokens.cacheCreationTokens,
+      totalTokens: normalizedTotalTokens,
+      costUsd: costUsd || 0,
+      model: model || 'unknown',
+    });
+    const row = db
+      .prepare('SELECT id FROM usage_history WHERE session_id = ? AND provider = ? AND turn_id = ?')
+      .get(sessionId, provider, turnId) as { id: number } | undefined;
+
+    res.json({ success: true, data: { id: row?.id ?? null, turnId, inserted } });
   } catch (error) {
     console.error('Error recording usage:', error);
     res.status(500).json({ success: false, error: { message: 'Failed to record usage' } });

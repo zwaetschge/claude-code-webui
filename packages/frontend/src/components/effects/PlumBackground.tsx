@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
+import { LOGIN_WAVE_MOTIONS, startAmbientMotion } from '@/lib/ambientMotion';
 
 interface PlumBackgroundProps {
   className?: string;
@@ -9,13 +10,20 @@ interface PlumBackgroundProps {
 export function PlumBackground({ className, enableCursorGlow = true }: PlumBackgroundProps) {
   const glowRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
+  const lastGlowUpdateRef = useRef(0);
   const pointerRef = useRef({ x: 0, y: 0 });
+  const waveRefs = useRef<Array<HTMLDivElement | null>>([]);
+
+  useEffect(() => startAmbientMotion(waveRefs.current, LOGIN_WAVE_MOTIONS), []);
 
   useEffect(() => {
     if (!enableCursorGlow) return;
 
     const updateGlowPosition = () => {
       rafRef.current = 0;
+      const now = performance.now();
+      if (now - lastGlowUpdateRef.current < 1000 / 30) return;
+      lastGlowUpdateRef.current = now;
       const glow = glowRef.current;
       if (!glow) return;
 
@@ -57,9 +65,19 @@ export function PlumBackground({ className, enableCursorGlow = true }: PlumBackg
         className
       )}
     >
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-[70px]" />
-      <div className="login-galaxy-band login-galaxy-band-main" />
-      <div className="login-galaxy-band login-galaxy-band-cross" />
+      <div className="absolute inset-0 bg-background/70" />
+      <div
+        ref={(element) => {
+          waveRefs.current[0] = element;
+        }}
+        className="login-galaxy-band login-galaxy-band-main"
+      />
+      <div
+        ref={(element) => {
+          waveRefs.current[1] = element;
+        }}
+        className="login-galaxy-band login-galaxy-band-cross"
+      />
       <div className="login-galaxy-haze" />
 
       {enableCursorGlow && (
@@ -70,8 +88,7 @@ export function PlumBackground({ className, enableCursorGlow = true }: PlumBackg
             width: '520px',
             height: '180px',
             background:
-              'linear-gradient(100deg, transparent 0%, rgba(99, 244, 213, 0.26) 34%, rgba(116, 216, 255, 0.2) 56%, transparent 82%)',
-            filter: 'blur(46px)',
+              'radial-gradient(ellipse at 42% 50%, rgba(99, 244, 213, 0.24) 0%, rgba(99, 244, 213, 0.1) 34%, transparent 72%), radial-gradient(ellipse at 62% 50%, rgba(116, 216, 255, 0.18) 0%, transparent 68%)',
             left: 0,
             top: 0,
             transform: 'translate3d(-9999px, -9999px, 0) rotate(-14deg)',

@@ -2,6 +2,11 @@ import { useState } from 'react';
 import type { Session } from '@plum-code-webui/shared';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { toUiProvider } from '@/lib/providers';
+import {
+  buildSessionIconSrc,
+  DEFAULT_SESSION_ICON_THUMBNAIL_SIZE,
+  type SessionIconThumbnailSize,
+} from '@/lib/sessionIconUrl';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -11,6 +16,7 @@ type SessionIconProps = {
   imageClassName?: string;
   logoClassName?: string;
   alt?: string;
+  thumbnailSize?: SessionIconThumbnailSize | null;
 };
 
 export function SessionIcon({
@@ -19,11 +25,12 @@ export function SessionIcon({
   imageClassName,
   logoClassName,
   alt = '',
+  thumbnailSize = DEFAULT_SESSION_ICON_THUMBNAIL_SIZE,
 }: SessionIconProps) {
   const token = useAuthStore((state) => state.token);
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
   const iconUrl = session.iconUrl && failedIconUrl !== session.iconUrl ? session.iconUrl : null;
-  const iconSrc = iconUrl && token ? appendToken(iconUrl, token) : iconUrl;
+  const iconSrc = iconUrl ? buildSessionIconSrc(iconUrl, token, thumbnailSize) : null;
 
   if (iconSrc) {
     return (
@@ -31,6 +38,8 @@ export function SessionIcon({
         src={iconSrc}
         alt={alt}
         className={cn('object-cover', className, imageClassName)}
+        loading="lazy"
+        decoding="async"
         onError={() => setFailedIconUrl(iconUrl)}
       />
     );
@@ -43,10 +52,4 @@ export function SessionIcon({
       alt={alt}
     />
   );
-}
-
-function appendToken(url: string, token: string): string {
-  if (!url.startsWith('/')) return url;
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
 }

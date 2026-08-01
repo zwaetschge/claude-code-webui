@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { getDatabase } from '../db';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
+import { getDatabase } from '../db/index.js';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 

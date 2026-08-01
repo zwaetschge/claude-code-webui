@@ -6,25 +6,33 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import os from 'os';
 import multer from 'multer';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { getDatabase } from '../db';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { config } from '../config';
-import { safeJsonParse } from '../utils/json';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { getProcessManager } from '../websocket';
-import { isAllowedBasePath } from '../utils/allowedPaths';
-import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize';
-import { resolveConfigHome } from '../utils/configPaths';
-import { readSkillLibraryItem } from '../utils/skillLibrary';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { getDatabase } from '../db/index.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { config } from '../config.js';
+import { safeJsonParse } from '../utils/json.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { getProcessManager } from '../websocket/index.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
+import { sanitizeFilename, ALLOWED_UPLOAD_MIME_TYPES } from '../utils/sanitize.js';
+import { resolveConfigHome } from '../utils/configPaths.js';
+import { readSkillLibraryItem } from '../utils/skillLibrary.js';
 import { resolveContextWindow as contextWindowFor } from '../utils/contextWindow.js';
-import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers';
-import { readLatestCodexContextSnapshot } from '../services/claude/ClaudeProcessManager';
-import { scanProject } from '../utils/projectScanner';
+import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers.js';
+import { readLatestCodexContextSnapshot } from '../services/claude/ClaudeProcessManager.js';
+import { scanProject } from '../utils/projectScanner.js';
 import {
   buildSessionIconImagePrompt,
   generateSessionIconImage,
-} from '../services/sessionIconGenerator';
+} from '../services/sessionIconGenerator.js';
+import {
+  ensureSessionIconThumbnail,
+  parseSessionIconThumbnailSize,
+  sessionIconCacheControl,
+} from '../services/sessionIconThumbnail.js';
+import { applyUntrustedFileHeaders } from '../utils/untrustedFile.js';
+import { loadMessageMedia, resolveOwnedChatMedia } from '../services/chatMedia.js';
+import { getEnabledCliProvidersForUser, getZaiApiConfigForUser } from './settings.js';
 
 const router = Router();
 
@@ -38,10 +46,13 @@ const projectDescriptionCache = new Map<
 >();
 
 // Validation schemas
-const createSessionSchema = z.object({
+export const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   workingDirectory: z.string().optional(), // Optional - will be auto-generated from name
-  cliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']).optional().default('codex'),
+  cliProvider: z
+    .enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi'])
+    .optional()
+    .default('codex'),
   cliModel: z.string().trim().min(1).max(200).nullable().optional(),
   cliReasoning: z.string().trim().min(1).max(50).nullable().optional(),
   cliServiceTier: z.enum(['fast']).nullable().optional(),
@@ -55,8 +66,8 @@ const updateSessionSchema = z.object({
   workingDirectory: z.string().min(1).optional(),
 });
 
-const updateProviderSchema = z.object({
-  cliProvider: z.enum(['claude', 'codex', 'opencode', 'vibe']),
+export const updateProviderSchema = z.object({
+  cliProvider: z.enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']),
 });
 
 const updateSessionModelSchema = z.object({
@@ -228,6 +239,23 @@ function validateWorkingDirectory(dir: string): boolean {
   return isAllowedBasePath(dir);
 }
 
+function assertProviderEnabled(userId: string, provider: CLIProvider): void {
+  if (!getEnabledCliProvidersForUser(userId).includes(provider)) {
+    throw new AppError(
+      `${CLI_PROVIDERS[provider].name} is disabled in Settings`,
+      409,
+      'PROVIDER_DISABLED'
+    );
+  }
+  if (provider === 'zai' && !getZaiApiConfigForUser(userId)) {
+    throw new AppError(
+      'Configure Z.AI in Settings before starting a Z.AI session',
+      409,
+      'PROVIDER_NOT_CONFIGURED'
+    );
+  }
+}
+
 // Sanitize session name for folder creation
 function sanitizeFolderName(name: string): string {
   return name
@@ -293,7 +321,7 @@ function sessionIconSelect(prefix = ''): string {
   const p = prefix ? `${prefix}.` : '';
   return `CASE
                 WHEN ${p}icon_path IS NOT NULL AND ${p}icon_path != ''
-                THEN '/api/sessions/' || ${p}id || '/icon?v=' || COALESCE(strftime('%s', ${p}updated_at), '')
+                THEN '/api/sessions/' || ${p}id || '/icon?v=' || lower(hex(substr(${p}icon_path, -16)))
                 ELSE NULL
               END as iconUrl,
               ${p}icon_source as iconSource`;
@@ -358,6 +386,7 @@ function selectSessionById(
               s.design_style_skill as designStyleSkill,
               s.writing_style_skill as writingStyleSkill,
               s.android_device_serial as androidDeviceSerial,
+              s.home_assistant_entity_id as homeAssistantEntityId,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt
        FROM sessions s WHERE s.id = ? ${whereUser}`
@@ -907,6 +936,7 @@ router.get(
               s.design_style_skill as designStyleSkill,
               s.writing_style_skill as writingStyleSkill,
               s.android_device_serial as androidDeviceSerial,
+              s.home_assistant_entity_id as homeAssistantEntityId,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(
@@ -953,7 +983,7 @@ router.post(
   rateLimiters.sessionCreation,
   rateLimiters.upload,
   parseCreateSessionUpload,
-  async (req, res) => {
+  asyncHandler(async (req, res) => {
     const userId = (req as AuthenticatedRequest).userId;
     const parsed = createSessionSchema.safeParse(req.body);
 
@@ -972,6 +1002,7 @@ router.post(
       surface,
       initialMessage,
     } = parsed.data;
+    assertProviderEnabled(userId, cliProvider);
     const db = getDatabase();
     let storedReasoning = cliReasoning?.trim() || null;
     let storedServiceTier = cliProvider === 'codex' ? cliServiceTier || null : null;
@@ -1117,7 +1148,7 @@ router.post(
         }
       })();
     }
-  }
+  })
 );
 
 // Update session
@@ -1220,6 +1251,7 @@ router.patch('/:id/provider', requireAuth, (req, res) => {
   }
 
   const { cliProvider } = parsed.data;
+  assertProviderEnabled(userId, cliProvider);
 
   if (existing.cliProvider !== cliProvider) {
     db.prepare(
@@ -1470,7 +1502,7 @@ router.patch(
     if (designStyleSkill !== undefined) {
       if (designStyleSkill !== null) {
         const style = await readSkillLibraryItem(configHome, designStyleSkill);
-        if (!style || style.libraryKind !== 'design' || !style.enabled) {
+        if (!style || style.libraryKind !== 'design') {
           throw new AppError('UI style template not found', 400, 'INVALID_STYLE');
         }
       }
@@ -1481,7 +1513,7 @@ router.patch(
     if (writingStyleSkill !== undefined) {
       if (writingStyleSkill !== null) {
         const style = await readSkillLibraryItem(configHome, writingStyleSkill);
-        if (!style || style.libraryKind !== 'writing' || !style.enabled) {
+        if (!style || style.libraryKind !== 'writing') {
           throw new AppError('Writing style template not found', 400, 'INVALID_STYLE');
         }
       }
@@ -1523,12 +1555,56 @@ router.get(
     }
 
     const iconPath = resolveSessionIconPath(row.iconPath);
-    const ext = path.extname(iconPath).toLowerCase();
-    const contentType = ICON_MIME_BY_EXT[ext] || 'application/octet-stream';
     await fs.access(iconPath);
+
+    const requestedSize = req.query.size;
+    const thumbnailSize = parseSessionIconThumbnailSize(requestedSize);
+    if (requestedSize !== undefined && thumbnailSize === null) {
+      throw new AppError('Unsupported session icon thumbnail size', 400, 'INVALID_ICON_SIZE');
+    }
+
+    let responsePath = iconPath;
+    let variant = 'original';
+    let thumbnailFallback = false;
+    if (thumbnailSize !== null) {
+      try {
+        responsePath = await ensureSessionIconThumbnail(iconPath, thumbnailSize);
+        variant = `thumbnail-${thumbnailSize}`;
+      } catch (error) {
+        thumbnailFallback = true;
+        variant = 'original-fallback';
+        console.warn(
+          `[sessions] Could not create ${thumbnailSize}px thumbnail for session ${req.params.id}; serving the original icon`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+
+    const ext = path.extname(responsePath).toLowerCase();
+    const contentType = ICON_MIME_BY_EXT[ext] || 'application/octet-stream';
+    const stat = await fs.stat(responsePath);
+    const etag = `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+    const isVersioned = typeof req.query.v === 'string' && req.query.v.length > 0;
+
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    createReadStream(iconPath).pipe(res);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader(
+      'Cache-Control',
+      sessionIconCacheControl({ versioned: isVersioned, thumbnailFallback })
+    );
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', stat.mtime.toUTCString());
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Plum-Icon-Variant', variant);
+    if (req.fresh) {
+      res.status(304).end();
+      return;
+    }
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    createReadStream(responsePath).pipe(res);
   })
 );
 
@@ -1781,8 +1857,12 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       .prepare('SELECT 1 FROM messages WHERE session_id = ? AND rowid < ? LIMIT 1')
       .get(req.params.id, oldestRid) !== undefined;
 
-  // Strip the synthetic `rid` before returning.
-  const messages = ordered.map(({ rid: _rid, ...rest }) => rest);
+  // Strip the synthetic `rid` and hydrate durable, path-free media metadata.
+  const mediaByMessage = loadMessageMedia(ordered.map((row) => String(row.id)));
+  const messages = ordered.map(({ rid: _rid, ...rest }) => {
+    const media = mediaByMessage.get(String(rest.id));
+    return media?.length ? { ...rest, media } : rest;
+  });
 
   res.json({
     success: true,
@@ -2015,6 +2095,51 @@ async function validateToken(
   }
 }
 
+// Serve durable assistant/workspace media. Unlike the legacy filename routes,
+// lookup is by opaque media id and is bound to both session and authenticated
+// owner. Foreign users receive the same 404 as a missing object.
+router.get(
+  '/:id/media/:mediaId',
+  requireAuth,
+  asyncHandler(async (req, res, next) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const media = await resolveOwnedChatMedia({
+      sessionId: req.params.id as string,
+      mediaId: req.params.mediaId as string,
+      userId,
+    });
+    if (!media) throw new AppError('Media not found', 404, 'NOT_FOUND');
+
+    const etag = `"sha256-${media.sha256}"`;
+    res.setHeader('ETag', etag);
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.setHeader('Content-Type', media.mimeType);
+    res.setHeader('Content-Length', String(media.byteSize));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+
+    const safeName = media.filename.replace(/[\r\n"]/g, '') || 'image';
+    const asciiFallback = safeName.replace(/[^\x20-\x7e]/g, '_') || 'image';
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+    );
+
+    if (req.header('if-none-match') === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      res.sendFile(media.filePath, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    }).catch(next);
+  })
+);
+
 // Serve session images (supports token in query param for browser image loading)
 router.get('/:id/images/:filename', async (req, res, next) => {
   try {
@@ -2046,6 +2171,7 @@ router.get('/:id/images/:filename', async (req, res, next) => {
 
     try {
       await fs.access(imagePath);
+      applyUntrustedFileHeaders(res, imagePath);
       res.sendFile(imagePath);
     } catch {
       return res
@@ -2094,11 +2220,13 @@ router.get('/:id/attachments/:filename', async (req, res, next) => {
 
     try {
       await fs.access(attachmentPath);
+      applyUntrustedFileHeaders(res, attachmentPath);
       res.sendFile(attachmentPath);
     } catch {
       // Try legacy image path
       try {
         await fs.access(legacyImagePath);
+        applyUntrustedFileHeaders(res, legacyImagePath);
         res.sendFile(legacyImagePath);
       } catch {
         return res

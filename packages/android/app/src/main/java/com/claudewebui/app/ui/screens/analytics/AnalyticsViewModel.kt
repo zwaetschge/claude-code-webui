@@ -284,7 +284,7 @@ class AnalyticsViewModel(
         val providerData = listOf(
             Triple("Codex", rng.nextInt(30, 90), 0xFF10A37FL),
             Triple("OpenCode", rng.nextInt(8, 35), 0xFF7C3AEDL),
-            Triple("Vibe", rng.nextInt(4, 20), 0xFFEF4444L),
+            Triple("Pi", rng.nextInt(4, 20), 0xFF0F766EL),
             Triple("Claude", rng.nextInt(2, 16), 0xFFCC785CL)
         )
         val totalProviderSessions = providerData.sumOf { it.second }
@@ -311,7 +311,7 @@ class AnalyticsViewModel(
             ToolUsageItem(name, count, count / totalToolUsage * 100)
         }
 
-        val modelNames = listOf("gpt-5.5", "z-ai/glm-5.1", "mistral-vibe-cli-latest", "sonnet")
+        val modelNames = listOf("gpt-5.5", "z-ai/glm-5.1", "kimi-k2.7-code", "sonnet")
         val modelCounts = modelNames.map { rng.nextInt(3, 50) }.sortedDescending()
         val totalModelUsage = modelCounts.sum().toFloat()
         val modelUsage = modelNames.zip(modelCounts).mapIndexed { idx, (name, count) ->
@@ -355,7 +355,7 @@ class AnalyticsViewModel(
         val providerColors = listOf(
             0xFF10A37FL, // Codex
             0xFF7C3AEDL, // OpenCode
-            0xFFEF4444L, // Vibe
+            0xFF0F766EL, // Pi
             0xFFCC785CL, // Claude
             0xFFFF6B35L, // OpenCode secondary
             0xFFC377FFL  // Extra – Brand Purple

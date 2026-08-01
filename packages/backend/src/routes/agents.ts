@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import { getDatabase } from '../db';
-import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
-import { safeJsonParse } from '../utils/json';
+import { getDatabase } from '../db/index.js';
+import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
+import { safeJsonParse } from '../utils/json.js';
 
 const router = Router();
 

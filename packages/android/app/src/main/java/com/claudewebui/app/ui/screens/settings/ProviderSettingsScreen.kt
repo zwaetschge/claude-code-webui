@@ -85,7 +85,7 @@ import com.claudewebui.app.ui.theme.AntiqueBrass
 import com.claudewebui.app.ui.theme.ClaudeColor
 import com.claudewebui.app.ui.theme.CodexColor
 import com.claudewebui.app.ui.theme.ErrorRed
-import com.claudewebui.app.ui.theme.GeminiColor
+import com.claudewebui.app.ui.theme.GoogleColor
 import com.claudewebui.app.ui.theme.SuccessGreen
 import com.claudewebui.app.ui.theme.WarningAmber
 import kotlinx.coroutines.launch
@@ -536,7 +536,7 @@ private fun ProviderEditForm(
 private fun providerColor(type: ProviderType): Color = when (type) {
     ProviderType.ANTHROPIC -> ClaudeColor
     ProviderType.OPENAI -> CodexColor
-    ProviderType.GOOGLE -> GeminiColor
+    ProviderType.GOOGLE -> GoogleColor
     ProviderType.OPENROUTER -> WarningAmber
     ProviderType.OLLAMA -> MaterialTheme.colorScheme.tertiary
     ProviderType.ZAI -> MaterialTheme.colorScheme.secondary

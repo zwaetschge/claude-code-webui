@@ -6,15 +6,16 @@
 #   - Traefik / Caddy / nginx labels
 #   - Absolute host paths (e.g. /mnt/user/appdata/... on Unraid, /opt/... on Linux)
 #   - An external Docker network shared with a reverse proxy
-#   - A docker.sock mount (so the container can rebuild itself via repair-bot)
-#   - A second `repair-bot` service for self-rebuild
+#   - Filtered Docker inventory, with an explicit trusted-admin release opt-in
+#   - A dedicated `repair-bot` sidecar for self-rebuilds
 
 services:
   claude-code-webui:
-    # Example: pin the host docker GID so the in-container `node` user can read /var/run/docker.sock.
-    # Find yours with:  stat -c '%g' /var/run/docker.sock
-    # group_add:
-    #   - "999"
+    # Never mount /var/run/docker.sock into the main WebUI. If Docker access is
+    # needed, expose only selected endpoints through docker-socket-proxy below.
+    # depends_on:
+    #   docker-socket-proxy:
+    #     condition: service_healthy
 
     # Example: Traefik labels for a public hostname behind a reverse proxy.
     # labels:
@@ -29,6 +30,7 @@ services:
     #   - FRONTEND_URL=https://code.example.com
     #   - CORS_ALLOWED_ORIGINS=https://code.example.com
     #   - ALLOWED_BASE_PATHS=/mnt/host
+    #   - DOCKER_HOST=tcp://docker-socket-proxy:2375
     #   # Optional: point Godot MCP at a mounted Godot 4 binary.
     #   - GODOT_BIN=/opt/godot/Godot_v4_linux.x86_64
 
@@ -38,16 +40,60 @@ services:
     #   - /opt/claude-webui/config/claude:/home/node/.claude
     #   - /opt/claude-webui/config/codex:/home/node/.codex
     #   - /opt/claude-webui/config/opencode:/home/node/.opencode
+    #   - /opt/claude-webui/config/pi:/home/node/.pi
+    #   - /opt/claude-webui/config/kimi:/home/node/.kimi-code
     #   - /opt/projects:/workspace
     #   # Optional: mount a host Godot binary directory for the Godot MCP.
     #   - /opt/godot:/opt/godot:ro
-    #   # Required for the repair-bot self-rebuild flow:
-    #   - /var/run/docker.sock:/var/run/docker.sock
-
     # Example: attach to a pre-existing reverse-proxy network alongside the default one.
     # networks:
     #   - default
     #   - traefik-public
+
+  # Optional filtered Docker API for admin inventory and release automation.
+  # docker-socket-proxy:
+  #   image: ghcr.io/tecnativa/docker-socket-proxy:0.3.0
+  #   restart: unless-stopped
+  #   init: true
+  #   environment:
+  #     PING: "1"
+  #     VERSION: "1"
+  #     INFO: "1"
+  #     CONTAINERS: "${DOCKER_PROXY_CONTAINERS:-0}"
+  #     IMAGES: "${DOCKER_PROXY_IMAGES:-0}"
+  #     NETWORKS: "${DOCKER_PROXY_NETWORKS:-0}"
+  #     VOLUMES: "0"
+  #     EXEC: "0"
+  #     BUILD: "${DOCKER_PROXY_BUILD:-0}"
+  #     POST: "${DOCKER_PROXY_POST:-0}"
+  #   # Trusted-admin release automation opts into all five DOCKER_PROXY_*
+  #   # switches in .env. NETWORKS lets Compose inspect external networks.
+  #   # Container writes are host-equivalent authority; keep
+  #   # CLI_RUNNER_ACCESS admin-only and EXEC/VOLUMES disabled.
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #   tmpfs:
+  #     - /run
+  #     - /tmp
+  #   healthcheck:
+  #     test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+  #     interval: 15s
+  #     timeout: 3s
+  #     retries: 3
+
+  # The main WebUI never mounts the raw Docker socket; only this proxy and the
+  # repair bot may do so. Copy the complete site-specific repair service from
+  # the project documentation and keep WEBUI_EXTERNAL_SKILL_SYNC=false so it
+  # cannot race the main importer.
+  # repair-bot:
+  #   image: plum-code-webui:latest
+  #   init: true
+  #   entrypoint: ["bash", "/webui/scripts/repair-bot-entrypoint.sh"]
+  #   environment:
+  #     WEBUI_EXTERNAL_SKILL_SYNC: "false"
+  #   volumes:
+  #     - ./:/webui
+  #     - /var/run/docker.sock:/var/run/docker.sock
 
 # networks:
 #   traefik-public:

@@ -13,6 +13,7 @@ import {
   getCliModels,
   getModelDisplayLabels,
   getProviderCapabilities,
+  parseClaudeCliModelCatalog,
   resetDiscovery,
   resolveCliProviderSelectedModel,
   resolveOpenCodeConfiguredModel,
@@ -39,17 +40,36 @@ import {
   resolveZaiVisionMcpPolicy,
 } from '../src/utils/providerLinks.js';
 import { getOpenCodeCredentialEnvVars } from '../src/utils/opencodeProviderKeys.js';
-import { ensureDefaultClaudeMcpServers } from '../src/utils/mcpDefaults.js';
 import {
+  buildPiModelCatalog,
+  buildPiProviderConfig,
+  isPiRunnableModel,
+  parsePiProviderModels,
+} from '../src/utils/piConfig.js';
+import {
+  ensureDefaultClaudeMcpServers,
+  sanitizeClaudeSettingsProviderEnv,
+} from '../src/utils/mcpDefaults.js';
+import { sanitizeClaudeResumeTranscript } from '../src/utils/claudeResumeTranscript.js';
+import { mapCodexUsage } from '../src/utils/codexUsage.js';
+import {
+  buildOpenCodePollMessagesUrl,
+  buildOpenCodeTurnMessageId,
+  collectOpenCodeMessageUsage,
   collectOpenCodePollCursor,
   extractOpenCodeAssistantErrorMessage,
   formatOpenCodeStallErrorMessage,
   hasOpenCodeHardSafetyTimeoutElapsed,
+  OpencodeServer,
+  OPENCODE_POLL_MESSAGE_LIMIT,
   OpenCodeProviderTurnGate,
   isTerminalOpenCodeAssistantMessage,
   resolveOpenCodeProviderTurnGateKey,
   resolveOpenCodeNoProgressTimeoutMs,
   resolveOpenCodeStallTimeout,
+  selectOpenCodeTurnMessages,
+  shouldDetachOpenCodeServer,
+  subtractOpenCodeUsage,
   opencodeServer,
 } from '../src/services/opencode/OpencodeServer.js';
 import {
@@ -58,10 +78,15 @@ import {
 } from '../src/utils/opencodeCatalog.js';
 import {
   hasOpenCodeGoLocalUsage,
+  mapZaiAccountUsage,
   mapZaiUsage,
   parseOpenCodeGoQuotaHtml,
 } from '../src/routes/usage.js';
-import { readProjectIconCandidate } from '../src/routes/sessions.js';
+import {
+  createSessionSchema,
+  readProjectIconCandidate,
+  updateProviderSchema,
+} from '../src/routes/sessions.js';
 import { resolveMemoryDirectory } from '../src/routes/memories.js';
 import { buildTaskProxyHeaders, isTaskHookSecretValid } from '../src/routes/tasks.js';
 import {
@@ -69,16 +94,40 @@ import {
   generateSessionIconImage,
   buildSessionIconImagePrompt,
 } from '../src/services/sessionIconGenerator.js';
-import { stripDeviceAppearanceSettings, updateSettingsSchema } from '../src/routes/settings.js';
+import {
+  buildClaudeApiEnv,
+  getClaudeApiEndpointKind,
+  getClaudeApiModelLabels,
+  stripDeviceAppearanceSettings,
+  updateSettingsSchema,
+} from '../src/routes/settings.js';
 import { upsertProxyUserInDatabase } from '../src/utils/proxyUser.js';
+import { migrateLegacyClaudeEndpointToZai } from '../src/db/index.js';
 import { syncCodexConfig } from '../src/utils/codexConfigSync.js';
 import { resolveContextWindow } from '../src/utils/contextWindow.js';
+import { mapKimiUsage } from '../src/utils/kimiUsage.js';
 import {
+  CODEX_ROLLOUT_TAIL_MAX_BYTES,
   ClaudeProcessManager,
+  applyClaudeResultUsage,
+  appliesModeOnNextTurnWithoutRestart,
+  accumulateClaudeMessageDeltaUsage,
+  accumulateClaudeMessageStartUsage,
+  buildClaudeTransportProcessEnv,
+  extractExplicitWorkspaceChatMedia,
   extractCodexSessionId,
+  findCodexExecRootThreadId,
+  readCodexDescendantUsageDetail,
   formatCodexSharedContextForTest,
+  formatKimiExitMessage,
+  isKimiSessionNotFoundError,
+  kimiAcpModeForSessionMode,
+  resolveSessionStartMode,
+  shouldRecoverInterruptedKimiTurn,
   isCodexNativeSlashCommand,
   readCodexDescendantUsage,
+  readCodexRolloutTail,
+  readCodexThreadCumulativeUsage,
   readLatestCodexContextSnapshot,
   readCodexThreadState,
   shouldInjectSessionStyleContext,
@@ -89,7 +138,10 @@ import { commandService, resolveAllowedCommandPath } from '../src/services/comma
 import { getCliUpdateCommand } from '../src/services/cli-updates.js';
 import { buildSessionCookieOptions } from '../src/utils/sessionCookie.js';
 import { normalizeUsageSnapshot } from '../../shared/src/index.js';
-import { getProviderLabelForModel } from '../../shared/src/types/cli-providers.js';
+import {
+  getProviderLabelForModel,
+  getProviderLabelForUsage,
+} from '../../shared/src/types/cli-providers.js';
 import { estimateModelCost, resolveModelPricing } from '../../shared/src/types/llm-pricing.js';
 
 type ClaudeProcessManagerIo = ConstructorParameters<typeof ClaudeProcessManager>[0];
@@ -189,9 +241,168 @@ function testProviderLabels() {
   assert.equal(getProviderLabelForModel('glm-4.7'), 'OpenCode');
   assert.equal(getProviderLabelForModel('mistral-vibe-cli-latest'), 'Vibe');
   assert.equal(getProviderLabelForModel('unknown-model'), 'Other');
+  assert.equal(getProviderLabelForUsage('claude', 'opus'), 'Claude');
+  assert.equal(getProviderLabelForUsage('zai', 'glm-5.2'), 'Z.AI');
+}
+
+function testProviderTurnUsageAggregation() {
+  const claudeUsage = {
+    turnInputTokens: 0,
+    turnOutputTokens: 0,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+  };
+  accumulateClaudeMessageStartUsage(claudeUsage, 'response-1', {
+    input_tokens: 100,
+    cache_read_input_tokens: 900,
+  });
+  accumulateClaudeMessageDeltaUsage(claudeUsage, { output_tokens: 40 });
+  // Replayed fragments for one response must not be billed again.
+  accumulateClaudeMessageStartUsage(claudeUsage, 'response-1', {
+    input_tokens: 100,
+    cache_read_input_tokens: 900,
+  });
+  accumulateClaudeMessageDeltaUsage(claudeUsage, { output_tokens: 40 });
+  accumulateClaudeMessageStartUsage(claudeUsage, 'response-2', {
+    input_tokens: 25,
+    cache_read_input_tokens: 1_975,
+  });
+  accumulateClaudeMessageDeltaUsage(claudeUsage, { output_tokens: 60 });
+  assert.deepEqual(
+    {
+      input: claudeUsage.turnInputTokens,
+      output: claudeUsage.turnOutputTokens,
+      cacheRead: claudeUsage.turnCacheReadTokens,
+      contextInput: claudeUsage.contextInputTokens,
+      contextCacheRead: claudeUsage.contextCacheReadTokens,
+      contextOutput: claudeUsage.contextOutputTokens,
+    },
+    {
+      input: 125,
+      output: 100,
+      cacheRead: 2_875,
+      contextInput: 25,
+      contextCacheRead: 1_975,
+      contextOutput: 60,
+    },
+    'Claude billing must sum tool-loop responses while context reflects only the latest request'
+  );
+
+  // Z.AI's partial stream can carry output deltas but omit input/cache usage.
+  // The final Claude result must restore the missing billed buckets without
+  // double-counting richer per-response telemetry gathered above.
+  const zaiSparseStreamUsage = {
+    turnInputTokens: 0,
+    turnOutputTokens: 98_288,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+  };
+  applyClaudeResultUsage(zaiSparseStreamUsage, {
+    input_tokens: 413_954,
+    output_tokens: 98_288,
+    cache_read_input_tokens: 19_415_296,
+  });
+  assert.deepEqual(zaiSparseStreamUsage, {
+    turnInputTokens: 413_954,
+    turnOutputTokens: 98_288,
+    turnCacheReadTokens: 19_415_296,
+    turnCacheCreationTokens: 0,
+  });
+  applyClaudeResultUsage(claudeUsage, {
+    input_tokens: 100,
+    output_tokens: 80,
+    cache_read_input_tokens: 2_000,
+  });
+  assert.equal(claudeUsage.turnInputTokens, 125);
+  assert.equal(claudeUsage.turnOutputTokens, 100);
+  assert.equal(claudeUsage.turnCacheReadTokens, 2_875);
+
+  const seen = new Set<string>();
+  const rootUsage = collectOpenCodeMessageUsage(
+    [
+      {
+        info: {
+          id: 'root-message',
+          role: 'assistant',
+          tokens: {
+            input: 10,
+            output: 5,
+            reasoning: 3,
+            cache: { read: 100, write: 2 },
+          },
+        },
+      },
+    ],
+    seen
+  );
+  const childUsage = collectOpenCodeMessageUsage(
+    [
+      {
+        info: {
+          id: 'child-message',
+          role: 'assistant',
+          tokens: {
+            input: 20,
+            output: 7,
+            reasoning: 4,
+            cache: { read: 200, write: 1 },
+          },
+        },
+      },
+      {
+        info: {
+          id: 'root-message',
+          role: 'assistant',
+          tokens: {
+            input: 10,
+            output: 5,
+            reasoning: 3,
+            cache: { read: 100, write: 2 },
+          },
+        },
+      },
+    ],
+    seen
+  );
+  assert.deepEqual(rootUsage, {
+    input: 10,
+    output: 5,
+    reasoning: 3,
+    cacheRead: 100,
+    cacheWrite: 2,
+  });
+  assert.deepEqual(childUsage, {
+    input: 20,
+    output: 7,
+    reasoning: 4,
+    cacheRead: 200,
+    cacheWrite: 1,
+  });
+  assert.deepEqual(
+    subtractOpenCodeUsage(
+      { input: 30, output: 12, reasoning: 7, cacheRead: 300, cacheWrite: 3 },
+      rootUsage
+    ),
+    { input: 20, output: 7, reasoning: 4, cacheRead: 200, cacheWrite: 1 }
+  );
+  assert.equal(
+    subtractOpenCodeUsage(rootUsage, {
+      input: 11,
+      output: 5,
+      reasoning: 3,
+      cacheRead: 100,
+      cacheWrite: 2,
+    }),
+    null,
+    'counter resets must fall back instead of creating negative usage'
+  );
 }
 
 function testContextWindowFallbacks() {
+  assert.equal(resolveContextWindow('claude-fable-5'), 1_000_000);
+  assert.equal(resolveContextWindow('claude-opus-5'), 1_000_000);
+  assert.equal(resolveContextWindow('claude-sonnet-5'), 1_000_000);
+  assert.equal(resolveContextWindow('claude-haiku-4-5'), 200_000);
   assert.equal(resolveContextWindow('gpt-5.5'), 256_000);
   assert.equal(resolveContextWindow('gpt-5.5-pro'), 256_000);
   assert.equal(resolveContextWindow('gpt-5.6-sol'), 1_050_000);
@@ -717,6 +928,12 @@ async function testCodexContextSnapshotReadsRolloutTokenCount() {
           payload: {
             type: 'token_count',
             info: {
+              total_token_usage: {
+                input_tokens: 9_000_000,
+                cached_input_tokens: 8_500_000,
+                output_tokens: 300_000,
+                reasoning_output_tokens: 50_000,
+              },
               last_token_usage: {
                 input_tokens: 72_000,
                 cached_input_tokens: 30_000,
@@ -741,6 +958,543 @@ async function testCodexContextSnapshotReadsRolloutTokenCount() {
     assert.equal(snapshot?.counters.output, 1_000);
     assert.equal(snapshot?.contextWindow, 256_000);
     assert.equal(snapshot?.recordedAt, '2026-06-17T20:22:00.000Z');
+    assert.deepEqual(readCodexThreadCumulativeUsage(codexHome, threadId), {
+      input: 9_000_000,
+      cached: 8_500_000,
+      output: 300_000,
+    });
+  } finally {
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+async function testCodexContextSnapshotReadsOnlyBoundedTail() {
+  const threadId = 'thread-context-bounded-tail';
+  const codexHome = await createCodexStateFixture({
+    cwd: '/workspace/plum',
+    threadId,
+    tokensUsed: 90_000,
+    prompt: 'Bounded rollout tail',
+  });
+  const rolloutPath = path.join(codexHome, 'sessions', `${threadId}.jsonl`);
+  const tokenCount = JSON.stringify({
+    timestamp: '2026-07-14T05:00:00.000Z',
+    type: 'event_msg',
+    payload: {
+      type: 'token_count',
+      info: {
+        last_token_usage: {
+          input_tokens: 88_000,
+          cached_input_tokens: 70_000,
+          output_tokens: 2_000,
+        },
+        model_context_window: 256_000,
+      },
+    },
+  });
+
+  try {
+    await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
+    await fs.writeFile(rolloutPath, '', 'utf8');
+    // Sparse prefix models a multi-hundred-MiB rollout without allocating it in
+    // the test process. The newest complete token_count remains in the tail.
+    await fs.truncate(rolloutPath, CODEX_ROLLOUT_TAIL_MAX_BYTES * 4);
+    await fs.appendFile(rolloutPath, `\n${tokenCount}\n{"partial":`, 'utf8');
+
+    const stat = await fs.stat(rolloutPath);
+    const tail = readCodexRolloutTail(rolloutPath);
+    assert.ok(stat.size > CODEX_ROLLOUT_TAIL_MAX_BYTES);
+    assert.equal(tail?.truncated, true);
+    assert.equal(tail?.bytesRead, CODEX_ROLLOUT_TAIL_MAX_BYTES);
+
+    const snapshot = readLatestCodexContextSnapshot(codexHome, {
+      threadId,
+      cwd: '/workspace/plum',
+    });
+    assert.deepEqual(snapshot?.counters, {
+      input: 88_000,
+      cached: 70_000,
+      output: 2_000,
+    });
+    assert.equal(snapshot?.recordedAt, '2026-07-14T05:00:00.000Z');
+  } finally {
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Fixture: one exec root plus a subagent child in the same cwd, both with a
+ * rollout carrying a single token_count. Mirrors what Codex writes when a turn
+ * spawns subagents.
+ */
+async function createCodexExecTreeFixture(opts: {
+  cwd: string;
+  rootThreadId: string;
+  rootCreatedAtMs: number;
+  childUsage: { input: number; cached: number; output: number };
+  rootUsage: { input: number; cached: number; output: number };
+  extraRoot?: { id: string; createdAtMs: number };
+}): Promise<string> {
+  const codexHome = await createCodexStateFixture({
+    cwd: opts.cwd,
+    threadId: opts.rootThreadId,
+    tokensUsed: 10_000,
+    prompt: 'Root prompt',
+    updatedAtMs: opts.rootCreatedAtMs,
+  });
+  await fs.mkdir(path.join(codexHome, 'sessions'), { recursive: true });
+  const db = new Database(path.join(codexHome, 'state_5.sqlite'));
+  const tokenCount = (counters: { input: number; cached: number; output: number }) =>
+    `${JSON.stringify({
+      timestamp: '2026-07-30T11:20:00.000Z',
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: counters.input,
+            cached_input_tokens: counters.cached,
+            output_tokens: counters.output,
+          },
+        },
+      },
+    })}\n`;
+
+  const insertThread = db.prepare(`
+    INSERT INTO threads (
+      id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+      sandbox_policy, approval_mode, tokens_used, has_user_event, archived,
+      cli_version, first_user_message, memory_mode, model, created_at_ms,
+      updated_at_ms, preview
+    ) VALUES (?, ?, ?, ?, ?, 'openai', ?, ?, 'workspace-write',
+      'on-request', 1, 0, 0, '0.144.0', '', 'enabled', 'gpt-5.6-sol', ?, ?, '')
+  `);
+
+  const rootRollout = path.join(codexHome, 'sessions', `${opts.rootThreadId}.jsonl`);
+  db.prepare(
+    'UPDATE threads SET rollout_path = ?, created_at_ms = ?, created_at = ? WHERE id = ?'
+  ).run(
+    rootRollout,
+    opts.rootCreatedAtMs,
+    Math.floor(opts.rootCreatedAtMs / 1000),
+    opts.rootThreadId
+  );
+  await fs.writeFile(rootRollout, tokenCount(opts.rootUsage), 'utf8');
+
+  const childId = `${opts.rootThreadId}-child`;
+  const childRollout = path.join(codexHome, 'sessions', `${childId}.jsonl`);
+  const childCreatedAtMs = opts.rootCreatedAtMs + 60_000;
+  insertThread.run(
+    childId,
+    childRollout,
+    Math.floor(childCreatedAtMs / 1000),
+    Math.floor(childCreatedAtMs / 1000),
+    JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: opts.rootThreadId } } }),
+    opts.cwd,
+    childId,
+    childCreatedAtMs,
+    childCreatedAtMs
+  );
+  await fs.writeFile(childRollout, tokenCount(opts.childUsage), 'utf8');
+
+  if (opts.extraRoot) {
+    const extraRollout = path.join(codexHome, 'sessions', `${opts.extraRoot.id}.jsonl`);
+    insertThread.run(
+      opts.extraRoot.id,
+      extraRollout,
+      Math.floor(opts.extraRoot.createdAtMs / 1000),
+      Math.floor(opts.extraRoot.createdAtMs / 1000),
+      'exec',
+      opts.cwd,
+      opts.extraRoot.id,
+      opts.extraRoot.createdAtMs,
+      opts.extraRoot.createdAtMs
+    );
+    await fs.writeFile(extraRollout, tokenCount({ input: 1, cached: 0, output: 1 }), 'utf8');
+  }
+
+  db.close();
+  return codexHome;
+}
+
+/**
+ * Regression: subagent threads share the parent's cwd, and a second WebUI
+ * session can start its own exec in the same directory. The lookup must skip
+ * spawned children and take the exec started by *this* turn, not the newest one.
+ */
+async function testCodexExecRootLookupSkipsSubagentsAndForeignExecs() {
+  const execStartedAtMs = Date.parse('2026-07-30T11:18:14.000Z');
+  const codexHome = await createCodexExecTreeFixture({
+    cwd: '/workspace/plum-exec-root',
+    rootThreadId: 'exec-root',
+    rootCreatedAtMs: execStartedAtMs + 500,
+    rootUsage: { input: 99_000, cached: 95_000, output: 900 },
+    childUsage: { input: 48_000, cached: 46_000, output: 400 },
+    extraRoot: { id: 'foreign-exec-root', createdAtMs: execStartedAtMs + 300_000 },
+  });
+
+  try {
+    assert.equal(
+      findCodexExecRootThreadId(codexHome, {
+        cwd: '/workspace/plum-exec-root',
+        sinceMs: execStartedAtMs,
+      }),
+      'exec-root'
+    );
+    assert.equal(
+      findCodexExecRootThreadId(codexHome, { cwd: '/nope', sinceMs: execStartedAtMs }),
+      null
+    );
+    assert.deepEqual(readCodexDescendantUsage(codexHome, 'exec-root'), {
+      input: 48_000,
+      cached: 46_000,
+      output: 400,
+    });
+  } finally {
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+function makeCodexProcFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    cliProvider: 'codex',
+    userId: 'user-1',
+    workingDirectory: '/workspace/plum-exec-root',
+    model: 'gpt-5.6-sol',
+    contextWindow: 258_400,
+    totalCostUsd: 0,
+    previousTotalCostUsd: 0,
+    turnInputTokens: 0,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+    turnOutputTokens: 0,
+    codexCurrentExecUsedResume: false,
+    codexSawTokenCountThisTurn: true,
+    currentToolName: null,
+    currentToolId: null,
+    currentAgentType: null,
+    currentAgentDescription: null,
+    currentActivitySummary: null,
+    subagentRuns: new Map(),
+    outputBuffer: { push: () => undefined },
+    lastActivityAt: Date.now(),
+    ...overrides,
+  };
+}
+
+/**
+ * Regression: the thread id used to be resolved *after* the descendant lookup,
+ * so a turn whose session_meta carried no id charged its subagents against
+ * `null` and silently dropped them.
+ */
+async function testCodexTurnCompletedRollsUpDescendantsWithoutKnownThreadId() {
+  const execStartedAtMs = Date.parse('2026-07-30T11:18:14.000Z');
+  const codexHome = await createCodexExecTreeFixture({
+    cwd: '/workspace/plum-exec-root',
+    rootThreadId: 'exec-root',
+    rootCreatedAtMs: execStartedAtMs + 500,
+    rootUsage: { input: 99_000, cached: 95_000, output: 900 },
+    childUsage: { input: 48_000, cached: 46_000, output: 400 },
+  });
+  const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
+  const ioStub = { to: () => ({ emit: () => undefined }) };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    completeActiveSubagents: (...args: unknown[]) => void;
+    emitUsage: (...args: unknown[]) => void;
+    translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  managerPrivate.completeActiveSubagents = () => undefined;
+  managerPrivate.emitUsage = () => undefined;
+
+  const sessionId = 'session-codex-root-resolution';
+  // No codexSessionId/claudeSessionId: exactly the state that lost the subagents.
+  const proc = makeCodexProcFixture({ codexExecStartedAtMs: execStartedAtMs });
+
+  try {
+    CLI_PROVIDERS.codex.credentialsPath = codexHome;
+    managerPrivate.processes.set(sessionId, proc);
+    const translated = managerPrivate.translateCodexMessage(sessionId, {
+      type: 'turn.completed',
+      usage: {
+        input_tokens: 99_000,
+        cached_input_tokens: 95_000,
+        output_tokens: 700,
+        reasoning_output_tokens: 200,
+      },
+    }) as { usage?: Record<string, number> } | null;
+
+    // Root non-cached 4_000 + child non-cached 2_000; caches and output summed.
+    assert.equal(translated?.usage?.input_tokens, 6_000);
+    assert.equal(translated?.usage?.cache_read_input_tokens, 141_000);
+    assert.equal(translated?.usage?.output_tokens, 1_300);
+    assert.equal(proc.codexSessionId, 'exec-root');
+  } finally {
+    CLI_PROVIDERS.codex.credentialsPath = originalCredentialsPath;
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+/** Regression: `turn.failed` carries no usage, so the turn used to cost nothing. */
+async function testCodexTurnFailedBooksUsageFromThreadState() {
+  const execStartedAtMs = Date.parse('2026-07-30T11:18:14.000Z');
+  const codexHome = await createCodexExecTreeFixture({
+    cwd: '/workspace/plum-exec-root',
+    rootThreadId: 'exec-root',
+    rootCreatedAtMs: execStartedAtMs + 500,
+    rootUsage: { input: 99_000, cached: 95_000, output: 900 },
+    childUsage: { input: 48_000, cached: 46_000, output: 400 },
+  });
+  const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
+  const ioStub = { to: () => ({ emit: () => undefined }) };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const saved: Array<Record<string, unknown>> = [];
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    completeActiveSubagents: (...args: unknown[]) => void;
+    emitUsage: (...args: unknown[]) => void;
+    saveUsageToDatabase: (sessionId: string, proc: Record<string, unknown>) => void;
+    translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  managerPrivate.completeActiveSubagents = () => undefined;
+  managerPrivate.emitUsage = () => undefined;
+  managerPrivate.saveUsageToDatabase = (_sessionId, savedProc) => {
+    saved.push({
+      input: savedProc.turnInputTokens,
+      cached: savedProc.turnCacheReadTokens,
+      output: savedProc.turnOutputTokens,
+    });
+  };
+
+  const sessionId = 'session-codex-turn-failed';
+  const proc = makeCodexProcFixture({ codexExecStartedAtMs: execStartedAtMs });
+
+  try {
+    CLI_PROVIDERS.codex.credentialsPath = codexHome;
+    managerPrivate.processes.set(sessionId, proc);
+    const translated = managerPrivate.translateCodexMessage(sessionId, {
+      type: 'turn.failed',
+      message: 'rate limit',
+    });
+
+    // A failed turn must not synthesize a successful result...
+    assert.equal(translated, null);
+    // ...but its spend still has to land in usage_history.
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0], { input: 6_000, cached: 141_000, output: 1_300 });
+  } finally {
+    CLI_PROVIDERS.codex.credentialsPath = originalCredentialsPath;
+    await fs.rm(codexHome, { recursive: true, force: true });
+  }
+}
+
+function makePiManagerFixture(sessionId: string, overrides: Record<string, unknown> = {}) {
+  const emitted: EmittedSocketEvent[] = [];
+  const ioStub = {
+    to: () => ({
+      emit: (event: string, data: unknown) => {
+        emitted.push({ event, data });
+      },
+    }),
+  };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    emitCompact: (...args: unknown[]) => void;
+    resetCurrentContextUsage: (...args: unknown[]) => void;
+    translatePiMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  managerPrivate.emitCompact = () => undefined;
+  managerPrivate.resetCurrentContextUsage = () => undefined;
+
+  const written: string[] = [];
+  const proc: Record<string, unknown> = {
+    cliProvider: 'pi',
+    userId: 'user-1',
+    model: 'alibaba-token-plan/qwen3.8-max-preview',
+    streamingText: '',
+    isStreaming: true,
+    turnInputTokens: 0,
+    turnOutputTokens: 0,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalCostUsd: 0,
+    piTurnInFlight: true,
+    pendingToolResults: new Map(),
+    subagentRuns: new Map(),
+    process: { stdin: { write: (chunk: string) => written.push(chunk), writable: true } },
+    ...overrides,
+  };
+  managerPrivate.processes.set(sessionId, proc);
+  return { managerPrivate, proc, written, emitted };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Regression: threshold compaction consumed the turn and Pi never picked the
+ * work back up, leaving the request unfinished with the thinking indicator on.
+ */
+async function testPiResumesTurnAfterThresholdCompaction() {
+  const sessionId = 'session-pi-compact-resume';
+  const { managerPrivate, proc, written } = makePiManagerFixture(sessionId);
+
+  managerPrivate.translatePiMessage(sessionId, {
+    type: 'compaction_end',
+    reason: 'threshold',
+    aborted: false,
+    willRetry: false,
+  });
+
+  assert.equal(written.length, 0, 'nudge must not fire synchronously');
+  await sleep(6_400);
+
+  assert.equal(written.length, 1);
+  const sent = JSON.parse(written[0]) as { type: string; message: string };
+  assert.equal(sent.type, 'prompt');
+  assert.match(sent.message, /Continue the task from the compaction summary/);
+  assert.equal(proc.piCompactContinuations, 1);
+}
+
+/** Pi retries the aborted turn itself on overflow — a nudge would duplicate it. */
+async function testPiDoesNotResumeWhenPiWillRetry() {
+  const sessionId = 'session-pi-compact-will-retry';
+  const { managerPrivate, written } = makePiManagerFixture(sessionId);
+
+  managerPrivate.translatePiMessage(sessionId, {
+    type: 'compaction_end',
+    reason: 'overflow',
+    aborted: false,
+    willRetry: true,
+  });
+
+  await sleep(6_400);
+  assert.equal(written.length, 0);
+}
+
+/** Any sign of progress cancels the pending nudge. */
+async function testPiProgressCancelsScheduledCompactionResume() {
+  const sessionId = 'session-pi-compact-progress';
+  const { managerPrivate, written } = makePiManagerFixture(sessionId);
+
+  managerPrivate.translatePiMessage(sessionId, {
+    type: 'compaction_end',
+    reason: 'threshold',
+    aborted: false,
+    willRetry: false,
+  });
+  managerPrivate.translatePiMessage(sessionId, {
+    type: 'message_start',
+    message: { role: 'assistant' },
+  });
+
+  await sleep(6_400);
+  assert.equal(written.length, 0);
+}
+
+/** A manual /compact between turns must not inject a continuation. */
+async function testPiManualCompactWithoutTurnDoesNotResume() {
+  const sessionId = 'session-pi-compact-manual';
+  const { managerPrivate, written } = makePiManagerFixture(sessionId, { piTurnInFlight: false });
+
+  managerPrivate.translatePiMessage(sessionId, {
+    type: 'compaction_end',
+    reason: 'manual',
+    aborted: false,
+    willRetry: false,
+  });
+
+  await sleep(6_400);
+  assert.equal(written.length, 0);
+}
+
+/**
+ * Subagent detail must strip the parent history Codex replays into each spawned
+ * thread, otherwise the breakdown inflates with every extra child.
+ */
+async function testCodexSubagentDetailStripsInheritedHistory() {
+  const codexHome = await createCodexStateFixture({
+    cwd: '/workspace/plum-subagents',
+    threadId: 'detail-root',
+    tokensUsed: 10_000,
+    prompt: 'Root prompt',
+  });
+  const db = new Database(path.join(codexHome, 'state_5.sqlite'));
+  await fs.mkdir(path.join(codexHome, 'sessions'), { recursive: true });
+
+  const tokenCount = (
+    timestamp: string,
+    counters: { input: number; cached: number; output: number }
+  ) =>
+    JSON.stringify({
+      timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: counters.input,
+            cached_input_tokens: counters.cached,
+            output_tokens: counters.output,
+          },
+        },
+      },
+    });
+
+  const childId = 'detail-child';
+  const childRollout = path.join(codexHome, 'sessions', `${childId}.jsonl`);
+  const childCreatedAtMs = Date.parse('2026-07-12T10:00:00.000Z');
+  db.prepare(
+    `INSERT INTO threads (
+       id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+       sandbox_policy, approval_mode, tokens_used, has_user_event, archived,
+       cli_version, first_user_message, memory_mode, model, created_at_ms,
+       updated_at_ms, preview, agent_nickname
+     ) VALUES (?, ?, ?, ?, ?, 'openai', '/workspace/plum-subagents', ?, 'workspace-write',
+       'on-request', 1, 0, 0, '0.144.0', '', 'enabled', 'gpt-5.6-terra', ?, ?, '', ?)`
+  ).run(
+    childId,
+    childRollout,
+    Math.floor(childCreatedAtMs / 1000),
+    Math.floor(childCreatedAtMs / 1000),
+    JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: 'detail-root' } } }),
+    childId,
+    childCreatedAtMs,
+    childCreatedAtMs,
+    'playtester'
+  );
+  db.close();
+
+  // Replayed parent history carries the fork timestamp; the child's own spend
+  // is only what lands after it.
+  await fs.writeFile(
+    childRollout,
+    [
+      tokenCount('2026-07-12T10:00:00.000Z', { input: 78_000, cached: 76_000, output: 900 }),
+      tokenCount('2026-07-12T10:05:00.000Z', { input: 80_000, cached: 77_000, output: 1_100 }),
+    ].join('\n') + '\n',
+    'utf8'
+  );
+
+  try {
+    const detail = readCodexDescendantUsageDetail(codexHome, 'detail-root');
+    assert.equal(detail.length, 1);
+    assert.equal(detail[0].threadId, childId);
+    assert.equal(detail[0].parentThreadId, 'detail-root');
+    assert.equal(detail[0].agentType, 'playtester');
+    assert.equal(detail[0].model, 'gpt-5.6-terra');
+    assert.deepEqual(detail[0].usage, { input: 2_000, cached: 1_000, output: 200 });
+    // The aggregate helper must stay consistent with the detail it sums.
+    assert.deepEqual(readCodexDescendantUsage(codexHome, 'detail-root'), {
+      input: 2_000,
+      cached: 1_000,
+      output: 200,
+    });
   } finally {
     await fs.rm(codexHome, { recursive: true, force: true });
   }
@@ -811,11 +1565,7 @@ async function testCodexDescendantUsageReadsRecursiveRolloutTotals() {
           tokenCount('2026-07-12T10:00:02.000Z', usage),
         ]
       : [tokenCount('2026-07-12T10:00:02.000Z', usage)];
-    await fs.writeFile(
-      rolloutPath,
-      `${lines.join('\n')}\n`,
-      'utf8'
-    );
+    await fs.writeFile(rolloutPath, `${lines.join('\n')}\n`, 'utf8');
   };
 
   try {
@@ -1315,7 +2065,42 @@ function testProviderCapabilities() {
   }
   assert.equal(getProviderCapabilities('codex').nativeVision, true);
   assert.equal(getProviderCapabilities('opencode').imageBridge, true);
-  assert.equal(getProviderCapabilities('vibe').usageLimits, 'local-budget');
+}
+
+function testClaudeCurrentModelCatalog() {
+  const catalog = parseClaudeCliModelCatalog(
+    [
+      'claude-opus-4-8',
+      'Claude Opus 4.8',
+      'claude-fable-5',
+      'Claude Fable 5',
+      'claude-opus-5',
+      'Claude Opus 5',
+      'claude-sonnet-4-6',
+      'Claude Sonnet 4.6',
+      'claude-sonnet-5',
+      'Claude Sonnet 5',
+      'claude-haiku-4-5',
+      'Claude Haiku 4.5',
+      'claude-opus-4-5-20251101',
+    ].join('\n')
+  );
+
+  assert.deepEqual(catalog.models, [
+    'claude-fable-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-4-5',
+  ]);
+  assert.equal(
+    CLI_PROVIDERS.claude.defaultModel,
+    process.env.CLI_PROVIDER_CLAUDE_DEFAULT_MODEL || 'sonnet'
+  );
+  assert.equal(catalog.labels['claude-fable-5'], 'Fable 5');
+  assert.equal(catalog.labels['claude-opus-5'], 'Opus 5');
+  assert.equal(catalog.labels['claude-sonnet-5'], 'Sonnet 5');
+  assert.equal(catalog.labels['claude-haiku-4-5'], 'Haiku 4.5');
+  assert.equal(catalog.labels.sonnet, 'Sonnet 5');
 }
 
 function testCodexFastTierArgs() {
@@ -1409,9 +2194,10 @@ function testCodexSharedRegistryDoesNotRepeatLongDescriptions() {
     plugins: [{ name: 'github', description: 'A deliberately long plugin description.' }],
   });
 
-  assert.match(context || '', /Skills \(1\): debugging-playbook/);
-  assert.match(context || '', /Agents \(1\): backend-dev/);
-  assert.match(context || '', /Plugins \(1\): github/);
+  assert.match(context || '', /Active core skills \(1\): debugging-playbook/);
+  assert.match(context || '', /capability-catalog\.mjs search/);
+  assert.doesNotMatch(context || '', /Agents \(1\): backend-dev/);
+  assert.doesNotMatch(context || '', /Plugins \(1\): github/);
   assert.doesNotMatch(context || '', /deliberately long/);
 }
 
@@ -1720,6 +2506,117 @@ function testOpenCodeSessionModelSelection() {
     resolveCliProviderSelectedModel('codex', 'gpt-5.5', ['gpt-5.4'], 'gpt-5.4'),
     'gpt-5.4'
   );
+  assert.equal(
+    resolveCliProviderSelectedModel('pi', 'z-ai/glm-5.1', configured, 'openai/gpt-5.2'),
+    'openai/gpt-5.2'
+  );
+}
+
+function testPiSharesOpenCodeProviderConfigWithoutPersistingSecrets() {
+  const entry = buildPiProviderConfig(
+    {
+      id: 'z-ai',
+      name: 'Z.AI',
+      apiKey: 'encrypted-secret-that-must-not-be-copied',
+      baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      enabled: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+    {
+      'z-ai': {
+        name: 'Z.AI',
+        models: ['glm-5.1', 'glm-5.2'],
+        description: 'test',
+        env: ['Z_AI_API_KEY'],
+        api: 'https://api.z.ai/api/coding/paas/v4',
+        source: 'config',
+      },
+    }
+  );
+
+  assert.ok(entry);
+  assert.equal(entry?.api, 'openai-completions');
+  assert.equal(entry?.apiKey, '$Z_AI_API_KEY');
+  assert.equal(JSON.stringify(entry).includes('encrypted-secret-that-must-not-be-copied'), false);
+  assert.equal(Array.isArray(entry?.models), true);
+  assert.equal((entry?.models as unknown[]).length, 2);
+}
+
+function testPiUsesOnlyEnabledUserProviderModels() {
+  const configured = parsePiProviderModels({
+    provider: {
+      'llama-local': {
+        models: {
+          'Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf': {},
+        },
+      },
+      'z-ai': {
+        models: {
+          'glm-5.2': {},
+          'glm-5.1': {},
+        },
+      },
+      deepseek: {
+        models: {
+          'deepseek-chat': {},
+          'deepseek-reasoner': {},
+        },
+      },
+      'alibaba-token-plan': {
+        models: {
+          'qwen3.8-max-preview': {},
+          'qwen3.7-plus': {},
+          'qwen-image-2.0': {},
+          'wan2.7-image-pro': {},
+          'happyhorse-1.1-t2v': {},
+        },
+      },
+    },
+  });
+  const provider = (
+    id: string,
+    enabled = true
+  ): Parameters<typeof buildPiModelCatalog>[0][number] => ({
+    id,
+    name: id,
+    apiKey: 'encrypted',
+    baseUrl: `https://${id}.example/v1`,
+    enabled,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const result = buildPiModelCatalog(
+    [
+      provider('z-ai'),
+      provider('deepseek'),
+      provider('alibaba-token-plan'),
+      provider('llama-local', false),
+    ],
+    {},
+    configured
+  );
+
+  assert.deepEqual(result.models, [
+    'z-ai/glm-5.2',
+    'z-ai/glm-5.1',
+    'deepseek/deepseek-chat',
+    'deepseek/deepseek-reasoner',
+    'alibaba-token-plan/qwen3.8-max-preview',
+    'alibaba-token-plan/qwen3.7-plus',
+  ]);
+  assert.equal(
+    result.models.some((model) => /qwopus/i.test(model)),
+    false
+  );
+  assert.equal(
+    result.models.some((model) => /qwen-image|wan2|happyhorse/i.test(model)),
+    false
+  );
+  assert.deepEqual(Object.keys(result.piProviders), ['z-ai', 'deepseek', 'alibaba-token-plan']);
+  assert.equal(isPiRunnableModel('qwen3.8-max-preview'), true);
+  assert.equal(isPiRunnableModel('glm-4.5v'), true);
+  assert.equal(isPiRunnableModel('qwen-image-2.0-pro'), false);
 }
 
 function testOpenCodeAllowedDirectories() {
@@ -1855,6 +2752,141 @@ function testDangerModeProvidesAutonomousExecutionContract() {
   assert.match(prompt, /Vale decision proxy/i);
   assert.match(prompt, /reversible/i);
   assert.match(prompt, /silently choose/i);
+  assert.match(prompt, /local image or QR code/i);
+  assert.match(prompt, /absolute PNG, JPEG, WebP, or GIF path inside the current workspace/i);
+  assert.match(prompt, /Never claim.*visible or sent/i);
+}
+
+async function testExplicitWorkspaceImagesBecomePathFreePendingMedia() {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'plum-workspace-media-'));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'plum-outside-media-'));
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64'
+  );
+  const qrPath = path.join(workspace, 'tuya-qr.png');
+  const outsidePath = path.join(outside, 'private.png');
+  try {
+    await fs.writeFile(qrPath, png);
+    await fs.writeFile(outsidePath, png);
+    const extracted = extractExplicitWorkspaceChatMedia(
+      [
+        `Scan this: ![Tuya QR](<${qrPath}>)`,
+        `Do not expose this: [private image](<${outsidePath}>)`,
+        'Remote images remain Markdown: ![remote](https://example.com/reference.png)',
+      ].join('\n'),
+      workspace
+    );
+
+    assert.equal(extracted.media.length, 1);
+    assert.equal(extracted.media[0]?.source, 'workspace');
+    assert.equal(extracted.media[0]?.kind, 'file');
+    assert.match(extracted.content, /\[Image attached: Tuya QR\]/);
+    assert.match(extracted.content, /\[Local image could not be attached\]/);
+    assert.doesNotMatch(extracted.content, /\[Image attached: private image\]/);
+    assert.match(extracted.content, /https:\/\/example\.com\/reference\.png/);
+    assert.doesNotMatch(
+      extracted.content,
+      new RegExp(qrPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    );
+    assert.doesNotMatch(
+      extracted.content,
+      new RegExp(outsidePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    );
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+}
+
+async function testCodexImageGenerationEventQueuesOnlyManagedOutput() {
+  const ioStub = { to: () => ({ emit: () => undefined }) };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
+  const generatedRoot = path.join(codexHome, 'generated_images');
+  await fs.mkdir(generatedRoot, { recursive: true });
+  const fixtureDir = await fs.mkdtemp(path.join(generatedRoot, 'provider-media-fixture-'));
+  const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'provider-media-outside-'));
+  const managedPath = path.join(fixtureDir, 'exec-image.png');
+  const outsidePath = path.join(outsideDir, 'host-image.png');
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64'
+  );
+  const sessionId = 'session-codex-generated-media';
+  const proc: Record<string, unknown> = {
+    cliProvider: 'codex',
+    pendingChatMedia: [],
+    codexEmittedTools: new Set(),
+    currentToolName: null,
+    currentToolId: null,
+    currentActivitySummary: null,
+    currentAgentType: null,
+    outputBuffer: { push: () => undefined },
+    lastActivityAt: Date.now(),
+  };
+  managerPrivate.processes.set(sessionId, proc);
+
+  const imageEvent = (status: string, savedPath: string, callId: string) => ({
+    type: 'event_msg',
+    payload: {
+      type: 'image_generation_end',
+      status,
+      call_id: callId,
+      saved_path: savedPath,
+      revised_prompt: 'A scannable Tuya QR code',
+    },
+  });
+
+  try {
+    await fs.writeFile(managedPath, png);
+    await fs.writeFile(outsidePath, png);
+    managerPrivate.translateCodexMessage(
+      sessionId,
+      imageEvent('failed', managedPath, 'exec-failed')
+    );
+    managerPrivate.translateCodexMessage(
+      sessionId,
+      imageEvent('completed', outsidePath, 'exec-outside')
+    );
+    assert.equal((proc.pendingChatMedia as unknown[]).length, 0);
+
+    managerPrivate.translateCodexMessage(
+      sessionId,
+      imageEvent('completed', managedPath, 'exec-managed')
+    );
+    managerPrivate.translateCodexMessage(
+      sessionId,
+      imageEvent('completed', managedPath, 'exec-managed')
+    );
+    assert.equal((proc.pendingChatMedia as unknown[]).length, 1);
+    assert.equal(
+      ((proc.pendingChatMedia as Array<Record<string, unknown>>)[0] || {}).source,
+      'provider'
+    );
+    assert.equal(
+      ((proc.pendingChatMedia as Array<Record<string, unknown>>)[0] || {}).sourceId,
+      'exec-managed'
+    );
+
+    managerPrivate.translateCodexMessage(sessionId, {
+      type: 'item.completed',
+      item: { id: 'image-input', type: 'imageView', path: managedPath },
+    });
+    managerPrivate.translateCodexMessage(sessionId, {
+      type: 'custom_tool_call_output',
+      output: [{ type: 'input_image', image_url: 'data:image/png;base64,redacted' }],
+    });
+    assert.equal((proc.pendingChatMedia as unknown[]).length, 1);
+  } finally {
+    managerPrivate.processes.delete(sessionId);
+    await fs.rm(fixtureDir, { recursive: true, force: true });
+    await fs.rm(outsideDir, { recursive: true, force: true });
+  }
 }
 
 function testOpenCodePrimaryAgentConfig() {
@@ -2109,6 +3141,275 @@ function testSettingsThemeSchemaAcceptsEink() {
   assert.equal(parsed.success, true);
 }
 
+function testVibeProviderIsRemoved() {
+  assert.equal(Object.hasOwn(CLI_PROVIDERS, 'vibe'), false);
+  assert.equal(updateSettingsSchema.safeParse({ defaultCliProvider: 'vibe' }).success, false);
+  assert.equal(Object.hasOwn(CLI_PROVIDERS, 'pi'), true);
+  assert.equal(updateSettingsSchema.safeParse({ defaultCliProvider: 'pi' }).success, true);
+
+  const args = getCLIArgs('pi', {
+    model: 'z-ai/glm-5.1',
+    reasoningLevel: 'extra_high',
+    resumeSessionId: 'pi-session-123',
+  });
+  assert.deepEqual(args.slice(0, 3), ['--mode', 'rpc', '--approve']);
+  assert.ok(args.includes('z-ai/glm-5.1'));
+  assert.ok(args.includes('xhigh'));
+  assert.ok(args.includes('pi-session-123'));
+  assert.equal(CLI_PROVIDERS.pi.defaultModel, CLI_PROVIDERS.opencode.defaultModel);
+}
+
+function testKimiCliArgsMatchInstalledContract() {
+  const firstTurn = getCLIArgs('kimi', { model: 'kimi-for-coding' });
+  assert.deepEqual(firstTurn, [
+    '--output-format',
+    'stream-json',
+    '-m',
+    'kimi-code/kimi-for-coding',
+  ]);
+  assert.equal(firstTurn.includes('--session'), false);
+  assert.equal(firstTurn.includes('--session-id'), false);
+
+  const resumedTurn = getCLIArgs('kimi', {
+    model: 'kimi-code/k3',
+    resumeSessionId: 'session_native-kimi-id',
+  });
+  assert.deepEqual(resumedTurn, [
+    '--output-format',
+    'stream-json',
+    '-m',
+    'kimi-code/k3',
+    '--session',
+    'session_native-kimi-id',
+  ]);
+}
+
+function testSessionSchemasAcceptKimi() {
+  const created = createSessionSchema.safeParse({
+    name: 'Kimi session',
+    workingDirectory: '/workspace/project',
+    cliProvider: 'kimi',
+    cliModel: 'kimi-code/kimi-for-coding',
+    mode: 'auto-accept',
+    surface: 'code',
+    initialMessage: 'Reply only OK',
+  });
+  assert.equal(created.success, true);
+  assert.equal(updateProviderSchema.safeParse({ cliProvider: 'kimi' }).success, true);
+}
+
+function testKimiMissingSessionRecoveryClassification() {
+  const missing = 'error: failed to run prompt: Session "session_old-id" not found.';
+  assert.equal(isKimiSessionNotFoundError(missing), true);
+  assert.equal(isKimiSessionNotFoundError('ACP error: session_old-id does not exist'), true);
+  assert.equal(isKimiSessionNotFoundError('error: request timed out'), false);
+  assert.match(formatKimiExitMessage(1, missing), /Session "session_old-id" not found/);
+  assert.match(
+    formatKimiExitMessage(1, 'Authentication credentials are missing'),
+    /Settings → Kimi → Connect/
+  );
+  assert.doesNotMatch(formatKimiExitMessage(1, 'request timed out'), /logged in|Connect/);
+}
+
+function testKimiAcpModeMapping() {
+  assert.equal(kimiAcpModeForSessionMode('planning'), 'plan');
+  assert.equal(kimiAcpModeForSessionMode('manual'), 'default');
+  assert.equal(kimiAcpModeForSessionMode('auto-accept'), 'auto');
+  assert.equal(kimiAcpModeForSessionMode('danger'), 'yolo');
+}
+
+function testKimiRestartRecoveryContract() {
+  assert.equal(shouldRecoverInterruptedKimiTurn('kimi', 'stopped', 'user'), true);
+  assert.equal(shouldRecoverInterruptedKimiTurn('kimi', 'stopped', 'assistant'), false);
+  assert.equal(shouldRecoverInterruptedKimiTurn('kimi', 'running', 'user'), false);
+  assert.equal(shouldRecoverInterruptedKimiTurn('codex', 'stopped', 'user'), false);
+
+  assert.equal(resolveSessionStartMode(undefined, undefined, 'danger'), 'danger');
+  assert.equal(resolveSessionStartMode(undefined, 'manual', 'danger'), 'manual');
+  assert.equal(resolveSessionStartMode('planning', 'manual', 'danger'), 'planning');
+  assert.equal(resolveSessionStartMode(), 'auto-accept');
+}
+
+function testKimiUsageMapping() {
+  const mapped = mapKimiUsage({
+    usage: { limit: '100', used: '18', remaining: '82', resetTime: '2026-08-06T07:52:24.988Z' },
+    limits: [
+      {
+        window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+        detail: {
+          limit: '100',
+          used: '28',
+          remaining: '72',
+          resetTime: '2026-08-01T14:52:24.988Z',
+        },
+      },
+    ],
+    parallel: { limit: '20', details: ['active-session'] },
+    subType: 'TYPE_PURCHASE',
+  });
+  assert.equal(mapped.fiveHour?.utilization, 28);
+  assert.equal(mapped.fiveHour?.windowSeconds, 18_000);
+  assert.equal(mapped.sevenDay?.utilization, 18);
+  assert.equal(mapped.sevenDay?.remaining, 82);
+  assert.equal(mapped.additional[0]?.name, 'Parallel sessions');
+  assert.equal(mapped.additional[0]?.used, 1);
+  assert.equal(mapped.additional[0]?.limit, 20);
+}
+
+function testPerTurnModeChangesDoNotRestartActiveChildren() {
+  assert.equal(appliesModeOnNextTurnWithoutRestart('kimi'), true);
+  assert.equal(appliesModeOnNextTurnWithoutRestart('codex'), true);
+  assert.equal(appliesModeOnNextTurnWithoutRestart('claude'), false);
+  assert.equal(appliesModeOnNextTurnWithoutRestart('opencode'), false);
+  assert.equal(appliesModeOnNextTurnWithoutRestart('pi'), false);
+}
+
+function testClaudeApiEnvironmentMapping() {
+  assert.deepEqual(
+    buildClaudeApiEnv({
+      baseUrl: 'https://api.z.ai/api/anthropic',
+      authToken: 'redacted-test-token',
+      opusModel: 'glm-5.2',
+      sonnetModel: 'glm-5.2',
+      haikuModel: 'glm-4.5-air',
+      apiTimeoutMs: 3_000_000,
+    }),
+    {
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+      ANTHROPIC_AUTH_TOKEN: 'redacted-test-token',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.2',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.2',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
+      API_TIMEOUT_MS: '3000000',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    }
+  );
+  assert.deepEqual(buildClaudeApiEnv(null), {});
+
+  const zaiConfig = {
+    baseUrl: 'https://api.z.ai/api/anthropic',
+    authToken: 'redacted-test-token',
+    opusModel: 'glm-5.2',
+    sonnetModel: 'glm-5.2',
+    haikuModel: 'glm-4.5-air',
+    apiTimeoutMs: 3_000_000,
+  };
+  assert.equal(getClaudeApiEndpointKind(zaiConfig), 'z-ai');
+  assert.deepEqual(getClaudeApiModelLabels(zaiConfig), {
+    opus: 'glm-5.2',
+    sonnet: 'glm-5.2',
+    haiku: 'glm-4.5-air',
+  });
+  assert.equal(
+    getClaudeApiEndpointKind({ ...zaiConfig, baseUrl: 'https://llm.example.com/anthropic' }),
+    'custom'
+  );
+  assert.equal(getClaudeApiEndpointKind(null), 'anthropic');
+}
+
+function testClaudeAndZaiProcessEnvironmentsAreIsolated() {
+  const inherited = {
+    PATH: '/usr/bin',
+    ANTHROPIC_BASE_URL: 'https://global.example.test/anthropic',
+    ANTHROPIC_AUTH_TOKEN: 'global-token',
+    ANTHROPIC_API_KEY: 'global-api-key',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'global-opus',
+  };
+  const zaiConfig = {
+    baseUrl: 'https://api.z.ai/api/anthropic',
+    authToken: 'zai-session-token',
+    opusModel: 'glm-5.2',
+    sonnetModel: 'glm-5.2',
+    apiTimeoutMs: 3_000_000,
+  };
+
+  const claudeEnv = buildClaudeTransportProcessEnv('claude', '/home/node/.claude', null, inherited);
+  assert.equal(claudeEnv.PATH, '/usr/bin');
+  assert.equal(claudeEnv.CLAUDE_CONFIG_HOME, '/home/node/.claude');
+  assert.equal(claudeEnv.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(claudeEnv.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.equal(claudeEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(claudeEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined);
+
+  const zaiEnv = buildClaudeTransportProcessEnv('zai', '/home/node/.claude', zaiConfig, inherited);
+  assert.equal(zaiEnv.ANTHROPIC_BASE_URL, zaiConfig.baseUrl);
+  assert.equal(zaiEnv.ANTHROPIC_AUTH_TOKEN, zaiConfig.authToken);
+  assert.equal(zaiEnv.ANTHROPIC_API_KEY, undefined);
+  assert.equal(zaiEnv.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2');
+  assert.equal(zaiEnv.ANTHROPIC_DEFAULT_SONNET_MODEL, 'glm-5.2');
+
+  assert.equal(
+    updateSettingsSchema.safeParse({ enabledCliProviders: ['claude', 'zai'] }).success,
+    true
+  );
+  assert.equal(updateSettingsSchema.safeParse({ enabledCliProviders: [] }).success, false);
+}
+
+function testLegacyClaudeEndpointMigrationSeparatesZai() {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE user_settings (user_id TEXT PRIMARY KEY, settings_json TEXT);
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      cli_provider TEXT,
+      updated_at TEXT
+    );
+    CREATE TABLE usage_history (
+      id INTEGER PRIMARY KEY,
+      provider TEXT,
+      model TEXT
+    );
+  `);
+  db.prepare('INSERT INTO user_settings (user_id, settings_json) VALUES (?, ?)').run(
+    'user-zai',
+    JSON.stringify({
+      claudeApi: { baseUrl: 'https://api.z.ai/api/anthropic', authToken: 'encrypted' },
+      enabledCliProviders: ['codex', 'claude'],
+    })
+  );
+  db.prepare(
+    "INSERT INTO sessions (id, user_id, cli_provider) VALUES ('legacy-zai', 'user-zai', 'claude')"
+  ).run();
+  db.prepare("INSERT INTO usage_history (provider, model) VALUES ('claude', 'glm-5.2')").run();
+
+  assert.deepEqual(migrateLegacyClaudeEndpointToZai(db), {
+    settings: 1,
+    sessions: 1,
+    usage: 1,
+  });
+  const migratedSettings = JSON.parse(
+    (
+      db
+        .prepare(
+          "SELECT settings_json as settingsJson FROM user_settings WHERE user_id = 'user-zai'"
+        )
+        .get() as { settingsJson: string }
+    ).settingsJson
+  ) as Record<string, unknown>;
+  assert.equal(migratedSettings.claudeApi, undefined);
+  assert.ok(migratedSettings.zaiApi);
+  assert.deepEqual(migratedSettings.enabledCliProviders, ['codex', 'claude', 'zai']);
+  assert.equal(
+    (
+      db.prepare("SELECT cli_provider as provider FROM sessions WHERE id = 'legacy-zai'").get() as {
+        provider: string;
+      }
+    ).provider,
+    'zai'
+  );
+  assert.equal(
+    (db.prepare('SELECT provider FROM usage_history').get() as { provider: string }).provider,
+    'zai'
+  );
+  assert.deepEqual(migrateLegacyClaudeEndpointToZai(db), {
+    settings: 0,
+    sessions: 0,
+    usage: 0,
+  });
+  db.close();
+}
+
 function testDeviceAppearanceSettingsAreNotAccountPersisted() {
   const accountSettings = stripDeviceAppearanceSettings({
     theme: 'eink',
@@ -2324,6 +3625,56 @@ function testZaiUsageTrackerQuotaShape() {
   assert.equal(mapped?.additional?.[0]?.unit, 'requests');
 }
 
+function testCodexUsageWindowsFollowUpstreamDuration() {
+  const normal = mapCodexUsage({
+    rate_limit: {
+      primary_window: { used_percent: 12, limit_window_seconds: 18_000 },
+      secondary_window: { used_percent: 34, limit_window_seconds: 604_800 },
+    },
+  });
+  assert.equal(normal.fiveHour?.utilization, 12);
+  assert.equal(normal.sevenDay?.utilization, 34);
+
+  const weeklyOnly = mapCodexUsage({
+    rate_limit: {
+      primary_window: { used_percent: 56, limit_window_seconds: 604_800 },
+    },
+  });
+  assert.equal(weeklyOnly.fiveHour, null, 'a weekly primary window must not be labelled as 5h');
+  assert.equal(weeklyOnly.sevenDay?.utilization, 56);
+}
+
+function testZaiAccountUsageShape() {
+  assert.deepEqual(
+    mapZaiAccountUsage(
+      {
+        x_time: ['2026-06-22', '2026-07-21'],
+        totalUsage: {
+          totalModelCallCount: 34_832,
+          totalTokensUsage: 443_388_365,
+          modelSummaryList: [
+            { modelName: 'GLM-5.2', totalTokens: 443_283_784 },
+            { modelName: 'GLM-4.7', totalTokens: 17_296 },
+          ],
+        },
+      },
+      30
+    ),
+    {
+      periodDays: 30,
+      totalTokens: 443_388_365,
+      totalRequests: 34_832,
+      startsAt: '2026-06-22',
+      endsAt: '2026-07-21',
+      timezone: 'Asia/Shanghai',
+      models: [
+        { model: 'GLM-5.2', tokens: 443_283_784 },
+        { model: 'GLM-4.7', tokens: 17_296 },
+      ],
+    }
+  );
+}
+
 function testOpenCodeGoMonitorHtmlShape() {
   const snapshot = parseOpenCodeGoQuotaHtml(
     'rollingUsage:$R[30]={status:"ok",resetInSec:17562,usagePercent:1},' +
@@ -2453,6 +3804,122 @@ function testOpenCodePollCursorPriming() {
   assert.equal(cursor.toolStatus.get('tool-old'), 'completed');
   assert.equal(cursor.finishedMessages.has('msg-old'), true);
   assert.equal(cursor.finishedMessages.has('msg-error'), true);
+}
+
+function testOpenCodePollingIsBoundedToCurrentTurn() {
+  const turnMessageId = buildOpenCodeTurnMessageId('webui-turn-123');
+  assert.equal(turnMessageId, 'msg_plum_webui-turn-123');
+
+  const pollUrl = new URL(buildOpenCodePollMessagesUrl('http://127.0.0.1:4321', 'ses/a'));
+  assert.equal(pollUrl.pathname, '/session/ses%2Fa/message');
+  assert.equal(pollUrl.searchParams.get('limit'), String(OPENCODE_POLL_MESSAGE_LIMIT));
+
+  const selected = selectOpenCodeTurnMessages(
+    [
+      {
+        info: { id: 'msg-old-assistant', role: 'assistant', parentID: 'msg-old-user' },
+        parts: [{ id: 'part-old', type: 'text', text: 'Old history' }],
+      },
+      {
+        info: { id: turnMessageId, role: 'user' },
+        parts: [{ id: 'part-user', type: 'text', text: 'Current prompt' }],
+      },
+      {
+        info: { id: 'msg-current-assistant', role: 'assistant', parentID: turnMessageId },
+        parts: [{ id: 'part-current', type: 'text', text: 'Current answer' }],
+      },
+      {
+        info: { id: 'msg-unrelated', role: 'assistant', parentID: 'msg-other-user' },
+        parts: [{ id: 'part-unrelated', type: 'text', text: 'Unrelated answer' }],
+      },
+    ],
+    turnMessageId
+  );
+
+  assert.deepEqual(
+    selected.map((message) => message.info?.id),
+    [turnMessageId, 'msg-current-assistant']
+  );
+}
+
+function testOpenCodeServerUsesProcessGroupsOnPosix() {
+  assert.equal(shouldDetachOpenCodeServer('linux'), true);
+  assert.equal(shouldDetachOpenCodeServer('darwin'), true);
+  assert.equal(shouldDetachOpenCodeServer('win32'), false);
+}
+
+async function testOpenCodePollingSerializesAndAbortsRequests() {
+  const server = new OpencodeServer();
+  const harness = server as unknown as {
+    baseUrl: string | null;
+    startPolling: (sessionId: string, turnMessageId: string) => void;
+    stopPolling: (sessionId: string) => void;
+  };
+  const originalFetch = globalThis.fetch;
+  const pending: Array<{ resolve: () => void }> = [];
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  let aborted = 0;
+
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    calls += 1;
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+
+    return new Promise<Response>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        active -= 1;
+        init?.signal?.removeEventListener('abort', onAbort);
+        callback();
+      };
+      const onAbort = () => {
+        finish(() => {
+          aborted += 1;
+          reject(new DOMException('Polling aborted', 'AbortError'));
+        });
+      };
+      init?.signal?.addEventListener('abort', onAbort, { once: true });
+      pending.push({
+        resolve: () =>
+          finish(() => {
+            resolve(
+              new Response('[]', {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            );
+          }),
+      });
+    });
+  }) as typeof fetch;
+
+  try {
+    harness.baseUrl = 'http://127.0.0.1:4321';
+    harness.startPolling('ses-serialized', 'msg_plum_serialized-turn');
+
+    // A setInterval implementation would start a second request at 500ms even
+    // though the first one is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 620));
+    assert.equal(calls, 1);
+    assert.equal(maxActive, 1);
+
+    pending[0]?.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 620));
+    assert.equal(calls, 2);
+    assert.equal(maxActive, 1);
+
+    harness.stopPolling('ses-serialized');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(aborted, 1);
+    assert.equal(active, 0);
+  } finally {
+    harness.stopPolling('ses-serialized');
+    globalThis.fetch = originalFetch;
+  }
 }
 
 function testOpenCodeStallErrorDescribesLastToolWithoutSecrets() {
@@ -2927,6 +4394,144 @@ async function testDefaultMcpServerSeeding() {
     const second = await ensureDefaultClaudeMcpServers({ settingsPath });
     assert.equal(second.updated, false);
     assert.deepEqual(second.added, []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testClaudeSettingsProviderIsolation() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-provider-isolation-'));
+  const settingsPath = path.join(root, '.claude', 'settings.json');
+
+  try {
+    await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          mcpServers: {
+            demo: {
+              type: 'stdio',
+              command: 'demo-cli',
+            },
+          },
+          env: {
+            KEEP: '1',
+            ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+            ANTHROPIC_AUTH_TOKEN: 'must-not-reach-claude',
+            ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.2',
+            ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.7',
+            API_TIMEOUT_MS: '3000000',
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    const first = await sanitizeClaudeSettingsProviderEnv({ settingsPath });
+    const parsed = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as {
+      mcpServers: Record<string, { command: string }>;
+      env?: Record<string, string>;
+    };
+
+    assert.equal(first.updated, true);
+    assert.deepEqual(first.removed, [
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'API_TIMEOUT_MS',
+    ]);
+    assert.deepEqual(parsed.env, { KEEP: '1' });
+    assert.equal(parsed.mcpServers.demo.command, 'demo-cli');
+
+    const second = await sanitizeClaudeSettingsProviderEnv({ settingsPath });
+    assert.equal(second.updated, false);
+    assert.deepEqual(second.removed, []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testClaudeResumeTranscriptProviderIsolation() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-resume-isolation-'));
+  const configHome = path.join(root, '.claude');
+  const workingDirectory = path.join(root, 'workspace', 'demo');
+  const resumeId = '47eb639b-b7ab-46e3-b122-6c2d7b54a749';
+  const projectDirectory = path.join(
+    configHome,
+    'projects',
+    path.resolve(workingDirectory).replace(/[^a-zA-Z0-9]/g, '-')
+  );
+  const transcriptPath = path.join(projectDirectory, `${resumeId}.jsonl`);
+  const validBlock = {
+    parentUuid: null,
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'server_tool_use',
+          id: 'srvtoolu_valid_123',
+          name: 'web_search',
+          input: {},
+        },
+      ],
+      stop_reason: 'tool_use',
+    },
+  };
+  const incompatibleBlock = {
+    parentUuid: 'one',
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'server_tool_use',
+          id: 'call_zai_123',
+          name: 'analyze_image',
+          input: {},
+        },
+      ],
+      stop_reason: 'tool_use',
+    },
+  };
+  const followingText = {
+    parentUuid: 'two',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'The image result remains available.' }],
+      stop_reason: 'end_turn',
+    },
+  };
+
+  try {
+    await fs.mkdir(projectDirectory, { recursive: true });
+    const original = [validBlock, incompatibleBlock, followingText]
+      .map((entry) => JSON.stringify(entry))
+      .join('\n');
+    await fs.writeFile(transcriptPath, `${original}\n`);
+
+    const first = await sanitizeClaudeResumeTranscript(configHome, workingDirectory, resumeId);
+    assert.equal(first.updated, true);
+    assert.equal(first.replacements, 1);
+    assert.equal(first.backupPath, `${transcriptPath}.pre-anthropic-resume.bak`);
+    assert.equal(await fs.readFile(first.backupPath!, 'utf8'), `${original}\n`);
+
+    const lines = (await fs.readFile(transcriptPath, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)) as Array<{
+      message: { content: Array<Record<string, unknown>>; stop_reason: string };
+    }>;
+    assert.equal(lines[0]?.message.content[0]?.id, 'srvtoolu_valid_123');
+    assert.equal(lines[1]?.message.content[0]?.type, 'text');
+    assert.match(String(lines[1]?.message.content[0]?.text), /Legacy Z\.AI server tool call/);
+    assert.equal(lines[1]?.message.stop_reason, 'end_turn');
+    assert.equal(lines[2]?.message.content[0]?.text, 'The image result remains available.');
+
+    const second = await sanitizeClaudeResumeTranscript(configHome, workingDirectory, resumeId);
+    assert.equal(second.updated, false);
+    assert.equal(second.replacements, 0);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -3423,6 +5028,10 @@ function testPricingTable() {
   assert.deepEqual(resolveModelPricing('gpt-5.5')?.input, 5);
   assert.deepEqual(resolveModelPricing('gpt-5.4-mini')?.output, 4.5);
   assert.deepEqual(resolveModelPricing('gpt-5.2')?.input, 1.75);
+  assert.deepEqual(resolveModelPricing('claude-fable-5')?.output, 50);
+  assert.deepEqual(resolveModelPricing('claude-opus-5')?.cacheWrite, 6.25);
+  assert.deepEqual(resolveModelPricing('claude-sonnet-5')?.input, 2);
+  assert.deepEqual(resolveModelPricing('claude-sonnet-5')?.output, 10);
   assert.deepEqual(resolveModelPricing('claude-opus-4-8')?.input, 5);
   assert.deepEqual(resolveModelPricing('claude-opus-4.7')?.output, 25);
   assert.deepEqual(resolveModelPricing('anthropic/claude-opus-4.5')?.cacheWrite, 6.25);
@@ -3448,6 +5057,14 @@ function testPricingTable() {
   assert.deepEqual(resolveModelPricing('opencode/big-pickle')?.input, 0);
   assert.deepEqual(resolveModelPricing('opencode-go/glm-5.1')?.input, 1.4);
   assert.deepEqual(resolveModelPricing('opencode-go/qwen3.7-max')?.output, 7.5);
+  assert.deepEqual(resolveModelPricing('alibaba-token-plan/qwen3.8-max-preview'), {
+    input: 2.5,
+    output: 7.5,
+    cacheRead: 0.5,
+    cacheWrite: 3.125,
+    source: 'Alibaba Model Studio Qwen3.7 Max list-price proxy, 2026-07-27',
+    label: 'Qwen3.8 Max Preview (Qwen3.7 Max proxy)',
+  });
   assert.deepEqual(resolveModelPricing('opencode-go/mimo-v2.5-pro')?.input, 1.74);
   assert.deepEqual(resolveModelPricing('opencode-go/mimo-v2.5-pro')?.cacheRead, 0.0145);
   assert.deepEqual(resolveModelPricing('opencode-go/minimax-m3')?.cacheRead, 0.06);
@@ -3525,6 +5142,8 @@ async function testPwaInstallAssets() {
   const serviceWorker = await fs.readFile(path.join(publicDir, 'sw.js'), 'utf8');
   assert.match(serviceWorker, /self\.addEventListener\('fetch'/);
   assert.match(serviceWorker, /self\.clients\.claim/);
+  assert.match(serviceWorker, /url\.pathname\.startsWith\('\/assets\/'\)/);
+  assert.match(serviceWorker, /cache\.put\(event\.request, response\.clone\(\)\)/);
   assert.doesNotMatch(serviceWorker, /unregister/);
 
   const legacyServiceWorker = await fs.readFile(path.join(publicDir, 'service-worker.js'), 'utf8');
@@ -3537,7 +5156,16 @@ function testCodexCliUpdaterTracksLatest() {
   assert.doesNotMatch(command, /@openai\/codex@\d+\.\d+\.\d+/);
 }
 
+function testPiUpdaterIncludesHarnessAndMcpBridge() {
+  const command = getCliUpdateCommand('pi') || '';
+  assert.match(command, /@earendil-works\/pi-coding-agent@latest/);
+  assert.match(command, /pi-mcp-adapter@latest/);
+}
+
 testProviderLabels();
+testCodexUsageWindowsFollowUpstreamDuration();
+testProviderTurnUsageAggregation();
+testZaiAccountUsageShape();
 testContextWindowFallbacks();
 testUsageWindowNormalization();
 testContextUsageIncludesAssistantOutput();
@@ -3548,13 +5176,23 @@ testCodexUsageDoesNotClampLargeAgenticTurns();
 testCodexUsageIncludesDescendantThreadDelta();
 await testCodexThreadStateReaderMatchesPrompt();
 await testCodexContextSnapshotReadsRolloutTokenCount();
+await testCodexContextSnapshotReadsOnlyBoundedTail();
 await testCodexDescendantUsageReadsRecursiveRolloutTotals();
+await testCodexExecRootLookupSkipsSubagentsAndForeignExecs();
+await testCodexTurnCompletedRollsUpDescendantsWithoutKnownThreadId();
+await testCodexTurnFailedBooksUsageFromThreadState();
+await testCodexSubagentDetailStripsInheritedHistory();
+await testPiResumesTurnAfterThresholdCompaction();
+await testPiDoesNotResumeWhenPiWillRetry();
+await testPiProgressCancelsScheduledCompactionResume();
+await testPiManualCompactWithoutTurnDoesNotResume();
 await testCodexContextFallbackUsesThreadState();
 await testCodexContextFallbackCapsThreadStateAtWindow();
 testCodexCompactEventRetainsCompactedContext();
 testCodexImplicitCompactDetectedFromContextDrop();
 testCodexImplicitCompactDetectedFromMidWindowReset();
 testProviderCapabilities();
+testClaudeCurrentModelCatalog();
 testCodexFastTierArgs();
 testSolUsesSingleAgentPolicyUnlessParallelismIsExplicit();
 testNativeCodexResumeDoesNotRepeatStaticBootstrap();
@@ -3567,11 +5205,15 @@ testOpenCodeZaiCredentialAliases();
 testOpenCodeWebuiProviderConfig();
 testZaiVisionMcpPolicyManagedConfig();
 testOpenCodeSessionModelSelection();
+testPiSharesOpenCodeProviderConfigWithoutPersistingSecrets();
+testPiUsesOnlyEnabledUserProviderModels();
 testOpenCodeAllowedDirectories();
 testAttachmentNormalization();
 testOpenCodePromptContext();
 testOpenCodeRuntimePrompt();
 testDangerModeProvidesAutonomousExecutionContract();
+await testExplicitWorkspaceImagesBecomePathFreePendingMedia();
+await testCodexImageGenerationEventQueuesOnlyManagedOutput();
 testOpenCodePrimaryAgentConfig();
 testOpenCodeModelsCacheParsing();
 testOpenCodeFallbackCatalogIncludesKimiK27();
@@ -3582,6 +5224,18 @@ await testOpenCodeZaiTurnsAreSerializedByProviderGate();
 await testOpenCodeQueuedProviderTurnCancellationDoesNotHang();
 await testOpenCodeProviderTurnGateShutdownCancelsAllWaiters();
 testSettingsThemeSchemaAcceptsEink();
+testVibeProviderIsRemoved();
+testKimiCliArgsMatchInstalledContract();
+testSessionSchemasAcceptKimi();
+testKimiMissingSessionRecoveryClassification();
+testKimiAcpModeMapping();
+testKimiRestartRecoveryContract();
+testKimiUsageMapping();
+testPerTurnModeChangesDoNotRestartActiveChildren();
+testClaudeApiEnvironmentMapping();
+testClaudeAndZaiProcessEnvironmentsAreIsolated();
+testLegacyClaudeEndpointMigrationSeparatesZai();
+testClaudeAndZaiProcessEnvironmentsAreIsolated();
 testDeviceAppearanceSettingsAreNotAccountPersisted();
 testMemoryDirectoryRejectsWorkingDirectoriesOutsideAllowedBases();
 testSessionCookiePolicyBlocksCrossSiteMutationByDefault();
@@ -3598,6 +5252,9 @@ testOpenCodeGoMonitorHtmlShape();
 testOpenCodeGoLocalEstimateRequiresUsage();
 testOpenCodeTerminalMessageDetection();
 testOpenCodePollCursorPriming();
+testOpenCodePollingIsBoundedToCurrentTurn();
+testOpenCodeServerUsesProcessGroupsOnPosix();
+await testOpenCodePollingSerializesAndAbortsRequests();
 testOpenCodeStallErrorDescribesLastToolWithoutSecrets();
 testProxyUserAdoptsLegacySharedCliUser();
 testCodexSessionIdExtraction();
@@ -3607,11 +5264,14 @@ testOpenCodeQueueStateAndRuntime();
 testLatestContextSnapshotOrdering();
 await testCodexConfigSyncIdempotence();
 await testDefaultMcpServerSeeding();
+await testClaudeSettingsProviderIsolation();
+await testClaudeResumeTranscriptProviderIsolation();
 await testGodotAndBlenderMcpToolLists();
 await testOracleMcpPrefersEmbeddedBrowserTarget();
 await testOracleMcpStartsEmbeddedBrowserForManualMode();
 await testPwaInstallAssets();
 testCodexCliUpdaterTracksLatest();
+testPiUpdaterIncludesHarnessAndMcpBridge();
 testPricingTable();
 
 console.log('provider regression tests passed');

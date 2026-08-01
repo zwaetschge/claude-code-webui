@@ -59,8 +59,10 @@ async function testProjectInstructionsPreferAgentsMd() {
   const agentsMd = await fs.readFile(path.join(projectDir, 'AGENTS.md'), 'utf8');
   assert.match(agentsMd, /# Human Agent Notes/);
   assert.match(agentsMd, /<!-- webui-managed: project-context:start -->/);
-  assert.match(agentsMd, /Available Skills: .*useful-skill/);
-  assert.match(agentsMd, /Available Agents: reviewer/);
+  assert.match(agentsMd, /Active Core Skills:/);
+  assert.match(agentsMd, /capability-catalog\.mjs search/);
+  assert.doesNotMatch(agentsMd, /Available Skills:/);
+  assert.doesNotMatch(agentsMd, /Available Agents:/);
 
   const claudeMd = await fs.readFile(path.join(projectDir, 'CLAUDE.md'), 'utf8');
   assert.match(claudeMd, /# Human Claude Notes/);

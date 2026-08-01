@@ -18,8 +18,8 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { safeJsonParse } from './json';
-import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from './codexDefaults';
+import { safeJsonParse } from './json.js';
+import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from './codexDefaults.js';
 
 const MANAGED_BLOCK_START = '# >>> webui-managed defaults >>>';
 const MANAGED_BLOCK_END = '# <<< webui-managed defaults <<<';

@@ -15,7 +15,7 @@ const oauthStates = new Map<
 >();
 
 // Clean up old states periodically
-setInterval(() => {
+const oauthStateCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, _value] of oauthStates.entries()) {
     // States older than 10 minutes are removed
@@ -25,6 +25,7 @@ setInterval(() => {
     }
   }
 }, 60 * 1000);
+oauthStateCleanupTimer.unref();
 
 // Supported OAuth providers and their configurations
 const OAUTH_CONFIGS: Record<

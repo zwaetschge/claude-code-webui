@@ -460,16 +460,11 @@ private fun SessionStatus.toUiStatus(): UiSessionStatus = when (this) {
     SessionStatus.ERROR   -> UiSessionStatus.ERROR
 }
 
-@Suppress("DEPRECATION")
 private fun CLIProvider.toCliProvider(): CliProvider = when (this) {
     CLIProvider.CLAUDE -> CliProvider.CLAUDE
     CLIProvider.CODEX  -> CliProvider.CODEX
     CLIProvider.OPENCODE -> CliProvider.OPENCODE
-    CLIProvider.VIBE -> CliProvider.VIBE
-    CLIProvider.GLM,
-    CLIProvider.KIMI   -> CliProvider.OPENCODE
-    CLIProvider.GEMINI,
-    CLIProvider.MULTI  -> CliProvider.UNKNOWN
+    CLIProvider.PI -> CliProvider.PI
 }
 
 private fun relativeTime(isoTimestamp: String): String {

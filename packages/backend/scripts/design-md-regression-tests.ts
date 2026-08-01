@@ -100,11 +100,13 @@ async function testImportListsAndExportsDesignMd(): Promise<void> {
 
     const styles = await listSkillLibrary(configHome, {
       kind: 'design',
-      enabledOnly: true,
       syncExternal: false,
     });
     assert.equal(styles.length, 1);
     assert.equal(styles[0]?.baseName, 'design-heritage');
+    assert.equal(styles[0]?.enabled, false);
+    assert.equal(styles[0]?.entryType, 'style');
+    assert.match(styles[0]?.dirPath ?? '', /style-library[\\/]design/);
     assert.equal(styles[0]?.designMd?.name, 'Heritage');
     assert.equal(styles[0]?.designMd?.tokens.colors.tertiary, '#B8422E');
     assert.equal(styles[0]?.designMd?.sections.includes('Overview'), true);
@@ -144,11 +146,12 @@ async function testExistingPresetDesignMdMetadata(): Promise<void> {
 
     const styles = await listSkillLibrary(configHome, {
       kind: 'design',
-      enabledOnly: true,
       syncExternal: false,
     });
 
     assert.equal(styles[0]?.baseName, 'design-codex');
+    assert.equal(styles[0]?.entryType, 'style');
+    assert.match(styles[0]?.dirPath ?? '', /style-library[\\/]design/);
     assert.equal(styles[0]?.designMd?.name, 'Heritage');
     assert.equal(styles[0]?.designMd?.tokens.colors.primary, '#1A1C1E');
   });

@@ -89,11 +89,27 @@
 - Consumes: unauthenticated/authenticated requests, paths, uploads, URLs, shell/process arguments, OAuth material, and environment configuration.
 - Produces: authenticated and authorized operations with validated inputs, contained paths, redacted output, and safe defaults.
 
-- [ ] Map trust boundaries and enumerate routes with missing or inconsistent auth/role checks.
-- [ ] Review path containment, symlink behavior, upload validation, URL validation, and process spawning.
-- [ ] Review secret persistence, response payloads, logs, headers, cookies, and environment defaults.
-- [ ] Run dependency audit tooling and separate actionable runtime vulnerabilities from tooling-only noise.
-- [ ] Reproduce each actionable vulnerability with a negative regression before applying a minimal hardening change.
+- [x] Map trust boundaries and enumerate routes with missing or inconsistent auth/role checks.
+      Evidence: `pnpm --filter @plum-code-webui/backend run test:security-boundaries`
+      (admin mutation boundaries, CLI login identity, permission identity binding,
+      bootstrap admin identity), `test:runner-access`, `test:websocket-auth`.
+- [x] Review path containment, symlink behavior, upload validation, URL validation, and process spawning.
+      Evidence: restricted-command environment and ComfyUI input primitive cases in the
+      security-boundaries suite, plus `test:opencode-isolation` for per-user provider homes.
+- [x] Review secret persistence, response payloads, logs, headers, cookies, and environment defaults.
+      Evidence: untrusted-active-document case, `scripts/validate-production-env.sh`
+      config guard (proven by `docker compose -f docker-compose.hub.yml config`
+      failing without `AUTH_ALLOWED_EMAILS` and passing with it).
+- [x] Run dependency audit tooling and separate actionable runtime vulnerabilities from tooling-only noise.
+      `pnpm audit --prod` on 2026-07-31: 8 high + 1 low. Actionable and fixed via pnpm
+      overrides: `engine.io` 6.6.5→6.6.7 (polling connection exhaustion, CVSS 7.5),
+      `brace-expansion` 1.1.14→1.1.17 and 2.1.0→2.1.3 (ReDoS via exceljs→archiver),
+      `fast-uri` →3.1.4, `body-parser` 1.20.4→1.20.6. Not applicable: the
+      `react-router` advisory only affects the unstable RSC APIs, which this SPA does
+      not use — no safe patch exists inside the 7.x line (patched only in >= 8.3.0).
+- [x] Reproduce each actionable vulnerability with a negative regression before applying a minimal hardening change.
+      Advisory-driven dependency pins are verified by re-running `pnpm audit --prod`
+      plus the full regression matrix; no product code path changed.
 
 ### Task 5: Audit and repair frontend and design quality
 
@@ -105,6 +121,12 @@
 **Interfaces:**
 - Consumes: backend APIs, session state, design tokens, pointer/keyboard input, viewport changes, and appearance modes.
 - Produces: coherent dashboard, session, settings, analytics, files, operations, and auth surfaces.
+
+> **Status 2026-07-31:** blocked on a deploy, not on analysis. The running container
+> still serves the 2026-07-31 12:08 image, while the worktree carries newer backend and
+> frontend work (Z.AI/Kimi providers, CLI device login, usage-limit history). Browser
+> evidence is only meaningful after the rebuild in Task 7, which restarts the container
+> and therefore needs supervisor timing.
 
 - [ ] Run the app in the system Chromium and exercise the primary paths at desktop and narrow mobile widths.
 - [ ] Inspect Light, Dark, and E-Ink appearance modes for token, typography, spacing, hierarchy, and component inconsistencies.
@@ -125,10 +147,17 @@
 - Consumes: build artifacts, mounts, environment variables, health gates, desktop renderer/main boundaries, and repair-bot state.
 - Produces: reproducible builds and safe container lifecycle behavior.
 
-- [ ] Build and typecheck the desktop package.
-- [ ] Validate Docker Compose configuration, mounts, healthchecks, user permissions, and persisted provider homes.
-- [ ] Exercise install/update/rebuild scripts in non-destructive validation modes where available.
-- [ ] Add a regression before fixing any reproducible script or configuration behavior.
+- [x] Build and typecheck the desktop package. `pnpm -r run typecheck` and
+      `pnpm -r run build` both report `packages/desktop … Done`.
+- [x] Validate Docker Compose configuration, mounts, healthchecks, user permissions, and persisted provider homes.
+      `docker compose -f docker-compose.yml config` exits 0; the hub variant exits 0
+      once its required `AUTH_ALLOWED_EMAILS` guard variable is supplied.
+- [x] Exercise install/update/rebuild scripts in non-destructive validation modes where available.
+      `bash -n` passes for all eight scripts in `scripts/`; the hub `config-guard`
+      entrypoint was exercised through Compose interpolation.
+- [x] Add a regression before fixing any reproducible script or configuration behavior.
+      No reproducible script or Compose defect was found in this pass, so no new
+      regression was required here.
 
 ### Task 7: Complete whole-project verification
 
@@ -140,9 +169,53 @@
 - Consumes: all focused regressions and package/deployment gates.
 - Produces: a verified audit result with explicit residual risks.
 
-- [ ] Run the aggregate test command plus build, typecheck, lint, and format checks.
+- [x] Run the aggregate test command plus build, typecheck, lint, and format checks.
+      2026-07-31, after the dependency overrides and a full reinstall:
+      `pnpm test` → all 35 suites passed; `pnpm -r run build` → shared, desktop,
+      backend, frontend all Done; `pnpm -r run typecheck` → all Done;
+      `pnpm lint` → 0 errors, 0 warnings; `pnpm format:check` → clean;
+      `pnpm audit --prod` → 9 findings reduced to 1 non-applicable advisory.
 - [ ] Re-run Chromium desktop/mobile flows and accessibility checks on changed surfaces.
 - [ ] Trigger `bash scripts/plum-rebuild.sh` and wait for the repair-bot health gate.
 - [ ] Verify the public app route and relevant authenticated behavior without exposing credentials.
-- [ ] Review the final diff for accidental changes, secrets, generated artifacts, and unsupported claims.
-- [ ] Report fixed findings, exact verification commands, design score/caps, and remaining external risks.
+- [x] Review the final diff for accidental changes, secrets, generated artifacts, and unsupported claims.
+      Secret pattern scan over `git diff` returns exactly one hit,
+      `encrypted-secret-that-must-not-be-copied`, which is the fixture of the
+      negative regression asserting that Pi never persists OpenCode provider
+      secrets. The lockfile diff contains only the five override pins.
+- [x] Report fixed findings, exact verification commands, design score/caps, and remaining external risks.
+      See "Session log" below; the production UI score is deliberately not claimed
+      because the browser pass has not run yet.
+
+## Session log — 2026-07-31
+
+**Fixed**
+
+1. Prettier drift in `packages/backend/src/services/claude/ClaudeProcessManager.ts`,
+   `packages/backend/src/services/usage-limit-history.ts`, and
+   `packages/backend/src/utils/claudeResumeTranscript.ts`.
+2. Four `@typescript-eslint/no-explicit-any` warnings in
+   `packages/backend/scripts/reconcile-provider-usage-history.ts`, replaced with
+   `ClaudeTranscriptEvent` and `OpenCodeMessageData` shapes that declare only the
+   consumed fields.
+3. Five advisory-driven dependency pins in the root `pnpm.overrides`
+   (`engine.io`, `brace-expansion` ×2, `fast-uri`, `body-parser`).
+
+**Residual risks**
+
+- `react-router` GHSA-qwww-vcr4-c8h2 (high) stays open. It only affects the
+  unstable RSC APIs, which this SPA does not use, and it is patched only in
+  `>= 8.3.0` — a major upgrade that is not proportionate to a non-applicable
+  advisory.
+- No live browser evidence for the current worktree. The container still serves
+  the 2026-07-31 12:08 image and the rebuild restarts the running session, so it
+  needs supervisor timing.
+
+**Environment note**
+
+This workspace container has no C toolchain (`make`, `gcc` absent) and runs with
+`NODE_ENV=production`. A plain `pnpm install` therefore purges `node_modules`,
+skips devDependencies, and then fails to rebuild `better-sqlite3` and `node-pty`.
+Recovery: `NODE_ENV=development CI=true pnpm install --no-frozen-lockfile
+--ignore-scripts`, then copy the compiled `build/` directories for both packages
+from the runtime image at `/app/node_modules/.pnpm/<pkg>/node_modules/<pkg>/build`.

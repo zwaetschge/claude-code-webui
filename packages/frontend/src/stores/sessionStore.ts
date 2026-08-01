@@ -377,7 +377,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }),
 
   appendStreamingContent: (sessionId, content) => {
-    // Buffer content and flush via RAF at ~30fps instead of per-character updates
+    // Buffer content and flush via RAF at no more than 20fps instead of per-character updates
     bufferStreamingContent(sessionId, content);
   },
 

@@ -2,13 +2,24 @@ import { Router } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import multer from 'multer';
-import { requireAuth } from '../middleware/auth';
-import { asyncHandler } from '../middleware/errorHandler';
-import { isValidGitHubRepo, isValidGitUrl, sanitizeShellArg } from '../utils/sanitize';
-import { resolveConfigHome } from '../utils/configPaths';
-import { importSkillFromBuffer } from '../utils/skillImport';
-import { listSkillLibrary, readSkillLibraryItem } from '../utils/skillLibrary';
-import { buildFallbackDesignMd, importDesignMdPreset, serializeDesignMd } from '../utils/designMd';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import { isValidGitHubRepo, isValidGitUrl, sanitizeShellArg } from '../utils/sanitize.js';
+import { resolveConfigHome } from '../utils/configPaths.js';
+import { importSkillIntoCatalog } from '../utils/skillImport.js';
+import { listSkillLibrary, readSkillLibraryItem } from '../utils/skillLibrary.js';
+import {
+  buildFallbackDesignMd,
+  importDesignMdPreset,
+  serializeDesignMd,
+} from '../utils/designMd.js';
+import {
+  ensureLeanSkillCatalog,
+  findSkillDirectory,
+  registerActiveSkill,
+  setSkillRuntimeEnabled,
+  unregisterSkill,
+} from '../utils/leanSkillCatalog.js';
 
 const router = Router();
 
@@ -173,16 +184,34 @@ router.get(
   })
 );
 
-// GET /api/claude-config/skills - List normal capability skills.
-// Design/theme and persona/writing packs are exposed through /style-library.
+// GET /api/claude-config/skills - Search the active and on-demand skill catalog.
 router.get(
   '/skills',
   requireAuth,
   asyncHandler(async (req, res) => {
     const configHome = resolveConfigHome(req.query.provider);
     const library = String(req.query.library || 'skill');
-    const kind = library === 'design' || library === 'writing' ? library : 'skill';
-    const userSkills = await listSkillLibrary(configHome, { kind });
+    const kind =
+      library === 'all'
+        ? undefined
+        : library === 'design' || library === 'writing'
+          ? library
+          : 'skill';
+    const query = String(req.query.query || '')
+      .trim()
+      .toLowerCase();
+    const status = String(req.query.status || 'all');
+    let userSkills = await listSkillLibrary(configHome, { kind });
+    if (status === 'active') userSkills = userSkills.filter((skill) => skill.enabled);
+    if (status === 'on-demand') userSkills = userSkills.filter((skill) => !skill.enabled);
+    if (query) {
+      userSkills = userSkills.filter((skill) =>
+        [skill.name, skill.baseName, skill.description, skill.libraryKind, ...(skill.aliases || [])]
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
+      );
+    }
 
     res.json({
       success: true,
@@ -198,8 +227,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const configHome = resolveConfigHome(req.query.provider);
     const [designStyles, writingStyles] = await Promise.all([
-      listSkillLibrary(configHome, { kind: 'design', enabledOnly: true }),
-      listSkillLibrary(configHome, { kind: 'writing', enabledOnly: true }),
+      listSkillLibrary(configHome, { kind: 'design' }),
+      listSkillLibrary(configHome, { kind: 'writing' }),
     ]);
 
     res.json({
@@ -225,6 +254,7 @@ const designMdUpload = multer({
 router.post(
   '/style-library/design-md/import',
   requireAuth,
+  requireAdmin,
   designMdUpload.single('file'),
   asyncHandler(async (req, res) => {
     const file = req.file as Express.Multer.File | undefined;
@@ -338,6 +368,7 @@ router.get(
 router.post(
   '/agents',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { name, description, tools, model, prompt } = req.body;
 
@@ -396,6 +427,7 @@ router.post(
 router.put(
   '/agent/:name',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const paramName = req.params.name ?? '';
     const { name, description, tools, model, prompt } = req.body;
@@ -462,6 +494,7 @@ router.put(
 router.put(
   '/agent/:name/toggle',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const name = req.params.name ?? '';
     const configHome = resolveConfigHome(req.query.provider);
@@ -495,6 +528,7 @@ router.put(
 router.delete(
   '/agent/:name',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const name = req.params.name ?? '';
     const configHome = resolveConfigHome(req.query.provider);
@@ -536,18 +570,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const name = req.params.name ?? '';
     const configHome = resolveConfigHome(req.query.provider);
-    const skillsDir = path.join(configHome, 'skills');
-
-    // Try both enabled and disabled paths
-    let skillDir = path.join(skillsDir, name);
-    let enabled = true;
-
-    try {
-      await fs.access(skillDir);
-    } catch {
-      skillDir = path.join(skillsDir, `${name}.disabled`);
-      enabled = false;
-    }
+    const location = await findSkillDirectory(configHome, name);
+    const skillDir = location?.dirPath || '';
+    const enabled = location?.enabled ?? false;
 
     const skillFile = path.join(skillDir, 'SKILL.md');
 
@@ -580,6 +605,7 @@ router.get(
 router.post(
   '/skills',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { name, description, allowedTools, model, content: prompt } = req.body;
 
@@ -596,14 +622,11 @@ router.post(
     const skillDir = path.join(skillsDir, sanitizedName);
 
     // Check if skill already exists
-    try {
-      await fs.access(skillDir);
+    if (await findSkillDirectory(configHome, sanitizedName)) {
       return res.status(409).json({
         success: false,
         error: { code: 'CONFLICT', message: 'Skill with this name already exists' },
       });
-    } catch {
-      // Directory doesn't exist, we can create it
     }
 
     await ensureDir(skillDir);
@@ -618,6 +641,7 @@ router.post(
     const content = `${frontmatter}\n\n${prompt}`;
     const skillFile = path.join(skillDir, 'SKILL.md');
     await fs.writeFile(skillFile, content, 'utf-8');
+    await registerActiveSkill(configHome, sanitizedName);
 
     res.json({
       success: true,
@@ -639,31 +663,21 @@ router.post(
 router.put(
   '/skill/:name',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const paramName = req.params.name ?? '';
     const { name, description, allowedTools, model, content: prompt } = req.body;
 
     const configHome = resolveConfigHome(req.query.provider);
-    const skillsDir = path.join(configHome, 'skills');
-
-    // Find existing directory (enabled or disabled)
-    let oldSkillDir = path.join(skillsDir, paramName);
-    let wasEnabled = true;
-
-    try {
-      await fs.access(oldSkillDir);
-    } catch {
-      oldSkillDir = path.join(skillsDir, `${paramName}.disabled`);
-      wasEnabled = false;
-      try {
-        await fs.access(oldSkillDir);
-      } catch {
-        return res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Skill not found' },
-        });
-      }
+    const location = await findSkillDirectory(configHome, paramName);
+    if (!location) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Skill not found' },
+      });
     }
+    const oldSkillDir = location.dirPath;
+    const wasEnabled = location.enabled;
 
     const frontmatter = generateFrontmatter({
       name: name || paramName,
@@ -676,11 +690,12 @@ router.put(
 
     // If name changed, rename the directory
     const sanitizedName = sanitizeFilename(name || paramName);
-    const suffix = wasEnabled ? '' : '.disabled';
-    const newSkillDir = path.join(skillsDir, `${sanitizedName}${suffix}`);
+    const newSkillDir = path.join(path.dirname(oldSkillDir), sanitizedName);
 
     if (oldSkillDir !== newSkillDir) {
       await fs.rename(oldSkillDir, newSkillDir);
+      await unregisterSkill(configHome, paramName);
+      if (wasEnabled) await registerActiveSkill(configHome, sanitizedName);
     }
 
     const skillFile = path.join(newSkillDir, 'SKILL.md');
@@ -706,32 +721,29 @@ router.put(
 router.put(
   '/skill/:name/toggle',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const name = req.params.name ?? '';
     const configHome = resolveConfigHome(req.query.provider);
-    const skillsDir = path.join(configHome, 'skills');
-
-    const enabledPath = path.join(skillsDir, name);
-    const disabledPath = path.join(skillsDir, `${name}.disabled`);
-
-    try {
-      await fs.access(enabledPath);
-      // Currently enabled, disable it
-      await fs.rename(enabledPath, disabledPath);
-      res.json({ success: true, data: { enabled: false } });
-    } catch {
-      try {
-        await fs.access(disabledPath);
-        // Currently disabled, enable it
-        await fs.rename(disabledPath, enabledPath);
-        res.json({ success: true, data: { enabled: true } });
-      } catch {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Skill not found' },
-        });
-      }
+    const location = await findSkillDirectory(configHome, name);
+    if (!location) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Skill not found' },
+      });
     }
+    if (!location.runtimeConfigurable) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'STYLE_PRESET_NOT_TOGGLEABLE',
+          message: 'Style presets are selected per session and are not runtime skills',
+        },
+      });
+    }
+    const enabled = !location.enabled;
+    await setSkillRuntimeEnabled(configHome, name, enabled);
+    res.json({ success: true, data: { enabled } });
   })
 );
 
@@ -739,27 +751,15 @@ router.put(
 router.delete(
   '/skill/:name',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const name = req.params.name ?? '';
     const configHome = resolveConfigHome(req.query.provider);
-    const skillsDir = path.join(configHome, 'skills');
-
-    // Try both enabled and disabled paths
-    const enabledPath = path.join(skillsDir, name);
-    const disabledPath = path.join(skillsDir, `${name}.disabled`);
-
-    let deleted = false;
-
-    try {
-      await fs.rm(enabledPath, { recursive: true });
-      deleted = true;
-    } catch {
-      try {
-        await fs.rm(disabledPath, { recursive: true });
-        deleted = true;
-      } catch {
-        // Neither directory exists
-      }
+    const location = await findSkillDirectory(configHome, name);
+    const deleted = !!location;
+    if (location) {
+      await fs.rm(location.dirPath, { recursive: true, force: true });
+      await unregisterSkill(configHome, name);
     }
 
     if (deleted) {
@@ -792,6 +792,7 @@ const skillImportUpload = multer({
 router.post(
   '/skills/import',
   requireAuth,
+  requireAdmin,
   skillImportUpload.array('files', 200),
   asyncHandler(async (req, res) => {
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
@@ -804,8 +805,6 @@ router.post(
 
     const conflict = String(req.query.conflict || 'skip') === 'overwrite' ? 'overwrite' : 'skip';
     const configHome = resolveConfigHome(req.query.provider);
-    const skillsDir = path.join(configHome, 'skills');
-    await ensureDir(skillsDir);
 
     const imported: Array<{ name: string; dirPath: string }> = [];
     const skipped: Array<{ file: string; skillName?: string; reason: string }> = [];
@@ -813,7 +812,7 @@ router.post(
 
     for (const f of files) {
       try {
-        const result = await importSkillFromBuffer(f.buffer, f.originalname, skillsDir, {
+        const result = await importSkillIntoCatalog(f.buffer, f.originalname, configHome, {
           conflict,
         });
         if (result.status === 'imported') {
@@ -832,6 +831,8 @@ router.post(
         });
       }
     }
+
+    await ensureLeanSkillCatalog(configHome);
 
     res.json({ success: true, data: { imported, skipped, errors } });
   })
@@ -1057,6 +1058,7 @@ router.get(
 router.post(
   '/plugins',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { name, description, version, author, category, content: prompt } = req.body;
 
@@ -1118,6 +1120,7 @@ router.post(
 router.put(
   '/plugin/:name',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const paramName = req.params.name ?? '';
     const { name, description, version, author, category, content: prompt } = req.body;
@@ -1187,6 +1190,7 @@ router.put(
 router.put(
   '/plugin/:name/toggle',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const name = req.params.name ?? '';
     const configHome = resolveConfigHome(req.query.provider);
@@ -1235,6 +1239,7 @@ router.get(
 router.post(
   '/marketplaces',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { name, source, repo, url } = req.body;
 
@@ -1387,6 +1392,7 @@ router.post(
 router.post(
   '/marketplace/:id/refresh',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const marketplaceId = req.params.id ?? '';
     const configHome = resolveConfigHome(req.query.provider);
@@ -1463,6 +1469,7 @@ router.post(
 router.delete(
   '/marketplace/:id',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const marketplaceId = req.params.id ?? '';
     const configHome = resolveConfigHome(req.query.provider);
@@ -1506,6 +1513,7 @@ router.delete(
 router.post(
   '/plugins/install',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { pluginName, marketplaceId } = req.body;
 
@@ -1645,6 +1653,7 @@ router.post(
 router.delete(
   '/plugin/:id',
   requireAuth,
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const pluginId = decodeURIComponent(req.params.id ?? '');
     const configHome = resolveConfigHome(req.query.provider);

@@ -15,6 +15,7 @@ import type {
 const execFileAsync = promisify(execFile);
 
 const DOCKER_SOCKET_PATH = process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock';
+const DOCKER_HOST = process.env.DOCKER_HOST?.trim() || null;
 const DOCKER_TIMEOUT_MS = Number(process.env.DOCKER_INTEGRATION_TIMEOUT_MS || 12_000);
 const DOCKER_MAX_BUFFER = 4 * 1024 * 1024;
 const LOG_MAX_BUFFER = 512 * 1024;
@@ -335,7 +336,7 @@ export class DockerHostService {
         error: 'Docker integration is disabled',
       };
     }
-    if (!fs.existsSync(DOCKER_SOCKET_PATH)) {
+    if (!DOCKER_HOST && !fs.existsSync(DOCKER_SOCKET_PATH)) {
       return {
         enabled,
         available: false,

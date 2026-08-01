@@ -1,11 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { getTaskManager } from '../services/tasks';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError } from '../middleware/errorHandler';
-import { resolveTargetUrl } from '../utils/containers';
-import { config } from '../config';
+import { getTaskManager } from '../services/tasks/index.js';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { resolveTargetUrl } from '../utils/containers.js';
+import { config } from '../config.js';
 
 const router = Router();
 

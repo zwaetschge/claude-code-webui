@@ -1,0 +1,1 @@
+export const RECENT_SESSIONS_LIMIT = 10;

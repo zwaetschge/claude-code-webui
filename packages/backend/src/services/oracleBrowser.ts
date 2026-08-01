@@ -10,7 +10,7 @@ import type { OracleBrowserMode } from '@plum-code-webui/shared';
 import {
   DEFAULT_ORACLE_CHATGPT_URL,
   getOracleRuntimeConfigForSession,
-} from '../utils/oracleSettings';
+} from '../utils/oracleSettings.js';
 
 const DEFAULT_BROWSER_BIN =
   process.env.CHROME_BIN ||

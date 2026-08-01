@@ -10,16 +10,20 @@ import path from 'path';
 import fs from 'fs/promises';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth';
-import { AppError, asyncHandler } from '../middleware/errorHandler';
-import { rateLimiters } from '../middleware/rateLimiter';
-import { getDatabase } from '../db';
-import { safeJsonParse } from '../utils/json';
-import { recordAudit } from '../utils/auditLog';
-import { getProcessManager } from '../websocket';
-import type { SessionRuntimeSnapshot } from '../services/claude/ClaudeProcessManager';
-import { discordIntegrationService, discordNotifier } from '../services/discord';
-import { isAllowedBasePath } from '../utils/allowedPaths';
+import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { AppError, asyncHandler } from '../middleware/errorHandler.js';
+import { rateLimiters } from '../middleware/rateLimiter.js';
+import { getDatabase } from '../db/index.js';
+import { safeJsonParse } from '../utils/json.js';
+import { recordAudit } from '../utils/auditLog.js';
+import { getProcessManager } from '../websocket/index.js';
+import type { SessionRuntimeSnapshot } from '../services/claude/ClaudeProcessManager.js';
+import { discordIntegrationService, discordNotifier } from '../services/discord/index.js';
+import {
+  homeAssistantStatusForGoalStatus,
+  homeAssistantStatusLights,
+} from '../services/home-assistant/index.js';
+import { isAllowedBasePath } from '../utils/allowedPaths.js';
 import type {
   CLIProvider,
   DiscordAlertEventType,
@@ -27,6 +31,7 @@ import type {
   DiscordMaintenancePolicy,
   SessionMode,
 } from '@plum-code-webui/shared';
+import { getEnabledCliProvidersForUser, getZaiApiConfigForUser } from './settings.js';
 
 const router = Router();
 
@@ -40,7 +45,7 @@ const automationScopeValues = [
 ] as const;
 type AutomationScope = (typeof automationScopeValues)[number];
 
-const cliProviderValues = ['claude', 'codex', 'opencode', 'vibe'] as const;
+const cliProviderValues = ['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi'] as const;
 const sessionModeValues = ['planning', 'auto-accept', 'manual', 'danger'] as const;
 const sessionSurfaceValues = ['code', 'task'] as const;
 
@@ -339,6 +344,10 @@ function queueGoalNotification(
     previousStatus?: GoalStatus | null;
   }
 ): void {
+  const homeAssistantStatus = homeAssistantStatusForGoalStatus(row.status);
+  if (homeAssistantStatus) {
+    homeAssistantStatusLights.notifySession(row.sessionId, homeAssistantStatus);
+  }
   try {
     discordNotifier.queueAlert({
       eventType: input.eventType,
@@ -740,6 +749,16 @@ router.post(
     }
 
     const cliProvider: CLIProvider = parsed.data.cliProvider;
+    if (!getEnabledCliProvidersForUser(principal.userId).includes(cliProvider)) {
+      throw new AppError(`${cliProvider} is disabled in Settings`, 409, 'PROVIDER_DISABLED');
+    }
+    if (cliProvider === 'zai' && !getZaiApiConfigForUser(principal.userId)) {
+      throw new AppError(
+        'Configure Z.AI in Settings before creating a Z.AI session',
+        409,
+        'PROVIDER_NOT_CONFIGURED'
+      );
+    }
     const modeDecision = resolveAutomationSessionMode(
       parsed.data.mode,
       principal,

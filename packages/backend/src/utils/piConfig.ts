@@ -1,0 +1,375 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { getOpenCodeProviderCatalog, type OpenCodeProviderCatalog } from './opencodeCatalog.js';
+import {
+  getOpenCodeCredentialEnvVars,
+  readOpenCodeProvidersForUser,
+  type OpenCodeProvider,
+} from './opencodeProviderKeys.js';
+import {
+  ensureOpenCodeTenantDirectories,
+  resolveOpenCodeTenantPaths,
+} from '../services/opencode/tenantPaths.js';
+import { syncProviderLinks } from './providerLinks.js';
+
+const CLAUDE_AGENTS_DIR = path.join(os.homedir(), '.claude', 'agents');
+const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+const PI_ROOT = path.join(os.homedir(), '.pi', 'webui-users');
+
+interface ClaudeMcpServer {
+  type?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+interface ClaudeSettings {
+  mcpServers?: Record<string, ClaudeMcpServer>;
+}
+
+export interface PiConfigSyncResult {
+  agentDir: string;
+  modelCount: number;
+  providerCount: number;
+  mcpCount: number;
+  agentCount: number;
+  extensions: string[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readJsonObject(filePath: string): Record<string, unknown> {
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+    return isRecord(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeJsonIfChanged(filePath: string, value: unknown): void {
+  const next = `${JSON.stringify(value, null, 2)}\n`;
+  let current = '';
+  try {
+    current = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    // Created below.
+  }
+  if (current === next) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, next, { encoding: 'utf8', mode: 0o600 });
+}
+
+function writeTextIfChanged(filePath: string, value: string): void {
+  let current = '';
+  try {
+    current = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    // Created below.
+  }
+  if (current === value) return;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, value, 'utf8');
+}
+
+function safeUserSegment(userId: string): string {
+  const safe = userId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 120);
+  return safe || 'default';
+}
+
+function inferPiApi(
+  providerId: string
+): 'anthropic-messages' | 'openai-completions' | 'openai-responses' | 'google-generative-ai' {
+  const id = providerId.toLowerCase();
+  if (id === 'anthropic' || id.includes('claude')) return 'anthropic-messages';
+  if (id === 'google' || id.includes('gemini')) return 'google-generative-ai';
+  if (id === 'openai') return 'openai-responses';
+  return 'openai-completions';
+}
+
+function modelSupportsReasoning(modelId: string): boolean {
+  return /(?:reason|thinking|(^|[-_/])o[134](?:[-_/]|$)|gpt-5|glm-5|kimi|deepseek-r)/i.test(
+    modelId
+  );
+}
+
+function modelSupportsImages(modelId: string): boolean {
+  return /(?:vision|vl|gpt-4o|gpt-5|claude|gemini|glm-4\.5v)/i.test(modelId);
+}
+
+function humanizeModel(modelId: string): string {
+  return modelId
+    .replace(/[-_]/g, ' ')
+    .replace(/\bglm\b/gi, 'GLM')
+    .replace(/\bgpt\b/gi, 'GPT')
+    .replace(/\b\w/g, (value) => value.toUpperCase());
+}
+
+export function isPiRunnableModel(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  if (!id) return false;
+  return !(
+    /^wan\d/.test(id) ||
+    id.includes('happyhorse') ||
+    /(^|[-_/])(?:image|video|i2v|t2v|r2v)(?:[-_.:/]|$)/.test(id)
+  );
+}
+
+export function buildPiProviderConfig(
+  provider: OpenCodeProvider,
+  catalog: OpenCodeProviderCatalog = getOpenCodeProviderCatalog(),
+  configuredModelIds: string[] = []
+): Record<string, unknown> | null {
+  const catalogProvider = catalog[provider.id];
+  const baseUrl = provider.baseUrl || catalogProvider?.api;
+  const modelIds = (
+    configuredModelIds.length > 0 ? configuredModelIds : catalogProvider?.models || []
+  ).filter(isPiRunnableModel);
+  if (!provider.enabled || !baseUrl || modelIds.length === 0) return null;
+
+  const envVar = getOpenCodeCredentialEnvVars(provider.id, catalog)[0];
+  if (!envVar) return null;
+
+  return {
+    baseUrl,
+    api: inferPiApi(provider.id),
+    apiKey: `$${envVar}`,
+    authHeader: true,
+    models: modelIds.map((modelId) => ({
+      id: modelId,
+      name: humanizeModel(modelId),
+      reasoning: modelSupportsReasoning(modelId),
+      input: modelSupportsImages(modelId) ? ['text', 'image'] : ['text'],
+    })),
+  };
+}
+
+export function parsePiProviderModels(config: unknown): Record<string, string[]> {
+  if (!isRecord(config) || !isRecord(config.provider)) return {};
+
+  const providers: Record<string, string[]> = {};
+  for (const [providerId, rawProvider] of Object.entries(config.provider)) {
+    if (!isRecord(rawProvider) || !isRecord(rawProvider.models)) continue;
+    const models = Object.keys(rawProvider.models).filter((modelId) => modelId.trim().length > 0);
+    if (models.length > 0) providers[providerId] = models;
+  }
+  return providers;
+}
+
+function readPiProviderModelsForUser(userId: string): Record<string, string[]> {
+  const tenantPaths = resolveOpenCodeTenantPaths(userId);
+  const config = readJsonObject(path.join(tenantPaths.configDir, 'opencode.json'));
+  return parsePiProviderModels(config);
+}
+
+export function buildPiModelCatalog(
+  storedProviders: OpenCodeProvider[],
+  catalog: OpenCodeProviderCatalog,
+  configuredModels: Record<string, string[]>
+): {
+  piProviders: Record<string, unknown>;
+  models: string[];
+} {
+  const piProviders: Record<string, unknown> = {};
+  const models: string[] = [];
+
+  for (const provider of storedProviders.filter((entry) => entry.enabled)) {
+    const entry = buildPiProviderConfig(provider, catalog, configuredModels[provider.id]);
+    if (!entry) continue;
+    piProviders[provider.id] = entry;
+    const entryModels = Array.isArray(entry.models)
+      ? (entry.models as Array<{ id?: unknown }>)
+          .map((model) => (typeof model.id === 'string' ? model.id.trim() : ''))
+          .filter((modelId) => modelId.length > 0)
+      : [];
+    models.push(...entryModels.map((modelId) => `${provider.id}/${modelId}`));
+  }
+
+  return {
+    piProviders,
+    models: [...new Set(models)],
+  };
+}
+
+function buildPiProvidersForUser(userId: string): {
+  storedProviders: OpenCodeProvider[];
+  piProviders: Record<string, unknown>;
+  models: string[];
+} {
+  const storedProviders = readOpenCodeProvidersForUser(userId).filter(
+    (provider) => provider.enabled
+  );
+  const resolved = buildPiModelCatalog(
+    storedProviders,
+    getOpenCodeProviderCatalog(),
+    readPiProviderModelsForUser(userId)
+  );
+  return { storedProviders, ...resolved };
+}
+
+export function getPiModelsForUser(userId: string): string[] {
+  return buildPiProvidersForUser(userId).models;
+}
+
+function readClaudeMcpServers(): Record<string, ClaudeMcpServer> {
+  const settings = readJsonObject(CLAUDE_SETTINGS_PATH) as ClaudeSettings;
+  return settings.mcpServers && typeof settings.mcpServers === 'object' ? settings.mcpServers : {};
+}
+
+function shouldEnableZaiVision(providers: OpenCodeProvider[]): boolean {
+  const policy = (process.env.OPENCODE_ZAI_VISION_MCP || 'auto').trim().toLowerCase();
+  if (['0', 'false', 'off', 'disabled', 'none'].includes(policy)) return false;
+  const hasStoredKey = providers.some(
+    (provider) =>
+      provider.enabled && ['z-ai', 'zai'].includes(provider.id.toLowerCase()) && !!provider.apiKey
+  );
+  if (hasStoredKey) return true;
+  return (
+    ['1', 'true', 'on', 'always'].includes(policy) &&
+    typeof process.env.Z_AI_API_KEY === 'string' &&
+    process.env.Z_AI_API_KEY.trim().length > 0
+  );
+}
+
+function buildPiMcpConfig(providers: OpenCodeProvider[]): Record<string, unknown> {
+  const mcpServers: Record<string, unknown> = { ...readClaudeMcpServers() };
+  if (shouldEnableZaiVision(providers) && !mcpServers['zai-vision']) {
+    mcpServers['zai-vision'] = {
+      command: 'npx',
+      args: ['-y', '@z_ai/mcp-server@latest'],
+      env: { Z_AI_MODE: 'ZAI' },
+    };
+  }
+  return {
+    settings: {
+      toolPrefix: 'server',
+      idleTimeout: 10,
+      outputGuard: true,
+    },
+    mcpServers,
+  };
+}
+
+const PI_TOOL_MAP: Record<string, string> = {
+  read: 'read',
+  write: 'write',
+  edit: 'edit',
+  glob: 'find',
+  grep: 'grep',
+  bash: 'bash',
+  webfetch: 'mcp',
+  websearch: 'mcp',
+  task: 'subagent',
+  todowrite: 'write',
+  ls: 'ls',
+};
+
+function convertAgentForPi(source: string): string {
+  return source.replace(/^tools:\s*(.+)$/m, (_line, raw: string) => {
+    const tools = raw
+      .split(',')
+      .map((value) => value.trim().replace(/^['"]|['"]$/g, ''))
+      .map((value) => PI_TOOL_MAP[value.toLowerCase()])
+      .filter((value): value is string => !!value);
+    return tools.length > 0
+      ? `tools: ${[...new Set(tools)].join(', ')}`
+      : 'tools: read, grep, find, ls';
+  });
+}
+
+function syncPiAgents(agentDir: string): number {
+  const targetDir = path.join(agentDir, 'agents');
+  fs.mkdirSync(targetDir, { recursive: true });
+  const sourceFiles = fs.existsSync(CLAUDE_AGENTS_DIR)
+    ? fs.readdirSync(CLAUDE_AGENTS_DIR).filter((name) => name.endsWith('.md'))
+    : [];
+  const names = new Set(sourceFiles);
+
+  for (const name of sourceFiles) {
+    const source = fs.readFileSync(path.join(CLAUDE_AGENTS_DIR, name), 'utf8');
+    writeTextIfChanged(path.join(targetDir, name), convertAgentForPi(source));
+  }
+
+  for (const name of fs.readdirSync(targetDir)) {
+    if (name.endsWith('.md') && !names.has(name)) {
+      fs.unlinkSync(path.join(targetDir, name));
+    }
+  }
+  return sourceFiles.length;
+}
+
+function firstExisting(candidates: string[]): string | null {
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+export function resolvePiExtensionPaths(): string[] {
+  const prefixes = ['/home/node/.npm-global', '/opt/plum-cli'];
+  const mcp = firstExisting(
+    prefixes.map((prefix) => path.join(prefix, 'lib', 'node_modules', 'pi-mcp-adapter', 'index.ts'))
+  );
+  const subagent = firstExisting(
+    prefixes.map((prefix) =>
+      path.join(
+        prefix,
+        'lib',
+        'node_modules',
+        '@earendil-works',
+        'pi-coding-agent',
+        'examples',
+        'extensions',
+        'subagent',
+        'index.ts'
+      )
+    )
+  );
+  const permission = firstExisting([
+    path.resolve(process.cwd(), 'scripts', 'pi-webui-extension.ts'),
+    '/app/scripts/pi-webui-extension.ts',
+  ]);
+  return [mcp, subagent, permission].filter((value): value is string => !!value);
+}
+
+export function syncPiConfig(userId: string): PiConfigSyncResult {
+  const agentDir = path.join(PI_ROOT, safeUserSegment(userId), 'agent');
+  fs.mkdirSync(agentDir, { recursive: true });
+
+  const tenantPaths = resolveOpenCodeTenantPaths(userId);
+  ensureOpenCodeTenantDirectories(tenantPaths);
+  syncProviderLinks({
+    quiet: true,
+    userId,
+    opencodeConfigPath: path.join(tenantPaths.configDir, 'opencode.json'),
+    opencodeAgentsDir: path.join(tenantPaths.configDir, 'agents'),
+  });
+  const { storedProviders, piProviders, models } = buildPiProvidersForUser(userId);
+
+  writeJsonIfChanged(path.join(agentDir, 'models.json'), { providers: piProviders });
+
+  const mcpConfig = buildPiMcpConfig(storedProviders);
+  writeJsonIfChanged(path.join(agentDir, 'mcp.json'), mcpConfig);
+  const mcpServers = isRecord(mcpConfig.mcpServers) ? mcpConfig.mcpServers : {};
+
+  const extensions = resolvePiExtensionPaths();
+  const currentSettings = readJsonObject(path.join(agentDir, 'settings.json'));
+  writeJsonIfChanged(path.join(agentDir, 'settings.json'), {
+    ...currentSettings,
+    defaultProjectTrust: 'always',
+    enableInstallTelemetry: false,
+    extensions,
+  });
+
+  const agentCount = syncPiAgents(agentDir);
+  return {
+    agentDir,
+    modelCount: models.length,
+    providerCount: Object.keys(piProviders).length,
+    mcpCount: Object.keys(mcpServers).length,
+    agentCount,
+    extensions,
+  };
+}

@@ -2,9 +2,11 @@
  * CLI Provider Abstraction
  *
  * Supports multiple AI CLI tools:
- * - Claude Code CLI (claude) - Anthropic
+ * - Claude Code CLI (claude) - Anthropic subscription
+ * - Z.AI Code (zai) - Claude Code transport with Z.AI-compatible endpoint
  * - Codex CLI (codex) - OpenAI
  * - OpenCode CLI (opencode) - Multi-provider (75+ LLM backends)
+ * - Pi (pi) - Alternative harness sharing OpenCode provider connections
  */
 
 import os from 'os';
@@ -18,16 +20,16 @@ import type {
   ProviderCapabilities,
   SessionMode,
 } from '@plum-code-webui/shared';
-import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from '../utils/codexDefaults';
+import { getCodexWebuiApprovalPolicy, getCodexWebuiSandboxMode } from '../utils/codexDefaults.js';
 import {
   discoverOpenCodeCliModels,
   getOpenCodeModelIdsForProviders,
-} from '../utils/opencodeCatalog';
+} from '../utils/opencodeCatalog.js';
 
 const execFileAsync = promisify(execFile);
 const CODEX_UNRAID_DEFAULT_ALLOWED_DIRS = ['/mnt/user', '/mnt/cache'];
 
-export type CLIProvider = 'claude' | 'codex' | 'opencode' | 'vibe';
+export type CLIProvider = 'claude' | 'zai' | 'codex' | 'opencode' | 'pi' | 'kimi';
 
 export interface CLIProviderConfig {
   id: CLIProvider;
@@ -43,16 +45,11 @@ export interface CLIProviderConfig {
   models?: string[];
 }
 
-export interface VibeModelEntry {
-  name: string;
-  alias: string;
-  thinking?: string;
-}
-
 // Fallback models - used when CLI discovery fails or CLI not installed
 // Can be overridden via CLI_PROVIDER_<PROVIDER>_MODELS env var
 const CLI_PROVIDER_MODELS: Record<CLIProvider, string[]> = {
-  claude: ['opus', 'sonnet', 'haiku'],
+  claude: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
+  zai: ['opus', 'sonnet', 'haiku'],
   // Fallback only — runtime list comes from ~/.codex/models_cache.json (filtered to
   // visibility=list, sorted by priority). Cache refreshes via the codex CLI itself;
   // if the user's auth token is expired, the cache freezes and the dropdown stays on
@@ -77,16 +74,34 @@ const CLI_PROVIDER_MODELS: Record<CLIProvider, string[]> = {
     'deepseek/deepseek-chat',
     'google/gemini-2.5-pro',
   ],
-  // Names must match `[[models]].name` in ~/.vibe/config.toml. Vibe ships with
-  // mistral-vibe-cli-latest (alias mistral-medium-3.5) and devstral-small-latest.
-  vibe: ['mistral-vibe-cli-latest', 'devstral-small-latest'],
+  pi: [
+    'opencode-go/kimi-k2.7',
+    'opencode/kimi-k2.7',
+    'z-ai/glm-5.1',
+    'z-ai/glm-5',
+    'anthropic/claude-sonnet-4-5',
+    'openai/gpt-4o',
+    'deepseek/deepseek-chat',
+    'google/gemini-2.5-pro',
+  ],
+  // Kimi Code CLI (@moonshot-ai/kimi-code). Model aliases resolve through the
+  // managed Kimi provider that `kimi login` populates. Fallback only — the
+  // runtime list should come from the CLI's configured providers after login.
+  kimi: ['kimi-code/kimi-for-coding', 'kimi-code/kimi-for-coding-highspeed', 'kimi-code/k3'],
 };
 
-// Display labels — enhanced at startup by CLI discovery
+// Display labels — enhanced at startup by CLI discovery. Claude aliases stay
+// stable, while their labels are replaced with the versions exposed by the
+// installed Claude Code CLI.
 const MODEL_DISPLAY_LABELS: Record<string, string> = {
-  // Claude (aliases resolve server-side to latest version)
-  opus: 'Opus 4.7',
-  sonnet: 'Sonnet 4.6',
+  // Claude Code fallback labels. These are used only when CLI discovery fails.
+  'claude-fable-5': 'Fable 5',
+  'claude-opus-5': 'Opus 5',
+  'claude-sonnet-5': 'Sonnet 5',
+  'claude-haiku-4-5': 'Haiku 4.5',
+  // Legacy aliases remain labelled for existing sessions and Z.AI mappings.
+  opus: 'Opus 5',
+  sonnet: 'Sonnet 5',
   haiku: 'Haiku 4.5',
   // Codex (labels for the currently-listed models in upstream models_cache.json)
   'gpt-5.5': 'GPT 5.5',
@@ -107,9 +122,13 @@ const MODEL_DISPLAY_LABELS: Record<string, string> = {
   'openai/gpt-4o': 'GPT-4o',
   'deepseek/deepseek-chat': 'DeepSeek Chat',
   'google/gemini-2.5-pro': 'Gemini 2.5 Pro',
-  // Mistral Vibe (name → alias resolves to mistral-medium-3.5 / devstral-small)
-  'mistral-vibe-cli-latest': 'Mistral Medium 3.5 (Vibe)',
-  'devstral-small-latest': 'Devstral Small',
+  // Kimi Code CLI model aliases (populated by `kimi login`).
+  'kimi-for-coding': 'Kimi K2.7 Code',
+  'kimi-for-coding-highspeed': 'Kimi K2.7 Code HighSpeed',
+  k3: 'Kimi K3',
+  'kimi-code/kimi-for-coding': 'Kimi K2.7 Code',
+  'kimi-code/kimi-for-coding-highspeed': 'Kimi K2.7 Code HighSpeed',
+  'kimi-code/k3': 'Kimi K3',
 };
 
 function normalizeAllowedDirectory(dir: string): string | null {
@@ -204,7 +223,12 @@ function getCodexWebuiAgentLimitArgs(
 function findCliBinary(command: string): string | null {
   const candidates = command.includes('/')
     ? [command.replace(/^~/, os.homedir())]
-    : [`/home/node/.npm-global/bin/${command}`, `/usr/local/bin/${command}`, `/usr/bin/${command}`];
+    : [
+        `/home/node/.npm-global/bin/${command}`,
+        `/opt/plum-cli/bin/${command}`,
+        `/usr/local/bin/${command}`,
+        `/usr/bin/${command}`,
+      ];
   for (const candidate of candidates) {
     try {
       if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
@@ -215,7 +239,12 @@ function findCliBinary(command: string): string | null {
 
   try {
     const pathParts = (process.env.PATH || '').split(':').filter(Boolean);
-    for (const item of ['/home/node/.npm-global/bin', '/usr/local/bin', '/usr/bin']) {
+    for (const item of [
+      '/home/node/.npm-global/bin',
+      '/opt/plum-cli/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+    ]) {
       if (!pathParts.includes(item)) pathParts.unshift(item);
     }
     const p = execFileSync('which', [command], {
@@ -244,60 +273,124 @@ function readCliFile(binaryPath: string, ...segments: string[]): string | null {
   return null;
 }
 
+const CLAUDE_MODEL_FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'] as const;
+type ClaudeModelFamily = (typeof CLAUDE_MODEL_FAMILIES)[number];
+
+export interface ClaudeCliModelCatalog {
+  models: string[];
+  labels: Record<string, string>;
+}
+
+function compareClaudeVersions(left: string, right: string): number {
+  const leftParts = left.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const rightParts = right.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function versionFromClaudeModelId(modelId: string, family: ClaudeModelFamily): string | null {
+  const suffix = modelId.replace(new RegExp(`^claude-${family}-`), '').replace(/-\d{8}$/, '');
+  if (!/^\d+(?:-\d+)*$/.test(suffix)) return null;
+  return suffix.replace(/-/g, '.');
+}
+
 /**
- * Claude: Enhance alias labels by resolving what each alias points to.
+ * Parse the model catalog embedded in Claude Code.
+ *
+ * Current native releases expose canonical model ID/display-name pairs in
+ * their string table. Older JavaScript releases expose the same IDs in
+ * `firstParty` and alias maps. Prefer labelled pairs because native binaries
+ * also retain legacy IDs for migrations and compatibility.
+ */
+export function parseClaudeCliModelCatalog(source: string): ClaudeCliModelCatalog {
+  const candidates = new Map<
+    ClaudeModelFamily,
+    Array<{ modelId: string; version: string; label: string }>
+  >();
+  for (const family of CLAUDE_MODEL_FAMILIES) candidates.set(family, []);
+
+  const lines = source.split(/\r?\n/);
+  for (let index = 1; index < lines.length; index += 1) {
+    const modelId = lines[index - 1]?.trim() ?? '';
+    const displayName = lines[index]?.trim() ?? '';
+    const modelMatch = /^claude-(fable|opus|sonnet|haiku)-[a-z0-9-]+$/.exec(modelId);
+    const labelMatch = /^Claude (Fable|Opus|Sonnet|Haiku) (\d+(?:\.\d+)*)$/.exec(displayName);
+    if (!modelMatch?.[1] || !labelMatch?.[1] || !labelMatch[2]) continue;
+
+    const family = modelMatch[1] as ClaudeModelFamily;
+    if (labelMatch[1].toLowerCase() !== family) continue;
+    candidates.get(family)!.push({
+      modelId,
+      version: labelMatch[2],
+      label: `${labelMatch[1]} ${labelMatch[2]}`,
+    });
+  }
+
+  // JavaScript CLI fallback: extract canonical IDs when no adjacent display
+  // labels exist. Dated snapshots collapse to their stable family/version ID.
+  if ([...candidates.values()].every((items) => items.length === 0)) {
+    const modelPattern = /claude-(fable|opus|sonnet|haiku)-\d+(?:-\d+)*(?:-\d{8})?/g;
+    let match: RegExpExecArray | null;
+    while ((match = modelPattern.exec(source)) !== null) {
+      const family = match[1] as ClaudeModelFamily;
+      const version = versionFromClaudeModelId(match[0], family);
+      if (!version) continue;
+      const stableId = `claude-${family}-${version.replace(/\./g, '-')}`;
+      const familyLabel = family.charAt(0).toUpperCase() + family.slice(1);
+      candidates.get(family)!.push({
+        modelId: stableId,
+        version,
+        label: `${familyLabel} ${version}`,
+      });
+    }
+  }
+
+  const models: string[] = [];
+  const labels: Record<string, string> = {};
+  for (const family of CLAUDE_MODEL_FAMILIES) {
+    const latest = candidates
+      .get(family)!
+      .sort((left, right) => compareClaudeVersions(right.version, left.version))[0];
+    if (!latest) continue;
+    models.push(latest.modelId);
+    labels[latest.modelId] = latest.label;
+    labels[family] = latest.label;
+  }
+
+  return { models, labels };
+}
+
+/**
+ * Claude: read the current model catalog from the installed CLI. Claude Code
+ * moved from cli.js to a native executable in 2.1.x, so both formats are
+ * supported.
  */
 function discoverClaude(): void {
   try {
     const bin = findCliBinary('claude');
     if (!bin) return;
-    const source =
+    let source =
       readCliFile(bin, 'cli.js') ?? readCliFile(bin, '@anthropic-ai', 'claude-code', 'cli.js');
-    if (!source) return;
-
-    // Try v2.1.34+ format: {opus:"claude-opus-4-6",sonnet:...}
-    // and v2.1.29 format: firstParty:"claude-opus-4-5-20251101" with separate alias function
-    // Strategy: find the latest firstParty model per family
-    const families: Record<string, string[]> = { opus: [], sonnet: [], haiku: [] };
-    const fpRe = /firstParty:"(claude-(opus|sonnet|haiku)-[^"]+)"/g;
-    let fpMatch;
-    while ((fpMatch = fpRe.exec(source)) !== null) {
-      if (fpMatch[1] && fpMatch[2] && families[fpMatch[2]]) {
-        families[fpMatch[2]]!.push(fpMatch[1]);
-      }
+    if (!source) {
+      source = execFileSync('strings', [bin], {
+        encoding: 'utf-8',
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
     }
 
-    // Also try direct alias map format (v2.1.34+): {opus:"claude-opus-4-6",...}
-    for (const alias of ['opus', 'sonnet', 'haiku']) {
-      const directRe = new RegExp(`${alias}:"(claude-${alias}-[a-z0-9-]+)"`);
-      const dm = directRe.exec(source);
-      if (dm?.[1] && !families[alias]!.includes(dm[1])) {
-        families[alias]!.push(dm[1]);
-      }
-    }
-
-    for (const [alias, modelIds] of Object.entries(families)) {
-      if (modelIds.length === 0) continue;
-      // Sort descending → newest model first
-      modelIds.sort().reverse();
-      const latest = modelIds[0]!;
-      const stripped = latest.replace(/^claude-(?:opus|sonnet|haiku)-/, '');
-      const version = stripped
-        .replace(/-\d{8}$/, '')
-        .split('-')
-        .join('.');
-      const family = alias.charAt(0).toUpperCase() + alias.slice(1);
-      const newLabel = `${family} ${version}`;
-      // Only update if discovered version is newer than hardcoded
-      // (aliases resolve server-side, so the CLI bundle may lag behind)
-      const currentVersion = MODEL_DISPLAY_LABELS[alias]?.match(/(\d+(?:\.\d+)*)/)?.[1] || '0';
-      if (version >= currentVersion) {
-        MODEL_DISPLAY_LABELS[alias] = newLabel;
-      }
-      console.log(
-        `[CLI-PROVIDERS] claude: ${alias} → ${latest} (label: ${MODEL_DISPLAY_LABELS[alias]})`
-      );
-    }
+    const catalog = parseClaudeCliModelCatalog(source);
+    if (catalog.models.length === 0) return;
+    discoveredModels.claude = catalog.models;
+    Object.assign(MODEL_DISPLAY_LABELS, catalog.labels);
+    console.log(
+      `[CLI-PROVIDERS] claude: discovered ${catalog.models.length} models:`,
+      catalog.models
+    );
   } catch {
     /* keep defaults */
   }
@@ -602,93 +695,6 @@ function formatOpenCodeLabel(modelId: string): string {
   return cleaned;
 }
 
-export function parseVibeModelsToml(raw: string): VibeModelEntry[] {
-  const models: VibeModelEntry[] = [];
-  const blockRe = /^\s*\[\[models\]\]\s*$/gm;
-  const starts: number[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = blockRe.exec(raw)) !== null) {
-    starts.push(match.index);
-  }
-
-  for (let i = 0; i < starts.length; i += 1) {
-    const start = starts[i]!;
-    const end = starts[i + 1] ?? raw.length;
-    const block = raw.slice(start, end);
-    const name = block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1]?.trim();
-    const alias = block.match(/^\s*alias\s*=\s*"([^"]+)"/m)?.[1]?.trim();
-    const thinking = block.match(/^\s*thinking\s*=\s*"([^"]+)"/m)?.[1]?.trim();
-    if (name || alias) {
-      models.push({
-        name: name || alias!,
-        alias: alias || name!,
-        thinking,
-      });
-    }
-  }
-
-  return models;
-}
-
-export function getVibeModelAlias(
-  modelId: string | null | undefined,
-  rawConfig: string
-): string | null {
-  if (!modelId) return null;
-  const wanted = modelId.trim();
-  if (!wanted) return null;
-  const models = parseVibeModelsToml(rawConfig);
-  const byName = models.find((model) => model.name === wanted);
-  if (byName) return byName.alias;
-  const byAlias = models.find((model) => model.alias === wanted);
-  if (byAlias) return byAlias.alias;
-  return null;
-}
-
-function formatVibeLabel(entry: VibeModelEntry): string {
-  const base = entry.alias || entry.name;
-  if (base === 'mistral-medium-3.5') return 'Mistral Medium 3.5 (Vibe)';
-  if (base === 'devstral-small') return 'Devstral Small';
-  return base
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .map((segment) => {
-      if (/^\d/.test(segment)) return segment;
-      if (segment.toLowerCase() === 'mistral') return 'Mistral';
-      if (segment.toLowerCase() === 'devstral') return 'Devstral';
-      return segment.charAt(0).toUpperCase() + segment.slice(1);
-    })
-    .join(' ');
-}
-
-function discoverVibe(): void {
-  try {
-    const homeDir = os.homedir();
-    const configDir = (
-      getProviderEnv('vibe', 'CREDENTIALS_PATH') || path.join(homeDir, '.vibe')
-    ).replace(/^~/, homeDir);
-    const configPath = path.join(configDir, 'config.toml');
-    if (!fs.existsSync(configPath)) return;
-
-    const models = parseVibeModelsToml(fs.readFileSync(configPath, 'utf-8'));
-    if (models.length === 0) return;
-
-    const ids = [...new Set(models.map((model) => model.name).filter(Boolean))];
-    discoveredModels.vibe = ids;
-    for (const entry of models) {
-      if (!MODEL_DISPLAY_LABELS[entry.name]) {
-        MODEL_DISPLAY_LABELS[entry.name] = formatVibeLabel(entry);
-      }
-      if (!MODEL_DISPLAY_LABELS[entry.alias]) {
-        MODEL_DISPLAY_LABELS[entry.alias] = formatVibeLabel(entry);
-      }
-    }
-    console.log(`[CLI-PROVIDERS] vibe: discovered ${ids.length} models:`, ids);
-  } catch {
-    // Keep defaults
-  }
-}
-
 // ── Discovery Cache ──────────────────────────────────────────────────
 
 const discoveredModels: Partial<Record<CLIProvider, string[]>> = {};
@@ -715,7 +721,6 @@ function ensureDiscovery(): void {
   discoverClaude();
   discoverCodex();
   discoverOpenCode();
-  discoverVibe();
 }
 
 /**
@@ -728,7 +733,7 @@ export function resetDiscovery(): void {
   delete discoveredModels.claude;
   delete discoveredModels.codex;
   delete discoveredModels.opencode;
-  delete discoveredModels.vibe;
+  delete discoveredModels.pi;
 }
 
 // Single shared promise so concurrent callers don't spawn multiple Codex processes
@@ -779,6 +784,9 @@ export async function refreshCodexModelsCache(): Promise<boolean> {
 
 function getDiscoveredModels(provider: CLIProvider): string[] {
   ensureDiscovery();
+  if (provider === 'pi') {
+    return discoveredModels.opencode ?? CLI_PROVIDER_MODELS.opencode;
+  }
   if (provider === 'codex') {
     const latestFingerprint = readCodexModelsCacheFingerprint();
     if (latestFingerprint !== codexModelsCacheFingerprint) {
@@ -821,7 +829,7 @@ export function resolveCliProviderSelectedModel(
       ? sessionSelectedModel.trim()
       : null;
 
-  if (provider !== 'opencode') {
+  if (provider !== 'opencode' && provider !== 'pi') {
     return sessionSelected ?? userSelected;
   }
 
@@ -916,18 +924,15 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     defaultModel: getProviderEnv('opencode', 'DEFAULT_MODEL') || 'z-ai/glm-5.1',
     models: parseEnvModels('opencode') ?? CLI_PROVIDER_MODELS.opencode,
   },
-  vibe: {
-    id: 'vibe',
-    name: 'Mistral Vibe',
-    command: defaultCliCommand('vibe', 'vibe'),
-    icon: '🟣',
-    // Vibe state lives in ~/.vibe by default; we override per-session via VIBE_HOME
-    // at spawn time so each WebUI chat is an isolated agent session.
-    credentialsPath: envOr('vibe', 'CREDENTIALS_PATH', '~/.vibe'),
-    // Vibe streams newline-delimited JSON (one LLMMessage per line) under --output streaming.
+  pi: {
+    id: 'pi',
+    name: 'Pi',
+    command: defaultCliCommand('pi', 'pi'),
+    icon: 'π',
+    // Authentication and API connections are intentionally shared with OpenCode.
+    // Pi itself stores only generated, secret-free provider references in ~/.pi.
+    credentialsPath: envOr('pi', 'CREDENTIALS_PATH', '~/.opencode'),
     supportsStreamJson: true,
-    // Continuation is provided by reusing the same VIBE_HOME — the CLI's --continue
-    // flag picks up the last session in that home dir.
     supportsResume: true,
     supportsModes: true,
     capabilities: {
@@ -935,18 +940,21 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
       resume: true,
       modes: true,
       approvals: true,
-      nativeVision: false,
-      imageBridge: true,
+      nativeVision: true,
+      imageBridge: false,
       mcp: true,
-      mcpSessionAttribution: 'native',
+      mcpSessionAttribution: 'prompt-scoped',
       usageLimits: 'local-budget',
       reasoning: true,
       serviceTier: false,
-      webSearch: false,
+      webSearch: true,
       allowedDirectories: true,
     },
-    defaultModel: getProviderEnv('vibe', 'DEFAULT_MODEL') || 'mistral-vibe-cli-latest',
-    models: parseEnvModels('vibe') ?? CLI_PROVIDER_MODELS.vibe,
+    defaultModel:
+      getProviderEnv('pi', 'DEFAULT_MODEL') ||
+      getProviderEnv('opencode', 'DEFAULT_MODEL') ||
+      'z-ai/glm-5.1',
+    models: parseEnvModels('pi') ?? parseEnvModels('opencode') ?? CLI_PROVIDER_MODELS.opencode,
   },
   claude: {
     id: 'claude',
@@ -972,8 +980,70 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
       webSearch: true,
       allowedDirectories: true,
     },
+    // The stable alias always follows the installed CLI's current Sonnet.
     defaultModel: getProviderEnv('claude', 'DEFAULT_MODEL') || 'sonnet',
     models: parseEnvModels('claude') ?? CLI_PROVIDER_MODELS.claude,
+  },
+  zai: {
+    id: 'zai',
+    name: 'Z.AI Code',
+    command: defaultCliCommand('zai', 'claude'),
+    icon: '🟩',
+    credentialsPath: envOr('zai', 'CREDENTIALS_PATH', '~/.claude'),
+    supportsStreamJson: true,
+    supportsResume: true,
+    supportsModes: true,
+    capabilities: {
+      streaming: true,
+      resume: true,
+      modes: true,
+      approvals: true,
+      nativeVision: false,
+      imageBridge: false,
+      mcp: true,
+      mcpSessionAttribution: 'native',
+      usageLimits: 'upstream',
+      reasoning: true,
+      serviceTier: false,
+      webSearch: true,
+      allowedDirectories: true,
+    },
+    defaultModel: getProviderEnv('zai', 'DEFAULT_MODEL') || 'opus',
+    models: parseEnvModels('zai') ?? CLI_PROVIDER_MODELS.zai,
+  },
+  kimi: {
+    id: 'kimi',
+    name: 'Kimi Code',
+    command: defaultCliCommand('kimi', 'kimi'),
+    icon: '🌙',
+    // Kimi Code CLI (@moonshot-ai/kimi-code) keeps OAuth + provider state under
+    // ~/.kimi-code. `kimi login` writes the device-code OAuth token there; the
+    // managed Kimi provider/models are populated into config.toml on success.
+    credentialsPath: envOr('kimi', 'CREDENTIALS_PATH', '~/.kimi-code'),
+    // Interactive runtime uses persistent `kimi acp` over stdio. The argument
+    // builder below remains for one-shot diagnostics and compatibility tests.
+    // NDJSON on stdout (assistant text, tool_calls, tool results); thinking is
+    // omitted from the JSONL and tool progress goes to stderr.
+    supportsStreamJson: true,
+    supportsResume: true,
+    supportsModes: true,
+    capabilities: {
+      streaming: true,
+      resume: true,
+      modes: true,
+      approvals: true,
+      nativeVision: true,
+      imageBridge: false,
+      mcp: true,
+      mcpSessionAttribution: 'native',
+      usageLimits: 'upstream',
+      reasoning: true,
+      serviceTier: false,
+      webSearch: true,
+      allowedDirectories: true,
+    },
+    defaultModel: getProviderEnv('kimi', 'DEFAULT_MODEL') || 'kimi-code/kimi-for-coding',
+    models: parseEnvModels('kimi') ?? CLI_PROVIDER_MODELS.kimi,
   },
 };
 
@@ -1004,6 +1074,7 @@ export function getCLIArgs(
 
   switch (provider) {
     case 'claude':
+    case 'zai':
       // Claude Code CLI arguments
       args.push(
         '--print',
@@ -1163,36 +1234,61 @@ export function getCLIArgs(
       }
       break;
 
-    case 'vibe':
-      // Mistral Vibe: prompt is passed via argv (-p), output streams newline-JSON.
-      // The actual prompt text is appended by the spawner just before exec, since
-      // it changes every turn — here we set up everything else.
-      // --trust skips the folder-trust prompt. Tool policy is selected through
-      // Vibe's builtin agents so WebUI modes stay meaningful in programmatic mode.
-      // Note: vibe has no --model flag; the spawner rewrites per-session config.toml.
-      args.push('--output', 'streaming', '--trust');
+    case 'pi':
+      // Pi's RPC mode is a persistent JSONL process. Provider/model credentials
+      // and shared extensions are prepared in the per-user PI_CODING_AGENT_DIR.
+      args.push('--mode', 'rpc', '--approve');
 
-      if (options.mode && config.supportsModes) {
-        args.push('--agent', getVibeAgentForMode(options.mode));
+      if (options.model) {
+        args.push('--model', options.model);
       }
 
-      if (options.workingDirectory) {
-        args.push('--workdir', options.workingDirectory);
-      }
-
-      if (options.allowedDirectories) {
-        for (const dir of options.allowedDirectories) {
-          args.push('--add-dir', dir);
-        }
+      if (options.reasoningLevel) {
+        args.push('--thinking', normalizePiThinking(options.reasoningLevel));
       }
 
       if (options.resumeSessionId && config.supportsResume) {
-        args.push('--continue');
+        args.push('--session', options.resumeSessionId);
       }
       break;
+
+    case 'kimi': {
+      // Legacy one-shot diagnostics: `kimi --output-format stream-json [-m model] [--session id] -p "<prompt>"`.
+      // The prompt itself is appended as the trailing `-p <message>` arg by the
+      // process manager (kimi does not read the prompt from stdin).
+      // `--output-format` may only be combined with `--prompt`.
+      args.push('--output-format', 'stream-json');
+      if (options.model) {
+        // `kimi login` registers aliases as `kimi-code/<model>`. Preserve
+        // explicitly-qualified custom aliases, while upgrading the unqualified
+        // values stored by the first WebUI integration for compatibility.
+        const model = options.model.includes('/') ? options.model : `kimi-code/${options.model}`;
+        args.push('-m', model);
+      }
+      if (options.resumeSessionId && config.supportsResume) {
+        // Kimi only resumes an ID it previously emitted; it cannot create a
+        // native session from an arbitrary WebUI id.
+        args.push('--session', options.resumeSessionId);
+      }
+      // Reasoning effort is expressed as a model-alias suffix (e.g. model:high)
+      // in kimi-code; there is no standalone --thinking flag in prompt mode, so
+      // we leave the model alias untouched here.
+      break;
+    }
   }
 
   return args;
+}
+
+function normalizePiThinking(reasoningLevel: string): string {
+  const normalized = reasoningLevel
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (normalized === 'none') return 'off';
+  if (normalized === 'extra_high') return 'xhigh';
+  if (normalized === 'ultra') return 'max';
+  return normalized;
 }
 
 function normalizeOpenCodeVariant(reasoningLevel: string): string {
@@ -1202,20 +1298,6 @@ function normalizeOpenCodeVariant(reasoningLevel: string): string {
     .replace(/[\s-]+/g, '_');
   if (normalized === 'extra_high' || normalized === 'xhigh') return 'max';
   return normalized;
-}
-
-function getVibeAgentForMode(mode?: SessionMode): string {
-  switch (mode) {
-    case 'planning':
-      return 'plan';
-    case 'manual':
-      return 'default';
-    case 'danger':
-      return 'auto-approve';
-    case 'auto-accept':
-    default:
-      return 'accept-edits';
-  }
 }
 
 /**
@@ -1444,6 +1526,14 @@ export async function isProviderAvailable(provider: CLIProvider): Promise<boolea
       };
       return !!(auth.tokens?.access_token || auth.OPENAI_API_KEY);
     }
+    if (provider === 'kimi') {
+      // Kimi Code CLI only creates ~/.kimi-code/credentials/ after a successful
+      // `kimi login` (device-code OAuth). The home dir itself exists before
+      // login, so directory presence alone is not a logged-in signal.
+      const credsDir = path.join(credPath, 'credentials');
+      const entries = await fs.readdir(credsDir);
+      return entries.some((entry) => !entry.startsWith('.'));
+    }
     await fs.access(credPath);
     return true;
   } catch {
@@ -1501,6 +1591,7 @@ export function getModelDisplayLabels(): Record<string, string> {
 export function formatInputMessage(provider: CLIProvider, message: string): string {
   switch (provider) {
     case 'claude':
+    case 'zai':
       // Claude uses stream-json input
       return (
         JSON.stringify({
@@ -1512,16 +1603,17 @@ export function formatInputMessage(provider: CLIProvider, message: string): stri
         }) + '\n'
       );
 
+    case 'pi':
+      return `${JSON.stringify({
+        type: 'prompt',
+        message,
+        streamingBehavior: 'followUp',
+      })}\n`;
+
     case 'codex':
     case 'opencode':
       // Plain text + newline
       return message + '\n';
-
-    case 'vibe':
-      // Vibe takes the prompt via argv (-p), not stdin. The spawner appends -p <message>
-      // to the argv just before exec; we return the raw text here so the manager can
-      // detect the provider and route accordingly.
-      return message;
 
     default:
       return message + '\n';

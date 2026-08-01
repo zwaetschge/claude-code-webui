@@ -35,6 +35,8 @@ export interface SkillLibraryItem {
   libraryKind: SkillLibraryKind;
   writingStyleType?: WritingStyleType;
   designMd?: DesignMdSummary;
+  entryType?: 'skill' | 'style';
+  aliases?: string[];
 }
 
 export interface StyleLibraryResponse {
