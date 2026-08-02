@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
@@ -11,6 +12,11 @@ import {
   type CLIProvider,
 } from '@plum-code-webui/shared';
 import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
+import {
+  readAllKimiUsageRecords,
+  readKimiRootPrompts,
+  summarizeKimiUsageBetween,
+} from '../utils/kimiTurnUsage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIRECTORY = process.env.WEBUI_DATA_DIR
@@ -44,6 +50,7 @@ export function initDatabase(): Database.Database {
 
   // Run migrations
   runMigrations(db);
+  backfillKimiUsageHistory(db);
 
   // The in-memory process registry starts empty after every backend restart.
   // Any persisted `running` rows therefore describe processes owned by the old
@@ -202,6 +209,124 @@ export function reconcileStaleRunningSessions(database: Database.Database): numb
        WHERE status = 'running'`
     )
     .run().changes;
+}
+
+/**
+ * Recover Kimi ACP turns created before Plum consumed Kimi's native usage
+ * ledger. Kimi persists one usage.record per model call, including cached
+ * tokens, under its native session directory. WebUI message ids are reused as
+ * turn ids so this scan is safe to repeat and cannot duplicate live writes.
+ */
+export function backfillKimiUsageHistory(database: Database.Database): number {
+  const kimiHome = (
+    process.env.CLI_PROVIDER_KIMI_CREDENTIALS_PATH || path.join(os.homedir(), '.kimi-code')
+  ).replace(/^~/, os.homedir());
+  const sessions = database
+    .prepare(
+      `SELECT id, user_id as userId, claude_session_id as nativeSessionId, cli_model as model
+       FROM sessions
+       WHERE cli_provider = 'kimi' AND claude_session_id IS NOT NULL`
+    )
+    .all() as Array<{
+    id: string;
+    userId: string;
+    nativeSessionId: string;
+    model: string | null;
+  }>;
+
+  let inserted = 0;
+  for (const session of sessions) {
+    try {
+      const messages = database
+        .prepare(
+          `SELECT id, content, created_at as createdAt
+           FROM messages
+           WHERE session_id = ? AND role = 'user'
+           ORDER BY created_at ASC, id ASC`
+        )
+        .all(session.id) as Array<{ id: string; content: string; createdAt: string }>;
+      if (messages.length === 0) continue;
+
+      const prompts = readKimiRootPrompts(kimiHome, session.nativeSessionId);
+      const usageRecords = readAllKimiUsageRecords(kimiHome, session.nativeSessionId);
+      if (prompts.length === 0 || usageRecords.length === 0) continue;
+
+      const mappedPrompts: Array<{ messageId: string; recordedAt: number }> = [];
+      let promptCursor = 0;
+      for (const message of messages) {
+        const sqlTime = Date.parse(`${message.createdAt.replace(' ', 'T')}Z`);
+        let match = -1;
+        for (let index = promptCursor; index < prompts.length; index += 1) {
+          const prompt = prompts[index]!;
+          if (Number.isFinite(sqlTime) && prompt.recordedAt < sqlTime - 5_000) continue;
+          if (message.content && prompt.text.includes(message.content)) {
+            match = index;
+            break;
+          }
+        }
+        if (match < 0) {
+          match = prompts.findIndex(
+            (prompt, index) =>
+              index >= promptCursor &&
+              (!Number.isFinite(sqlTime) || prompt.recordedAt >= sqlTime - 2_000)
+          );
+        }
+        if (match < 0) continue;
+        mappedPrompts.push({ messageId: message.id, recordedAt: prompts[match]!.recordedAt });
+        promptCursor = match + 1;
+      }
+
+      for (let index = 0; index < mappedPrompts.length; index += 1) {
+        const prompt = mappedPrompts[index]!;
+        const nextPrompt = mappedPrompts[index + 1];
+        const usage = summarizeKimiUsageBetween(
+          usageRecords,
+          prompt.recordedAt,
+          nextPrompt?.recordedAt ?? Number.POSITIVE_INFINITY
+        );
+        if (usage.totalTokens <= 0) continue;
+        const dominantModel = Object.entries(usage.models).sort((a, b) => b[1] - a[1])[0]?.[0];
+        const model = dominantModel || session.model;
+        const cost = estimateModelCost(
+          model,
+          {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheCreationTokens: usage.cacheCreationTokens,
+          },
+          null
+        ).cost;
+        if (
+          insertUsageHistoryTurn(database, {
+            userId: session.userId,
+            sessionId: session.id,
+            provider: 'kimi',
+            turnId: prompt.messageId,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheCreationTokens: usage.cacheCreationTokens,
+            totalTokens: usage.totalTokens,
+            costUsd: cost,
+            model,
+            createdAt: usage.lastRecordedAt
+              ? new Date(usage.lastRecordedAt).toISOString()
+              : new Date(prompt.recordedAt).toISOString(),
+          })
+        ) {
+          inserted += 1;
+        }
+      }
+    } catch (error) {
+      console.warn(`[DB] Kimi usage backfill skipped for session ${session.id}:`, error);
+    }
+  }
+
+  if (inserted > 0) {
+    console.log(`[DB] Backfilled ${inserted} Kimi usage turn(s) from native ACP ledgers.`);
+  }
+  return inserted;
 }
 
 /**

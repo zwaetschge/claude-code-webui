@@ -1,20 +1,7 @@
 package com.claudewebui.app.ui.screens.dashboard
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,790 +16,441 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Sort
-import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material.icons.outlined.Brightness4
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.claudewebui.app.data.model.Category
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.Session
 import com.claudewebui.app.data.model.SessionStatus
-import com.claudewebui.app.ui.components.common.PullToRefreshContainer
-import com.claudewebui.app.ui.components.dashboard.CategoryManager
+import com.claudewebui.app.ui.components.common.GlassPanel
+import com.claudewebui.app.ui.components.common.MainDestination
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBackdrop
+import com.claudewebui.app.ui.components.common.PlumBorder
+import com.claudewebui.app.ui.components.common.PlumBottomBar
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumIconButton
+import com.claudewebui.app.ui.components.common.PlumMuted
+import com.claudewebui.app.ui.components.common.PlumRed
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
+import com.claudewebui.app.ui.components.common.PlumText
+import com.claudewebui.app.ui.components.common.SectionHeading
+import com.claudewebui.app.ui.components.common.providerColor
+import com.claudewebui.app.ui.components.common.providerLabel
+import com.claudewebui.app.ui.components.common.providerModel
 import com.claudewebui.app.ui.components.dashboard.NewSessionDialog
-import com.claudewebui.app.ui.components.dashboard.SessionCard
-import com.claudewebui.app.ui.components.dashboard.SessionCardSkeleton
-import com.claudewebui.app.ui.theme.ClaudeWebUITheme
-import com.claudewebui.app.ui.theme.SuccessGreen
-import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
-
-// ── DashboardScreen ───────────────────────────────────────────────────────────
 
 @Composable
 fun DashboardScreen(
     onNavigateToChat: (sessionId: String) -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateMain: (MainDestination) -> Unit = {},
     viewModel: DashboardViewModel = koinViewModel(),
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-
+    val state by viewModel.uiState.collectAsState()
     var showNewSessionDialog by remember { mutableStateOf(false) }
-    var showCategoryManager by remember { mutableStateOf(false) }
-    var renameTarget by remember { mutableStateOf<Session?>(null) }
-    var moveCategoryTarget by remember { mutableStateOf<Session?>(null) }
+    var selectedFilter by remember { mutableStateOf("All") }
 
-    // Consume one-shot events
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
                 is DashboardEvent.NavigateToChat -> onNavigateToChat(event.sessionId)
-                is DashboardEvent.ShowError -> scope.launch {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is DashboardEvent.ShowNewSessionDialog -> showNewSessionDialog = true
-                is DashboardEvent.ShowCategoryManager -> showCategoryManager = true
-                is DashboardEvent.NavigateToSettings -> onNavigateToSettings()
-                is DashboardEvent.SessionCreated, is DashboardEvent.SessionDeleted -> { /* handled in VM */ }
+                DashboardEvent.ShowNewSessionDialog -> showNewSessionDialog = true
+                DashboardEvent.NavigateToSettings -> onNavigateToSettings()
+                else -> Unit
             }
         }
     }
 
-    val listState = rememberLazyListState()
-    val isFabExpanded by remember {
-        derivedStateOf { listState.firstVisibleItemIndex == 0 }
+    val visibleSessions = state.filteredSessions.filter { session ->
+        when (selectedFilter) {
+            "Running" -> session.status == SessionStatus.RUNNING
+            "Starred" -> session.starred
+            else -> true
+        }
     }
+    val runningCount = state.sessions.count { it.status == SessionStatus.RUNNING }
+    val attentionCount = state.sessions.count { it.status == SessionStatus.ERROR }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            DashboardTopBar(
-                isOffline = uiState.isOffline,
-                isSearchExpanded = uiState.isSearchExpanded,
-                searchQuery = uiState.searchQuery,
-                sortOrder = uiState.sortOrder,
-                onSearchToggle = { viewModel.toggleSearch() },
-                onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                onSortSelected = { viewModel.updateSort(it) },
-                onSettingsTapped = { viewModel.onSettingsTapped() },
-                onCategoryManagerTapped = { viewModel.onCategoryManagerTapped() },
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                text = { Text("New Session") },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                onClick = { viewModel.onNewSessionFabTapped() },
-                expanded = isFabExpanded,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { innerPadding ->
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-        ) {
-
-            // ── Category filter chips ─────────────────────────────────────────
-            CategoryChipsRow(
-                categories = uiState.categories,
-                selectedId = uiState.selectedCategoryId,
-                onSelect = { viewModel.filterByCategory(it) },
-            )
-
-            // ── Offline banner ────────────────────────────────────────────────
-            AnimatedVisibility(
-                visible = uiState.isOffline,
-                enter = slideInVertically() + fadeIn(),
-                exit = slideOutVertically() + fadeOut(),
+    PlumBackdrop {
+        Scaffold(
+            containerColor = Color.Transparent,
+            bottomBar = {
+                PlumBottomBar(
+                    selected = MainDestination.SESSIONS,
+                    onNavigate = onNavigateMain,
+                    badgeCount = attentionCount,
+                )
+            },
+            floatingActionButton = {
+                Box(
+                    modifier = Modifier
+                        .size(62.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFC46DFF), Color(0xFF317CF4)),
+                            ),
+                        )
+                        .clickable { showNewSessionDialog = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Default.Add, "New session", tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                OfflineBanner()
-            }
-
-            // ── Main content ──────────────────────────────────────────────────
-            PullToRefreshContainer(
-                isRefreshing = uiState.isRefreshing,
-                onRefresh = { viewModel.refresh() },
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                when {
-                    uiState.isInitialLoading -> SkeletonList()
-
-                    uiState.filteredSessions.isEmpty() -> EmptyState(
-                        isSearchActive = uiState.searchQuery.isNotBlank() ||
-                                uiState.selectedCategoryId != null,
-                        onClearFilters = {
-                            viewModel.setSearchQuery("")
-                            viewModel.filterByCategory(null)
-                        },
-                        onNewSession = { viewModel.onNewSessionFabTapped() },
+                item {
+                    SessionsHeader(
+                        online = !state.isOffline,
+                        onSettings = onNavigateToSettings,
                     )
-
-                    else -> SessionList(
-                        sessions = uiState.filteredSessions,
-                        categories = uiState.categories,
-                        listState = listState,
-                        onSessionClick = { viewModel.onSessionTapped(it) },
-                        onDelete = { viewModel.deleteSession(it) },
-                        onArchive = { /* archive via category */ },
-                        onRename = { session -> renameTarget = session },
-                        onDuplicate = { session ->
-                            viewModel.createSession(
-                                name = "${session.name} (copy)",
-                                workingDirectory = session.workingDirectory,
-                                provider = session.cliProvider,
+                }
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        WorkspaceHero(
+                            runningCount = runningCount,
+                            sessions = state.sessions,
+                            modifier = Modifier.weight(1.45f),
+                        )
+                        ApprovalHero(
+                            count = attentionCount,
+                            modifier = Modifier.weight(.95f),
+                        )
+                    }
+                }
+                item {
+                    TextField(
+                        value = state.searchQuery,
+                        onValueChange = viewModel::setSearchQuery,
+                        placeholder = { Text("Search sessions, folders or providers", color = PlumMuted) },
+                        leadingIcon = { Icon(Icons.Outlined.Search, null, tint = PlumMuted) },
+                        trailingIcon = {
+                            Box(
+                                Modifier
+                                    .border(1.dp, PlumBorder, RoundedCornerShape(9.dp))
+                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                            ) {
+                                Text("⌘ K", color = PlumMuted, fontSize = 11.sp)
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = PlumSurfaceStrong,
+                            unfocusedContainerColor = PlumSurfaceStrong,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = PlumAccent,
+                            focusedTextColor = PlumText,
+                            unfocusedTextColor = PlumText,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, PlumBorder, RoundedCornerShape(18.dp)),
+                    )
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        listOf("All", "Running", "Starred", "Recent").forEach { label ->
+                            FilterPill(
+                                label = if (label == "All") "All  ${state.sessions.size}" else label,
+                                selected = selectedFilter == label,
+                                onClick = { selectedFilter = label },
                             )
-                        },
-                        onMoveToCategory = { session -> moveCategoryTarget = session },
+                        }
+                    }
+                }
+                item {
+                    SectionHeading(
+                        title = "Recent sessions",
+                        trailing = { Text("Updated now", color = PlumMuted, fontSize = 13.sp) },
                     )
                 }
+                if (state.isInitialLoading) {
+                    item {
+                        Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = PlumAccent)
+                        }
+                    }
+                } else if (visibleSessions.isEmpty()) {
+                    item {
+                        GlassPanel(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Icon(Icons.Outlined.ChatBubbleOutline, null, tint = PlumMuted, modifier = Modifier.size(32.dp))
+                                Spacer(Modifier.height(10.dp))
+                                Text("No sessions found", color = PlumText, fontWeight = FontWeight.SemiBold)
+                                Text("Create one to start working.", color = PlumMuted, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                } else {
+                    items(visibleSessions, key = { it.id }) { session ->
+                        PlumSessionCard(session = session, onClick = { onNavigateToChat(session.id) })
+                    }
+                }
+                item { Spacer(Modifier.height(72.dp)) }
             }
         }
     }
-
-    // ── Dialogs / Bottom Sheets ───────────────────────────────────────────────
 
     if (showNewSessionDialog) {
         NewSessionDialog(
-            categories = uiState.categories,
+            categories = state.categories,
+            providers = state.availableProviders,
             onDismiss = { showNewSessionDialog = false },
-            onCreate = { name, provider, workingDirectory ->
-                viewModel.createSession(name, workingDirectory, provider)
+            onCreate = { name, provider, directory ->
+                showNewSessionDialog = false
+                viewModel.createSession(name, directory, provider)
             },
-        )
-    }
-
-    if (showCategoryManager) {
-        CategoryManager(
-            categories = uiState.categories,
-            onDismiss = { showCategoryManager = false },
-            onCreate = { name, color -> viewModel.createCategory(name, color) },
-            onUpdate = { id, name, color -> viewModel.updateCategory(id, name, color) },
-            onDelete = { viewModel.deleteCategory(it) },
-            onReorder = { viewModel.reorderCategories(it) },
-        )
-    }
-
-    renameTarget?.let { session ->
-        RenameDialog(
-            current = session.name,
-            onConfirm = { newName ->
-                viewModel.renameSession(session.id, newName)
-                renameTarget = null
-            },
-            onDismiss = { renameTarget = null },
-        )
-    }
-
-    moveCategoryTarget?.let { session ->
-        MoveToCategoryDialog(
-            categories = uiState.categories,
-            currentCategoryId = session.category,
-            onConfirm = { categoryId ->
-                viewModel.moveSessionToCategory(session.id, categoryId)
-                moveCategoryTarget = null
-            },
-            onDismiss = { moveCategoryTarget = null },
         )
     }
 }
 
-// ── Top App Bar ───────────────────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DashboardTopBar(
-    isOffline: Boolean,
-    isSearchExpanded: Boolean,
-    searchQuery: String,
-    sortOrder: SortOrder,
-    onSearchToggle: () -> Unit,
-    onSearchQueryChange: (String) -> Unit,
-    onSortSelected: (SortOrder) -> Unit,
-    onSettingsTapped: () -> Unit,
-    onCategoryManagerTapped: () -> Unit,
-) {
-    var sortMenuExpanded by remember { mutableStateOf(false) }
-    var overflowMenuExpanded by remember { mutableStateOf(false) }
-    val searchFocus = remember { FocusRequester() }
-
-    LaunchedEffect(isSearchExpanded) {
-        if (isSearchExpanded) {
-            kotlinx.coroutines.delay(100)
-            searchFocus.requestFocus()
+private fun SessionsHeader(online: Boolean, onSettings: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFFBF67F5), Color(0xFF2E7AEF))))
+                .border(1.dp, PlumAccent, RoundedCornerShape(16.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.Check, null, tint = Color.White, modifier = Modifier.size(27.dp))
         }
+        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+            Text("PLUM CODE", color = PlumMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Sessions", color = PlumText, fontSize = 31.sp, fontWeight = FontWeight.Bold)
+        }
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(24.dp))
+                .background(PlumSurfaceStrong)
+                .border(1.dp, PlumBorder, RoundedCornerShape(24.dp))
+                .padding(horizontal = 13.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(9.dp).background(if (online) PlumGreen else PlumRed, CircleShape))
+            Spacer(Modifier.width(7.dp))
+            Text(if (online) "Online" else "Offline", color = PlumText, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        PlumIconButton(Icons.Outlined.Brightness4, "Settings", onSettings)
     }
+}
 
-    TopAppBar(
-        title = {
-            AnimatedContent(
-                targetState = isSearchExpanded,
-                transitionSpec = {
-                    fadeIn(tween(200)) togetherWith fadeOut(tween(150))
-                },
-                label = "topBarTitle",
-            ) { searching ->
-                if (searching) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchQueryChange,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(searchFocus),
-                        placeholder = {
-                            Text(
-                                "Search sessions…",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                        ),
-                    )
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Plum Code",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+@Composable
+private fun WorkspaceHero(runningCount: Int, sessions: List<Session>, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(126.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFFBB65EF), Color(0xFF2D7CE8))))
+            .padding(18.dp),
+    ) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+            Text("Live workspace", color = Color.White.copy(alpha = .74f), fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(runningCount.toString(), color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+                Text("  active sessions", color = Color.White.copy(alpha = .85f), modifier = Modifier.padding(bottom = 7.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row {
+                    sessions.filter { it.status == SessionStatus.RUNNING }.take(4).forEachIndexed { index, session ->
+                        Box(
+                            Modifier
+                                .padding(start = if (index == 0) 0.dp else 2.dp)
+                                .size(20.dp)
+                                .background(providerColor(session.cliProvider), CircleShape)
+                                .border(2.dp, Color(0xFF5937A7), CircleShape),
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        ConnectionDot(isOnline = !isOffline)
                     }
                 }
-            }
-        },
-        actions = {
-            // Search toggle
-            IconButton(onClick = onSearchToggle) {
-                Icon(
-                    imageVector = if (isSearchExpanded) Icons.Default.Close else Icons.Default.Search,
-                    contentDescription = if (isSearchExpanded) "Close search" else "Search",
-                )
-            }
-
-            // Sort
-            IconButton(onClick = { sortMenuExpanded = true }) {
-                Icon(Icons.Default.Sort, contentDescription = "Sort")
-            }
-            DropdownMenu(
-                expanded = sortMenuExpanded,
-                onDismissRequest = { sortMenuExpanded = false },
-            ) {
-                SortOrder.entries.forEach { order ->
-                    DropdownMenuItem(
-                        text = { Text(order.label) },
-                        leadingIcon = {
-                            if (order == sortOrder) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        },
-                        onClick = {
-                            onSortSelected(order)
-                            sortMenuExpanded = false
-                        },
-                    )
-                }
-            }
-
-            // Overflow menu
-            IconButton(onClick = { overflowMenuExpanded = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "More")
-            }
-            DropdownMenu(
-                expanded = overflowMenuExpanded,
-                onDismissRequest = { overflowMenuExpanded = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Categories") },
-                    onClick = { overflowMenuExpanded = false; onCategoryManagerTapped() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Settings") },
-                    leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    onClick = { overflowMenuExpanded = false; onSettingsTapped() },
-                )
-            }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.background,
-            titleContentColor = MaterialTheme.colorScheme.onBackground,
-            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-    )
-}
-
-// ── Connection Dot ────────────────────────────────────────────────────────────
-
-@Composable
-private fun ConnectionDot(isOnline: Boolean) {
-    val dotColor by animateColorAsState(
-        targetValue = if (isOnline) SuccessGreen else MaterialTheme.colorScheme.error,
-        animationSpec = tween(600),
-        label = "connectionDot",
-    )
-    Box(
-        modifier = Modifier
-            .size(8.dp)
-            .clip(RoundedCornerShape(50))
-            .background(dotColor),
-    )
-}
-
-// ── Category Chips Row ────────────────────────────────────────────────────────
-
-@Composable
-private fun CategoryChipsRow(
-    categories: List<Category>,
-    selectedId: String?,
-    onSelect: (String?) -> Unit,
-) {
-    if (categories.isEmpty()) return
-
-    LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item {
-            FilterChip(
-                selected = selectedId == null,
-                onClick = { onSelect(null) },
-                label = { Text("All") },
-                leadingIcon = if (selectedId == null) {
-                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                } else null,
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-            )
-        }
-        items(categories, key = { it.id }) { cat ->
-            FilterChip(
-                selected = selectedId == cat.id,
-                onClick = { onSelect(if (selectedId == cat.id) null else cat.id) },
-                label = { Text(cat.name) },
-                leadingIcon = if (selectedId == cat.id) {
-                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                } else null,
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-            )
-        }
-    }
-}
-
-// ── Session List ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun SessionList(
-    sessions: List<Session>,
-    categories: List<Category>,
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    onSessionClick: (String) -> Unit,
-    onDelete: (String) -> Unit,
-    onArchive: (String) -> Unit,
-    onRename: (Session) -> Unit,
-    onDuplicate: (Session) -> Unit,
-    onMoveToCategory: (Session) -> Unit,
-) {
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 8.dp,
-            bottom = 96.dp, // FAB clearance
-        ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        itemsIndexed(
-            items = sessions,
-            key = { _, session -> session.id },
-        ) { index, session ->
-            val delay = (index * 40).coerceAtMost(300)
-            AnimatedVisibility(
-                visible = true,
-                enter = slideInVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
-                    initialOffsetY = { it / 3 },
-                ) + fadeIn(tween(delayMillis = delay)),
-            ) {
-                SessionCard(
-                    session = session,
-                    onClick = { onSessionClick(session.id) },
-                    onDelete = { onDelete(session.id) },
-                    onArchive = { onArchive(session.id) },
-                    onRename = { onRename(session) },
-                    onDuplicate = { onDuplicate(session) },
-                    onMoveToCategory = { onMoveToCategory(session) },
-                )
+                Spacer(Modifier.width(6.dp))
+                Text("Providers are working", color = Color.White.copy(alpha = .72f), fontSize = 11.sp, maxLines = 1)
             }
         }
     }
 }
 
-// ── Skeleton List ─────────────────────────────────────────────────────────────
-
 @Composable
-private fun SkeletonList() {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        items(6) {
-            SessionCardSkeleton()
-        }
-    }
-}
-
-// ── Empty State ───────────────────────────────────────────────────────────────
-
-@Composable
-private fun EmptyState(
-    isSearchActive: Boolean,
-    onClearFilters: () -> Unit,
-    onNewSession: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+private fun ApprovalHero(count: Int, modifier: Modifier = Modifier) {
+    GlassPanel(modifier = modifier.height(126.dp), radius = 22.dp) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                text = if (isSearchActive) "No results" else "No sessions yet",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = if (isSearchActive)
-                    "Try a different search or clear your filters."
-                else
-                    "Create your first session to get started.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            if (isSearchActive) {
-                androidx.compose.material3.OutlinedButton(onClick = onClearFilters) {
-                    Text("Clear filters")
-                }
-            } else {
-                androidx.compose.material3.Button(
-                    onClick = onNewSession,
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("New Session")
-                }
-            }
-        }
-    }
-}
-
-// ── Offline Banner ────────────────────────────────────────────────────────────
-
-@Composable
-private fun OfflineBanner() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.errorContainer)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            imageVector = Icons.Default.WifiOff,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.onErrorContainer,
-        )
-        Text(
-            text = "Offline — showing cached sessions",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onErrorContainer,
-        )
-    }
-}
-
-// ── Rename Dialog ─────────────────────────────────────────────────────────────
-
-@Composable
-private fun RenameDialog(
-    current: String,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var text by remember { mutableStateOf(current) }
-    val focusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(100)
-        focusRequester.requestFocus()
-    }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename session") },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focusRequester),
-                singleLine = true,
-                shape = RoundedCornerShape(10.dp),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
-                ),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                    onDone = { if (text.isNotBlank()) onConfirm(text.trim()) }
-                ),
-            )
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(
-                onClick = { if (text.isNotBlank()) onConfirm(text.trim()) },
-                enabled = text.isNotBlank(),
-            ) {
-                Text("Rename")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
-}
-
-// ── Move to Category Dialog ───────────────────────────────────────────────────
-
-@Composable
-private fun MoveToCategoryDialog(
-    categories: List<Category>,
-    currentCategoryId: String?,
-    onConfirm: (String?) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var selectedId by remember { mutableStateOf(currentCategoryId) }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Move to category") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                // "None" option
-                CategoryDialogRow(
-                    name = "No category",
-                    colorHex = null,
-                    isSelected = selectedId == null,
-                    onClick = { selectedId = null },
-                )
-                categories.forEach { cat ->
-                    CategoryDialogRow(
-                        name = cat.name,
-                        colorHex = cat.color,
-                        isSelected = selectedId == cat.id,
-                        onClick = { selectedId = cat.id },
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { onConfirm(selectedId) }) {
-                Text("Move")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
-}
-
-@Composable
-private fun CategoryDialogRow(
-    name: String,
-    colorHex: String?,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (colorHex != null) {
             Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(com.claudewebui.app.ui.components.dashboard.parseHexColor(colorHex)),
-            )
-        } else {
-            Spacer(Modifier.size(10.dp))
-        }
-        Text(
-            text = name,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        if (isSelected) {
-            Icon(
-                Icons.Default.Check,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
-}
-
-// ── Preview ───────────────────────────────────────────────────────────────────
-
-@Preview(showBackground = true, showSystemUi = true, backgroundColor = 0xFFF0EFEA)
-@Composable
-private fun DashboardScreenPreview() {
-    ClaudeWebUITheme {
-        // Static preview using local state (no ViewModel)
-        DashboardScreenContent(
-            state = DashboardUiState(
-                filteredSessions = listOf(
-                    Session(
-                        id = "1", userId = "u", name = "Build Dashboard",
-                        workingDirectory = "/home", status = SessionStatus.RUNNING,
-                        lastMessage = "Working on the SessionCard…",
-                        cliProvider = CLIProvider.CODEX,
-                        createdAt = "2024-01-15T10:00:00Z",
-                        updatedAt = "2024-01-15T10:05:00Z",
-                    ),
-                    Session(
-                        id = "2", userId = "u", name = "API Tests",
-                        workingDirectory = "/home/api", status = SessionStatus.STOPPED,
-                        lastMessage = "All 47 tests passing.",
-                        cliProvider = CLIProvider.CODEX,
-                        createdAt = "2024-01-14T08:00:00Z",
-                        updatedAt = "2024-01-14T09:30:00Z",
-                    ),
-                ),
-                categories = listOf(
-                    Category("1", "u", "Work", "#6366f1", "folder", 0, ""),
-                ),
-            ),
-        )
-    }
-}
-
-// Stateless content composable for preview and testing
-@Composable
-private fun DashboardScreenContent(state: DashboardUiState) {
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                text = { Text("New Session") },
-                icon = { Icon(Icons.Default.Add, null) },
-                onClick = {},
-                expanded = true,
-            )
-        },
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding)) {
-            CategoryChipsRow(
-                categories = state.categories,
-                selectedId = null,
-                onSelect = {},
-            )
-            LazyColumn(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier.size(36.dp).background(Color(0x3DFFAA14), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
             ) {
-                items(state.filteredSessions, key = { it.id }) { session ->
-                    SessionCard(
-                        session = session,
-                        onClick = {}, onDelete = {}, onArchive = {},
-                        onRename = {}, onDuplicate = {}, onMoveToCategory = {},
+                Icon(Icons.Outlined.WarningAmber, null, tint = if (count > 0) Color(0xFFFFC052) else PlumMuted)
+            }
+            Text(
+                if (count == 1) "1 approval" else "$count approvals",
+                color = PlumText,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+            Text(
+                if (count > 0) "A session needs your attention." else "Nothing is waiting.",
+                color = PlumMuted,
+                fontSize = 12.sp,
+                maxLines = 2,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(if (selected) Color(0x2EB56BFF) else PlumSurfaceStrong)
+            .border(1.dp, if (selected) PlumAccent else PlumBorder, RoundedCornerShape(24.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
+        Text(label, color = if (selected) PlumText else PlumMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun PlumSessionCard(session: Session, onClick: () -> Unit) {
+    val accent = when (session.status) {
+        SessionStatus.RUNNING -> PlumGreen
+        SessionStatus.ERROR -> Color(0xFFFFB536)
+        SessionStatus.STOPPED -> PlumBorder
+    }
+    GlassPanel(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        radius = 22.dp,
+        borderColor = accent,
+    ) {
+        Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(11.dp).background(accent, CircleShape))
+                Text(
+                    session.name,
+                    color = PlumText,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 11.dp).weight(1f),
+                )
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(providerColor(session.cliProvider).copy(alpha = .16f))
+                        .border(1.dp, providerColor(session.cliProvider), RoundedCornerShape(11.dp))
+                        .padding(horizontal = 13.dp, vertical = 6.dp),
+                ) {
+                    Text(providerLabel(session.cliProvider), color = providerColor(session.cliProvider), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.FolderOpen, null, tint = PlumMuted, modifier = Modifier.size(17.dp))
+                Text(
+                    session.workingDirectory,
+                    color = PlumMuted,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            session.lastMessage?.takeIf { it.isNotBlank() }?.let { message ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (session.status == SessionStatus.ERROR) Icons.Outlined.WarningAmber else Icons.Outlined.ChatBubbleOutline,
+                        null,
+                        tint = if (session.status == SessionStatus.ERROR) Color(0xFFFFC052) else PlumMuted,
+                        modifier = Modifier.size(18.dp),
                     )
+                    Text(
+                        message,
+                        color = if (session.status == SessionStatus.ERROR) Color(0xFFFFC96B) else PlumMuted,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (session.status) {
+                        SessionStatus.RUNNING -> "now  •  working"
+                        SessionStatus.ERROR -> "Needs attention"
+                        SessionStatus.STOPPED -> "Idle"
+                    },
+                    color = PlumMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF232629))
+                        .border(1.dp, PlumBorder, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(providerModel(session.cliProvider), color = PlumMuted, fontSize = 11.sp)
                 }
             }
         }

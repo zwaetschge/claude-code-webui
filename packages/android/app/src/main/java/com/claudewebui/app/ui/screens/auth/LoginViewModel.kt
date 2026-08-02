@@ -2,12 +2,15 @@ package com.claudewebui.app.ui.screens.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudewebui.app.core.network.ApiClient
 import com.claudewebui.app.core.security.TokenStore
+import com.claudewebui.app.core.security.MobileAuthPkce
 import com.claudewebui.app.data.model.BasicAuthLoginRequest
 import com.claudewebui.app.data.model.LoginRequest
+import com.claudewebui.app.data.model.MobileAuthExchangeRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,18 +65,30 @@ class LoginViewModel(
         viewModelScope.launch {
             _authState.value = AuthState.Connecting
 
-            // Temporarily set server URL so ApiClient can reach it
-            TokenStore.setServerUrl(url)
-
             try {
-                val healthResponse = apiClient.health()
-                if (healthResponse.status.value !in 200..299) {
+                var selectedUrl: String? = null
+                var lastStatus: Int? = null
+                val candidates = listOfNotNull(url, mobileGatewayCandidate(url)).distinct()
+                for (candidate in candidates) {
+                    TokenStore.setServerUrl(candidate)
+                    val healthResponse = runCatching { apiClient.health() }.getOrNull() ?: continue
+                    lastStatus = healthResponse.status.value
+                    if (healthResponse.status.value in 200..299) {
+                        selectedUrl = candidate
+                        break
+                    }
+                }
+
+                val connectedUrl = selectedUrl
+                if (connectedUrl == null) {
                     _authState.value = AuthState.Error(
-                        message = "Server returned ${healthResponse.status.value}. Is this the right URL?",
+                        message = lastStatus?.let { "Server returned $it. Is this the right URL?" }
+                            ?: "Cannot reach server at $url. Check the URL and your network connection.",
                         isConnectionError = true,
                     )
                     return@launch
                 }
+                TokenStore.setServerUrl(connectedUrl)
 
                 // Fetch which auth methods are available
                 val providersResult = runCatching { apiClient.authProviders() }
@@ -84,16 +99,17 @@ class LoginViewModel(
                     googleOAuthEnabled = providers?.google ?: false,
                     githubOAuthEnabled = providers?.github ?: false,
                     claudeOAuthEnabled = providers?.claude ?: false,
+                    proxyAuthEnabled = providers?.proxy ?: false,
                     devLoginEnabled = providers?.let { false } ?: true,
                 )
 
                 val serverInfo = ServerInfo(
-                    url = url,
+                    url = connectedUrl,
                     name = "Plum Code WebUI",
                     reachable = true,
                 )
 
-                saveRecentServer(url)
+                saveRecentServer(connectedUrl)
 
                 _authState.value = AuthState.Connected(
                     serverInfo = serverInfo,
@@ -173,6 +189,61 @@ class LoginViewModel(
     fun getOAuthUrl(provider: String): String {
         val serverUrl = TokenStore.getServerUrl() ?: return ""
         return "$serverUrl/auth/$provider"
+    }
+
+    fun beginProxyLogin(): String {
+        val serverUrl = TokenStore.getServerUrl() ?: return ""
+        val pending = MobileAuthPkce.create()
+        TokenStore.setPendingMobileAuth(pending.state, pending.verifier)
+        return Uri.parse("$serverUrl/auth/proxy/mobile")
+            .buildUpon()
+            .appendQueryParameter("state", pending.state)
+            .appendQueryParameter("code_challenge", pending.challenge)
+            .build()
+            .toString()
+    }
+
+    fun handleMobileAuthCallback(callbackUri: String) {
+        val uri = runCatching { Uri.parse(callbackUri) }.getOrNull() ?: return
+        if (uri.scheme != "claudewebui" || uri.host != "auth" || uri.path != "/callback") return
+
+        uri.getQueryParameter("error")?.let { error ->
+            _authState.value = AuthState.Error("Authelia login failed: $error")
+            return
+        }
+
+        val code = uri.getQueryParameter("code")
+        val state = uri.getQueryParameter("state")
+        val expectedState = TokenStore.getPendingMobileAuthState()
+        val verifier = TokenStore.getPendingMobileAuthVerifier()
+        if (code.isNullOrBlank() || state.isNullOrBlank() || verifier.isNullOrBlank() || state != expectedState) {
+            _authState.value = AuthState.Error("Authelia login response is invalid or expired")
+            return
+        }
+
+        viewModelScope.launch {
+            _authState.value = AuthState.Authenticating
+            try {
+                val response = apiClient.mobileAuthExchange(
+                    MobileAuthExchangeRequest(code = code, codeVerifier = verifier)
+                )
+                if (response.success && response.data != null) {
+                    TokenStore.setToken(response.data.token)
+                    TokenStore.setUserId(response.data.user.id)
+                    _authState.value = AuthState.Authenticated(response.data.user)
+                } else {
+                    _authState.value = AuthState.Error(
+                        response.error?.message ?: "Authelia login response expired"
+                    )
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error(
+                    "Authelia login failed: ${e.message ?: "Unknown error"}"
+                )
+            } finally {
+                TokenStore.clearPendingMobileAuth()
+            }
+        }
     }
 
     /**
@@ -294,5 +365,11 @@ class LoginViewModel(
             trimmed.isNotBlank() -> "https://$trimmed"
             else -> trimmed
         }
+    }
+
+    private fun mobileGatewayCandidate(url: String): String? {
+        val path = runCatching { Uri.parse(url).path.orEmpty().trimEnd('/') }.getOrDefault("")
+        if (path.endsWith("/mobile")) return null
+        return "$url/mobile"
     }
 }

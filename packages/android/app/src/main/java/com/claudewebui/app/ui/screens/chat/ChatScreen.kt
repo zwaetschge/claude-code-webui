@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -39,7 +41,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claudewebui.app.data.model.*
+import com.claudewebui.app.BuildConfig
 import com.claudewebui.app.ui.components.chat.*
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBackground
+import com.claudewebui.app.ui.components.common.PlumBorder
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumMuted
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
+import com.claudewebui.app.ui.components.common.PlumText
+import com.claudewebui.app.ui.components.common.providerColor
+import com.claudewebui.app.ui.components.common.providerLabel
 import com.claudewebui.app.ui.theme.ClaudeWebUITheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,6 +74,9 @@ fun ChatScreen(
     val uiState by viewModel.uiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val session by viewModel.session.collectAsState()
+    val isDesignPreview = BuildConfig.DEBUG && sessionId == "preview"
+    val displaySession = session ?: if (isDesignPreview) previewSession() else null
+    val displayUiState = if (isDesignPreview) previewChatState() else uiState
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -97,7 +112,7 @@ fun ChatScreen(
 
     // Auto-scroll to bottom when new messages/streaming arrive
     val messageCount = messages.size
-    val streamingText = uiState.streamingText
+    val streamingText = displayUiState.streamingText
     LaunchedEffect(messageCount, streamingText) {
         if (!showScrollToBottom && messageCount > 0) {
             listState.animateScrollToItem(messageCount - 1)
@@ -105,19 +120,20 @@ fun ChatScreen(
     }
 
     // Build display items: messages + streaming + thinking
-    val displayItems = buildDisplayItems(messages, uiState)
+    val displayItems = if (isDesignPreview) previewDisplayItems() else buildDisplayItems(messages, displayUiState)
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = PlumBackground,
         topBar = {
             ChatTopBar(
-                session = session,
-                uiState = uiState,
+                session = displaySession,
+                uiState = displayUiState,
                 onNavigateBack = onNavigateBack,
                 onEditTitle = { viewModel.setEditingTitle(true) },
                 onTitleSaved = { viewModel.updateTitle(it) },
-                onNavigateToFiles = { onNavigateToFiles(session?.workingDirectory ?: "") },
-                onNavigateToGit = { onNavigateToGit(session?.workingDirectory ?: "") },
+                onNavigateToFiles = { onNavigateToFiles(displaySession?.workingDirectory ?: "") },
+                onNavigateToGit = { onNavigateToGit(displaySession?.workingDirectory ?: "") },
                 onNavigateToCheckpoints = { onNavigateToCheckpoints(sessionId) },
                 onToggleUsage = { viewModel.toggleUsageBanner() },
                 isEditingTitle = uiState.isEditingTitle,
@@ -127,20 +143,20 @@ fun ChatScreen(
             Column {
                 // Usage stats banner
                 AnimatedVisibility(
-                    visible = uiState.showUsageBanner && uiState.usageData != null,
+                    visible = displayUiState.showUsageBanner && displayUiState.usageData != null,
                     enter = expandVertically(expandFrom = Alignment.Bottom),
                     exit = shrinkVertically(shrinkTowards = Alignment.Bottom),
                 ) {
-                    uiState.usageData?.let { usage ->
+                    displayUiState.usageData?.let { usage ->
                         UsageBanner(usage = usage)
                     }
                 }
 
                 // Thinking/tool indicator sits just above input
                 ThinkingIndicator(
-                    isThinking = uiState.isThinking,
-                    toolName = uiState.currentToolName,
-                    thinkingStartTime = uiState.thinkingStartTime,
+                    isThinking = displayUiState.isThinking,
+                    toolName = displayUiState.currentToolName,
+                    thinkingStartTime = displayUiState.thinkingStartTime,
                 )
 
                 ChatInput(
@@ -168,7 +184,7 @@ fun ChatScreen(
                 state = pullRefreshState,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                if (displayItems.isEmpty() && !uiState.isLoadingHistory) {
+                if (displayItems.isEmpty() && !displayUiState.isLoadingHistory) {
                     EmptyChat(modifier = Modifier.fillMaxSize())
                 } else {
                     LazyColumn(
@@ -244,7 +260,7 @@ fun ChatScreen(
             }
 
             // Error snackbar
-            uiState.error?.let { error ->
+            displayUiState.error?.let { error ->
                 Snackbar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -288,16 +304,19 @@ private fun ChatTopBar(
         }
     }
 
-    TopAppBar(
-        navigationIcon = {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(PlumBackground)
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onNavigateBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                )
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PlumText)
             }
-        },
-        title = {
+            Box(Modifier.weight(1f)) {
             if (isEditingTitle) {
                 OutlinedTextField(
                     value = editTitleText,
@@ -306,7 +325,7 @@ private fun ChatTopBar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focusRequester),
-                    textStyle = MaterialTheme.typography.titleMedium,
+                    textStyle = MaterialTheme.typography.titleMedium.copy(color = PlumText),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Sentences,
                         imeAction = ImeAction.Done,
@@ -315,8 +334,8 @@ private fun ChatTopBar(
                         onDone = { onTitleSaved(editTitleText) }
                     ),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedBorderColor = PlumAccent,
+                        unfocusedBorderColor = PlumBorder,
                     ),
                 )
             } else {
@@ -330,14 +349,12 @@ private fun ChatTopBar(
                     ) {
                         Text(
                             text = session?.name ?: "Loading…",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = PlumText,
+                            fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        // Provider badge
-                        session?.cliProvider?.let { provider ->
-                            ProviderBadge(provider = provider)
-                        }
                     }
 
                     // Connection / status indicator
@@ -346,9 +363,9 @@ private fun ChatTopBar(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         val statusColor = when {
-                            !uiState.isConnected -> MaterialTheme.colorScheme.error
+                            !uiState.isConnected -> Color(0xFFFF575F)
                             uiState.isWorking -> ClaudeWebUITheme.extendedColors.warning
-                            else -> ClaudeWebUITheme.extendedColors.success
+                            else -> PlumGreen
                         }
                         Box(
                             modifier = Modifier
@@ -363,30 +380,17 @@ private fun ChatTopBar(
                                 else -> session?.status?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Ready"
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = PlumMuted,
                             fontSize = 11.sp,
                         )
                     }
                 }
             }
-        },
-        actions = {
-            // Usage toggle button
-            IconButton(onClick = onToggleUsage) {
-                Icon(
-                    imageVector = Icons.Outlined.Analytics,
-                    contentDescription = "Usage stats",
-                    modifier = Modifier.size(20.dp),
-                )
             }
-
-            // Overflow menu
+            session?.cliProvider?.let { ProviderBadge(it) }
             Box {
                 IconButton(onClick = { showMenu = true }) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "More options",
-                    )
+                    Icon(Icons.Filled.MoreVert, "More options", tint = PlumText)
                 }
                 DropdownMenu(
                     expanded = showMenu,
@@ -415,33 +419,82 @@ private fun ChatTopBar(
                     )
                 }
             }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(PlumSurfaceStrong)
+                .border(1.dp, PlumBorder, RoundedCornerShape(18.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ChatTab("Chat", Icons.Outlined.ChatBubbleOutline, true, Modifier.weight(1f), {})
+            ChatTab("Files", Icons.Outlined.FolderOpen, false, Modifier.weight(1f), onNavigateToFiles)
+            ChatTab("Git", Icons.Outlined.MergeType, false, Modifier.weight(1f), onNavigateToGit)
+            ChatTab("Checks", Icons.Outlined.Security, false, Modifier.weight(1f), onNavigateToCheckpoints)
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(13.dp))
+                .background(Color(0xC2191C1F))
+                .border(1.dp, PlumBorder, RoundedCornerShape(13.dp))
+                .clickable(onClick = onToggleUsage)
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("✦  ${session?.let { com.claudewebui.app.ui.components.common.providerModel(it.cliProvider) } ?: "model"}", color = PlumMuted, fontSize = 11.sp)
+            val usage = uiState.usageData
+            Text("Context  ${usage?.contextUsedPercent?.toInt()?.let { "$it%" } ?: "—"}", color = PlumMuted, fontSize = 11.sp)
+            Text("Tokens  ${usage?.totalTokens?.let { DecimalFormat("#,##0").format(it) } ?: "—"}", color = Color(0xFF64B5FF), fontSize = 11.sp)
+            Text("Cost  ${usage?.let { DecimalFormat("$0.00").format(it.totalCostUsd) } ?: "—"}", color = PlumGreen, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun ChatTab(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) Color(0xFF8044C5) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = if (selected) Color.White else PlumMuted, modifier = Modifier.size(18.dp))
+        Text("  $label", color = if (selected) Color.White else PlumMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    }
 }
 
 // ── Provider Badge ────────────────────────────────────────────────────────────
 
 @Composable
 private fun ProviderBadge(provider: CLIProvider) {
-    val (label, color) = when (provider) {
-        CLIProvider.CLAUDE -> "Claude" to com.claudewebui.app.ui.theme.ClaudeColor
-        CLIProvider.CODEX -> "Codex" to com.claudewebui.app.ui.theme.CodexColor
-        CLIProvider.OPENCODE -> "OpenCode" to com.claudewebui.app.ui.theme.OpenCodeColor
-        CLIProvider.PI -> "Pi" to Color(0xFF0F766E)
-    }
+    val label = providerLabel(provider)
+    val color = providerColor(provider)
     Surface(
-        shape = RoundedCornerShape(4.dp),
+        shape = RoundedCornerShape(10.dp),
         color = color.copy(alpha = 0.15f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color),
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = color,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            fontSize = 10.sp,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
         )
     }
@@ -649,6 +702,81 @@ private sealed class DisplayItem {
         override val key = "tool_${tool.toolId}"
     }
 }
+
+private fun previewSession() = Session(
+    id = "preview",
+    userId = "preview",
+    name = "Frontend Refactor",
+    workingDirectory = "/workspace/plum-code-webui",
+    status = SessionStatus.RUNNING,
+    cliProvider = CLIProvider.CODEX,
+    createdAt = "2026-08-01T13:33:00Z",
+    updatedAt = "2026-08-01T13:36:00Z",
+)
+
+private fun previewChatState() = ChatUiState(
+    isLoadingSession = false,
+    isConnected = true,
+    usageData = UsageData(
+        sessionId = "preview",
+        inputTokens = 154_200,
+        outputTokens = 29_800,
+        totalTokens = 184_000,
+        contextWindow = 296_000,
+        contextUsedPercent = 62.0,
+        totalCostUsd = 2.84,
+        model = "gpt-5.5",
+    ),
+)
+
+private fun previewDisplayItems(): List<DisplayItem> = listOf(
+    DisplayItem.MessageItem(
+        Message(
+            id = "preview-plan",
+            sessionId = "preview",
+            role = MessageRole.ASSISTANT,
+            content = "Here's my plan to simplify the provider selector while maintaining flexibility:\n\n• Create a unified provider config\n• Replace scattered usage with ProviderRegistry\n• Update settings UI to render from registry\n• Migrate existing references and clean up",
+            createdAt = "2026-08-01T13:33:00Z",
+        )
+    ),
+    DisplayItem.MessageItem(
+        Message(
+            id = "preview-user",
+            sessionId = "preview",
+            role = MessageRole.USER,
+            content = "Great! Please simplify the provider selector in Settings and use a compact chip style instead of full rows.",
+            createdAt = "2026-08-01T13:35:00Z",
+        )
+    ),
+    DisplayItem.ToolItem(
+        ToolExecution(
+            toolId = "preview-read",
+            toolName = "read_file",
+            status = ToolStatus.COMPLETED,
+            result = "Read src/ui/settings/ProviderSection.kt",
+            timestamp = 1L,
+            completedAt = 2L,
+        )
+    ),
+    DisplayItem.ToolItem(
+        ToolExecution(
+            toolId = "preview-edit",
+            toolName = "edit_file",
+            status = ToolStatus.STARTED,
+            result = "Editing src/ui/settings/ProviderSection.kt",
+            timestamp = 3L,
+        )
+    ),
+    DisplayItem.MessageItem(
+        Message(
+            id = "preview-result",
+            sessionId = "preview",
+            role = MessageRole.ASSISTANT,
+            content = "Provider selector is now simplified to compact chips. Two files updated and tests are ready to run.",
+            createdAt = "2026-08-01T13:36:00Z",
+        )
+    ),
+)
 
 private fun buildDisplayItems(messages: List<Message>, uiState: ChatUiState): List<DisplayItem> {
     val items = mutableListOf<DisplayItem>()

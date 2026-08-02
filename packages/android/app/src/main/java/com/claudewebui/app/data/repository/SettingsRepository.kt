@@ -4,14 +4,18 @@ import com.claudewebui.app.core.network.ApiClient
 import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.Category
 import com.claudewebui.app.data.model.CLIProvider
+import com.claudewebui.app.data.model.CLIProviderConfig
 import com.claudewebui.app.data.model.CLIProviderStatus
 import com.claudewebui.app.data.model.CreateCategoryInput
+import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CreateMcpServerInput
 import com.claudewebui.app.data.model.CreateProviderInput
+import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.Theme
 import com.claudewebui.app.data.model.UiProvider
 import com.claudewebui.app.data.model.UpdateCategoryInput
+import com.claudewebui.app.data.model.UpdateCustomAgentInput
 import com.claudewebui.app.data.model.UpdateMcpServerInput
 import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UpdateSettingsInput
@@ -110,6 +114,15 @@ class SettingsRepository(
         response.data
     }
 
+    /** Fetch the canonical CLI provider registry, including enabled/auth status. */
+    suspend fun getCLIProviders(): Result<List<CLIProviderConfig>> = runCatching {
+        val response = api.getCLIProviders()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch CLI providers")
+        }
+        response.data
+    }
+
     // ---- MCP Servers -------------------------------------------------------
 
     /** Fetch all configured MCP servers. */
@@ -144,6 +157,39 @@ class SettingsRepository(
         val response = api.deleteMcpServer(id)
         if (!response.success) {
             error(response.error?.message ?: "Failed to delete MCP server")
+        }
+    }
+
+    // ---- Custom agents ----------------------------------------------------
+
+    suspend fun getAgents(): Result<List<CustomAgent>> = runCatching {
+        val response = api.getAgents()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch agents")
+        }
+        response.data
+    }
+
+    suspend fun createAgent(input: CreateCustomAgentInput): Result<CustomAgent> = runCatching {
+        val response = api.createAgent(input)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to create agent")
+        }
+        response.data
+    }
+
+    suspend fun updateAgent(id: String, input: UpdateCustomAgentInput): Result<CustomAgent> = runCatching {
+        val response = api.updateAgent(id, input)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to update agent")
+        }
+        response.data
+    }
+
+    suspend fun deleteAgent(id: String): Result<Unit> = runCatching {
+        val response = api.deleteAgent(id)
+        if (!response.success) {
+            error(response.error?.message ?: "Failed to delete agent")
         }
     }
 

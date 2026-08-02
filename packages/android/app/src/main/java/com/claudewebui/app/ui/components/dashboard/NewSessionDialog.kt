@@ -76,6 +76,7 @@ enum class SessionMode(val label: String, val description: String) {
 @Composable
 fun NewSessionDialog(
     categories: List<Category>,
+    providers: List<CLIProvider> = CLIProvider.active,
     onDismiss: () -> Unit,
     onCreate: (name: String, provider: CLIProvider, workingDirectory: String?) -> Unit,
 ) {
@@ -132,7 +133,7 @@ fun NewSessionDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                CLIProvider.active.forEach { provider ->
+                providers.forEach { provider ->
                     ProviderOption(
                         provider = provider,
                         isSelected = selectedProvider == provider,
@@ -452,6 +453,7 @@ private fun CLIProvider.toCliProvider(): CliProvider = when (this) {
     CLIProvider.CODEX  -> CliProvider.CODEX
     CLIProvider.OPENCODE -> CliProvider.OPENCODE
     CLIProvider.PI -> CliProvider.PI
+    CLIProvider.KIMI -> CliProvider.KIMI
 }
 
 private val CliProvider.displayName: String

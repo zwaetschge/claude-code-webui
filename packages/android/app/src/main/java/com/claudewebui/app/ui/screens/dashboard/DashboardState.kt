@@ -1,6 +1,7 @@
 package com.claudewebui.app.ui.screens.dashboard
 
 import com.claudewebui.app.data.model.Category
+import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.Session
 
 // ── Sort Order ────────────────────────────────────────────────────────────────
@@ -18,6 +19,7 @@ data class DashboardUiState(
     val sessions: List<Session> = emptyList(),
     val filteredSessions: List<Session> = emptyList(),
     val categories: List<Category> = emptyList(),
+    val availableProviders: List<CLIProvider> = CLIProvider.active,
     val selectedCategoryId: String? = null,   // null = "All"
     val searchQuery: String = "",
     val sortOrder: SortOrder = SortOrder.RECENT,

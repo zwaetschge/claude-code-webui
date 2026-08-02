@@ -310,7 +310,8 @@ const USAGE_PROVIDERS: UsageLimitTracker[] = ACCOUNT_USAGE_LIMIT_PROVIDERS.filte
   (provider): provider is UsageLimitTracker => provider !== 'alibaba'
 );
 const DEFAULT_USAGE_TRACKERS: UsageLimitTracker[] = [...USAGE_PROVIDERS];
-const USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v2';
+const USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v3';
+const LEGACY_USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v2';
 const USAGE_HISTORY_RANGES: Array<{ value: UsageLimitHistoryRange; label: string }> = [
   { value: '24h', label: '24h' },
   { value: '7d', label: '7d' },
@@ -361,9 +362,22 @@ const USAGE_TRACKER_ANALYTICS_LABEL: Record<UsageLimitTracker, string> = {
 function loadUsageLimitTrackers(): UsageLimitTracker[] {
   if (typeof window === 'undefined') return DEFAULT_USAGE_TRACKERS;
   try {
-    const stored = JSON.parse(window.localStorage.getItem(USAGE_TRACKERS_STORAGE_KEY) || 'null');
-    if (!Array.isArray(stored)) return DEFAULT_USAGE_TRACKERS;
-    return USAGE_PROVIDERS.filter((provider) => stored.includes(provider));
+    const current = JSON.parse(window.localStorage.getItem(USAGE_TRACKERS_STORAGE_KEY) || 'null');
+    if (Array.isArray(current)) {
+      return USAGE_PROVIDERS.filter((provider) => current.includes(provider));
+    }
+    const legacy = JSON.parse(
+      window.localStorage.getItem(LEGACY_USAGE_TRACKERS_STORAGE_KEY) || 'null'
+    );
+    if (!Array.isArray(legacy)) return DEFAULT_USAGE_TRACKERS;
+    // Kimi was added after the v2 preference was stored on existing devices.
+    // Preserve their choices for older providers while making the new
+    // standalone provider visible once by default.
+    const migrated = USAGE_PROVIDERS.filter(
+      (provider) => provider === 'kimi' || legacy.includes(provider)
+    );
+    window.localStorage.setItem(USAGE_TRACKERS_STORAGE_KEY, JSON.stringify(migrated));
+    return migrated;
   } catch {
     return DEFAULT_USAGE_TRACKERS;
   }
@@ -418,6 +432,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   Kimi: '#2582ed',
   OpenCode: '#3b82f6',
   Pi: '#a855f7',
+  'Z.AI': '#14b8a6',
   Vibe: '#fa520f',
   Claude: '#f97316',
   Other: PROVIDER_FALLBACK_COLOR,
@@ -1341,7 +1356,7 @@ export function AnalyticsPage() {
         // Codex variants such as sol, terra, and luna remain distinguishable.
         models: entry.models.sort((a, b) => b.tokens - a.tokens),
       }))
-      .sort((a, b) => b.cost - a.cost);
+      .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
   }, [summary]);
 
   const modelSeries = useMemo(() => {

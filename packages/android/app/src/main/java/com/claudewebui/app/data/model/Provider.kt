@@ -64,5 +64,16 @@ data class CLIProviderStatus(
     val claude: Boolean = false,
     val codex: Boolean = false,
     val opencode: Boolean = false,
-    val pi: Boolean = false
+    val pi: Boolean = false,
+    val kimi: Boolean = false
+)
+
+@Serializable
+data class CLIProviderConfig(
+    val id: String,
+    val name: String,
+    val defaultModel: String? = null,
+    val models: List<String> = emptyList(),
+    val enabled: Boolean = true,
+    val available: Boolean = false,
 )

@@ -105,7 +105,7 @@ export const updateSettingsSchema = z.object({
   defaultWorkingDir: z.string().nullable().optional(),
   allowedTools: z.array(z.string()).optional(),
   customSystemPrompt: z.string().nullable().optional(),
-  uiProvider: z.enum(['plum', 'claude', 'zai', 'codex', 'opencode', 'pi']).optional(),
+  uiProvider: z.enum(['plum', 'claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']).optional(),
   backgroundAnimation: z.enum(['glass', 'aurora', 'ribbons', 'still']).optional(),
   defaultCliProvider: z.enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']).optional(),
   enabledCliProviders: z
@@ -119,6 +119,7 @@ export const updateSettingsSchema = z.object({
       codex: z.string().optional(),
       opencode: z.string().optional(),
       pi: z.string().optional(),
+      kimi: z.string().optional(),
     })
     .partial()
     .optional(),
@@ -129,6 +130,7 @@ export const updateSettingsSchema = z.object({
       codex: z.array(z.string()).optional(),
       opencode: z.array(z.string()).optional(),
       pi: z.array(z.string()).optional(),
+      kimi: z.array(z.string()).optional(),
     })
     .partial()
     .optional(),
@@ -139,6 +141,7 @@ export const updateSettingsSchema = z.object({
       codex: z.string().optional(),
       opencode: z.string().optional(),
       pi: z.string().optional(),
+      kimi: z.string().optional(),
     })
     .partial()
     .optional(),
@@ -168,6 +171,10 @@ export const updateSettingsSchema = z.object({
         .partial()
         .optional(),
       pi: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
+      kimi: z
         .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
         .partial()
         .optional(),
@@ -216,7 +223,8 @@ function parseUiProvider(value: unknown): UiProvider {
     value === 'zai' ||
     value === 'codex' ||
     value === 'opencode' ||
-    value === 'pi'
+    value === 'pi' ||
+    value === 'kimi'
     ? value
     : 'plum';
 }
@@ -226,7 +234,8 @@ function parseCliProvider(value: unknown): CLIProvider {
     value === 'zai' ||
     value === 'codex' ||
     value === 'opencode' ||
-    value === 'pi'
+    value === 'pi' ||
+    value === 'kimi'
     ? value
     : 'codex';
 }

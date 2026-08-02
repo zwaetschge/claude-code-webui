@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -38,6 +39,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.claudewebui.app.data.model.FileAttachmentData
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBackground
+import com.claudewebui.app.ui.components.common.PlumBorder
+import com.claudewebui.app.ui.components.common.PlumMuted
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
+import com.claudewebui.app.ui.components.common.PlumText
 
 @Composable
 fun ChatInput(
@@ -60,8 +67,7 @@ fun ChatInput(
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
+        color = PlumBackground,
     ) {
         Column {
             // Pending attachments
@@ -140,7 +146,7 @@ fun ChatInput(
                         Text(
                             text = if (isWorking) "Agent is working…" else "Message agent…",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            color = PlumMuted,
                         )
                     },
                     modifier = Modifier
@@ -156,10 +162,12 @@ fun ChatInput(
                     maxLines = 6,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        focusedBorderColor = PlumAccent,
+                        unfocusedBorderColor = PlumBorder,
+                        focusedContainerColor = PlumSurfaceStrong,
+                        unfocusedContainerColor = PlumSurfaceStrong,
+                        focusedTextColor = PlumText,
+                        unfocusedTextColor = PlumText,
                     ),
                     enabled = !isWorking,
                 )
@@ -179,8 +187,8 @@ fun ChatInput(
                         .background(
                             color = when {
                                 isWorking -> MaterialTheme.colorScheme.error
-                                canSend -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.surfaceContainerHighest
+                                canSend -> PlumAccent
+                                else -> PlumSurfaceStrong
                             }
                         ),
                     contentAlignment = Alignment.Center,
@@ -212,8 +220,8 @@ fun ChatInput(
                                 contentDescription = if (working) "Stop" else "Send",
                                 tint = when {
                                     working -> MaterialTheme.colorScheme.onError
-                                    canSend -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    canSend -> Color.White
+                                    else -> PlumMuted.copy(alpha = 0.38f)
                                 },
                                 modifier = Modifier.size(18.dp),
                             )

@@ -97,6 +97,7 @@ import {
   spawnManagedProcess,
   terminateManagedProcess,
 } from './processLifecycle.js';
+import { captureKimiUsageCursor, readKimiUsageSince } from '../../utils/kimiTurnUsage.js';
 
 function isClaudeTransportProvider(provider: string): provider is 'claude' | 'zai' {
   return provider === 'claude' || provider === 'zai';
@@ -8212,18 +8213,44 @@ The planning phase is complete. You are now in Auto-Accept mode.
     this.emitQueueState(sessionId, proc);
 
     let response: AcpPromptResponse | null = null;
+    const kimiHome = CLI_PROVIDERS.kimi.credentialsPath.replace('~', os.homedir());
+    // Kimi 0.31 writes exact per-model-call counters to its native ledger but
+    // does not currently attach the optional ACP PromptResponse.usage payload.
+    // Snapshot the append-only ledgers while the persistent session is idle so
+    // this WebUI turn can book only the records written by the prompt below.
+    const usageCursor = captureKimiUsageCursor(kimiHome, nativeSessionId);
     try {
       response = await connection.prompt({
         sessionId: nativeSessionId,
         prompt: [{ type: 'text', text: turn.messageForClaude }],
       });
-      if (response.usage) {
+      const nativeUsage = readKimiUsageSince(usageCursor);
+      if (nativeUsage.totalTokens > 0) {
+        proc.turnInputTokens = nativeUsage.inputTokens;
+        proc.turnOutputTokens = nativeUsage.outputTokens;
+        proc.turnCacheReadTokens = nativeUsage.cacheReadTokens;
+        proc.turnCacheCreationTokens = nativeUsage.cacheCreationTokens;
+        const dominantModel = Object.entries(nativeUsage.models).sort(
+          (a, b) => b[1] - a[1]
+        )[0]?.[0];
+        if (dominantModel) proc.model = dominantModel;
+      } else if (response.usage) {
+        // Protocol fallback for a future Kimi build that starts returning ACP
+        // usage before/without a local native ledger.
         const cacheRead = Math.max(0, response.usage.cachedReadTokens || 0);
         proc.turnInputTokens = Math.max(0, response.usage.inputTokens - cacheRead);
         proc.turnCacheReadTokens = cacheRead;
         proc.turnCacheCreationTokens = Math.max(0, response.usage.cachedWriteTokens || 0);
-        proc.turnOutputTokens = Math.max(0, response.usage.outputTokens);
+        proc.turnOutputTokens = Math.max(
+          0,
+          response.usage.outputTokens + (response.usage.thoughtTokens || 0)
+        );
       }
+      proc.totalInputTokens += proc.turnInputTokens;
+      proc.totalOutputTokens += proc.turnOutputTokens;
+      proc.cacheReadTokens += proc.turnCacheReadTokens;
+      proc.cacheCreationTokens += proc.turnCacheCreationTokens;
+      this.emitUsage(sessionId, proc);
       const text = proc.streamingText.trim();
       if (text) this.saveAssistantMessage(sessionId, text);
       this.saveUsageToDatabase(sessionId, proc);

@@ -107,6 +107,11 @@ import { syncCodexConfig } from '../src/utils/codexConfigSync.js';
 import { resolveContextWindow } from '../src/utils/contextWindow.js';
 import { mapKimiUsage } from '../src/utils/kimiUsage.js';
 import {
+  captureKimiUsageCursor,
+  readKimiRootPrompts,
+  readKimiUsageSince,
+} from '../src/utils/kimiTurnUsage.js';
+import {
   CODEX_ROLLOUT_TAIL_MAX_BYTES,
   ClaudeProcessManager,
   applyClaudeResultUsage,
@@ -3256,6 +3261,71 @@ function testKimiUsageMapping() {
   assert.equal(mapped.additional[0]?.limit, 20);
 }
 
+async function testKimiNativeTurnUsageLedger() {
+  const kimiHome = await fs.mkdtemp(path.join(os.tmpdir(), 'kimi-usage-fixture-'));
+  const nativeSessionId = 'session_native-usage-test';
+  const mainDirectory = path.join(
+    kimiHome,
+    'sessions',
+    'wd_fixture',
+    nativeSessionId,
+    'agents',
+    'main'
+  );
+  const childDirectory = path.join(
+    kimiHome,
+    'sessions',
+    'wd_fixture',
+    nativeSessionId,
+    'agents',
+    'agent-1'
+  );
+  await fs.mkdir(mainDirectory, { recursive: true });
+  const mainWire = path.join(mainDirectory, 'wire.jsonl');
+  await fs.writeFile(
+    mainWire,
+    `${JSON.stringify({ type: 'turn.prompt', input: [{ type: 'text', text: 'first' }], time: 1000 })}\n` +
+      `${JSON.stringify({ type: 'usage.record', model: 'kimi-code/k3', usageScope: 'turn', usage: { inputOther: 9, output: 1, inputCacheRead: 20, inputCacheCreation: 0 }, time: 1100 })}\n`
+  );
+
+  const cursor = captureKimiUsageCursor(kimiHome, nativeSessionId);
+  await fs.appendFile(
+    mainWire,
+    `${JSON.stringify({ type: 'turn.prompt', input: [{ type: 'text', text: 'second' }], time: 2000 })}\n` +
+      `${JSON.stringify({ type: 'context.append_loop_event', event: { type: 'step.end', usage: { inputOther: 999 } }, time: 2100 })}\n` +
+      `${JSON.stringify({ type: 'usage.record', model: 'kimi-code/k3', usageScope: 'turn', usage: { inputOther: 10, output: 3, inputCacheRead: 40, inputCacheCreation: 2 }, time: 2100 })}\n`
+  );
+  await fs.mkdir(childDirectory, { recursive: true });
+  await fs.writeFile(
+    path.join(childDirectory, 'wire.jsonl'),
+    `${JSON.stringify({ type: 'usage.record', model: 'kimi-code/k3', usageScope: 'turn', usage: { inputOther: 5, output: 7, inputCacheRead: 30, inputCacheCreation: 0 }, time: 2200 })}\n`
+  );
+
+  const usage = readKimiUsageSince(cursor);
+  assert.deepEqual(
+    {
+      input: usage.inputTokens,
+      output: usage.outputTokens,
+      cacheRead: usage.cacheReadTokens,
+      cacheCreate: usage.cacheCreationTokens,
+      total: usage.totalTokens,
+    },
+    { input: 15, output: 10, cacheRead: 70, cacheCreate: 2, total: 97 }
+  );
+  assert.equal(usage.models['kimi-code/k3'], 97);
+  assert.deepEqual(
+    readKimiRootPrompts(kimiHome, nativeSessionId).map((prompt) => ({
+      recordedAt: prompt.recordedAt,
+      text: prompt.text,
+    })),
+    [
+      { recordedAt: 1000, text: 'first' },
+      { recordedAt: 2000, text: 'second' },
+    ]
+  );
+  await fs.rm(kimiHome, { recursive: true, force: true });
+}
+
 function testPerTurnModeChangesDoNotRestartActiveChildren() {
   assert.equal(appliesModeOnNextTurnWithoutRestart('kimi'), true);
   assert.equal(appliesModeOnNextTurnWithoutRestart('codex'), true);
@@ -5156,6 +5226,15 @@ function testCodexCliUpdaterTracksLatest() {
   assert.doesNotMatch(command, /@openai\/codex@\d+\.\d+\.\d+/);
 }
 
+function testClaudeCliUpdaterPromotesAndExecutesNativeBinary() {
+  for (const provider of ['claude', 'zai'] as const) {
+    const command = getCliUpdateCommand(provider) || '';
+    assert.match(command, /@anthropic-ai\/claude-code@latest/);
+    assert.match(command, /@anthropic-ai\/claude-code\/install\.cjs/);
+    assert.match(command, /claude --version/);
+  }
+}
+
 function testPiUpdaterIncludesHarnessAndMcpBridge() {
   const command = getCliUpdateCommand('pi') || '';
   assert.match(command, /@earendil-works\/pi-coding-agent@latest/);
@@ -5231,6 +5310,7 @@ testKimiMissingSessionRecoveryClassification();
 testKimiAcpModeMapping();
 testKimiRestartRecoveryContract();
 testKimiUsageMapping();
+await testKimiNativeTurnUsageLedger();
 testPerTurnModeChangesDoNotRestartActiveChildren();
 testClaudeApiEnvironmentMapping();
 testClaudeAndZaiProcessEnvironmentsAreIsolated();
@@ -5271,6 +5351,7 @@ await testOracleMcpPrefersEmbeddedBrowserTarget();
 await testOracleMcpStartsEmbeddedBrowserForManualMode();
 await testPwaInstallAssets();
 testCodexCliUpdaterTracksLatest();
+testClaudeCliUpdaterPromotesAndExecutesNativeBinary();
 testPiUpdaterIncludesHarnessAndMcpBridge();
 testPricingTable();
 

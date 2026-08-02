@@ -162,3 +162,13 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
 }
+
+// The shared Android Builder invokes `clean assembleDebug` on an Unraid/FUSE
+// project mount where recursive Gradle deletes can observe directory entries
+// reappearing mid-delete. Keep normal local clean behaviour; only make the
+// builder's redundant pre-build clean a no-op so assemble can update outputs.
+if (project.projectDir.absolutePath.startsWith("/app/projects/")) {
+    tasks.named<org.gradle.api.tasks.Delete>("clean") {
+        setDelete(emptyList<Any>())
+    }
+}

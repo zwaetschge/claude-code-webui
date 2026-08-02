@@ -11,8 +11,14 @@ const execAsync = promisify(exec);
 export const CLI_UPDATE_PROVIDERS = ['claude', 'codex', 'opencode', 'pi', 'kimi'] as const;
 
 const CLI_UPDATE_COMMANDS: Record<CLIProvider, string> = {
-  claude: 'npm install -g @anthropic-ai/claude-code@latest',
-  zai: 'npm install -g @anthropic-ai/claude-code@latest',
+  // npm 12 can leave Claude Code's executable placeholder in place even when
+  // the platform-specific optional package was downloaded. The placeholder is
+  // intentionally not a shell script and therefore fails with ENOEXEC. Run the
+  // package's idempotent installer explicitly, then prove the promoted binary
+  // can execute before reporting the update as successful.
+  claude:
+    'npm install -g @anthropic-ai/claude-code@latest && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs" && claude --version',
+  zai: 'npm install -g @anthropic-ai/claude-code@latest && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs" && claude --version',
   codex: 'npm install -g @openai/codex@latest',
   opencode: 'npm install -g opencode-ai@latest',
   pi: 'npm install -g @earendil-works/pi-coding-agent@latest pi-mcp-adapter@latest',

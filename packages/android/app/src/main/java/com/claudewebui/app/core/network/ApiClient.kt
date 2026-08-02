@@ -77,6 +77,12 @@ class ApiClient {
     suspend fun authProviders(): ApiResponse<AuthProviders> =
         client.get(url("/auth/providers")).body()
 
+    /** Exchange the short-lived Authelia handoff code for a Plum JWT. */
+    suspend fun mobileAuthExchange(request: MobileAuthExchangeRequest): ApiResponse<LoginResponse> =
+        client.post(url("/auth/mobile/exchange")) {
+            setBody(request)
+        }.body()
+
     /** POST /api/basic-auth/login */
     suspend fun basicAuthLogin(request: BasicAuthLoginRequest): ApiResponse<LoginResponse> =
         client.post(url("/api/basic-auth/login")) {
@@ -306,6 +312,10 @@ class ApiClient {
     /** GET /api/cli-providers/status */
     suspend fun cliProviderStatus(): ApiResponse<CLIProviderStatus> =
         client.get(url("/api/cli-providers/status")).body()
+
+    /** GET /api/cli-providers */
+    suspend fun getCLIProviders(): ApiResponse<List<CLIProviderConfig>> =
+        client.get(url("/api/cli-providers")).body()
 
     // ========================================================================
     // MCP Servers

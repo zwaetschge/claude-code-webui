@@ -33,6 +33,12 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.claudewebui.app.data.model.Message
 import com.claudewebui.app.data.model.MessageRole
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBorder
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumMuted
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
+import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.theme.JetBrainsMonoFamily
 
 // ── Message Group Metadata ────────────────────────────────────────────────────
@@ -132,7 +138,7 @@ private fun UserBubble(
                 bottomEnd = if (groupInfo.isLast) 16.dp else 4.dp,
                 bottomStart = 16.dp,
             ),
-            color = MaterialTheme.colorScheme.primary,
+            color = Color(0xFF6F3CA5),
             modifier = Modifier
                 .wrapContentWidth()
                 .pointerInput(Unit) {
@@ -145,7 +151,7 @@ private fun UserBubble(
             Text(
                 text = message.content,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimary,
+                color = Color.White,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
@@ -179,8 +185,8 @@ private fun AssistantBubble(
         modifier = modifier
             .fillMaxWidth()
             .padding(
-                start = 16.dp,
-                end = 48.dp,
+                start = 12.dp,
+                end = 12.dp,
                 top = if (groupInfo.isFirst) 8.dp else 2.dp,
                 bottom = if (groupInfo.isLast) 8.dp else 2.dp,
             ),
@@ -191,19 +197,19 @@ private fun AssistantBubble(
         if (groupInfo.isFirst) {
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(28.dp),
+                color = PlumGreen.copy(alpha = .15f),
+                modifier = Modifier.size(34.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = "✦",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 14.sp,
+                        color = PlumGreen,
                     )
                 }
             }
         } else {
-            Spacer(modifier = Modifier.width(28.dp))
+            Spacer(modifier = Modifier.width(34.dp))
         }
 
         Column(
@@ -218,7 +224,8 @@ private fun AssistantBubble(
                     bottomEnd = 16.dp,
                     bottomStart = if (groupInfo.isLast) 16.dp else 4.dp,
                 ),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                color = PlumSurfaceStrong,
+                border = BorderStroke(1.dp, PlumBorder),
                 modifier = Modifier
                     .wrapContentWidth()
                     .fillMaxWidth()

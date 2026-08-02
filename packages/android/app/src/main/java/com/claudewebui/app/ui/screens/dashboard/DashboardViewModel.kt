@@ -50,6 +50,7 @@ class DashboardViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
             loadSessions()
             loadCategories()
+            loadCLIProviders()
             _uiState.update { it.copy(isLoading = false) }
         }
     }
@@ -59,6 +60,7 @@ class DashboardViewModel(
             _uiState.update { it.copy(isRefreshing = true) }
             loadSessions()
             loadCategories()
+            loadCLIProviders()
             _uiState.update { it.copy(isRefreshing = false) }
         }
     }
@@ -100,6 +102,20 @@ class DashboardViewModel(
                 _uiState.update { it.copy(categories = response.data ?: emptyList()) }
             }
             .onFailure { /* categories are non-critical */ }
+    }
+
+    private suspend fun loadCLIProviders() {
+        runCatching { apiClient.getCLIProviders() }
+            .onSuccess { response ->
+                val providers = response.data
+                    .orEmpty()
+                    .filter { it.enabled }
+                    .mapNotNull { CLIProvider.fromId(it.id) }
+                if (providers.isNotEmpty()) {
+                    _uiState.update { it.copy(availableProviders = providers) }
+                }
+            }
+            .onFailure { /* retain the complete local fallback registry */ }
     }
 
     // ── Filtering & Sorting ───────────────────────────────────────────────────

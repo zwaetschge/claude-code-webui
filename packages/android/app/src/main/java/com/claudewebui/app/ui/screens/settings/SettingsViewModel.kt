@@ -8,6 +8,7 @@ import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.AuthUser
 import com.claudewebui.app.data.model.CreateCustomAgentInput
+import com.claudewebui.app.data.model.CLIProviderConfig
 import com.claudewebui.app.data.model.CreateMcpServerInput
 import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
@@ -91,6 +92,7 @@ data class SettingsUiState(
 
     // Providers
     val providers: List<AIProvider> = emptyList(),
+    val cliProviders: List<CLIProviderConfig> = emptyList(),
     val providerTestResults: Map<String, TestResult> = emptyMap(),
 
     // MCP
@@ -197,9 +199,17 @@ class SettingsViewModel(
             settingsRepository.getProviders()
                 .onSuccess { providers -> _uiState.update { it.copy(providers = providers) } }
 
+            settingsRepository.getCLIProviders()
+                .onSuccess { providers -> _uiState.update { it.copy(cliProviders = providers) } }
+
             // MCP servers
             settingsRepository.getMcpServers()
                 .onSuccess { servers -> _uiState.update { it.copy(mcpServers = servers) } }
+
+            settingsRepository.getAgents()
+                .onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
+
+            loadCliTools()
 
             _uiState.update { it.copy(isLoading = false) }
         }
@@ -234,9 +244,9 @@ class SettingsViewModel(
     fun loadAgents() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            // Agents API lives on ApiClient; the SettingsRepository doesn't expose it directly,
-            // so we call the API via a minimal repository method we can add, or we use a workaround.
-            // For now we use a direct suspend call pattern consistent with how the app works.
+            settingsRepository.getAgents()
+                .onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
             _uiState.update { it.copy(isLoading = false) }
         }
     }
@@ -490,35 +500,53 @@ class SettingsViewModel(
 
     fun addAgent(input: CreateCustomAgentInput) {
         viewModelScope.launch {
-            // Agents go through ApiClient directly since SettingsRepository doesn't expose them
-            // We use a stub here that the screen can call; a proper implementation would add
-            // agent CRUD to SettingsRepository
-            _uiState.update { it.copy(toastMessage = "Agent creation requires API integration") }
+            settingsRepository.createAgent(input)
+                .onSuccess { agent ->
+                    _uiState.update { it.copy(agents = it.agents + agent, toastMessage = "Agent created") }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
         }
     }
 
     fun updateAgent(id: String, input: UpdateCustomAgentInput) {
         viewModelScope.launch {
-            _uiState.update { it.copy(toastMessage = "Agent updated") }
+            settingsRepository.updateAgent(id, input)
+                .onSuccess { updated ->
+                    _uiState.update { state ->
+                        state.copy(
+                            agents = state.agents.map { if (it.id == id) updated else it },
+                            toastMessage = "Agent updated",
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
         }
     }
 
     fun deleteAgent(id: String) {
-        _uiState.update { state ->
-            state.copy(
-                agents = state.agents.filter { it.id != id },
-                toastMessage = "Agent removed",
-            )
+        viewModelScope.launch {
+            settingsRepository.deleteAgent(id)
+                .onSuccess {
+                    _uiState.update { state ->
+                        state.copy(
+                            agents = state.agents.filter { it.id != id },
+                            toastMessage = "Agent removed",
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
         }
     }
 
     fun toggleAgent(id: String, enabled: Boolean) {
-        _uiState.update { state ->
-            state.copy(
-                agents = state.agents.map {
-                    if (it.id == id) it.copy(enabled = enabled) else it
-                },
-            )
+        viewModelScope.launch {
+            settingsRepository.updateAgent(id, UpdateCustomAgentInput(enabled = enabled))
+                .onSuccess { updated ->
+                    _uiState.update { state ->
+                        state.copy(agents = state.agents.map { if (it.id == id) updated else it })
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
         }
     }
 

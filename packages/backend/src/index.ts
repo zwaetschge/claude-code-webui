@@ -17,6 +17,7 @@ import { initDatabase } from './db/index.js';
 import { setupPassport } from './auth/passport.js';
 import { setupWebSocket } from './websocket/index.js';
 import { errorHandler, requestIdMiddleware } from './middleware/errorHandler.js';
+import { mobileGatewayAuth } from './middleware/mobileGateway.js';
 import {
   previewVhostMiddleware,
   handlePreviewUpgrade,
@@ -311,6 +312,7 @@ async function main() {
   setupPassport();
   app.use(passport.initialize());
   app.use(passport.session());
+  app.use(mobileGatewayAuth);
 
   // Make io available in routes
   app.set('io', io);

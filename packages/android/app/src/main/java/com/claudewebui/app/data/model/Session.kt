@@ -11,14 +11,18 @@ enum class SessionStatus {
 }
 
 @Serializable
-enum class CLIProvider {
-    @SerialName("claude") CLAUDE,
-    @SerialName("codex") CODEX,
-    @SerialName("opencode") OPENCODE,
-    @SerialName("pi") PI;
+enum class CLIProvider(val displayName: String) {
+    @SerialName("claude") CLAUDE("Claude"),
+    @SerialName("codex") CODEX("Codex"),
+    @SerialName("opencode") OPENCODE("OpenCode"),
+    @SerialName("pi") PI("Pi"),
+    @SerialName("kimi") KIMI("Kimi");
 
     companion object {
-        val active: List<CLIProvider> = listOf(CODEX, OPENCODE, PI, CLAUDE)
+        val active: List<CLIProvider> = listOf(CODEX, OPENCODE, PI, KIMI, CLAUDE)
+
+        fun fromId(id: String): CLIProvider? =
+            entries.firstOrNull { it.name.equals(id, ignoreCase = true) }
     }
 }
 

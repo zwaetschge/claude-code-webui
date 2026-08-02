@@ -465,6 +465,7 @@ private fun CLIProvider.toCliProvider(): CliProvider = when (this) {
     CLIProvider.CODEX  -> CliProvider.CODEX
     CLIProvider.OPENCODE -> CliProvider.OPENCODE
     CLIProvider.PI -> CliProvider.PI
+    CLIProvider.KIMI -> CliProvider.KIMI
 }
 
 private fun relativeTime(isoTimestamp: String): String {

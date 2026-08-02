@@ -71,10 +71,10 @@ data class DurationPoint(
 )
 
 enum class AnalyticsTimeRange(val label: String, val apiPeriod: String) {
-    TODAY("Today", "today"),
+    TODAY("24h", "24h"),
     WEEK("7d", "7d"),
     MONTH("30d", "30d"),
-    ALL("All Time", "all")
+    ALL("90d", "90d")
 }
 
 data class AnalyticsUiState(

@@ -99,7 +99,7 @@ fun SessionConfigSheet(
                     onExpandedChange = { providerDropdownExpanded = it }
                 ) {
                     OutlinedTextField(
-                        value = selectedProvider.name.lowercase().replaceFirstChar { it.uppercaseChar() },
+                        value = selectedProvider.displayName,
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Provider") },
@@ -118,7 +118,7 @@ fun SessionConfigSheet(
                         CLIProvider.active.forEach { provider ->
                             DropdownMenuItem(
                                 text = {
-                                    Text(provider.name.lowercase().replaceFirstChar { it.uppercaseChar() })
+                                    Text(provider.displayName)
                                 },
                                 onClick = {
                                     selectedProvider = provider

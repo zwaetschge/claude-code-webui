@@ -16,6 +16,8 @@ import { applyUntrustedFileHeaders, isActiveDocument } from '../src/utils/untrus
 import { detectImageMime, isPathWithin } from '../src/services/comfyui/index.js';
 import { permissionIdentityMatches } from '../src/routes/permissions.js';
 import { permissionRequestBelongsToSession } from '../src/services/opencode/OpencodeServer.js';
+import { MobileAuthCodeStore, createPkceChallenge } from '../src/services/mobileAuthCodes.js';
+import { isMobileGatewayPublicRequest } from '../src/middleware/mobileGateway.js';
 
 type RouterLayer = {
   route?: {
@@ -219,6 +221,46 @@ function testBootstrapAdminIdentity(): void {
   }
 }
 
+function testMobileAuthBoundary(): void {
+  const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+  const challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+  assert.equal(createPkceChallenge(verifier), challenge);
+
+  let now = 1_000;
+  const codes = ['A'.repeat(43), 'B'.repeat(43), 'C'.repeat(43)];
+  const store = new MobileAuthCodeStore(
+    () => now,
+    () => codes.shift() || 'D'.repeat(43),
+    1_000,
+    3
+  );
+
+  const validCode = store.issue('user-a', challenge);
+  assert.equal(store.exchange(validCode, verifier), 'user-a');
+  assert.equal(store.exchange(validCode, verifier), null, 'mobile code must be one-time');
+
+  const wrongVerifierCode = store.issue('user-a', challenge);
+  assert.equal(store.exchange(wrongVerifierCode, 'x'.repeat(43)), null);
+  assert.equal(store.exchange(wrongVerifierCode, verifier), null, 'failed PKCE burns the code');
+
+  const expiredCode = store.issue('user-a', challenge);
+  now += 1_001;
+  assert.equal(store.exchange(expiredCode, verifier), null);
+
+  for (const [method, route] of [
+    ['GET', '/health'],
+    ['GET', '/auth/providers'],
+    ['GET', '/auth/proxy/mobile'],
+    ['POST', '/auth/mobile/exchange'],
+    ['POST', '/api/basic-auth/login'],
+  ]) {
+    assert.equal(isMobileGatewayPublicRequest(method, route), true, `${method} ${route}`);
+  }
+  assert.equal(isMobileGatewayPublicRequest('GET', '/api/sessions'), false);
+  assert.equal(isMobileGatewayPublicRequest('GET', '/auth/me'), false);
+  assert.equal(isMobileGatewayPublicRequest('POST', '/auth/mobile/exchange/extra'), false);
+}
+
 async function testPermissionHookCarriesSessionIdentity(): Promise<void> {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const source = await fs.readFile(
@@ -248,6 +290,7 @@ testPermissionIdentityBinding();
 testUntrustedActiveDocuments();
 testComfyInputPrimitives();
 testBootstrapAdminIdentity();
+testMobileAuthBoundary();
 await testPermissionHookCarriesSessionIdentity();
 await testCustomCommandsUseRestrictedEnvironment();
 

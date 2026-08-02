@@ -264,7 +264,8 @@ export function applyProviderClass(_provider: UiProvider): void {
     'provider-zai',
     'provider-codex',
     'provider-opencode',
-    'provider-pi'
+    'provider-pi',
+    'provider-kimi'
   );
   root.classList.add(`provider-${visualProvider}`);
   root.setAttribute('data-provider', visualProvider);

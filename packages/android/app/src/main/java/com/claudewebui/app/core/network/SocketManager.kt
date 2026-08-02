@@ -13,7 +13,20 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+
+internal data class SocketEndpoint(val origin: String, val path: String)
+
+internal fun socketEndpoint(serverUrl: String): SocketEndpoint {
+    val uri = URI(serverUrl)
+    val prefix = uri.path.orEmpty().trimEnd('/')
+    val origin = URI(uri.scheme, uri.userInfo, uri.host, uri.port, null, null, null).toString()
+    return SocketEndpoint(
+        origin = origin,
+        path = if (prefix.isBlank()) "/socket.io" else "$prefix/socket.io",
+    )
+}
 
 /**
  * Connection state for the Socket.IO connection.
@@ -112,6 +125,7 @@ class SocketManager {
      */
     fun connect(serverUrl: String? = null) {
         val url = serverUrl ?: TokenStore.getServerUrl() ?: return
+        val endpoint = runCatching { socketEndpoint(url) }.getOrNull() ?: return
         disconnect()
 
         _connectionState.value = ConnectionState.CONNECTING
@@ -121,6 +135,7 @@ class SocketManager {
             forceNew = true
             reconnection = false // We handle reconnection ourselves
             transports = arrayOf("websocket", "polling")
+            path = endpoint.path
             val token = TokenStore.getToken()
             if (token != null) {
                 auth = mapOf("token" to token)
@@ -129,7 +144,7 @@ class SocketManager {
         }
 
         try {
-            socket = IO.socket(url, options).apply {
+            socket = IO.socket(endpoint.origin, options).apply {
                 on(Socket.EVENT_CONNECT, onConnect)
                 on(Socket.EVENT_DISCONNECT, onDisconnect)
                 on(Socket.EVENT_CONNECT_ERROR, onConnectError)

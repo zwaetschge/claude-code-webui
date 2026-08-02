@@ -21,8 +21,10 @@ import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import com.claudewebui.app.BuildConfig
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.ui.screens.analytics.AnalyticsScreen
+import com.claudewebui.app.ui.screens.activity.ActivityScreen
 import com.claudewebui.app.ui.screens.auth.LoginScreen
 import com.claudewebui.app.ui.screens.auth.ServerSetupScreen
 import com.claudewebui.app.ui.screens.chat.ChatScreen
@@ -34,6 +36,8 @@ import com.claudewebui.app.ui.screens.chat.UsageScreen
 import com.claudewebui.app.ui.screens.chat.UsageViewModel
 import com.claudewebui.app.ui.screens.dashboard.DashboardScreen
 import com.claudewebui.app.ui.screens.filemanager.FileManagerScreen
+import com.claudewebui.app.ui.screens.library.LibraryScreen
+import com.claudewebui.app.ui.components.common.MainDestination
 import com.claudewebui.app.ui.screens.settings.AgentsScreen
 import com.claudewebui.app.ui.screens.settings.CliToolsScreen
 import com.claudewebui.app.ui.screens.settings.McpSettingsScreen
@@ -80,7 +84,13 @@ fun AppNavigation(
     deepLinkUri: String? = null
 ) {
     val startDestination = remember {
-        if (TokenStore.isLoggedIn) Routes.Dashboard.route else Routes.Login.route
+        val isDesignPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview"
+        val isChatPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview-chat"
+        when {
+            isChatPreview -> Routes.Chat.createRoute("preview")
+            TokenStore.isLoggedIn || isDesignPreview -> Routes.Dashboard.route
+            else -> Routes.Login.route
+        }
     }
 
     NavHost(
@@ -105,7 +115,10 @@ fun AppNavigation(
                 },
                 onNavigateToServerSetup = {
                     navController.navigate(Routes.ServerSetup.route)
-                }
+                },
+                authCallbackUri = deepLinkUri?.takeIf {
+                    it.startsWith("claudewebui://auth/callback")
+                },
             )
         }
 
@@ -130,8 +143,22 @@ fun AppNavigation(
                 },
                 onNavigateToSettings = {
                     navController.navigate(SETTINGS_GRAPH)
-                }
+                },
+                onNavigateMain = { navController.navigateMain(it) },
             )
+        }
+
+        composable(route = Routes.Activity.route) {
+            ActivityScreen(
+                onNavigateMain = { navController.navigateMain(it) },
+                onOpenSession = { sessionId ->
+                    navController.navigate(Routes.Chat.createRoute(sessionId))
+                },
+            )
+        }
+
+        composable(route = Routes.Library.route) {
+            LibraryScreen(onNavigateMain = { navController.navigateMain(it) })
         }
 
         // ---- Chat ----
@@ -182,7 +209,8 @@ fun AppNavigation(
                         navController.navigate(Routes.Login.route) {
                             popUpTo(0) { inclusive = true }
                         }
-                    }
+                    },
+                    onNavigateMain = { navController.navigateMain(it) },
                 )
             }
 
@@ -273,7 +301,7 @@ fun AppNavigation(
         // ---- Analytics ----
 
         composable(route = Routes.Analytics.route) {
-            AnalyticsScreen()
+            AnalyticsScreen(onNavigateMain = { navController.navigateMain(it) })
         }
 
         // ---- Checkpoint Manager ----
@@ -359,5 +387,20 @@ fun AppNavigation(
                 onRefresh = { viewModel.refreshUsage() }
             )
         }
+    }
+}
+
+private fun NavHostController.navigateMain(destination: MainDestination) {
+    val route = when (destination) {
+        MainDestination.SESSIONS -> Routes.Dashboard.route
+        MainDestination.ACTIVITY -> Routes.Activity.route
+        MainDestination.ANALYTICS -> Routes.Analytics.route
+        MainDestination.LIBRARY -> Routes.Library.route
+        MainDestination.SETTINGS -> SETTINGS_GRAPH
+    }
+    navigate(route) {
+        launchSingleTop = true
+        restoreState = true
+        popUpTo(Routes.Dashboard.route) { saveState = true }
     }
 }

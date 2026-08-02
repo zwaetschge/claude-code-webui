@@ -19,6 +19,12 @@ sealed class Routes(val route: String) {
     /** Session list / dashboard */
     object Dashboard : Routes("dashboard")
 
+    /** Realtime sessions, tools and permission activity */
+    object Activity : Routes("activity")
+
+    /** Shared agents, skills, plugins, MCP servers and commands */
+    object Library : Routes("library")
+
     /** Chat view for a specific session */
     data class Chat(val sessionId: String) : Routes("chat/{sessionId}") {
         companion object {

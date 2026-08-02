@@ -1,5 +1,6 @@
 package com.claudewebui.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -22,10 +23,13 @@ import com.claudewebui.app.ui.theme.ClaudeWebUITheme
 
 class MainActivity : ComponentActivity() {
 
+    private var incomingDeepLink by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Enable edge-to-edge display before setContent
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        incomingDeepLink = intent?.data?.toString()
 
         setContent {
             val darkTheme = isSystemInDarkTheme()
@@ -60,10 +64,16 @@ class MainActivity : ComponentActivity() {
                 ) {
                     // Pass deep link intent to the navigation host
                     AppNavigation(
-                        deepLinkUri = intent?.data?.toString()
+                        deepLinkUri = incomingDeepLink
                     )
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incomingDeepLink = intent.data?.toString()
     }
 }

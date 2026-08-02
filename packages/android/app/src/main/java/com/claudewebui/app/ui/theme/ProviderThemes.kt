@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -17,6 +18,7 @@ enum class CliProvider(val displayName: String, val id: String) {
     CODEX("Codex", "codex"),
     OPENCODE("OpenCode", "opencode"),
     PI("Pi", "pi"),
+    KIMI("Kimi", "kimi"),
     UNKNOWN("Unknown", "unknown"),
     ;
 
@@ -84,6 +86,16 @@ object ProviderThemes {
             onContainerColorDark = Color(0xFF99F6E4),
             icon = Icons.Filled.Cloud,
             displayName = "Pi",
+        ),
+        CliProvider.KIMI to ProviderTheme(
+            color = Color(0xFF2582ED),
+            colorDark = Color(0xFF7DB5FF),
+            containerColor = Color(0xFFE8F2FF),
+            containerColorDark = Color(0xFF102A4C),
+            onContainerColor = Color(0xFF174F9C),
+            onContainerColorDark = Color(0xFF9BC9FF),
+            icon = Icons.Filled.Bedtime,
+            displayName = "Kimi",
         ),
     )
 
