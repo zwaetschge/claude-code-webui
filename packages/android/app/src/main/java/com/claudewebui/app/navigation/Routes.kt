@@ -75,13 +75,14 @@ sealed class Routes(val route: String) {
     /** Tool permissions */
     object SettingsPermissions : Routes("settings/permissions")
 
-    /** Dev-server preview ports and GitHub for one session's working directory */
-    data class DevTools(val workingDirectory: String) : Routes(ROUTE) {
+    /** Preview, GitHub and Oracle browser for one session. */
+    data class DevTools(val sessionId: String, val workingDirectory: String) : Routes(ROUTE) {
         companion object {
-            const val ROUTE = "devtools/{workingDirectory}"
+            const val ROUTE = "devtools/{sessionId}/{workingDirectory}"
+            const val ARG_SESSION_ID = "sessionId"
             const val ARG_WORKING_DIRECTORY = "workingDirectory"
-            fun createRoute(workingDirectory: String) =
-                "devtools/" + java.net.URLEncoder.encode(workingDirectory, "UTF-8")
+            fun createRoute(sessionId: String, workingDirectory: String) =
+                "devtools/$sessionId/" + java.net.URLEncoder.encode(workingDirectory, "UTF-8")
         }
     }
 

@@ -18,6 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -25,6 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +65,9 @@ fun DevToolsScreen(
     val state by viewModel.uiState.collectAsState()
     val wide = isTabletWidth()
     val uriHandler = LocalUriHandler.current
+    var showCreateRepo by remember { mutableStateOf(false) }
+    var cloneRepo by remember { mutableStateOf<GitHubRepo?>(null) }
+    var showPush by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
 
@@ -103,6 +111,9 @@ fun DevToolsScreen(
                         }
                         TabChip("GitHub", state.tab == DevToolsTab.GITHUB) {
                             viewModel.selectTab(DevToolsTab.GITHUB)
+                        }
+                        TabChip("Oracle", state.tab == DevToolsTab.ORACLE) {
+                            viewModel.selectTab(DevToolsTab.ORACLE)
                         }
                     }
                 }
@@ -208,6 +219,26 @@ fun DevToolsScreen(
                             }
                         }
 
+                        if (state.tokenStatus?.valid == true) {
+                            item {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Chip("New repo", Icons.Outlined.Add) { showCreateRepo = true }
+                                    Chip("Push", Icons.Outlined.Upload) { showPush = true }
+                                    state.gitHubAction?.let {
+                                        Text(
+                                            it,
+                                            color = PlumMuted,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.align(Alignment.CenterVertically),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         if (state.isLoadingGitHub) {
                             item {
                                 Box(
@@ -225,12 +256,53 @@ fun DevToolsScreen(
                         }
 
                         items(state.repos, key = { it.fullName }) { repo ->
-                            RepoRow(repo) { uriHandler.openUri(repo.htmlUrl) }
+                            RepoRow(
+                                repo = repo,
+                                canClone = state.tokenStatus?.valid == true && state.gitHubAction == null,
+                                onOpen = { uriHandler.openUri(repo.htmlUrl) },
+                                onClone = { cloneRepo = repo },
+                            )
                         }
+                    }
+
+                    DevToolsTab.ORACLE -> item {
+                        OracleBrowserPanel(state = state, viewModel = viewModel)
                     }
                 }
             }
         }
+    }
+
+    if (showCreateRepo) {
+        CreateRepoDialog(
+            onDismiss = { showCreateRepo = false },
+            onCreate = { name, description, isPrivate ->
+                showCreateRepo = false
+                viewModel.createRepo(name, description, isPrivate)
+            },
+        )
+    }
+
+    cloneRepo?.let { repo ->
+        CloneRepoDialog(
+            repo = repo,
+            initialTarget = viewModel.defaultCloneTarget(repo),
+            onDismiss = { cloneRepo = null },
+            onClone = { target, branch ->
+                cloneRepo = null
+                viewModel.cloneRepo(repo.cloneUrl, target, branch)
+            },
+        )
+    }
+
+    if (showPush) {
+        PushRepoDialog(
+            onDismiss = { showPush = false },
+            onPush = { remote, branch, force ->
+                showPush = false
+                viewModel.push(remote, branch, force)
+            },
+        )
     }
 }
 
@@ -271,7 +343,12 @@ private fun PortRow(port: PreviewPort, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun RepoRow(repo: GitHubRepo, onOpen: () -> Unit) {
+private fun RepoRow(
+    repo: GitHubRepo,
+    canClone: Boolean,
+    onOpen: () -> Unit,
+    onClone: () -> Unit,
+) {
     GlassPanel(Modifier.fillMaxWidth(), radius = 16.dp) {
         Row(
             Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(14.dp),
@@ -293,7 +370,20 @@ private fun RepoRow(repo: GitHubRepo, onOpen: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (repo.private) StatusPill("private", PlumAccent)
+            Column(horizontalAlignment = Alignment.End) {
+                if (repo.private) StatusPill("private", PlumAccent)
+                if (canClone) {
+                    Text(
+                        "Clone",
+                        color = PlumAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable(onClick = onClone)
+                            .padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
+                    )
+                }
+            }
         }
     }
 }

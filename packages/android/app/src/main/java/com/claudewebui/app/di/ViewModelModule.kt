@@ -78,8 +78,10 @@ val viewModelModule = module {
     // MemoryViewModel(workingDirectory, apiClient)
     viewModel { (workingDirectory: String) -> MemoryViewModel(workingDirectory, get()) }
 
-    // DevToolsViewModel(workingDirectory, apiClient)
-    viewModel { (workingDirectory: String) -> DevToolsViewModel(workingDirectory, get()) }
+    // DevToolsViewModel(sessionId, workingDirectory, apiClient)
+    viewModel { (sessionId: String, workingDirectory: String) ->
+        DevToolsViewModel(sessionId, workingDirectory, get())
+    }
 
     // OperationsViewModel(apiClient)
     viewModel { OperationsViewModel(get()) }

@@ -834,6 +834,12 @@ class ApiClient {
     suspend fun getGitHubRepos(): ApiResponse<GitHubRepoPage> =
         client.get(url("/api/github/repos")).body()
 
+    /** POST /api/github/repos */
+    suspend fun createGitHubRepo(input: CreateRepoInput): ApiResponse<GitHubRepo> =
+        client.post(url("/api/github/repos")) {
+            setBody(input)
+        }.body()
+
     /** POST /api/github/clone */
     suspend fun cloneGitHubRepo(
         repoUrl: String,
@@ -849,10 +855,67 @@ class ApiClient {
         workingDirectory: String,
         remote: String? = null,
         branch: String? = null,
+        force: Boolean = false,
     ): ApiResponse<JsonElement> =
         client.post(url("/api/github/push")) {
-            setBody(PushInput(workingDirectory, remote, branch))
+            setBody(PushInput(workingDirectory, remote, branch, force))
         }.body()
+
+    // ========================================================================
+    // Oracle browser
+    // ========================================================================
+
+    suspend fun getOracleBrowser(sessionId: String): ApiResponse<OracleBrowserState> =
+        client.get(url("/api/oracle/browser/$sessionId")).body()
+
+    suspend fun startOracleBrowser(
+        sessionId: String,
+        targetUrl: String?,
+    ): ApiResponse<OracleBrowserState> =
+        client.post(url("/api/oracle/browser/$sessionId/start")) {
+            setBody(OracleStartInput(targetUrl))
+        }.body()
+
+    suspend fun stopOracleBrowser(sessionId: String): ApiResponse<OracleBrowserState> =
+        client.post(url("/api/oracle/browser/$sessionId/stop")).body()
+
+    suspend fun reloadOracleBrowser(sessionId: String): ApiResponse<OracleBrowserState> =
+        client.post(url("/api/oracle/browser/$sessionId/reload")).body()
+
+    suspend fun navigateOracleBrowser(
+        sessionId: String,
+        targetUrl: String,
+    ): ApiResponse<OracleBrowserState> =
+        client.post(url("/api/oracle/browser/$sessionId/navigate")) {
+            setBody(OracleNavigateInput(targetUrl))
+        }.body()
+
+    suspend fun getOracleFrame(sessionId: String): ByteArray =
+        client.get(url("/api/oracle/browser/$sessionId/frame")).body()
+
+    suspend fun clickOracleBrowser(sessionId: String, xRatio: Float, yRatio: Float) {
+        client.post(url("/api/oracle/browser/$sessionId/click")) {
+            setBody(OracleClickInput(xRatio, yRatio))
+        }
+    }
+
+    suspend fun wheelOracleBrowser(sessionId: String, deltaY: Float) {
+        client.post(url("/api/oracle/browser/$sessionId/wheel")) {
+            setBody(OracleWheelInput(.5f, .5f, deltaY = deltaY))
+        }
+    }
+
+    suspend fun keyOracleBrowser(sessionId: String, key: String, code: String? = null) {
+        client.post(url("/api/oracle/browser/$sessionId/key")) {
+            setBody(OracleKeyInput(key, code))
+        }
+    }
+
+    suspend fun textOracleBrowser(sessionId: String, text: String) {
+        client.post(url("/api/oracle/browser/$sessionId/text")) {
+            setBody(OracleTextInput(text))
+        }
+    }
 
     // ========================================================================
     // Health

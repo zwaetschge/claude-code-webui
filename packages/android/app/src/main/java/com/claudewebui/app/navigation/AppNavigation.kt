@@ -224,7 +224,7 @@ fun AppNavigation(
                     navController.navigate(Routes.CheckpointManager.createRoute(sid))
                 },
                 onNavigateToDevTools = { workingDirectory ->
-                    navController.navigate(Routes.DevTools.createRoute(workingDirectory))
+                    navController.navigate(Routes.DevTools.createRoute(sessionId, workingDirectory))
                 },
                 onNavigateToMemory = { workingDirectory ->
                     navController.navigate(Routes.Memory.createRoute(workingDirectory))
@@ -338,11 +338,13 @@ fun AppNavigation(
         // ---- Dev tools ----
 
         composable(route = Routes.DevTools.ROUTE) { entry ->
+            val sessionId =
+                entry.arguments?.getString(Routes.DevTools.ARG_SESSION_ID).orEmpty()
             val encoded =
                 entry.arguments?.getString(Routes.DevTools.ARG_WORKING_DIRECTORY).orEmpty()
             val workingDirectory = java.net.URLDecoder.decode(encoded, "UTF-8")
             DevToolsScreen(
-                viewModel = koinViewModel { parametersOf(workingDirectory) },
+                viewModel = koinViewModel { parametersOf(sessionId, workingDirectory) },
                 onNavigateBack = { navController.popBackStack() },
             )
         }

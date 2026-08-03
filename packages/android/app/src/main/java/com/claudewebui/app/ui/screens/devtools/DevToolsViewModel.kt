@@ -3,8 +3,10 @@ package com.claudewebui.app.ui.screens.devtools
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudewebui.app.core.network.ApiClient
+import com.claudewebui.app.data.model.CreateRepoInput
 import com.claudewebui.app.data.model.GitHubRepo
 import com.claudewebui.app.data.model.GitHubTokenStatus
+import com.claudewebui.app.data.model.OracleBrowserState
 import com.claudewebui.app.data.model.PreviewConfig
 import com.claudewebui.app.data.model.PreviewPort
 import kotlinx.coroutines.async
@@ -15,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class DevToolsTab { PREVIEW, GITHUB }
+enum class DevToolsTab { PREVIEW, GITHUB, ORACLE }
 
 data class DevToolsUiState(
     val tab: DevToolsTab = DevToolsTab.PREVIEW,
@@ -26,6 +28,11 @@ data class DevToolsUiState(
     val tokenStatus: GitHubTokenStatus? = null,
     val repos: List<GitHubRepo> = emptyList(),
     val isLoadingGitHub: Boolean = false,
+    val gitHubAction: String? = null,
+    val oracle: OracleBrowserState? = null,
+    val oracleFrame: ByteArray? = null,
+    val isLoadingOracle: Boolean = false,
+    val isOracleActionPending: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
 )
@@ -37,6 +44,7 @@ data class DevToolsUiState(
  * calls are not unwrapped the way the GitHub ones are.
  */
 class DevToolsViewModel(
+    private val sessionId: String,
     private val workingDirectory: String,
     private val api: ApiClient,
 ) : ViewModel() {
@@ -51,6 +59,7 @@ class DevToolsViewModel(
         loaded = true
         scanPorts()
         loadGitHub()
+        loadOracle()
     }
 
     fun selectTab(tab: DevToolsTab) {
@@ -112,6 +121,177 @@ class DevToolsViewModel(
                     )
                 }
             }
+        }
+    }
+
+    fun createRepo(name: String, description: String, isPrivate: Boolean) {
+        val cleanName = name.trim()
+        if (cleanName.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(gitHubAction = "Creating repository…", error = null) }
+            runCatching {
+                val response = api.createGitHubRepo(
+                    CreateRepoInput(
+                        name = cleanName,
+                        description = description.trim().takeIf(String::isNotEmpty),
+                        private = isPrivate,
+                    ),
+                )
+                if (!response.success) error(response.error?.message ?: "Repository creation failed")
+                response
+            }.onSuccess { response ->
+                _uiState.update {
+                    it.copy(notice = "Repository ${response.data?.fullName ?: cleanName} created")
+                }
+                loadGitHub()
+            }.onFailure { failure ->
+                _uiState.update { it.copy(error = failure.message ?: "Repository creation failed") }
+            }
+            _uiState.update { it.copy(gitHubAction = null) }
+        }
+    }
+
+    fun cloneRepo(repoUrl: String, targetDirectory: String, branch: String = "") {
+        val target = targetDirectory.trim()
+        if (repoUrl.isBlank() || target.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(gitHubAction = "Cloning repository…", error = null) }
+            runCatching {
+                val response =
+                    api.cloneGitHubRepo(repoUrl, target, branch.trim().takeIf(String::isNotEmpty))
+                if (!response.success) error(response.error?.message ?: "Clone failed")
+                response
+            }.onSuccess {
+                _uiState.update { it.copy(notice = "Repository cloned to $target") }
+            }.onFailure { failure ->
+                _uiState.update { it.copy(error = failure.message ?: "Clone failed") }
+            }
+            _uiState.update { it.copy(gitHubAction = null) }
+        }
+    }
+
+    fun push(remote: String = "", branch: String = "", force: Boolean = false) {
+        if (workingDirectory.isBlank()) {
+            _uiState.update { it.copy(error = "This session has no working directory") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(gitHubAction = "Pushing commits…", error = null) }
+            runCatching {
+                val response = api.pushToGitHub(
+                    workingDirectory,
+                    remote.trim().takeIf(String::isNotEmpty),
+                    branch.trim().takeIf(String::isNotEmpty),
+                    force,
+                )
+                if (!response.success) error(response.error?.message ?: "Push failed")
+                response
+            }.onSuccess {
+                _uiState.update { it.copy(notice = "Push completed") }
+            }.onFailure { failure ->
+                _uiState.update { it.copy(error = failure.message ?: "Push failed") }
+            }
+            _uiState.update { it.copy(gitHubAction = null) }
+        }
+    }
+
+    fun defaultCloneTarget(repo: GitHubRepo): String {
+        val parent = workingDirectory.trimEnd('/').substringBeforeLast('/', "")
+        return if (parent.isBlank()) repo.name else "$parent/${repo.name}"
+    }
+
+    fun loadOracle(loadFrame: Boolean = true) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingOracle = true) }
+            runCatching { api.getOracleBrowser(sessionId) }
+                .onSuccess { response ->
+                    val browser = response.data
+                    _uiState.update {
+                        it.copy(
+                            oracle = browser,
+                            isLoadingOracle = false,
+                            error = if (response.success) it.error else response.error?.message,
+                        )
+                    }
+                    if (loadFrame && browser?.running == true) loadOracleFrame()
+                }
+                .onFailure { failure ->
+                    _uiState.update {
+                        it.copy(isLoadingOracle = false, error = failure.message)
+                    }
+                }
+        }
+    }
+
+    fun loadOracleFrame() {
+        viewModelScope.launch {
+            runCatching { api.getOracleFrame(sessionId) }
+                .onSuccess { frame -> _uiState.update { it.copy(oracleFrame = frame) } }
+        }
+    }
+
+    private fun oracleAction(action: suspend () -> com.claudewebui.app.data.model.ApiResponse<OracleBrowserState>) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isOracleActionPending = true, error = null) }
+            runCatching {
+                val response = action()
+                if (!response.success) {
+                    error(response.error?.message ?: "Oracle browser action failed")
+                }
+                response
+            }
+                .onSuccess { response ->
+                    _uiState.update { it.copy(oracle = response.data) }
+                    if (response.data?.running == true) loadOracleFrame()
+                }
+                .onFailure { failure -> _uiState.update { it.copy(error = failure.message) } }
+            _uiState.update { it.copy(isOracleActionPending = false) }
+        }
+    }
+
+    fun startOracle(targetUrl: String) = oracleAction {
+        api.startOracleBrowser(sessionId, targetUrl.trim().takeIf(String::isNotEmpty))
+    }
+
+    fun stopOracle() = oracleAction { api.stopOracleBrowser(sessionId) }
+
+    fun reloadOracle() = oracleAction { api.reloadOracleBrowser(sessionId) }
+
+    fun navigateOracle(targetUrl: String) {
+        if (targetUrl.isBlank()) return
+        oracleAction { api.navigateOracleBrowser(sessionId, targetUrl.trim()) }
+    }
+
+    fun clickOracle(xRatio: Float, yRatio: Float) {
+        viewModelScope.launch {
+            runCatching { api.clickOracleBrowser(sessionId, xRatio, yRatio) }
+                .onFailure { failure -> _uiState.update { it.copy(error = failure.message) } }
+            loadOracleFrame()
+        }
+    }
+
+    fun scrollOracle(deltaY: Float) {
+        viewModelScope.launch {
+            runCatching { api.wheelOracleBrowser(sessionId, deltaY) }
+                .onFailure { failure -> _uiState.update { it.copy(error = failure.message) } }
+            loadOracleFrame()
+        }
+    }
+
+    fun sendOracleText(text: String) {
+        if (text.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { api.textOracleBrowser(sessionId, text) }
+                .onFailure { failure -> _uiState.update { it.copy(error = failure.message) } }
+            loadOracleFrame()
+        }
+    }
+
+    fun sendOracleKey(key: String, code: String? = null) {
+        viewModelScope.launch {
+            runCatching { api.keyOracleBrowser(sessionId, key, code) }
+                .onFailure { failure -> _uiState.update { it.copy(error = failure.message) } }
+            loadOracleFrame()
         }
     }
 

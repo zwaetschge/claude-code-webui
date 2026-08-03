@@ -97,6 +97,14 @@ data class GitHubRepoPage(
 )
 
 @Serializable
+data class CreateRepoInput(
+    val name: String,
+    val description: String? = null,
+    val private: Boolean = false,
+    @SerialName("auto_init") val autoInit: Boolean = true,
+)
+
+@Serializable
 data class CloneRepoInput(
     val url: String,
     val targetDir: String,
@@ -110,3 +118,69 @@ data class PushInput(
     val branch: String? = null,
     val force: Boolean? = null,
 )
+
+// ============================================================================
+// Oracle browser
+// ============================================================================
+
+@Serializable
+data class OracleViewport(
+    val width: Int = 1280,
+    val height: Int = 720,
+)
+
+@Serializable
+data class OracleBrowserState(
+    val sessionId: String = "",
+    val status: String = "idle",
+    val running: Boolean = false,
+    val mode: String = "profile",
+    val chatgptUrl: String = "",
+    val currentUrl: String? = null,
+    val title: String? = null,
+    val profileDir: String = "",
+    val debugPort: Int? = null,
+    val remoteChromeTarget: String? = null,
+    val oracleWillAttachToEmbeddedBrowser: Boolean = false,
+    val startedAt: String? = null,
+    val stoppedAt: String? = null,
+    val lastFrameAt: String? = null,
+    val viewport: OracleViewport = OracleViewport(),
+    val message: String = "",
+    val error: String? = null,
+    val outputTail: String = "",
+)
+
+@Serializable
+data class OracleStartInput(val url: String? = null)
+
+@Serializable
+data class OracleNavigateInput(val url: String)
+
+@Serializable
+data class OracleClickInput(
+    val xRatio: Float,
+    val yRatio: Float,
+    val button: String = "left",
+)
+
+@Serializable
+data class OracleWheelInput(
+    val xRatio: Float,
+    val yRatio: Float,
+    val deltaX: Float = 0f,
+    val deltaY: Float,
+)
+
+@Serializable
+data class OracleKeyInput(
+    val key: String,
+    val code: String? = null,
+    val altKey: Boolean = false,
+    val ctrlKey: Boolean = false,
+    val metaKey: Boolean = false,
+    val shiftKey: Boolean = false,
+)
+
+@Serializable
+data class OracleTextInput(val text: String)
