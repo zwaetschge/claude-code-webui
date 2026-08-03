@@ -165,6 +165,26 @@ class SessionRepository(
         }
     }
 
+    /** Set the model this session runs; null restores the provider default. */
+    suspend fun setModel(id: String, model: String?): Result<Session> = runCatching {
+        val response = api.setSessionModel(id, model)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to set model")
+        }
+        dao.insert(response.data.toEntity())
+        response.data
+    }
+
+    /** Set the reasoning level, where the provider supports one. */
+    suspend fun setReasoning(id: String, reasoning: String?): Result<Session> = runCatching {
+        val response = api.setSessionReasoning(id, reasoning)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to set reasoning")
+        }
+        dao.insert(response.data.toEntity())
+        response.data
+    }
+
     /**
      * Update the category for a session.
      */

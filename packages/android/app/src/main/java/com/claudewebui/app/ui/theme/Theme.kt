@@ -162,13 +162,14 @@ fun ClaudeWebUITheme(
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    // Derived from the active Plum palette so the Material-based screens share
+    // one theme with the Plum-based ones instead of keeping a separate brand.
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        else -> LocalPlumPalette.current.toMaterialScheme()
     }
 
     val extendedColors = if (darkTheme) DarkExtendedColors else LightExtendedColors

@@ -9,6 +9,10 @@ import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.AuthUser
 import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CLIProviderConfig
+import com.claudewebui.app.data.model.CliLoginSession
+import com.claudewebui.app.data.model.ConfigAgent
+import com.claudewebui.app.data.model.ConfigPlugin
+import com.claudewebui.app.data.model.ConfigSkill
 import com.claudewebui.app.data.model.CreateMcpServerInput
 import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
@@ -16,6 +20,7 @@ import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.McpServerType
 import com.claudewebui.app.data.model.PermissionAction
 import com.claudewebui.app.data.model.ProviderType
+import com.claudewebui.app.data.model.SlashCommand
 import com.claudewebui.app.data.model.Theme
 import com.claudewebui.app.data.model.UpdateCustomAgentInput
 import com.claudewebui.app.data.model.UpdateMcpServerInput
@@ -23,6 +28,13 @@ import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UserSettings
 import com.claudewebui.app.data.repository.AuthRepository
 import com.claudewebui.app.data.repository.SettingsRepository
+import com.claudewebui.app.ui.theme.AppThemeOption
+import com.claudewebui.app.ui.theme.AppThemeStore
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,7 +93,7 @@ data class SettingsUiState(
     val currentUser: AuthUser? = null,
 
     // Local-only prefs
-    val theme: AppTheme = AppTheme.SYSTEM,
+    val theme: AppThemeOption = AppThemeOption.SYSTEM,
     val fontSize: FontSize = FontSize.MEDIUM,
     val notificationsEnabled: Boolean = true,
     val biometricEnabled: Boolean = false,
@@ -104,12 +116,27 @@ data class SettingsUiState(
     val cliTools: List<CliTool> = emptyList(),
     val cliToolSearchQuery: String = "",
 
-    // Agents
+    // Agents (user-authored, stored in the WebUI database)
     val agents: List<CustomAgent> = emptyList(),
+
+    // On-disk catalogue served to the CLI harnesses (the claude-config routes).
+    // This — not `agents` above — is what the WebUI's Extensions pane counts.
+    val configAgents: List<ConfigAgent> = emptyList(),
+    val configSkills: List<ConfigSkill> = emptyList(),
+    val configPlugins: List<ConfigPlugin> = emptyList(),
+    val designStyles: List<ConfigSkill> = emptyList(),
+    val writingStyles: List<ConfigSkill> = emptyList(),
+    val commands: List<SlashCommand> = emptyList(),
+    val libraryLoading: Boolean = false,
 
     // Permissions
     val permissionRules: List<PermissionRule> = emptyList(),
     val defaultPermissionMode: PermissionAction = PermissionAction.ALLOW_ONCE,
+
+    // CLI harness login in progress
+    val cliLogin: CliLoginSession? = null,
+    val cliLoginProvider: String? = null,
+    val cliLoginError: String? = null,
 
     // App info
     val appVersion: String = "1.0.0",
@@ -118,11 +145,8 @@ data class SettingsUiState(
 
 // ── Local preference enums (mirrors Theme but for local storage) ──────────────
 
-enum class AppTheme(val label: String) {
-    SYSTEM("System default"),
-    LIGHT("Light"),
-    DARK("Dark"),
-}
+// Theme options live in AppThemeStore so the activity can read them without
+// depending on this ViewModel.
 
 enum class FontSize(val label: String, val scale: Float) {
     SMALL("Small", 0.85f),
@@ -134,7 +158,7 @@ enum class FontSize(val label: String, val scale: Float) {
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
 private const val PREFS_NAME = "settings_prefs"
-private const val KEY_THEME = "theme"
+// The theme key is owned by AppThemeStore — deliberately not duplicated here.
 private const val KEY_FONT_SIZE = "font_size"
 private const val KEY_NOTIFICATIONS = "notifications_enabled"
 private const val KEY_BIOMETRIC = "biometric_enabled"
@@ -152,6 +176,7 @@ class SettingsViewModel(
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+    private var cliLoginJob: Job? = null
 
     init {
         loadLocalPrefs()
@@ -161,7 +186,6 @@ class SettingsViewModel(
     // ── Load ──────────────────────────────────────────────────────────────────
 
     private fun loadLocalPrefs() {
-        val themeName = prefs.getString(KEY_THEME, AppTheme.SYSTEM.name) ?: AppTheme.SYSTEM.name
         val fontSizeName = prefs.getString(KEY_FONT_SIZE, FontSize.MEDIUM.name) ?: FontSize.MEDIUM.name
         val permissionModeName = prefs.getString(
             KEY_DEFAULT_PERMISSION_MODE, PermissionAction.ALLOW_ONCE.name
@@ -170,7 +194,7 @@ class SettingsViewModel(
         _uiState.update {
             it.copy(
                 serverUrl = TokenStore.getServerUrl() ?: "",
-                theme = AppTheme.entries.firstOrNull { e -> e.name == themeName } ?: AppTheme.SYSTEM,
+                theme = AppThemeStore.theme.value,
                 fontSize = FontSize.entries.firstOrNull { e -> e.name == fontSizeName } ?: FontSize.MEDIUM,
                 notificationsEnabled = prefs.getBoolean(KEY_NOTIFICATIONS, true),
                 biometricEnabled = prefs.getBoolean(KEY_BIOMETRIC, false),
@@ -182,63 +206,170 @@ class SettingsViewModel(
         }
     }
 
+    /**
+     * Load everything the settings and library screens render.
+     *
+     * The requests are independent, so they run concurrently rather than in
+     * sequence — served over the internet, a serial chain left the Library
+     * screen sitting on zeros for the better part of a minute, which reads as
+     * "nothing configured" rather than "still loading".
+     */
     fun loadSettings() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _uiState.update { it.copy(isLoading = true, libraryLoading = true, error = null) }
 
-            // Fetch current user
-            authRepository.getAuthUser()
-                .onSuccess { user -> _uiState.update { it.copy(currentUser = user) } }
-
-            // Server settings
-            settingsRepository.getSettings()
-                .onSuccess { settings -> _uiState.update { it.copy(userSettings = settings) } }
-                .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
-
-            // Providers
-            settingsRepository.getProviders()
-                .onSuccess { providers -> _uiState.update { it.copy(providers = providers) } }
-
-            settingsRepository.getCLIProviders()
-                .onSuccess { providers -> _uiState.update { it.copy(cliProviders = providers) } }
-
-            // MCP servers
-            settingsRepository.getMcpServers()
-                .onSuccess { servers -> _uiState.update { it.copy(mcpServers = servers) } }
-
-            settingsRepository.getAgents()
-                .onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
-
-            loadCliTools()
+            coroutineScope {
+                launch {
+                    authRepository.getAuthUser()
+                        .onSuccess { user -> _uiState.update { it.copy(currentUser = user) } }
+                }
+                launch {
+                    settingsRepository.getSettings()
+                        .onSuccess { settings -> _uiState.update { it.copy(userSettings = settings) } }
+                        .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
+                    // Depends on the allowedTools allowlist from the call above.
+                    loadCliToolsInternal()
+                }
+                launch {
+                    settingsRepository.getProviders()
+                        .onSuccess { providers -> _uiState.update { it.copy(providers = providers) } }
+                }
+                launch {
+                    settingsRepository.getCLIProviders()
+                        .onSuccess { providers -> _uiState.update { it.copy(cliProviders = providers) } }
+                }
+                launch {
+                    settingsRepository.getMcpServers()
+                        .onSuccess { servers -> _uiState.update { it.copy(mcpServers = servers) } }
+                }
+                launch {
+                    settingsRepository.getAgents()
+                        .onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
+                }
+                launch { loadConfigLibraryInternal() }
+            }
 
             _uiState.update { it.copy(isLoading = false) }
         }
     }
 
-    fun loadCliTools() {
-        // CLI tools arrive as raw JsonElements; we parse what we need
-        // This is a stub that generates plausible defaults from the UserSettings allowedTools
-        val allowedTools = _uiState.value.userSettings?.allowedTools ?: emptyList()
-        val builtinNames = listOf(
-            "Bash" to "Execute shell commands",
-            "Read" to "Read file contents",
-            "Write" to "Write files to disk",
-            "Edit" to "Edit file contents",
-            "Glob" to "Find files by pattern",
-            "Grep" to "Search file contents",
-            "WebSearch" to "Search the web",
-            "WebFetch" to "Fetch web pages",
-        )
-        val tools = builtinNames.mapIndexed { i, (name, desc) ->
-            CliTool(
-                id = "builtin_$i",
-                name = name,
-                description = desc,
-                enabled = allowedTools.isEmpty() || allowedTools.contains(name),
-                category = CliToolCategory.BUILTIN,
-            )
+    /**
+     * Load the on-disk catalogue from the claude-config routes, plus commands.
+     *
+     * Each source is fetched independently so one unavailable endpoint doesn't
+     * blank out the rest of the Library screen.
+     */
+    /**
+     * Load once if we have nothing yet.
+     *
+     * The shared instance is created with the navigation graph, which happens
+     * before the user has authenticated. That first load fails silently, and
+     * without this the screens would sit on empty lists for the rest of the
+     * session. Screens call this when they appear.
+     */
+    fun ensureLoaded() {
+        val state = _uiState.value
+        val hasNothing = state.cliProviders.isEmpty() &&
+            state.mcpServers.isEmpty() &&
+            state.configAgents.isEmpty()
+        if (hasNothing && !state.isLoading) loadSettings()
+    }
+
+    fun loadConfigLibrary() {
+        viewModelScope.launch { loadConfigLibraryInternal() }
+    }
+
+    private suspend fun loadConfigLibraryInternal() {
+        _uiState.update { it.copy(libraryLoading = true) }
+        coroutineScope {
+            launch {
+                settingsRepository.getConfigAgents()
+                    .onSuccess { agents -> _uiState.update { it.copy(configAgents = agents) } }
+            }
+            launch {
+                settingsRepository.getConfigSkills()
+                    .onSuccess { skills -> _uiState.update { it.copy(configSkills = skills) } }
+            }
+            launch {
+                settingsRepository.getConfigPlugins()
+                    .onSuccess { plugins -> _uiState.update { it.copy(configPlugins = plugins) } }
+            }
+            launch {
+                settingsRepository.getStyleLibrary()
+                    .onSuccess { library ->
+                        _uiState.update {
+                            it.copy(
+                                designStyles = library.designStyles,
+                                writingStyles = library.writingStyles,
+                            )
+                        }
+                    }
+            }
+            launch {
+                settingsRepository.getCommands()
+                    .onSuccess { commands -> _uiState.update { it.copy(commands = commands) } }
+            }
         }
-        _uiState.update { it.copy(cliTools = tools) }
+        _uiState.update { it.copy(libraryLoading = false) }
+    }
+
+    /**
+     * Built-in harness tools plus any custom tools registered on the server.
+     *
+     * The built-ins are a fixed set the CLI always exposes; their enabled state
+     * comes from the user's `allowedTools` allowlist. Custom entries come from
+     * `/api/cli-tools`, which returns opaque JSON, so we pull out the fields we
+     * render and keep the raw payload for the detail sheet.
+     */
+    fun loadCliTools() {
+        viewModelScope.launch { loadCliToolsInternal() }
+    }
+
+    private suspend fun loadCliToolsInternal() {
+        run {
+            val allowedTools = _uiState.value.userSettings?.allowedTools ?: emptyList()
+            val builtinNames = listOf(
+                "Bash" to "Execute shell commands",
+                "Read" to "Read file contents",
+                "Write" to "Write files to disk",
+                "Edit" to "Edit file contents",
+                "Glob" to "Find files by pattern",
+                "Grep" to "Search file contents",
+                "WebSearch" to "Search the web",
+                "WebFetch" to "Fetch web pages",
+            )
+            val builtins = builtinNames.mapIndexed { i, (name, desc) ->
+                CliTool(
+                    id = "builtin_$i",
+                    name = name,
+                    description = desc,
+                    enabled = allowedTools.isEmpty() || allowedTools.contains(name),
+                    category = CliToolCategory.BUILTIN,
+                )
+            }
+
+            val custom = settingsRepository.getCliTools()
+                .getOrDefault(emptyList())
+                .mapIndexedNotNull { index, element -> parseCliTool(element, index) }
+
+            _uiState.update { it.copy(cliTools = builtins + custom) }
+        }
+    }
+
+    private fun parseCliTool(element: JsonElement, index: Int): CliTool? {
+        val obj = element as? JsonObject ?: return null
+        fun string(key: String): String? =
+            (obj[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        val name = string("name") ?: return null
+        return CliTool(
+            id = string("id") ?: "custom_$index",
+            name = name,
+            description = string("description").orEmpty(),
+            enabled = (obj["enabled"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true,
+            category = CliToolCategory.CUSTOM,
+            command = string("command"),
+            rawJson = element,
+        )
     }
 
     fun loadAgents() {
@@ -247,15 +378,75 @@ class SettingsViewModel(
             settingsRepository.getAgents()
                 .onSuccess { agents -> _uiState.update { it.copy(agents = agents) } }
                 .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+            loadConfigLibrary()
             _uiState.update { it.copy(isLoading = false) }
+        }
+    }
+
+    // ── Config library toggles ────────────────────────────────────────────────
+
+    // The server flips these itself and reports the resulting state, so we patch
+    // the matching entry with what came back rather than what the UI requested.
+
+    fun toggleConfigSkill(name: String) {
+        viewModelScope.launch {
+            settingsRepository.toggleConfigSkill(name)
+                .onSuccess { enabled ->
+                    _uiState.update { state ->
+                        state.copy(
+                            configSkills = state.configSkills.map {
+                                if (it.name == name) it.copy(enabled = enabled) else it
+                            },
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun toggleConfigAgent(name: String) {
+        viewModelScope.launch {
+            settingsRepository.toggleConfigAgent(name)
+                .onSuccess { enabled ->
+                    _uiState.update { state ->
+                        state.copy(
+                            configAgents = state.configAgents.map {
+                                if (it.name == name) it.copy(enabled = enabled) else it
+                            },
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun toggleConfigPlugin(name: String) {
+        viewModelScope.launch {
+            settingsRepository.toggleConfigPlugin(name)
+                .onSuccess { enabled ->
+                    _uiState.update { state ->
+                        state.copy(
+                            configPlugins = state.configPlugins.map {
+                                if (it.name == name) it.copy(enabled = enabled) else it
+                            },
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
         }
     }
 
     // ── Theme / appearance ────────────────────────────────────────────────────
 
-    fun updateTheme(theme: AppTheme) {
-        prefs.edit().putString(KEY_THEME, theme.name).apply()
-        _uiState.update { it.copy(theme = theme) }
+    /**
+     * Persist the theme through [AppThemeStore] rather than this ViewModel's
+     * own prefs: the activity observes that store, and it is what actually
+     * repaints the app. Writing only to local state here would leave the
+     * setting visibly inert, which is what it used to do.
+     */
+    fun updateTheme(option: AppThemeOption) {
+        AppThemeStore.set(context, option)
+        _uiState.update { it.copy(theme = option) }
     }
 
     fun updateFontSize(size: FontSize) {
@@ -359,17 +550,43 @@ class SettingsViewModel(
         }
     }
 
+    /**
+     * Choose which model a CLI harness runs for new sessions.
+     *
+     * Merges into the existing per-provider map rather than replacing it, so
+     * setting one provider's model doesn't clear the others.
+     */
+    fun setProviderModel(providerId: String, model: String) {
+        viewModelScope.launch {
+            val current = _uiState.value.userSettings?.cliProviderModels ?: emptyMap()
+            val merged = current + (providerId.lowercase() to model)
+            settingsRepository.updateSettings(cliProviderModels = merged)
+                .onSuccess { settings ->
+                    _uiState.update {
+                        it.copy(userSettings = settings, toastMessage = "Model set to $model")
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    /**
+     * Test a provider through the backend, which calls its API with the stored
+     * credentials. Previously this slept 1.5s and reported success from the
+     * local `enabled` flag, so it could claim a working connection for a
+     * provider whose key was wrong.
+     */
     fun testProviderConnection(id: String) {
         _uiState.update { it.copy(providerTestResults = it.providerTestResults + (id to TestResult.Testing)) }
         viewModelScope.launch {
-            // Simulate a test by pinging getProviders; a real impl would call a dedicated endpoint
-            kotlinx.coroutines.delay(1500)
+            val result = settingsRepository.testProvider(id).fold(
+                onSuccess = { test ->
+                    if (test.success) TestResult.Success
+                    else TestResult.Failure(test.message.ifBlank { "Connection failed" })
+                },
+                onFailure = { error -> TestResult.Failure(error.message ?: "Test failed") },
+            )
             _uiState.update { state ->
-                val result = if (state.providers.any { it.id == id && it.enabled }) {
-                    TestResult.Success
-                } else {
-                    TestResult.Failure("Provider is disabled or unreachable")
-                }
                 state.copy(providerTestResults = state.providerTestResults + (id to result))
             }
         }
@@ -450,16 +667,24 @@ class SettingsViewModel(
         }
     }
 
+    /**
+     * Actually start the MCP server through the backend and report the result.
+     *
+     * This used to sleep 1.5s and then report success whenever the local
+     * `enabled` flag was set, which meant the button said "Connected" without
+     * ever contacting anything.
+     */
     fun testMcpConnection(id: String) {
         _uiState.update { it.copy(mcpTestResults = it.mcpTestResults + (id to TestResult.Testing)) }
         viewModelScope.launch {
-            kotlinx.coroutines.delay(1500)
+            val result = settingsRepository.testMcpServer(id).fold(
+                onSuccess = { test ->
+                    if (test.connected) TestResult.Success
+                    else TestResult.Failure(test.error ?: "Server did not start")
+                },
+                onFailure = { error -> TestResult.Failure(error.message ?: "Test failed") },
+            )
             _uiState.update { state ->
-                val result = if (state.mcpServers.any { it.id == id && it.enabled }) {
-                    TestResult.Success
-                } else {
-                    TestResult.Failure("Server is disabled or unreachable")
-                }
                 state.copy(mcpTestResults = state.mcpTestResults + (id to result))
             }
         }
@@ -596,6 +821,60 @@ class SettingsViewModel(
 
     fun resetAllPermissions() {
         _uiState.update { it.copy(permissionRules = emptyList(), toastMessage = "All permissions reset") }
+    }
+
+    // ── CLI harness login ─────────────────────────────────────────────────────
+
+    /**
+     * Run the harness's own auth command on the server and follow it.
+     *
+     * There is no push channel for this, so the state is polled. Polling stops
+     * as soon as the run finishes or the caller cancels — the job is held so a
+     * second start can't leave two pollers running.
+     */
+    fun startCliLogin(providerId: String) {
+        cliLoginJob?.cancel()
+        _uiState.update { it.copy(cliLogin = null, cliLoginError = null, cliLoginProvider = providerId) }
+        cliLoginJob = viewModelScope.launch {
+            settingsRepository.startCliLogin(providerId)
+                .onSuccess { session ->
+                    _uiState.update { it.copy(cliLogin = session) }
+                    pollCliLogin(session.id)
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(cliLoginError = error.message ?: "Login could not be started") }
+                }
+        }
+    }
+
+    private suspend fun pollCliLogin(id: String) {
+        while (currentCoroutineContext().isActive) {
+            delay(1500)
+            val result = settingsRepository.pollCliLogin(id).getOrNull() ?: continue
+            _uiState.update { it.copy(cliLogin = result) }
+            if (result.isFinished) {
+                // A completed login changes provider availability.
+                if (result.status == "completed") loadSettings()
+                return
+            }
+        }
+    }
+
+    fun submitCliLoginCode(code: String) {
+        val id = _uiState.value.cliLogin?.id ?: return
+        viewModelScope.launch {
+            settingsRepository.submitCliLoginCode(id, code)
+                .onSuccess { session -> _uiState.update { it.copy(cliLogin = session) } }
+                .onFailure { error -> _uiState.update { it.copy(cliLoginError = error.message) } }
+        }
+    }
+
+    fun cancelCliLogin() {
+        val id = _uiState.value.cliLogin?.id
+        cliLoginJob?.cancel()
+        cliLoginJob = null
+        viewModelScope.launch { id?.let { settingsRepository.cancelCliLogin(it) } }
+        _uiState.update { it.copy(cliLogin = null, cliLoginProvider = null, cliLoginError = null) }
     }
 
     // ── Account ───────────────────────────────────────────────────────────────

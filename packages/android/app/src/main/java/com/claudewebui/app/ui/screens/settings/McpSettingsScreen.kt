@@ -83,11 +83,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.McpServerType
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.ErrorRed
-import com.claudewebui.app.ui.theme.InfoBlue
-import com.claudewebui.app.ui.theme.SuccessGreen
 import kotlinx.coroutines.launch
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumRed
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,7 +118,7 @@ fun McpSettingsScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddSheet = true },
-                containerColor = AntiqueBrass,
+                containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Add MCP server")
@@ -261,16 +260,16 @@ private fun McpServerCard(
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(
                                         if (server.type == McpServerType.SSE)
-                                            InfoBlue.copy(alpha = 0.15f)
+                                            PlumBlue.copy(alpha = 0.15f)
                                         else
-                                            AntiqueBrass.copy(alpha = 0.15f)
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                                     )
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
                             ) {
                                 Text(
                                     text = server.type.name,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (server.type == McpServerType.SSE) InfoBlue else AntiqueBrass,
+                                    color = if (server.type == McpServerType.SSE) PlumBlue else MaterialTheme.colorScheme.primary,
                                 )
                             }
 
@@ -280,7 +279,7 @@ private fun McpServerCard(
                                     .size(6.dp)
                                     .clip(androidx.compose.foundation.shape.CircleShape)
                                     .background(
-                                        if (server.enabled) SuccessGreen
+                                        if (server.enabled) PlumGreen
                                         else MaterialTheme.colorScheme.onSurfaceVariant
                                     ),
                             )
@@ -308,13 +307,13 @@ private fun McpServerCard(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(InfoBlue.copy(alpha = 0.15f)),
+                            .background(PlumBlue.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Default.Extension,
                             contentDescription = null,
-                            tint = InfoBlue,
+                            tint = PlumBlue,
                             modifier = Modifier.size(22.dp),
                         )
                     }
@@ -325,8 +324,8 @@ private fun McpServerCard(
                             checked = server.enabled,
                             onCheckedChange = onToggleEnabled,
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = AntiqueBrass,
-                                checkedTrackColor = AntiqueBrass.copy(alpha = 0.4f),
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                             ),
                         )
                     }
@@ -371,15 +370,15 @@ private fun McpServerCard(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Default.Check, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(14.dp))
-                                Text("Connected", style = MaterialTheme.typography.labelMedium, color = SuccessGreen)
+                                Icon(Icons.Default.Check, contentDescription = null, tint = PlumGreen, modifier = Modifier.size(14.dp))
+                                Text("Connected", style = MaterialTheme.typography.labelMedium, color = PlumGreen)
                             }
                             is TestResult.Failure -> Row(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Default.Close, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(14.dp))
-                                Text("Failed", style = MaterialTheme.typography.labelMedium, color = ErrorRed)
+                                Icon(Icons.Default.Close, contentDescription = null, tint = PlumRed, modifier = Modifier.size(14.dp))
+                                Text("Failed", style = MaterialTheme.typography.labelMedium, color = PlumRed)
                             }
                             else -> Row(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -406,7 +405,7 @@ private fun McpServerCard(
                 }
 
                 IconButton(onClick = { showDeleteConfirm = true }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = ErrorRed)
+                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = PlumRed)
                 }
             }
 
@@ -467,7 +466,7 @@ private fun McpServerCard(
             confirmButton = {
                 TextButton(
                     onClick = { showDeleteConfirm = false; onDelete() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = ErrorRed),
+                    colors = ButtonDefaults.textButtonColors(contentColor = PlumRed),
                 ) { Text("Remove") }
             },
             dismissButton = {
@@ -522,7 +521,7 @@ private fun McpServerEditForm(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
         )
 
         // Type selector
@@ -565,7 +564,7 @@ private fun McpServerEditForm(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
                 )
                 OutlinedTextField(
                     value = authToken,
@@ -585,7 +584,7 @@ private fun McpServerEditForm(
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
                 )
             }
         }
@@ -600,7 +599,7 @@ private fun McpServerEditForm(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
                 )
                 OutlinedTextField(
                     value = argsText,
@@ -610,7 +609,7 @@ private fun McpServerEditForm(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
                 )
                 OutlinedTextField(
                     value = envText,
@@ -621,7 +620,7 @@ private fun McpServerEditForm(
                     minLines = 2,
                     maxLines = 4,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
                 )
             }
         }
@@ -659,7 +658,7 @@ private fun McpServerEditForm(
                 ),
                 modifier = Modifier.weight(2f),
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AntiqueBrass),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             ) {
                 Text(if (server == null) "Add" else "Save")
             }

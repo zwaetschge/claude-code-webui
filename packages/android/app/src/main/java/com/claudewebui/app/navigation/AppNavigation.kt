@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -22,6 +23,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import com.claudewebui.app.BuildConfig
+import com.claudewebui.app.core.network.SocketManager
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.ui.screens.analytics.AnalyticsScreen
 import com.claudewebui.app.ui.screens.activity.ActivityScreen
@@ -40,11 +42,18 @@ import com.claudewebui.app.ui.screens.library.LibraryScreen
 import com.claudewebui.app.ui.components.common.MainDestination
 import com.claudewebui.app.ui.screens.settings.AgentsScreen
 import com.claudewebui.app.ui.screens.settings.CliToolsScreen
+import com.claudewebui.app.ui.screens.filemanager.FileEditorScreen
+import com.claudewebui.app.ui.screens.notes.NotesScreen
+import com.claudewebui.app.ui.screens.settings.IntegrationsScreen
+import com.claudewebui.app.ui.screens.operations.OperationsScreen
+import com.claudewebui.app.ui.screens.memory.MemoryScreen
+import com.claudewebui.app.ui.screens.settings.CliProviderDetailScreen
 import com.claudewebui.app.ui.screens.settings.McpSettingsScreen
 import com.claudewebui.app.ui.screens.settings.PermissionsScreen
 import com.claudewebui.app.ui.screens.settings.ProviderSettingsScreen
 import com.claudewebui.app.ui.screens.settings.SettingsScreen
 import org.koin.compose.viewmodel.koinViewModel
+import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 
 // Transition duration in ms
@@ -83,15 +92,28 @@ fun AppNavigation(
     navController: NavHostController = rememberNavController(),
     deepLinkUri: String? = null
 ) {
-    val startDestination = remember {
+    val socketManager = koinInject<SocketManager>()
+    val isAnalyticsPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview-analytics"
+    val startDestination = remember(deepLinkUri) {
         val isDesignPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview"
         val isChatPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview-chat"
         when {
             isChatPreview -> Routes.Chat.createRoute("preview")
+            isAnalyticsPreview -> Routes.Analytics.route
             TokenStore.isLoggedIn || isDesignPreview -> Routes.Dashboard.route
             else -> Routes.Login.route
         }
     }
+
+    LaunchedEffect(Unit) {
+        if (TokenStore.isLoggedIn) socketManager.connect()
+    }
+
+    // Shared across the settings screens: a per-destination instance would
+    // refetch everything on each navigation and render its empty state first,
+    // which reads as "not configured" rather than "loading".
+    val settingsViewModel =
+        koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
 
     NavHost(
         navController = navController,
@@ -109,6 +131,7 @@ fun AppNavigation(
             LoginScreen(
                 viewModel = viewModel,
                 onAuthenticated = { _ ->
+                    socketManager.connect()
                     navController.navigate(Routes.Dashboard.route) {
                         popUpTo(Routes.Login.route) { inclusive = true }
                     }
@@ -158,7 +181,18 @@ fun AppNavigation(
         }
 
         composable(route = Routes.Library.route) {
-            LibraryScreen(onNavigateMain = { navController.navigateMain(it) })
+            LibraryScreen(
+                onNavigateMain = { navController.navigateMain(it) },
+                viewModel = settingsViewModel,
+            )
+        }
+
+        composable(route = Routes.Notes.ROUTE) { entry ->
+            val id = entry.arguments?.getString(Routes.Notes.ARG_SESSION_ID).orEmpty()
+            NotesScreen(
+                viewModel = koinViewModel { parametersOf(id) },
+                onNavigateBack = { navController.popBackStack() },
+            )
         }
 
         // ---- Chat ----
@@ -177,14 +211,22 @@ fun AppNavigation(
             ChatScreen(
                 sessionId = sessionId,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToFiles = { sid ->
-                    navController.navigate(Routes.FileManager.createRoute(sid))
+                // ChatScreen hands over the session's working directory; the
+                // session id comes from this destination's own arguments.
+                onNavigateToFiles = { dir ->
+                    navController.navigate(Routes.FileManager.createRoute(sessionId, dir))
                 },
                 onNavigateToGit = { sid ->
                     navController.navigate(Routes.GitManager.createRoute(sid))
                 },
                 onNavigateToCheckpoints = { sid ->
                     navController.navigate(Routes.CheckpointManager.createRoute(sid))
+                },
+                onNavigateToMemory = { workingDirectory ->
+                    navController.navigate(Routes.Memory.createRoute(workingDirectory))
+                },
+                onNavigateToNotes = { sid ->
+                    navController.navigate(Routes.Notes.createRoute(sid))
                 },
             )
         }
@@ -196,16 +238,23 @@ fun AppNavigation(
             route = SETTINGS_GRAPH
         ) {
             composable(route = Routes.Settings.route) {
-                val viewModel =
-                    koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
+                val viewModel = settingsViewModel
                 SettingsScreen(
                     viewModel = viewModel,
                     onNavigateToProviders = { navController.navigate(Routes.SettingsProviders.route) },
+                    onNavigateToCliProvider = { providerId ->
+                        navController.navigate(Routes.SettingsCliProvider.createRoute(providerId))
+                    },
                     onNavigateToMcp = { navController.navigate(Routes.SettingsMcp.route) },
                     onNavigateToCliTools = { navController.navigate(Routes.SettingsCliTools.route) },
                     onNavigateToAgents = { navController.navigate(Routes.SettingsAgents.route) },
                     onNavigateToPermissions = { navController.navigate(Routes.SettingsPermissions.route) },
+                    onNavigateToIntegrations = {
+                        navController.navigate(Routes.SettingsIntegrations.route)
+                    },
+                    onNavigateToOperations = { navController.navigate(Routes.Operations.route) },
                     onLoggedOut = {
+                        socketManager.disconnect()
                         navController.navigate(Routes.Login.route) {
                             popUpTo(0) { inclusive = true }
                         }
@@ -215,17 +264,26 @@ fun AppNavigation(
             }
 
             composable(route = Routes.SettingsProviders.route) {
-                val viewModel =
-                    koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
+                val viewModel = settingsViewModel
                 ProviderSettingsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
 
+            composable(route = Routes.SettingsCliProvider.ROUTE) { entry ->
+                val viewModel = settingsViewModel
+                CliProviderDetailScreen(
+                    providerId = entry.arguments
+                        ?.getString(Routes.SettingsCliProvider.ARG_PROVIDER_ID)
+                        .orEmpty(),
+                    viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() },
+                )
+            }
+
             composable(route = Routes.SettingsMcp.route) {
-                val viewModel =
-                    koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
+                val viewModel = settingsViewModel
                 McpSettingsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() }
@@ -233,8 +291,7 @@ fun AppNavigation(
             }
 
             composable(route = Routes.SettingsCliTools.route) {
-                val viewModel =
-                    koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
+                val viewModel = settingsViewModel
                 CliToolsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() }
@@ -242,8 +299,7 @@ fun AppNavigation(
             }
 
             composable(route = Routes.SettingsAgents.route) {
-                val viewModel =
-                    koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
+                val viewModel = settingsViewModel
                 AgentsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() }
@@ -251,13 +307,39 @@ fun AppNavigation(
             }
 
             composable(route = Routes.SettingsPermissions.route) {
-                val viewModel =
-                    koinViewModel<com.claudewebui.app.ui.screens.settings.SettingsViewModel>()
+                val viewModel = settingsViewModel
                 PermissionsScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
+
+            composable(route = Routes.SettingsIntegrations.route) {
+                IntegrationsScreen(
+                    viewModel = koinViewModel(),
+                    onNavigateBack = { navController.popBackStack() },
+                )
+            }
+        }
+
+        // ---- Operations ----
+
+        composable(route = Routes.Operations.route) {
+            OperationsScreen(
+                viewModel = koinViewModel(),
+                onNavigateBack = { navController.popBackStack() },
+            )
+        }
+
+        // ---- Memory ----
+
+        composable(route = Routes.Memory.ROUTE) { entry ->
+            val encoded = entry.arguments?.getString(Routes.Memory.ARG_WORKING_DIRECTORY).orEmpty()
+            val workingDirectory = java.net.URLDecoder.decode(encoded, "UTF-8")
+            MemoryScreen(
+                viewModel = koinViewModel { parametersOf(workingDirectory) },
+                onNavigateBack = { navController.popBackStack() },
+            )
         }
 
         // ---- File Manager ----
@@ -265,18 +347,23 @@ fun AppNavigation(
         composable(
             route = Routes.FileManager.ROUTE,
             arguments = listOf(
-                navArgument(Routes.FileManager.ARG_SESSION_ID) { type = NavType.StringType }
+                navArgument(Routes.FileManager.ARG_SESSION_ID) { type = NavType.StringType },
+                navArgument(Routes.FileManager.ARG_PATH) { type = NavType.StringType }
             )
         ) { backStackEntry ->
             val sessionId = backStackEntry.arguments?.getString(Routes.FileManager.ARG_SESSION_ID)
                 ?: return@composable
+            val startPath = java.net.URLDecoder.decode(
+                backStackEntry.arguments?.getString(Routes.FileManager.ARG_PATH).orEmpty(),
+                "UTF-8",
+            )
             FileManagerScreen(
                 sessionId = sessionId,
-                workingDirectory = "",
+                workingDirectory = startPath,
                 onNavigateBack = { navController.popBackStack() },
                 onOpenFile = { fileInfo ->
                     navController.navigate(
-                        Routes.FileViewer.createRoute(sessionId, fileInfo.name)
+                        Routes.FileViewer.createRoute(sessionId, fileInfo.path)
                     )
                 },
                 onSendToChat = { /* handled in chat via deep linking */ }
@@ -292,16 +379,23 @@ fun AppNavigation(
                 navArgument(Routes.FileViewer.ARG_FILE_PATH) { type = NavType.StringType }
             )
         ) { backStackEntry ->
-            // FileViewerScreen is driven by data from FileManagerScreen's ViewModel.
-            // Navigation here preserves the back stack but defers rendering to FileManager's
-            // internal dialog/overlay.  Simply pop back to FileManager.
-            navController.popBackStack()
+            val encoded = backStackEntry.arguments
+                ?.getString(Routes.FileViewer.ARG_FILE_PATH)
+                .orEmpty()
+            val filePath = java.net.URLDecoder.decode(encoded, "UTF-8")
+            FileEditorScreen(
+                viewModel = koinViewModel { parametersOf(filePath) },
+                onNavigateBack = { navController.popBackStack() },
+            )
         }
 
         // ---- Analytics ----
 
         composable(route = Routes.Analytics.route) {
-            AnalyticsScreen(onNavigateMain = { navController.navigateMain(it) })
+            AnalyticsScreen(
+                onNavigateMain = { navController.navigateMain(it) },
+                designPreview = isAnalyticsPreview,
+            )
         }
 
         // ---- Checkpoint Manager ----

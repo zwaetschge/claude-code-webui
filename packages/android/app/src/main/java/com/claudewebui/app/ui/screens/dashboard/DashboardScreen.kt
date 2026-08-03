@@ -59,7 +59,7 @@ import com.claudewebui.app.ui.components.common.MainDestination
 import com.claudewebui.app.ui.components.common.PlumAccent
 import com.claudewebui.app.ui.components.common.PlumBackdrop
 import com.claudewebui.app.ui.components.common.PlumBorder
-import com.claudewebui.app.ui.components.common.PlumBottomBar
+import com.claudewebui.app.ui.components.common.PlumNavScaffold
 import com.claudewebui.app.ui.components.common.PlumGreen
 import com.claudewebui.app.ui.components.common.PlumIconButton
 import com.claudewebui.app.ui.components.common.PlumMuted
@@ -72,6 +72,7 @@ import com.claudewebui.app.ui.components.common.providerLabel
 import com.claudewebui.app.ui.components.common.providerModel
 import com.claudewebui.app.ui.components.dashboard.NewSessionDialog
 import org.koin.compose.viewmodel.koinViewModel
+import com.claudewebui.app.ui.components.common.PlumAmber
 
 @Composable
 fun DashboardScreen(
@@ -106,15 +107,10 @@ fun DashboardScreen(
     val attentionCount = state.sessions.count { it.status == SessionStatus.ERROR }
 
     PlumBackdrop {
-        Scaffold(
-            containerColor = Color.Transparent,
-            bottomBar = {
-                PlumBottomBar(
-                    selected = MainDestination.SESSIONS,
-                    onNavigate = onNavigateMain,
-                    badgeCount = attentionCount,
-                )
-            },
+        PlumNavScaffold(
+            selected = MainDestination.SESSIONS,
+            onNavigate = onNavigateMain,
+            badgeCount = attentionCount,
             floatingActionButton = {
                 Box(
                     modifier = Modifier
@@ -334,7 +330,7 @@ private fun ApprovalHero(count: Int, modifier: Modifier = Modifier) {
                 Modifier.size(36.dp).background(Color(0x3DFFAA14), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Outlined.WarningAmber, null, tint = if (count > 0) Color(0xFFFFC052) else PlumMuted)
+                Icon(Icons.Outlined.WarningAmber, null, tint = if (count > 0) PlumAmber else PlumMuted)
             }
             Text(
                 if (count == 1) "1 approval" else "$count approvals",

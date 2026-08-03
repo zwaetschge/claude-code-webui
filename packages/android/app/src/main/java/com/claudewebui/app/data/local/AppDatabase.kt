@@ -22,7 +22,7 @@ import com.claudewebui.app.data.local.entity.SessionEntity
         MessageEntity::class,
         DraftEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

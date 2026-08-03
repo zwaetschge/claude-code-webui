@@ -23,6 +23,14 @@ data class McpServer(
     val createdAt: String
 )
 
+/** Result of `POST /api/mcp-servers/:id/test`. */
+@Serializable
+data class McpTestResult(
+    val connected: Boolean = false,
+    val error: String? = null,
+    val output: String? = null,
+)
+
 @Serializable
 data class CreateMcpServerInput(
     val name: String,

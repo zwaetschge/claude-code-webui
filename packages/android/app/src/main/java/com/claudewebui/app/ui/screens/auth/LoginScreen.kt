@@ -90,10 +90,9 @@ import androidx.compose.ui.unit.sp
 import com.claudewebui.app.R
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.data.model.AuthUser
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.BrandBlue
-import com.claudewebui.app.ui.theme.BrandPurple
-import com.claudewebui.app.ui.theme.SuccessGreen
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
 
 // ── Screen entry point ────────────────────────────────────────────────────────
 
@@ -140,7 +139,7 @@ fun LoginScreen(
                         }
                     }
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = AntiqueBrass)
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
 
@@ -212,7 +211,7 @@ private fun BrandHeader(
             }
             withStyle(
                 SpanStyle(
-                    brush = Brush.horizontalGradient(listOf(BrandPurple, BrandBlue)),
+                    brush = Brush.horizontalGradient(listOf(PlumAccent, PlumBlue)),
                 )
             ) {
                 append("WebUI")
@@ -436,8 +435,8 @@ private fun BasicAuthForm(
             isError = authState is AuthState.Error,
             shape = RoundedCornerShape(10.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AntiqueBrass,
-                focusedLabelColor = AntiqueBrass,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
             ),
         )
 
@@ -476,8 +475,8 @@ private fun BasicAuthForm(
             isError = authState is AuthState.Error,
             shape = RoundedCornerShape(10.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AntiqueBrass,
-                focusedLabelColor = AntiqueBrass,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
             ),
         )
 
@@ -515,7 +514,7 @@ private fun BasicAuthForm(
             Checkbox(
                 checked = rememberMe,
                 onCheckedChange = { rememberMe = it },
-                colors = CheckboxDefaults.colors(checkedColor = AntiqueBrass),
+                colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
             )
             Text(
                 text = "Keep me signed in",
@@ -542,7 +541,7 @@ private fun BasicAuthForm(
                 enabled = username.isNotBlank() && password.isNotBlank() && !isLoading,
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = AntiqueBrass,
+                    containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color.White,
                 ),
             ) {
@@ -615,7 +614,7 @@ private fun ConnectedServerChip(
             modifier = Modifier
                 .size(8.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(SuccessGreen),
+                .background(PlumGreen),
         )
         Text(
             text = url,
@@ -630,7 +629,7 @@ private fun ConnectedServerChip(
             Text(
                 "Change",
                 style = MaterialTheme.typography.labelSmall,
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }
@@ -674,7 +673,7 @@ private fun ConnectingView() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             CircularProgressIndicator(
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp),
                 strokeWidth = 3.dp,
             )
@@ -698,7 +697,7 @@ private fun AuthenticatingView() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             CircularProgressIndicator(
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp),
                 strokeWidth = 3.dp,
             )
@@ -768,7 +767,7 @@ private fun ErrorView(
                     onClick = onRetry,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AntiqueBrass),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 ) {
                     Text(if (isConnectionError) "Try Again" else "Back to Login")
                 }

@@ -15,7 +15,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,9 +36,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -46,20 +55,26 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claudewebui.app.data.model.CLIProvider
+import com.claudewebui.app.ui.theme.LocalPlumPalette
 
-val PlumBackground = Color(0xFF080B0D)
-val PlumSurface = Color(0xE616191C)
-val PlumSurfaceStrong = Color(0xF21B1E21)
-val PlumBorder = Color(0xFF34383D)
-val PlumBorderSoft = Color(0xFF24292E)
-val PlumText = Color(0xFFF3F1F5)
-val PlumMuted = Color(0xFFA8A6AE)
-val PlumAccent = Color(0xFFB56BFF)
-val PlumAccentDeep = Color(0xFF7247E8)
-val PlumGreen = Color(0xFF35E59A)
-val PlumBlue = Color(0xFF3298FF)
-val PlumAmber = Color(0xFFFFB536)
-val PlumRed = Color(0xFFFF575F)
+// Resolved through the active palette rather than hardcoded, so the whole app
+// re-themes without touching the ~340 call sites that read these names.
+// See ui/theme/PlumPalette.kt for the palettes themselves.
+val PlumBackground: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.background
+val PlumSurface: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.surface
+val PlumSurfaceStrong: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.surfaceStrong
+val PlumBorder: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.border
+val PlumBorderSoft: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.borderSoft
+val PlumText: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.text
+val PlumMuted: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.muted
+val PlumAccent: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.accent
+val PlumAccentDeep: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.accentDeep
+val PlumGreen: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.green
+val PlumBlue: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.blue
+val PlumAmber: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.amber
+val PlumRed: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.red
+val PlumSubtleFill: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.subtleFill
+val PlumTrackFill: Color @Composable @ReadOnlyComposable get() = LocalPlumPalette.current.trackFill
 
 enum class MainDestination(
     val label: String,
@@ -77,56 +92,63 @@ fun PlumBackdrop(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    val palette = LocalPlumPalette.current
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(PlumBackground),
+            .background(palette.background),
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0x302B7FFF), Color.Transparent),
-                    center = Offset(size.width * .05f, size.height * .28f),
+            if (palette.glowPrimary != Color.Transparent) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(palette.glowPrimary, Color.Transparent),
+                        center = Offset(size.width * .05f, size.height * .28f),
+                        radius = size.width * .75f,
+                    ),
                     radius = size.width * .75f,
-                ),
-                radius = size.width * .75f,
-                center = Offset(size.width * .05f, size.height * .28f),
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0x2D8F3DFF), Color.Transparent),
-                    center = Offset(size.width * .98f, size.height * .04f),
-                    radius = size.width * .60f,
-                ),
-                radius = size.width * .60f,
-                center = Offset(size.width * .98f, size.height * .04f),
-            )
-            val step = 36.dp.toPx()
-            var x = 0f
-            while (x <= size.width) {
-                drawLine(
-                    color = Color.White.copy(alpha = .018f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1f,
+                    center = Offset(size.width * .05f, size.height * .28f),
                 )
-                x += step
             }
-            var y = 0f
-            while (y <= size.height) {
-                drawLine(
-                    color = Color.White.copy(alpha = .018f),
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = 1f,
+            if (palette.glowSecondary != Color.Transparent) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(palette.glowSecondary, Color.Transparent),
+                        center = Offset(size.width * .98f, size.height * .04f),
+                        radius = size.width * .60f,
+                    ),
+                    radius = size.width * .60f,
+                    center = Offset(size.width * .98f, size.height * .04f),
                 )
-                y += step
+            }
+            if (palette.grid != Color.Transparent) {
+                val step = 36.dp.toPx()
+                var x = 0f
+                while (x <= size.width) {
+                    drawLine(palette.grid, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                    x += step
+                }
+                var y = 0f
+                while (y <= size.height) {
+                    drawLine(palette.grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                    y += step
+                }
             }
         }
         content()
     }
 }
 
+/**
+ * Frosted glass surface, matching the WebUI's `.glass-panel`.
+ *
+ * Four things together make it read as glass rather than as a flat card: a
+ * very translucent fill so the atmospheric backdrop shows through, a slight
+ * top-to-bottom gradient, a soft drop shadow that lifts it off the background,
+ * and a bright hairline along the top edge standing in for the CSS
+ * `inset 0 1px 0` highlight. The backdrop itself is procedural and
+ * low-frequency, so it needs no blur to look diffused behind the glass.
+ */
 @Composable
 fun GlassPanel(
     modifier: Modifier = Modifier,
@@ -134,12 +156,41 @@ fun GlassPanel(
     borderColor: Color = PlumBorder,
     content: @Composable () -> Unit,
 ) {
+    val palette = LocalPlumPalette.current
+    val shape = RoundedCornerShape(radius)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(radius))
-            .background(PlumSurface)
-            .border(1.dp, borderColor, RoundedCornerShape(radius)),
+            .shadow(
+                elevation = if (palette.glassShadow == Color.Transparent) 0.dp else 10.dp,
+                shape = shape,
+                ambientColor = palette.glassShadow,
+                spotColor = palette.glassShadow,
+            )
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(palette.glassFillTop, palette.glassFill),
+                ),
+            )
+            .border(1.dp, borderColor, shape),
     ) {
+        if (palette.glassHighlight != Color.Transparent) {
+            // The lit top edge. Inset horizontally so it fades out before the
+            // corner radius, the way a real bevel catches light.
+            Canvas(Modifier.matchParentSize()) {
+                val inset = radius.toPx() * .55f
+                drawLine(
+                    brush = Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        .5f to palette.glassHighlight,
+                        1f to Color.Transparent,
+                    ),
+                    start = Offset(inset, 1f),
+                    end = Offset(size.width - inset, 1f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
         content()
     }
 }
@@ -156,7 +207,7 @@ fun PlumIconButton(
         modifier = modifier
             .size(48.dp)
             .clip(CircleShape)
-            .background(Color(0xE6212428))
+            .background(LocalPlumPalette.current.controlSurface)
             .border(1.dp, PlumBorderSoft, CircleShape)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -210,6 +261,139 @@ fun PlumScreenHeader(
     }
 }
 
+/**
+ * A vertical navigation rail for wide windows.
+ *
+ * On the unfolded Fold and on a tablet the bottom bar sits far from the hands
+ * and eats vertical space that a mostly-vertical app needs; a side rail is the
+ * Material answer and keeps the destinations reachable near the edge.
+ */
+@Composable
+fun PlumNavRail(
+    selected: MainDestination,
+    onNavigate: (MainDestination) -> Unit,
+    modifier: Modifier = Modifier,
+    badgeDestination: MainDestination? = MainDestination.ACTIVITY,
+    badgeCount: Int = 0,
+) {
+    // Five labelled items need roughly 350dp; below that the labels go and the
+    // rail narrows to icons so every destination still fits without scrolling.
+    val short = isShortWindow()
+    GlassPanel(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(if (short) 68.dp else 96.dp)
+            .padding(start = 10.dp, top = 10.dp, bottom = 10.dp),
+        radius = 26.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .padding(vertical = if (short) 6.dp else 12.dp, horizontal = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(if (short) 2.dp else 6.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            MainDestination.entries.forEach { destination ->
+                val active = destination == selected
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .then(
+                            if (active) {
+                                Modifier
+                                    .background(LocalPlumPalette.current.selectionTint)
+                                    .border(1.dp, PlumAccent, RoundedCornerShape(20.dp))
+                            } else Modifier
+                        )
+                        .clickable { onNavigate(destination) }
+                        .padding(vertical = if (short) 7.dp else 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box {
+                        Icon(
+                            destination.icon,
+                            contentDescription = destination.label,
+                            tint = if (active) PlumAccent else PlumMuted,
+                            modifier = Modifier.size(23.dp),
+                        )
+                        if (destination == badgeDestination && badgeCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(15.dp)
+                                    .background(PlumAmber, CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    badgeCount.coerceAtMost(9).toString(),
+                                    color = Color.Black,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                    if (!short) {
+                        Text(
+                            destination.label,
+                            color = if (active) PlumAccent else PlumMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Picks the navigation affordance that fits the window: a side rail once there
+ * is width to spare, the bottom bar otherwise. Screens hand over their content
+ * and get the correct insets either way.
+ */
+@Composable
+fun PlumNavScaffold(
+    selected: MainDestination,
+    onNavigate: (MainDestination) -> Unit,
+    badgeCount: Int = 0,
+    floatingActionButton: @Composable (() -> Unit)? = null,
+    content: @Composable (PaddingValues) -> Unit,
+) {
+    if (isTabletWidth()) {
+        Row(Modifier.fillMaxSize()) {
+            PlumNavRail(selected, onNavigate, badgeCount = badgeCount)
+            // Without a Scaffold there is nothing applying window insets, so
+            // the content would slide under the status bar.
+            Box(Modifier.weight(1f).statusBarsPadding()) {
+                content(PaddingValues(0.dp))
+                // No bottom bar to sit above, so the action floats in the
+                // content corner itself.
+                floatingActionButton?.let { fab ->
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .navigationBarsPadding()
+                            .padding(end = 22.dp, bottom = 22.dp),
+                    ) { fab() }
+                }
+            }
+        }
+    } else {
+        Scaffold(
+            containerColor = Color.Transparent,
+            bottomBar = { PlumBottomBar(selected, onNavigate, badgeCount = badgeCount) },
+            floatingActionButton = { floatingActionButton?.invoke() },
+            content = content,
+        )
+    }
+}
+
 @Composable
 fun PlumBottomBar(
     selected: MainDestination,
@@ -218,12 +402,13 @@ fun PlumBottomBar(
     badgeDestination: MainDestination? = MainDestination.ACTIVITY,
     badgeCount: Int = 0,
 ) {
+    val short = isShortWindow()
     GlassPanel(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-            .height(78.dp),
+            .padding(horizontal = 14.dp, vertical = if (short) 4.dp else 8.dp)
+            .height(if (short) 54.dp else 78.dp),
         radius = 30.dp,
     ) {
         Row(
@@ -242,7 +427,7 @@ fun PlumBottomBar(
                         .then(
                             if (active) {
                                 Modifier
-                                    .background(Color(0x3D7C46CC))
+                                    .background(LocalPlumPalette.current.selectionTint)
                                     .border(1.dp, PlumAccent, RoundedCornerShape(22.dp))
                             } else Modifier
                         )
@@ -275,7 +460,7 @@ fun PlumBottomBar(
                             }
                         }
                     }
-                    Text(
+                    if (!short) Text(
                         destination.label,
                         color = if (active) PlumAccent else PlumMuted,
                         fontSize = 11.sp,
@@ -323,6 +508,9 @@ fun SectionHeading(
     }
 }
 
+// Composable because the brand tints now resolve through the active palette.
+@Composable
+@ReadOnlyComposable
 fun providerColor(provider: CLIProvider): Color = when (provider) {
     CLIProvider.CODEX -> PlumGreen
     CLIProvider.OPENCODE -> PlumAccent

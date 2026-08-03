@@ -360,11 +360,23 @@ class LoginViewModel(
 
     private fun normalizeUrl(raw: String): String {
         val trimmed = raw.trim().trimEnd('/')
-        return when {
-            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+        val withScheme = when {
+            trimmed.startsWith("http://", ignoreCase = true) ||
+                trimmed.startsWith("https://", ignoreCase = true) -> trimmed
             trimmed.isNotBlank() -> "https://$trimmed"
-            else -> trimmed
+            else -> return trimmed
         }
+        // Several IMEs capitalise the first letter even with
+        // KeyboardCapitalization.None, producing "https://Code.example.ch".
+        // Scheme and host are case-insensitive, the path is not — so only the
+        // authority is lowercased.
+        val separator = withScheme.indexOf("://")
+        if (separator < 0) return withScheme
+        val afterScheme = separator + 3
+        val pathStart = withScheme.indexOf('/', afterScheme)
+        val authorityEnd = if (pathStart < 0) withScheme.length else pathStart
+        return withScheme.substring(0, authorityEnd).lowercase() +
+            withScheme.substring(authorityEnd)
     }
 
     private fun mobileGatewayCandidate(url: String): String? {

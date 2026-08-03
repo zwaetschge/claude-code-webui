@@ -60,10 +60,10 @@ import com.claudewebui.app.ui.components.common.StatusDot
 import com.claudewebui.app.ui.components.common.SessionStatus as UiSessionStatus
 import com.claudewebui.app.ui.theme.CliProvider
 import com.claudewebui.app.ui.theme.ClaudeWebUITheme
-import com.claudewebui.app.ui.theme.SuccessGreen
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+import com.claudewebui.app.ui.components.common.PlumGreen
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -289,7 +289,7 @@ private fun RunningPill() {
     Row(
         modifier = Modifier
             .background(
-                color = SuccessGreen.copy(alpha = 0.12f),
+                color = PlumGreen.copy(alpha = 0.12f),
                 shape = RoundedCornerShape(50),
             )
             .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -300,7 +300,7 @@ private fun RunningPill() {
         Text(
             text = "Running",
             style = MaterialTheme.typography.labelSmall,
-            color = SuccessGreen,
+            color = PlumGreen,
             fontWeight = FontWeight.Medium,
         )
     }

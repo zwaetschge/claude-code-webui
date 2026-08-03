@@ -5,6 +5,7 @@ import com.claudewebui.app.data.model.Message
 import com.claudewebui.app.data.model.Session
 import com.claudewebui.app.data.model.ToolExecution
 import com.claudewebui.app.data.model.UsageData
+import com.claudewebui.app.data.model.SessionMode
 
 // ── Streaming State ───────────────────────────────────────────────────────────
 
@@ -46,6 +47,12 @@ data class ChatUiState(
     val draftText: String = "",
     val isSending: Boolean = false,
     val pendingAttachments: List<FileAttachmentData> = emptyList(),
+
+    // Session settings (provider / model / reasoning / mode)
+    val sessionMode: SessionMode = SessionMode.MANUAL,
+    val availableModels: List<String> = emptyList(),
+    val isApplyingSettings: Boolean = false,
+    val settingsNotice: String? = null,
 
     // UI state
     val error: String? = null,

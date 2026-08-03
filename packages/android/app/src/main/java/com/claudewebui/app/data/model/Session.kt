@@ -27,11 +27,11 @@ enum class CLIProvider(val displayName: String) {
 }
 
 @Serializable
-enum class SessionMode {
-    @SerialName("planning") PLANNING,
-    @SerialName("auto-accept") AUTO_ACCEPT,
-    @SerialName("manual") MANUAL,
-    @SerialName("danger") DANGER
+enum class SessionMode(val label: String, val description: String) {
+    @SerialName("planning") PLANNING("Plan", "Think it through, change nothing"),
+    @SerialName("auto-accept") AUTO_ACCEPT("Auto", "Run tools without asking"),
+    @SerialName("manual") MANUAL("Manual", "Ask before each tool"),
+    @SerialName("danger") DANGER("Danger", "Skip all permission checks")
 }
 
 @Serializable
@@ -45,10 +45,27 @@ data class Session(
     val lastMessage: String? = null,
     val starred: Boolean = false,
     val cliProvider: CLIProvider = CLIProvider.CODEX,
+    /** Model the harness runs for this session; null means the provider default. */
+    val cliModel: String? = null,
+    /** Reasoning level, where the provider supports one. */
+    val cliReasoning: String? = null,
     val category: String? = null,
     val createdAt: String,
     val updatedAt: String
 )
+
+/**
+ * Reasoning levels offered in the session settings.
+ *
+ * Codex names its fastest tier "fast"; the backend maps that to "no reasoning"
+ * and clears the column, so it is sent as-is rather than translated here.
+ */
+enum class ReasoningLevel(val id: String, val label: String) {
+    MINIMAL("minimal", "Minimal"),
+    LOW("low", "Low"),
+    MEDIUM("medium", "Medium"),
+    HIGH("high", "High"),
+}
 
 @Serializable
 data class CreateSessionInput(

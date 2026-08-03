@@ -68,10 +68,13 @@ fun ChatScreen(
     onNavigateToFiles: (String) -> Unit = {},
     onNavigateToGit: (String) -> Unit = {},
     onNavigateToCheckpoints: (String) -> Unit = {},
+    onNavigateToNotes: (String) -> Unit = {},
+    onNavigateToMemory: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel: ChatViewModel = koinViewModel(parameters = { parametersOf(sessionId) })
     val uiState by viewModel.uiState.collectAsState()
+    var showSessionSettings by remember { mutableStateOf(false) }
     val messages by viewModel.messages.collectAsState()
     val session by viewModel.session.collectAsState()
     val isDesignPreview = BuildConfig.DEBUG && sessionId == "preview"
@@ -136,6 +139,15 @@ fun ChatScreen(
                 onNavigateToGit = { onNavigateToGit(displaySession?.workingDirectory ?: "") },
                 onNavigateToCheckpoints = { onNavigateToCheckpoints(sessionId) },
                 onToggleUsage = { viewModel.toggleUsageBanner() },
+                onOpenSessionSettings = {
+                    viewModel.loadAvailableModels()
+                    showSessionSettings = true
+                },
+                onNavigateToNotes = { onNavigateToNotes(sessionId) },
+                // Memory files hang off the working directory, not the session.
+                onNavigateToMemory = {
+                    onNavigateToMemory(displaySession?.workingDirectory ?: "")
+                },
                 isEditingTitle = uiState.isEditingTitle,
             )
         },
@@ -259,6 +271,23 @@ fun ChatScreen(
                 }
             }
 
+            // Session-setting result: provider, model and reasoning only bind on
+            // the next process start, so the outcome is stated rather than implied.
+            displayUiState.settingsNotice?.let { notice ->
+                Snackbar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp),
+                    action = {
+                        TextButton(onClick = { viewModel.clearSettingsNotice() }) {
+                            Text("OK")
+                        }
+                    },
+                ) {
+                    Text(notice)
+                }
+            }
+
             // Error snackbar
             displayUiState.error?.let { error ->
                 Snackbar(
@@ -274,6 +303,22 @@ fun ChatScreen(
                     Text(error)
                 }
             }
+        }
+    }
+
+    if (showSessionSettings) {
+        displaySession?.let { session ->
+            SessionSettingsSheet(
+                session = session,
+                mode = uiState.sessionMode,
+                availableModels = uiState.availableModels,
+                isApplying = uiState.isApplyingSettings,
+                onProviderChange = viewModel::switchProvider,
+                onModelChange = viewModel::setModel,
+                onReasoningChange = viewModel::setReasoning,
+                onModeChange = viewModel::setMode,
+                onDismiss = { showSessionSettings = false },
+            )
         }
     }
 }
@@ -292,6 +337,9 @@ private fun ChatTopBar(
     onNavigateToGit: () -> Unit,
     onNavigateToCheckpoints: () -> Unit,
     onToggleUsage: () -> Unit,
+    onOpenSessionSettings: () -> Unit,
+    onNavigateToNotes: () -> Unit,
+    onNavigateToMemory: () -> Unit,
     isEditingTitle: Boolean,
 ) {
     var editTitleText by remember(session?.name) { mutableStateOf(session?.name ?: "") }
@@ -396,6 +444,22 @@ private fun ChatTopBar(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("Session settings") },
+                        leadingIcon = { Icon(Icons.Outlined.Tune, contentDescription = null) },
+                        onClick = { showMenu = false; onOpenSessionSettings() },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Notes") },
+                        leadingIcon = { Icon(Icons.Outlined.StickyNote2, contentDescription = null) },
+                        onClick = { showMenu = false; onNavigateToNotes() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Memory") },
+                        leadingIcon = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
+                        onClick = { showMenu = false; onNavigateToMemory() },
+                    )
                     DropdownMenuItem(
                         text = { Text("Checkpoints") },
                         leadingIcon = { Icon(Icons.Outlined.Bookmark, contentDescription = null) },

@@ -6,12 +6,20 @@ import com.claudewebui.app.data.model.Category
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.CLIProviderConfig
 import com.claudewebui.app.data.model.CLIProviderStatus
+import com.claudewebui.app.data.model.CliLoginSession
+import com.claudewebui.app.data.model.ConfigAgent
+import com.claudewebui.app.data.model.ConfigPlugin
+import com.claudewebui.app.data.model.ConfigSkill
 import com.claudewebui.app.data.model.CreateCategoryInput
 import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CreateMcpServerInput
 import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.McpServer
+import com.claudewebui.app.data.model.McpTestResult
+import com.claudewebui.app.data.model.ProviderTestResult
+import com.claudewebui.app.data.model.SlashCommand
+import com.claudewebui.app.data.model.StyleLibrary
 import com.claudewebui.app.data.model.Theme
 import com.claudewebui.app.data.model.UiProvider
 import com.claudewebui.app.data.model.UpdateCategoryInput
@@ -20,6 +28,7 @@ import com.claudewebui.app.data.model.UpdateMcpServerInput
 import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UpdateSettingsInput
 import com.claudewebui.app.data.model.UserSettings
+import kotlinx.serialization.json.JsonElement
 
 /**
  * Repository for user settings and configuration data.
@@ -97,6 +106,15 @@ class SettingsRepository(
         response.data
     }
 
+    /** Ask the server to call the provider's API and report the result. */
+    suspend fun testProvider(id: String): Result<ProviderTestResult> = runCatching {
+        val response = api.testProvider(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to test provider")
+        }
+        response.data
+    }
+
     /** Delete a provider. */
     suspend fun deleteProvider(id: String): Result<Unit> = runCatching {
         val response = api.deleteProvider(id)
@@ -152,6 +170,15 @@ class SettingsRepository(
         response.data
     }
 
+    /** Ask the server to actually start the MCP server and report back. */
+    suspend fun testMcpServer(id: String): Result<McpTestResult> = runCatching {
+        val response = api.testMcpServer(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to test MCP server")
+        }
+        response.data
+    }
+
     /** Delete an MCP server. */
     suspend fun deleteMcpServer(id: String): Result<Unit> = runCatching {
         val response = api.deleteMcpServer(id)
@@ -191,6 +218,117 @@ class SettingsRepository(
         if (!response.success) {
             error(response.error?.message ?: "Failed to delete agent")
         }
+    }
+
+    // ---- Claude config library ---------------------------------------------
+    //
+    // Distinct from the custom-agent CRUD above: these read the on-disk
+    // catalogue that actually ships to the CLI harnesses, which is what the
+    // WebUI's Extensions pane shows.
+
+    suspend fun getConfigSkills(): Result<List<ConfigSkill>> = runCatching {
+        val response = api.getConfigSkills()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch skills")
+        }
+        response.data
+    }
+
+    suspend fun getConfigAgents(): Result<List<ConfigAgent>> = runCatching {
+        val response = api.getConfigAgents()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch agents")
+        }
+        response.data
+    }
+
+    suspend fun getConfigPlugins(): Result<List<ConfigPlugin>> = runCatching {
+        val response = api.getConfigPlugins()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch plugins")
+        }
+        response.data
+    }
+
+    suspend fun getStyleLibrary(): Result<StyleLibrary> = runCatching {
+        val response = api.getStyleLibrary()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch style library")
+        }
+        response.data
+    }
+
+    /** Flip a skill between active and on-demand. Returns the resulting state. */
+    suspend fun toggleConfigSkill(name: String): Result<Boolean> = runCatching {
+        val response = api.toggleConfigSkill(name)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to toggle skill")
+        }
+        response.data.enabled
+    }
+
+    suspend fun toggleConfigAgent(name: String): Result<Boolean> = runCatching {
+        val response = api.toggleConfigAgent(name)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to toggle agent")
+        }
+        response.data.enabled
+    }
+
+    suspend fun toggleConfigPlugin(name: String): Result<Boolean> = runCatching {
+        val response = api.toggleConfigPlugin(name)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to toggle plugin")
+        }
+        response.data.enabled
+    }
+
+    /** Custom CLI tools registered on the server. Payloads stay opaque JSON. */
+    suspend fun getCliTools(): Result<List<JsonElement>> = runCatching {
+        val response = api.getCliTools()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch CLI tools")
+        }
+        response.data
+    }
+
+    suspend fun getCommands(): Result<List<SlashCommand>> = runCatching {
+        val response = api.getCommands()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch commands")
+        }
+        response.data
+    }
+
+    // ---- CLI harness login -------------------------------------------------
+
+    suspend fun startCliLogin(provider: String): Result<CliLoginSession> = runCatching {
+        val response = api.startCliLogin(provider)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to start login")
+        }
+        response.data
+    }
+
+    suspend fun pollCliLogin(id: String): Result<CliLoginSession> = runCatching {
+        val response = api.getCliLogin(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Login session not found")
+        }
+        response.data
+    }
+
+    suspend fun submitCliLoginCode(id: String, code: String): Result<CliLoginSession> = runCatching {
+        val response = api.submitCliLoginCode(id, code)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to submit code")
+        }
+        response.data
+    }
+
+    suspend fun cancelCliLogin(id: String): Result<Unit> = runCatching {
+        api.cancelCliLogin(id)
+        Unit
     }
 
     // ---- Categories --------------------------------------------------------

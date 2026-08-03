@@ -63,12 +63,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.claudewebui.app.data.model.PermissionAction
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.ErrorRed
-import com.claudewebui.app.ui.theme.InfoBlue
-import com.claudewebui.app.ui.theme.SuccessGreen
-import com.claudewebui.app.ui.theme.WarningAmber
 import kotlinx.coroutines.launch
+import com.claudewebui.app.ui.components.common.PlumAmber
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumRed
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -114,7 +113,7 @@ fun PermissionsScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddSheet = true },
-                containerColor = AntiqueBrass,
+                containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Add Rule")
@@ -330,9 +329,9 @@ private fun DefaultPermissionModeCard(
                 // Description of current mode
                 AnimatedContent(targetState = current, label = "permissionMode") { mode ->
                     val (color, desc) = when (mode) {
-                        PermissionAction.ALLOW_ONCE -> WarningAmber to "The active provider will prompt you before using each tool."
-                        PermissionAction.ALLOW_GLOBAL, PermissionAction.ALLOW_PROJECT -> SuccessGreen to "The active provider can use tools without confirmation."
-                        PermissionAction.DENY -> ErrorRed to "Tool calls are blocked by default."
+                        PermissionAction.ALLOW_ONCE -> PlumAmber to "The active provider will prompt you before using each tool."
+                        PermissionAction.ALLOW_GLOBAL, PermissionAction.ALLOW_PROJECT -> PlumGreen to "The active provider can use tools without confirmation."
+                        PermissionAction.DENY -> PlumRed to "Tool calls are blocked by default."
                     }
                     Row(
                         modifier = Modifier
@@ -370,15 +369,15 @@ private fun PermissionRuleRow(
     onDelete: () -> Unit,
 ) {
     val (actionColor, actionLabel) = when (rule.action) {
-        PermissionAction.ALLOW_ONCE -> SuccessGreen to "Allow Once"
-        PermissionAction.ALLOW_PROJECT -> SuccessGreen to "Allow Project"
-        PermissionAction.ALLOW_GLOBAL -> SuccessGreen to "Allow Global"
-        PermissionAction.DENY -> ErrorRed to "Deny"
+        PermissionAction.ALLOW_ONCE -> PlumGreen to "Allow Once"
+        PermissionAction.ALLOW_PROJECT -> PlumGreen to "Allow Project"
+        PermissionAction.ALLOW_GLOBAL -> PlumGreen to "Allow Global"
+        PermissionAction.DENY -> PlumRed to "Deny"
     }
 
     val scopeColor = when (rule.scope) {
-        PermissionScope.GLOBAL -> AntiqueBrass
-        PermissionScope.SESSION -> InfoBlue
+        PermissionScope.GLOBAL -> MaterialTheme.colorScheme.primary
+        PermissionScope.SESSION -> PlumBlue
     }
 
     ListItem(
@@ -406,7 +405,7 @@ private fun PermissionRuleRow(
                     Icon(
                         Icons.Default.Edit,
                         contentDescription = "Edit",
-                        tint = AntiqueBrass,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -487,8 +486,8 @@ private fun PermissionRuleSheet(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AntiqueBrass,
-                    focusedLabelColor = AntiqueBrass,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
                 ),
             )
 
@@ -507,10 +506,10 @@ private fun PermissionRuleSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     actions.forEach { (action, label) ->
                         val (color, desc) = when (action) {
-                            PermissionAction.ALLOW_GLOBAL -> SuccessGreen to "Always permit this tool"
-                            PermissionAction.DENY -> ErrorRed to "Always block this tool"
-                            PermissionAction.ALLOW_ONCE -> InfoBlue to "Permit once per request"
-                            PermissionAction.ALLOW_PROJECT -> WarningAmber to "Permit for this project"
+                            PermissionAction.ALLOW_GLOBAL -> PlumGreen to "Always permit this tool"
+                            PermissionAction.DENY -> PlumRed to "Always block this tool"
+                            PermissionAction.ALLOW_ONCE -> PlumBlue to "Permit once per request"
+                            PermissionAction.ALLOW_PROJECT -> PlumAmber to "Permit for this project"
                         }
                         val isSelected = selectedAction == action
                         Box(
@@ -608,7 +607,7 @@ private fun PermissionRuleSheet(
                     modifier = Modifier.weight(1f),
                     enabled = isValid,
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = AntiqueBrass,
+                        containerColor = MaterialTheme.colorScheme.primary,
                     ),
                 ) {
                     Text(if (rule == null) "Add Rule" else "Save")

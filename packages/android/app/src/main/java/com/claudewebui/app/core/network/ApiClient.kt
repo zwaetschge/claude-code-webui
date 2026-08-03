@@ -127,6 +127,18 @@ class ApiClient {
             setBody(input)
         }.body()
 
+    /** PATCH /api/sessions/:id/model — null restores the provider default. */
+    suspend fun setSessionModel(id: String, model: String?): ApiResponse<Session> =
+        client.patch(url("/api/sessions/$id/model")) {
+            setBody(mapOf("model" to model))
+        }.body()
+
+    /** PATCH /api/sessions/:id/reasoning */
+    suspend fun setSessionReasoning(id: String, reasoning: String?): ApiResponse<Session> =
+        client.patch(url("/api/sessions/$id/reasoning")) {
+            setBody(mapOf("reasoning" to reasoning))
+        }.body()
+
     /** GET /api/sessions/:id/messages */
     suspend fun getMessages(sessionId: String): ApiResponse<List<Message>> =
         client.get(url("/api/sessions/$sessionId/messages")).body()
@@ -147,9 +159,14 @@ class ApiClient {
     // Files
     // ========================================================================
 
-    /** GET /api/files/directory?path=:path */
+    /**
+     * GET /api/files?path=:path — directory listing.
+     *
+     * The router mounts this on the collection root; there is no `/directory`
+     * sub-path, and calling one returned HTML 404 that failed to decode.
+     */
     suspend fun getDirectory(path: String): ApiResponse<DirectoryContents> =
-        client.get(url("/api/files/directory")) {
+        client.get(url("/api/files")) {
             parameter("path", path)
         }.body()
 
@@ -174,6 +191,38 @@ class ApiClient {
                 })
             }
         ).body()
+
+    /** GET /api/files/content — read a text file (server rejects >1 MB). */
+    suspend fun getFileContent(path: String): ApiResponse<FileContent> =
+        client.get(url("/api/files/content")) {
+            parameter("path", path)
+        }.body()
+
+    /** PUT /api/files/content — write a file back to the workspace. */
+    suspend fun saveFileContent(path: String, content: String): ApiResponse<JsonElement> =
+        client.put(url("/api/files/content")) {
+            setBody(SaveFileInput(path, content))
+        }.body()
+
+    // ========================================================================
+    // Notes
+    // ========================================================================
+
+    /** GET /api/notes/session/:sessionId — notes attached to one session. */
+    suspend fun getSessionNotes(sessionId: String): ApiResponse<List<Note>> =
+        client.get(url("/api/notes/session/$sessionId")).body()
+
+    /** POST /api/notes */
+    suspend fun createNote(input: CreateNoteInput): ApiResponse<Note> =
+        client.post(url("/api/notes")) { setBody(input) }.body()
+
+    /** PATCH /api/notes/:id */
+    suspend fun updateNote(id: String, input: UpdateNoteInput): ApiResponse<Note> =
+        client.patch(url("/api/notes/$id")) { setBody(input) }.body()
+
+    /** DELETE /api/notes/:id */
+    suspend fun deleteNote(id: String): ApiResponse<Unit> =
+        client.delete(url("/api/notes/$id")).body()
 
     // ========================================================================
     // Git
@@ -305,6 +354,13 @@ class ApiClient {
             setBody(input)
         }.body()
 
+    /**
+     * POST /api/providers/:id/test — the backend actually calls the provider's
+     * API with the stored credentials and reports what came back.
+     */
+    suspend fun testProvider(id: String): ApiResponse<ProviderTestResult> =
+        client.post(url("/api/providers/$id/test")).body()
+
     /** DELETE /api/providers/:id */
     suspend fun deleteProvider(id: String): ApiResponse<Unit> =
         client.delete(url("/api/providers/$id")).body()
@@ -321,25 +377,32 @@ class ApiClient {
     // MCP Servers
     // ========================================================================
 
-    /** GET /api/mcp */
+    /** GET /api/mcp-servers */
     suspend fun getMcpServers(): ApiResponse<List<McpServer>> =
-        client.get(url("/api/mcp")).body()
+        client.get(url("/api/mcp-servers")).body()
 
-    /** POST /api/mcp */
+    /** POST /api/mcp-servers */
     suspend fun createMcpServer(input: CreateMcpServerInput): ApiResponse<McpServer> =
-        client.post(url("/api/mcp")) {
+        client.post(url("/api/mcp-servers")) {
             setBody(input)
         }.body()
 
-    /** PUT /api/mcp/:id */
+    /** PUT /api/mcp-servers/:id */
     suspend fun updateMcpServer(id: String, input: UpdateMcpServerInput): ApiResponse<McpServer> =
-        client.put(url("/api/mcp/$id")) {
+        client.put(url("/api/mcp-servers/$id")) {
             setBody(input)
         }.body()
 
-    /** DELETE /api/mcp/:id */
+    /** DELETE /api/mcp-servers/:id */
     suspend fun deleteMcpServer(id: String): ApiResponse<Unit> =
-        client.delete(url("/api/mcp/$id")).body()
+        client.delete(url("/api/mcp-servers/$id")).body()
+
+    /**
+     * POST /api/mcp-servers/:id/test — actually spawn the subprocess (or open
+     * the SSE URL) and report whether it came up. Admin-only.
+     */
+    suspend fun testMcpServer(id: String): ApiResponse<McpTestResult> =
+        client.post(url("/api/mcp-servers/$id/test")).body()
 
     // ========================================================================
     // CLI Tools
@@ -364,6 +427,28 @@ class ApiClient {
     /** DELETE /api/cli-tools/:id */
     suspend fun deleteCliTool(id: String): ApiResponse<Unit> =
         client.delete(url("/api/cli-tools/$id")).body()
+
+    // ========================================================================
+    // CLI harness login
+    // ========================================================================
+
+    /** POST /api/cli-login/:provider/start — spawns the harness's auth command. */
+    suspend fun startCliLogin(provider: String): ApiResponse<CliLoginSession> =
+        client.post(url("/api/cli-login/$provider/start")).body()
+
+    /** GET /api/cli-login/:id — poll for the code, URL, or completion. */
+    suspend fun getCliLogin(id: String): ApiResponse<CliLoginSession> =
+        client.get(url("/api/cli-login/$id")).body()
+
+    /** POST /api/cli-login/:id/code — answer a prompt that wants a pasted code. */
+    suspend fun submitCliLoginCode(id: String, code: String): ApiResponse<CliLoginSession> =
+        client.post(url("/api/cli-login/$id/code")) {
+            setBody(CliLoginCodeInput(code))
+        }.body()
+
+    /** DELETE /api/cli-login/:id — abandon the run. */
+    suspend fun cancelCliLogin(id: String): ApiResponse<Unit> =
+        client.delete(url("/api/cli-login/$id")).body()
 
     // ========================================================================
     // Custom Agents
@@ -394,17 +479,87 @@ class ApiClient {
         client.delete(url("/api/agents/$id")).body()
 
     // ========================================================================
+    // Claude config library (skills / agents / plugins / styles on disk)
+    // ========================================================================
+
+    /**
+     * GET /api/claude-config/skills — the on-disk skill catalogue.
+     *
+     * `library` selects the catalogue slice: `skill` (default) returns coding
+     * skills only, `all` additionally folds in the design and writing style
+     * presets, `design` / `writing` return just those.
+     */
+    suspend fun getConfigSkills(library: String = "skill"): ApiResponse<List<ConfigSkill>> =
+        client.get(url("/api/claude-config/skills")) {
+            parameter("library", library)
+        }.body()
+
+    /** GET /api/claude-config/agents — agents defined as markdown in `~/.claude/agents`. */
+    suspend fun getConfigAgents(): ApiResponse<List<ConfigAgent>> =
+        client.get(url("/api/claude-config/agents")).body()
+
+    /** GET /api/claude-config/plugins */
+    suspend fun getConfigPlugins(): ApiResponse<List<ConfigPlugin>> =
+        client.get(url("/api/claude-config/plugins")).body()
+
+    /** GET /api/claude-config/style-library */
+    suspend fun getStyleLibrary(): ApiResponse<StyleLibrary> =
+        client.get(url("/api/claude-config/style-library")).body()
+
+    /**
+     * PUT /api/claude-config/skill/:name/toggle
+     *
+     * These three routes flip the stored state themselves and ignore the
+     * request body, so there is no desired-state parameter — the response
+     * reports which way it landed. Admin-only on the server.
+     */
+    suspend fun toggleConfigSkill(name: String): ApiResponse<ToggleResult> =
+        client.put(url("/api/claude-config/skill/$name/toggle")).body()
+
+    /** PUT /api/claude-config/agent/:name/toggle */
+    suspend fun toggleConfigAgent(name: String): ApiResponse<ToggleResult> =
+        client.put(url("/api/claude-config/agent/$name/toggle")).body()
+
+    /** PUT /api/claude-config/plugin/:name/toggle */
+    suspend fun toggleConfigPlugin(name: String): ApiResponse<ToggleResult> =
+        client.put(url("/api/claude-config/plugin/$name/toggle")).body()
+
+    // ========================================================================
+    // Slash commands
+    // ========================================================================
+
+    /** GET /api/commands */
+    suspend fun getCommands(): ApiResponse<List<SlashCommand>> =
+        client.get(url("/api/commands")).body()
+
+    // ========================================================================
     // Analytics
     // ========================================================================
 
-    /** GET /api/analytics */
-    suspend fun getAnalytics(): ApiResponse<JsonElement> =
-        client.get(url("/api/analytics")).body()
-
-    /** GET /api/analytics?period=:period */
-    suspend fun getAnalytics(period: String): ApiResponse<JsonElement> =
-        client.get(url("/api/analytics")) {
+    /** GET /api/analytics/summary — the same unified ledger used by the WebUI. */
+    suspend fun getAnalyticsSummary(
+        period: String,
+        timezoneOffsetMinutes: Int,
+        offset: Int = 0
+    ): ApiResponse<JsonElement> =
+        client.get(url("/api/analytics/summary")) {
             parameter("period", period)
+            parameter("tz", timezoneOffsetMinutes)
+            parameter("offset", offset)
+        }.body()
+
+    /** GET /api/analytics/timeline — real token, cost and request history. */
+    suspend fun getAnalyticsTimeline(
+        period: String,
+        timezoneOffsetMinutes: Int,
+        offset: Int = 0,
+        granularity: String = if (period == "24h") "hour" else "day"
+    ): ApiResponse<JsonElement> =
+        client.get(url("/api/analytics/timeline")) {
+            parameter("period", period)
+            parameter("tz", timezoneOffsetMinutes)
+            parameter("offset", offset)
+            parameter("granularity", granularity)
         }.body()
 
     // ========================================================================
@@ -419,6 +574,18 @@ class ApiClient {
     suspend fun getSessionUsage(sessionId: String): ApiResponse<JsonElement> =
         client.get(url("/api/usage/sessions/$sessionId")).body()
 
+    /**
+     * GET /api/usage/limits?provider=:provider — live account quota.
+     *
+     * Answers `supported = false` (with an explanatory error, still HTTP 200)
+     * for harnesses that have no account of their own, so callers should check
+     * [UsageLimitsResponse.supported] rather than treating it as a failure.
+     */
+    suspend fun getUsageLimits(provider: String): UsageLimitsResponse =
+        client.get(url("/api/usage/limits")) {
+            parameter("provider", provider)
+        }.body()
+
     // ========================================================================
     // App Version
     // ========================================================================
@@ -426,6 +593,112 @@ class ApiClient {
     /** GET /api/app/version — returns latest Android APK metadata */
     suspend fun checkAppVersion(): ApiResponse<AppVersionInfo> =
         client.get(url("/api/app/version")).body()
+
+    // ========================================================================
+    // Memories
+    // ========================================================================
+
+    /** GET /api/memories?workingDirectory=:cwd */
+    suspend fun getMemories(workingDirectory: String): ApiResponse<MemoryListing> =
+        client.get(url("/api/memories")) {
+            parameter("workingDirectory", workingDirectory)
+        }.body()
+
+    /** GET /api/memories/content?path=:path&workingDirectory=:cwd */
+    suspend fun getMemoryContent(path: String, workingDirectory: String): ApiResponse<MemoryContent> =
+        client.get(url("/api/memories/content")) {
+            parameter("path", path)
+            parameter("workingDirectory", workingDirectory)
+        }.body()
+
+    /** PUT /api/memories/content */
+    suspend fun saveMemoryContent(
+        path: String,
+        content: String,
+        workingDirectory: String,
+    ): ApiResponse<JsonElement> =
+        client.put(url("/api/memories/content")) {
+            setBody(SaveMemoryInput(workingDirectory, path, content))
+        }.body()
+
+    /** POST /api/memories — create a new memory file. */
+    suspend fun createMemory(
+        name: String,
+        content: String,
+        workingDirectory: String,
+    ): ApiResponse<JsonElement> =
+        client.post(url("/api/memories")) {
+            setBody(CreateMemoryInput(workingDirectory, name, content))
+        }.body()
+
+    /** DELETE /api/memories?path=:path&workingDirectory=:cwd — params, not a body. */
+    suspend fun deleteMemory(path: String, workingDirectory: String): ApiResponse<JsonElement> =
+        client.delete(url("/api/memories")) {
+            parameter("path", path)
+            parameter("workingDirectory", workingDirectory)
+        }.body()
+
+    // ========================================================================
+    // Integrations (ComfyUI / Discord / Home Assistant)
+    // ========================================================================
+
+    /** GET /api/comfyui/settings */
+    suspend fun getComfyUiSettings(): ApiResponse<ComfyUiSettings> =
+        client.get(url("/api/comfyui/settings")).body()
+
+    /** GET /api/comfyui/test — probes ComfyUI's /system_stats. */
+    suspend fun testComfyUi(): ApiResponse<JsonElement> =
+        client.get(url("/api/comfyui/test")).body()
+
+    /** GET /api/discord/settings */
+    suspend fun getDiscordSettings(): ApiResponse<DiscordSettings> =
+        client.get(url("/api/discord/settings")).body()
+
+    /** POST /api/discord/test */
+    suspend fun testDiscord(): ApiResponse<JsonElement> =
+        client.post(url("/api/discord/test")).body()
+
+    /** GET /api/home-assistant/settings */
+    suspend fun getHomeAssistantSettings(): ApiResponse<HomeAssistantSettings> =
+        client.get(url("/api/home-assistant/settings")).body()
+
+    /** POST /api/home-assistant/test */
+    suspend fun testHomeAssistant(): ApiResponse<JsonElement> =
+        client.post(url("/api/home-assistant/test")).body()
+
+    // ========================================================================
+    // Operations (Docker / watchdogs)
+    // ========================================================================
+
+    /** GET /api/docker/status */
+    suspend fun getDockerStatus(): ApiResponse<DockerStatus> =
+        client.get(url("/api/docker/status")).body()
+
+    /** GET /api/docker/containers */
+    suspend fun getDockerContainers(): ApiResponse<List<DockerContainer>> =
+        client.get(url("/api/docker/containers")).body()
+
+    /** GET /api/watchdogs — admin-only; a non-admin gets 403. */
+    suspend fun getWatchdogs(): ApiResponse<List<Watchdog>> =
+        client.get(url("/api/watchdogs")).body()
+
+    // ========================================================================
+    // Admin
+    // ========================================================================
+
+    /** GET /api/admin/stats */
+    suspend fun getAdminStats(): ApiResponse<AdminStats> =
+        client.get(url("/api/admin/stats")).body()
+
+    /** GET /api/admin/users */
+    suspend fun getAdminUsers(): ApiResponse<List<AdminUser>> =
+        client.get(url("/api/admin/users")).body()
+
+    /** GET /api/admin/audit-log */
+    suspend fun getAuditLog(limit: Int = 50): ApiResponse<AuditLogPage> =
+        client.get(url("/api/admin/audit-log")) {
+            parameter("limit", limit)
+        }.body()
 
     // ========================================================================
     // Health

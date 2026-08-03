@@ -126,7 +126,7 @@ class SocketManager {
     fun connect(serverUrl: String? = null) {
         val url = serverUrl ?: TokenStore.getServerUrl() ?: return
         val endpoint = runCatching { socketEndpoint(url) }.getOrNull() ?: return
-        disconnect()
+        disconnect(clearSubscriptions = false)
 
         _connectionState.value = ConnectionState.CONNECTING
         reconnectAttempt = 0
@@ -175,7 +175,7 @@ class SocketManager {
     /**
      * Disconnect from the server and clean up resources.
      */
-    fun disconnect() {
+    fun disconnect(clearSubscriptions: Boolean = true) {
         reconnectJob?.cancel()
         reconnectJob = null
         socket?.let { s ->
@@ -183,7 +183,7 @@ class SocketManager {
             s.disconnect()
         }
         socket = null
-        subscribedSessions.clear()
+        if (clearSubscriptions) subscribedSessions.clear()
         _connectionState.value = ConnectionState.DISCONNECTED
     }
 
@@ -220,10 +220,12 @@ class SocketManager {
         sessionId: String,
         message: String,
         images: List<FileAttachmentData>? = null
-    ) {
+    ): Boolean {
+        val activeSocket = socket?.takeIf { it.connected() } ?: return false
         val data = JSONObject().apply {
             put("sessionId", sessionId)
             put("message", message)
+            put("clientMessageId", java.util.UUID.randomUUID().toString())
             if (!images.isNullOrEmpty()) {
                 val imagesArray = JSONArray()
                 images.forEach { img ->
@@ -236,7 +238,8 @@ class SocketManager {
                 put("images", imagesArray)
             }
         }
-        socket?.emit("session:send", data)
+        activeSocket.emit("session:send", data)
+        return true
     }
 
     /**

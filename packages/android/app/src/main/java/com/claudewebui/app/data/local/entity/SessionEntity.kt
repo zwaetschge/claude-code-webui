@@ -26,6 +26,11 @@ data class SessionEntity(
     val starred: Boolean = false,
     val lastMessage: String? = null,
     val categoryId: String? = null,
+    // Cached alongside the rest: without these the session settings sheet reads
+    // a cached session that has dropped its model and reasoning, and shows
+    // "provider default" for a session that has neither.
+    val cliModel: String? = null,
+    val cliReasoning: String? = null,
     val updatedAt: String,
     val createdAt: String
 )
@@ -43,6 +48,8 @@ fun Session.toEntity(): SessionEntity = SessionEntity(
     starred = starred,
     lastMessage = lastMessage,
     categoryId = category,
+    cliModel = cliModel,
+    cliReasoning = cliReasoning,
     updatedAt = updatedAt,
     createdAt = createdAt
 )
@@ -57,6 +64,8 @@ fun SessionEntity.toModel(): Session = Session(
     starred = starred,
     lastMessage = lastMessage,
     category = categoryId,
+    cliModel = cliModel,
+    cliReasoning = cliReasoning,
     updatedAt = updatedAt,
     createdAt = createdAt
 )

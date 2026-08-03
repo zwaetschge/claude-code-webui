@@ -20,8 +20,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.claudewebui.app.ui.theme.ClaudeWebUITheme
-import com.claudewebui.app.ui.theme.ErrorRed
-import com.claudewebui.app.ui.theme.SuccessGreen
 
 // ── Status ───────────────────────────────────────────────────────────────────
 
@@ -41,9 +39,9 @@ fun StatusDot(
     size: Dp = 10.dp,
 ) {
     val baseColor = when (status) {
-        SessionStatus.RUNNING -> SuccessGreen
+        SessionStatus.RUNNING -> PlumGreen
         SessionStatus.STOPPED -> Color(0xFF9CA3AF)
-        SessionStatus.ERROR -> ErrorRed
+        SessionStatus.ERROR -> PlumRed
         SessionStatus.IDLE -> Color(0xFFD4D3CE)
     }
 

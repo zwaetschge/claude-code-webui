@@ -56,7 +56,8 @@ import com.claudewebui.app.ui.components.common.PlumAmber
 import com.claudewebui.app.ui.components.common.PlumBackdrop
 import com.claudewebui.app.ui.components.common.PlumBlue
 import com.claudewebui.app.ui.components.common.PlumBorder
-import com.claudewebui.app.ui.components.common.PlumBottomBar
+import com.claudewebui.app.ui.components.common.PlumNavScaffold
+import com.claudewebui.app.ui.theme.LocalPlumPalette
 import com.claudewebui.app.ui.components.common.PlumGreen
 import com.claudewebui.app.ui.components.common.PlumIconButton
 import com.claudewebui.app.ui.components.common.PlumMuted
@@ -92,15 +93,10 @@ fun ActivityScreen(
     val errors = state.sessions.count { it.status == SessionStatus.ERROR }
 
     PlumBackdrop {
-        Scaffold(
-            containerColor = Color.Transparent,
-            bottomBar = {
-                PlumBottomBar(
-                    selected = MainDestination.ACTIVITY,
-                    onNavigate = onNavigateMain,
-                    badgeCount = errors,
-                )
-            },
+        PlumNavScaffold(
+            selected = MainDestination.ACTIVITY,
+            onNavigate = onNavigateMain,
+            badgeCount = errors,
         ) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
@@ -140,8 +136,8 @@ fun ActivityScreen(
                                 Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (filter == option) Color(0xFF18245A) else Color.Transparent)
-                                    .border(1.dp, if (filter == option) Color(0xFF26377A) else PlumBorder, RoundedCornerShape(12.dp))
+                                    .background(if (filter == option) LocalPlumPalette.current.selectionTint else Color.Transparent)
+                                    .border(1.dp, if (filter == option) PlumAccent else PlumBorder, RoundedCornerShape(12.dp))
                                     .clickable { filter = option }
                                     .padding(vertical = 10.dp),
                                 contentAlignment = Alignment.Center,

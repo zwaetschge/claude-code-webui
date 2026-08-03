@@ -27,9 +27,9 @@ import androidx.compose.material.icons.outlined.Cached
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudQueue
-import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Notifications
@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,35 +70,40 @@ import com.claudewebui.app.ui.components.common.PlumAmber
 import com.claudewebui.app.ui.components.common.PlumBackdrop
 import com.claudewebui.app.ui.components.common.PlumBlue
 import com.claudewebui.app.ui.components.common.PlumBorder
-import com.claudewebui.app.ui.components.common.PlumBottomBar
+import com.claudewebui.app.ui.components.common.PlumNavScaffold
 import com.claudewebui.app.ui.components.common.PlumGreen
 import com.claudewebui.app.ui.components.common.PlumIconButton
 import com.claudewebui.app.ui.components.common.PlumMuted
 import com.claudewebui.app.ui.components.common.PlumRed
 import com.claudewebui.app.ui.components.common.PlumScreenHeader
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
 import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.components.common.StatusPill
+import com.claudewebui.app.ui.theme.AppThemeOption
 import com.claudewebui.app.ui.components.common.providerColor
 
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateToProviders: () -> Unit,
+    onNavigateToCliProvider: (String) -> Unit = {},
     onNavigateToMcp: () -> Unit,
     onNavigateToCliTools: () -> Unit,
     onNavigateToAgents: () -> Unit,
     onNavigateToPermissions: () -> Unit,
+    onNavigateToIntegrations: () -> Unit,
+    onNavigateToOperations: () -> Unit,
     onLoggedOut: () -> Unit,
     onNavigateMain: (MainDestination) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showThemePicker by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { viewModel.ensureLoaded() }
 
     PlumBackdrop {
-        Scaffold(
-            containerColor = Color.Transparent,
-            bottomBar = { PlumBottomBar(MainDestination.SETTINGS, onNavigateMain) },
-        ) { padding ->
+        PlumNavScaffold(MainDestination.SETTINGS, onNavigateMain) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -143,7 +149,10 @@ fun SettingsScreen(
                                     config = state.cliProviders.firstOrNull {
                                         it.id.equals(provider.name, ignoreCase = true)
                                     },
-                                    onClick = onNavigateToProviders,
+                                    // The row is about this CLI harness, so it
+                                    // opens that harness — not the unrelated
+                                    // database-provider list.
+                                    onClick = { onNavigateToCliProvider(provider.name.lowercase()) },
                                 )
                                 if (index < CLIProvider.active.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(PlumBorder))
                             }
@@ -162,16 +171,19 @@ fun SettingsScreen(
                             CompactSettingRow(Icons.Outlined.Lock, "Permission mode", state.defaultPermissionMode.name.lowercase(), PlumAccent, onNavigateToPermissions)
                         }
                         SettingsGroup("Appearance", Modifier.weight(1f)) {
-                            CompactSettingRow(Icons.Outlined.Brightness4, "Theme", state.theme.label, PlumMuted, onClick = {
-                                val next = when (state.theme) {
-                                    AppTheme.SYSTEM -> AppTheme.DARK
-                                    AppTheme.DARK -> AppTheme.LIGHT
-                                    AppTheme.LIGHT -> AppTheme.SYSTEM
-                                }
-                                viewModel.updateTheme(next)
-                            })
-                            CompactSettingRow(Icons.Outlined.ColorLens, "Accent color", "Plum", PlumAccent)
-                            CompactSettingRow(Icons.Outlined.AutoAwesome, "Background effects", "Subtle", PlumMuted)
+                            CompactSettingRow(
+                                Icons.Outlined.Brightness4,
+                                "Theme",
+                                state.theme.label,
+                                PlumMuted,
+                                onClick = { showThemePicker = true },
+                            )
+                            CompactSettingRow(
+                                Icons.Outlined.AutoAwesome,
+                                "Background effects",
+                                if (state.theme == AppThemeOption.EINK) "Off (E-Ink)" else "Subtle glow",
+                                PlumMuted,
+                            )
                         }
                     }
                 }
@@ -190,10 +202,28 @@ fun SettingsScreen(
                         }
                         SettingsGroup("Advanced", Modifier.weight(1f)) {
                             CompactSettingRow(Icons.Outlined.SettingsEthernet, "MCP Servers", "${state.mcpServers.size} configured", PlumMuted, onNavigateToMcp)
-                            CompactSettingRow(Icons.Outlined.SmartToy, "Agents & Skills", "${state.agents.size} agents", PlumMuted, onNavigateToAgents)
+                            CompactSettingRow(
+                                Icons.Outlined.SmartToy,
+                                "Agents & Skills",
+                                "${state.configAgents.size + state.agents.size} agents · ${state.configSkills.size} skills",
+                                PlumMuted,
+                                onNavigateToAgents,
+                            )
                             CompactSettingRow(Icons.Outlined.Terminal, "CLI Tools", "${state.cliTools.size} tools", PlumMuted, onNavigateToCliTools)
-                            CompactSettingRow(Icons.Outlined.Description, "Logs & Diagnostics", "", PlumMuted)
-                            CompactSettingRow(Icons.Outlined.AdminPanelSettings, "Admin", "", PlumMuted)
+                            CompactSettingRow(
+                                Icons.Outlined.Hub,
+                                "Integrations",
+                                "ComfyUI · Discord · Home Assistant",
+                                PlumMuted,
+                                onNavigateToIntegrations,
+                            )
+                            CompactSettingRow(
+                                Icons.Outlined.AdminPanelSettings,
+                                "Operations",
+                                "Containers, watchdogs, audit",
+                                PlumMuted,
+                                onNavigateToOperations,
+                            )
                         }
                     }
                 }
@@ -216,6 +246,47 @@ fun SettingsScreen(
                 item { Spacer(Modifier.height(5.dp)) }
             }
         }
+    }
+
+    if (showThemePicker) {
+        AlertDialog(
+            onDismissRequest = { showThemePicker = false },
+            containerColor = PlumSurfaceStrong,
+            title = { Text("Theme", color = PlumText) },
+            text = {
+                Column {
+                    AppThemeOption.entries.forEach { option ->
+                        val selected = option == state.theme
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    viewModel.updateTheme(option)
+                                    showThemePicker = false
+                                }
+                                .padding(vertical = 11.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(15.dp)
+                                    .clip(CircleShape)
+                                    .background(if (selected) PlumAccent else Color.Transparent)
+                                    .border(1.dp, if (selected) PlumAccent else PlumBorder, CircleShape)
+                            )
+                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                Text(option.label, color = PlumText, fontWeight = FontWeight.Medium)
+                                Text(option.description, color = PlumMuted, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemePicker = false }) { Text("Close", color = PlumAccent) }
+            },
+        )
     }
 
     if (showLogoutDialog) {

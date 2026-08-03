@@ -68,6 +68,13 @@ data class CLIProviderStatus(
     val kimi: Boolean = false
 )
 
+/** Result of `POST /api/providers/:id/test`. */
+@Serializable
+data class ProviderTestResult(
+    val success: Boolean = false,
+    val message: String = "",
+)
+
 @Serializable
 data class CLIProviderConfig(
     val id: String,

@@ -14,6 +14,7 @@ class ChatViewModel(
     private val sessionId: String,
     private val messageRepository: MessageRepository,
     private val sessionRepository: SessionRepository,
+    private val settingsRepository: com.claudewebui.app.data.repository.SettingsRepository,
     private val socketManager: SocketManager,
 ) : ViewModel() {
 
@@ -29,31 +30,54 @@ class ChatViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private var draftSaveJob: Job? = null
+    private var initializationJob: Job? = null
+    private var isSessionReady = false
 
     init {
-        loadMessages()
-        loadDraft()
         observeConnectionState()
-        observeSocketEvents()
+        initializeChat()
     }
 
     // ========================================================================
     // Initial Load
     // ========================================================================
 
-    private fun loadMessages() {
-        viewModelScope.launch {
+    private fun initializeChat() {
+        if (initializationJob?.isActive == true) return
+        initializationJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingHistory = true) }
-            messageRepository.fetchMessages(sessionId)
+            loadSessionThenMessages(
+                loadSession = { sessionRepository.getSession(sessionId).map { } },
+                onSessionLoaded = {
+                    isSessionReady = true
+                    observeSocketEvents()
+                    loadDraft()
+                    if (socketManager.connectionState.value == ConnectionState.CONNECTED) {
+                        socketManager.subscribeToSession(sessionId)
+                    }
+                },
+                loadMessages = { messageRepository.fetchMessages(sessionId).map { } },
+            )
                 .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
             _uiState.update { it.copy(isLoadingHistory = false) }
         }
     }
 
-    private fun loadDraft() {
+    private suspend fun loadDraft() {
+        val draft = messageRepository.getDraft(sessionId) ?: ""
+        _uiState.update { it.copy(draftText = draft) }
+    }
+
+    private fun loadMessages() {
+        if (!isSessionReady) {
+            initializeChat()
+            return
+        }
         viewModelScope.launch {
-            val draft = messageRepository.getDraft(sessionId) ?: ""
-            _uiState.update { it.copy(draftText = draft) }
+            _uiState.update { it.copy(isLoadingHistory = true) }
+            messageRepository.fetchMessages(sessionId)
+                .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
+            _uiState.update { it.copy(isLoadingHistory = false) }
         }
     }
 
@@ -66,7 +90,7 @@ class ChatViewModel(
             .onEach { state ->
                 val isConnected = state == ConnectionState.CONNECTED
                 _uiState.update { it.copy(isConnected = isConnected) }
-                if (isConnected) {
+                if (isConnected && isSessionReady) {
                     socketManager.subscribeToSession(sessionId)
                 }
             }
@@ -259,13 +283,25 @@ class ChatViewModel(
         val attachments = _uiState.value.pendingAttachments.takeIf { it.isNotEmpty() }
         if (content.isBlank() && attachments.isNullOrEmpty()) return
         if (_uiState.value.isWorking) return
+        if (!isSessionReady) {
+            _uiState.update { it.copy(error = "Session is still loading") }
+            return
+        }
 
         val trimmed = content.trim()
+        if (!socketManager.sendMessage(sessionId, trimmed, attachments)) {
+            _uiState.update {
+                it.copy(
+                    error = "Not connected to the server. Wait for reconnect and try again.",
+                    isSending = false,
+                )
+            }
+            return
+        }
         clearDraft()
         _uiState.update {
             it.copy(isSending = true, draftText = "", pendingAttachments = emptyList())
         }
-        socketManager.sendMessage(sessionId, trimmed, attachments)
     }
 
     fun addAttachments(attachments: List<FileAttachmentData>) {
@@ -337,6 +373,7 @@ class ChatViewModel(
         draftSaveJob?.cancel()
         draftSaveJob = viewModelScope.launch {
             delay(500)
+            if (!isSessionReady) return@launch
             if (text.isNotEmpty()) {
                 messageRepository.saveDraft(sessionId, text)
             } else {
@@ -348,6 +385,97 @@ class ChatViewModel(
     private fun clearDraft() {
         draftSaveJob?.cancel()
         viewModelScope.launch { messageRepository.clearDraft(sessionId) }
+    }
+
+    // ========================================================================
+    // Session settings
+    // ========================================================================
+
+    /**
+     * Load the model list the active provider offers.
+     *
+     * The session carries only the chosen model, so the candidate list comes
+     * from the CLI provider registry.
+     */
+    fun loadAvailableModels() {
+        viewModelScope.launch {
+            val provider = session.value?.cliProvider ?: return@launch
+            settingsRepository.getCLIProviders()
+                .onSuccess { configs ->
+                    val offered = configs
+                        .firstOrNull { it.id.equals(provider.name, ignoreCase = true) }
+                        ?.models
+                        .orEmpty()
+                    // The session may run a model the registry no longer lists;
+                    // without this it would be invisible and unselectable.
+                    val current = session.value?.cliModel
+                    val models = if (current.isNullOrBlank() || current in offered) {
+                        offered
+                    } else {
+                        offered + current
+                    }
+                    _uiState.update { it.copy(availableModels = models) }
+                }
+                .onFailure { failure ->
+                    _uiState.update {
+                        it.copy(settingsNotice = "Model list unavailable: ${failure.message}")
+                    }
+                }
+        }
+    }
+
+    fun setModel(model: String?) {
+        applySessionChange("Model updated") { sessionRepository.setModel(sessionId, model) }
+    }
+
+    fun setReasoning(level: String?) {
+        applySessionChange("Reasoning updated") { sessionRepository.setReasoning(sessionId, level) }
+    }
+
+    fun switchProvider(provider: CLIProvider) {
+        applySessionChange("Provider switched to ${provider.displayName}") {
+            sessionRepository.switchProvider(sessionId, provider)
+        }
+        loadAvailableModels()
+    }
+
+    /**
+     * Mode is a live setting on the running process, so it goes over the socket
+     * rather than through a REST write.
+     */
+    fun setMode(mode: SessionMode) {
+        socketManager.setMode(sessionId, mode)
+        _uiState.update { it.copy(sessionMode = mode, settingsNotice = "Mode set to ${mode.label}") }
+    }
+
+    private fun applySessionChange(notice: String, block: suspend () -> Result<Session>) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isApplyingSettings = true) }
+            block()
+                .onSuccess { updated ->
+                    _uiState.update {
+                        it.copy(
+                            isApplyingSettings = false,
+                            // These take effect on the next process start, so say
+                            // so rather than implying the change is already live.
+                            settingsNotice = if (updated.status == SessionStatus.RUNNING) {
+                                "$notice — restart the session to apply"
+                            } else {
+                                notice
+                            },
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(isApplyingSettings = false, error = error.message)
+                    }
+                }
+        }
+    }
+
+    fun clearSettingsNotice() {
+        _uiState.update { it.copy(settingsNotice = null) }
     }
 
     // ========================================================================
