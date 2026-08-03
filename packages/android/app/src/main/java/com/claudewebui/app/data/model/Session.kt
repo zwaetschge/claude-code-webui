@@ -16,10 +16,11 @@ enum class CLIProvider(val displayName: String) {
     @SerialName("codex") CODEX("Codex"),
     @SerialName("opencode") OPENCODE("OpenCode"),
     @SerialName("pi") PI("Pi"),
-    @SerialName("kimi") KIMI("Kimi");
+    @SerialName("kimi") KIMI("Kimi"),
+    @SerialName("zai") ZAI("Z.AI");
 
     companion object {
-        val active: List<CLIProvider> = listOf(CODEX, OPENCODE, PI, KIMI, CLAUDE)
+        val active: List<CLIProvider> = listOf(CODEX, OPENCODE, PI, KIMI, ZAI, CLAUDE)
 
         fun fromId(id: String): CLIProvider? =
             entries.firstOrNull { it.name.equals(id, ignoreCase = true) }

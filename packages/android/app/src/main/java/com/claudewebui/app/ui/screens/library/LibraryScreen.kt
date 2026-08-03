@@ -22,6 +22,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Refresh
@@ -74,6 +77,7 @@ import com.claudewebui.app.ui.components.common.SectionHeading
 import com.claudewebui.app.ui.theme.LocalPlumPalette
 import com.claudewebui.app.ui.screens.settings.SettingsUiState
 import com.claudewebui.app.ui.screens.settings.SettingsViewModel
+import com.claudewebui.app.data.model.ConfigItemKind
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
@@ -89,6 +93,7 @@ private enum class LibraryTab(
     AGENTS("Agents", "Agents", Icons.Outlined.SmartToy),
     SKILLS("Skills", "Skills", Icons.Outlined.Bolt),
     PLUGINS("Plugins", "Plugins", Icons.Outlined.Extension),
+    MARKETPLACE("Marketplace", "Market", Icons.Outlined.Download),
     MCP("MCP Servers", "MCP", Icons.Outlined.SettingsEthernet),
     COMMANDS("Commands", "Cmds", Icons.Outlined.Terminal),
     STYLES("Styles", "Styles", Icons.Outlined.Palette),
@@ -110,6 +115,9 @@ private data class LibraryEntry(
     val accent: Color,
     val icon: ImageVector,
     val onToggle: ((Boolean) -> Unit)? = null,
+    val onOpen: (() -> Unit)? = null,
+    val actionLabel: String? = null,
+    val onAction: (() -> Unit)? = null,
 )
 
 @Composable
@@ -146,6 +154,13 @@ fun LibraryScreen(
                         title = "Library",
                         subtitle = "Agents, skills, plugins and more — as Plum ships them",
                         actions = {
+                            tab.configKind()?.let { kind ->
+                                PlumIconButton(
+                                    icon = Icons.Outlined.Add,
+                                    contentDescription = "Create ${kind.name.lowercase()}",
+                                    onClick = { viewModel.createConfigDocument(kind) },
+                                )
+                            }
                             // Refresh everything: MCP servers come from loadSettings, not the
                             // config-library call.
                             PlumIconButton(Icons.Outlined.Refresh, "Refresh", viewModel::loadSettings)
@@ -240,6 +255,25 @@ fun LibraryScreen(
             }
         }
     }
+
+    state.libraryEditorKind?.let {
+        ConfigEditorSheet(
+            document = state.libraryDocument,
+            loading = state.libraryEditorLoading,
+            saving = state.librarySaving,
+            error = state.error,
+            onDismiss = viewModel::dismissConfigEditor,
+            onSave = viewModel::saveConfigDocument,
+            onDelete = viewModel::deleteConfigDocument,
+        )
+    }
+}
+
+private fun LibraryTab.configKind(): ConfigItemKind? = when (this) {
+    LibraryTab.AGENTS -> ConfigItemKind.AGENT
+    LibraryTab.SKILLS -> ConfigItemKind.SKILL
+    LibraryTab.PLUGINS -> ConfigItemKind.PLUGIN
+    else -> null
 }
 
 /** Item counts for the tab strip — always the full catalogue, never the filtered view. */
@@ -247,6 +281,7 @@ private fun countFor(tab: LibraryTab, state: SettingsUiState): Int = when (tab) 
     LibraryTab.AGENTS -> state.configAgents.size + state.agents.size
     LibraryTab.SKILLS -> state.configSkills.size
     LibraryTab.PLUGINS -> state.configPlugins.size
+    LibraryTab.MARKETPLACE -> state.configMarketplaces.sumOf { it.plugins.size }
     LibraryTab.MCP -> state.mcpServers.size
     LibraryTab.COMMANDS -> state.commands.size
     LibraryTab.STYLES -> state.designStyles.size + state.writingStyles.size
@@ -273,7 +308,12 @@ private fun entriesFor(
                 enabled = agent.enabled,
                 accent = PlumAccent,
                 icon = Icons.Outlined.SmartToy,
-                onToggle = { viewModel.toggleConfigAgent(agent.name) },
+                onToggle = if (agent.source == "user") {
+                    { viewModel.toggleConfigAgent(agent.id.removePrefix("user-")) }
+                } else null,
+                onOpen = if (agent.source == "user") {
+                    { viewModel.openConfigDocument(ConfigItemKind.AGENT, agent.id.removePrefix("user-")) }
+                } else null,
             )
         }
         // Agents authored in the WebUI database live alongside the on-disk ones.
@@ -303,7 +343,17 @@ private fun entriesFor(
             enabled = skill.enabled,
             accent = PlumAmber,
             icon = Icons.Outlined.Bolt,
-            onToggle = { viewModel.toggleConfigSkill(skill.name) },
+            onToggle = {
+                viewModel.toggleConfigSkill(skill.baseName ?: skill.id.removePrefix("user-"))
+            },
+            onOpen = if (skill.source == "user") {
+                {
+                    viewModel.openConfigDocument(
+                        ConfigItemKind.SKILL,
+                        skill.baseName ?: skill.id.removePrefix("user-"),
+                    )
+                }
+            } else null,
         )
     }
 
@@ -319,8 +369,40 @@ private fun entriesFor(
             enabled = plugin.enabled,
             accent = PlumGreen,
             icon = Icons.Outlined.Extension,
-            onToggle = { viewModel.toggleConfigPlugin(plugin.name) },
+            onToggle = if (plugin.source == "user") {
+                { viewModel.toggleConfigPlugin(plugin.id.removePrefix("user-")) }
+            } else null,
+            onOpen = if (plugin.source == "user") {
+                { viewModel.openConfigDocument(ConfigItemKind.PLUGIN, plugin.id.removePrefix("user-")) }
+            } else null,
         )
+    }
+
+    LibraryTab.MARKETPLACE -> state.configMarketplaces.flatMap { marketplace ->
+        marketplace.plugins.map { plugin ->
+            val id = "${plugin.name}@${marketplace.id}"
+            val installed = state.configPlugins.any {
+                it.id == id || (it.name == plugin.name && it.marketplace == marketplace.id)
+            }
+            val busy = id in state.marketplaceBusyIds
+            LibraryEntry(
+                id = "market-$id",
+                title = plugin.name,
+                subtitle = plugin.description.ifBlank { "Marketplace plugin" },
+                meta = "${marketplace.name} · v${plugin.version}",
+                enabled = installed,
+                accent = PlumGreen,
+                icon = Icons.Outlined.Extension,
+                actionLabel = when {
+                    installed -> "Installed"
+                    busy -> "Installing…"
+                    else -> "Install"
+                },
+                onAction = if (!installed && !busy) {
+                    { viewModel.installMarketplacePlugin(plugin.name, marketplace.id) }
+                } else null,
+            )
+        }
     }
 
     LibraryTab.MCP -> state.mcpServers.map { server ->
@@ -370,6 +452,7 @@ private fun emptyHintFor(tab: LibraryTab, catalogueEmpty: Boolean): String {
         LibraryTab.AGENTS -> "Agents live in ~/.claude/agents on the server."
         LibraryTab.SKILLS -> "Skill packs sync from the configured skills directories."
         LibraryTab.PLUGINS -> "Install plugins from a marketplace in the WebUI."
+        LibraryTab.MARKETPLACE -> "Add a marketplace in the WebUI, then refresh this page."
         LibraryTab.MCP -> "Add servers in Settings → MCP Servers."
         LibraryTab.COMMANDS -> "Slash commands are provided by the active harness."
         LibraryTab.STYLES -> "Style presets live in ~/.claude/style-library."
@@ -409,7 +492,10 @@ private fun LibraryTabCard(tab: LibraryTab, count: Int, selected: Boolean, onCli
 private fun LibraryRow(entry: LibraryEntry, modifier: Modifier = Modifier.fillMaxWidth()) {
     // Single-column callers take the default and add their own inset; grid
     // callers pass a weighted modifier and the parent Row supplies the padding.
-    GlassPanel(modifier, radius = 16.dp) {
+    GlassPanel(
+        modifier.then(if (entry.onOpen != null) Modifier.clickable(onClick = entry.onOpen) else Modifier),
+        radius = 16.dp,
+    ) {
         Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(44.dp).background(entry.accent.copy(alpha = .15f), RoundedCornerShape(13.dp)),
@@ -432,6 +518,28 @@ private fun LibraryRow(entry: LibraryEntry, modifier: Modifier = Modifier.fillMa
                     checked = entry.enabled,
                     onCheckedChange = toggle,
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = PlumAccent),
+                )
+            }
+            entry.actionLabel?.let { label ->
+                Text(
+                    label,
+                    color = if (entry.onAction != null) PlumAccent else PlumMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (entry.onAction != null) PlumAccent.copy(alpha = .14f) else Color.Transparent)
+                        .clickable(enabled = entry.onAction != null) { entry.onAction?.invoke() }
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                )
+            }
+            if (entry.onOpen != null) {
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = "Edit ${entry.title}",
+                    tint = PlumMuted,
+                    modifier = Modifier.padding(start = 8.dp).size(18.dp),
                 )
             }
         }

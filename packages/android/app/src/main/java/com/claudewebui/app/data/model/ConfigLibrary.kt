@@ -72,3 +72,111 @@ data class SlashCommand(
  */
 @Serializable
 data class ToggleResult(val enabled: Boolean)
+
+/** Editable config-library entries share one mobile editor even though the
+ * backend stores them in three different markdown shapes. */
+enum class ConfigItemKind { AGENT, SKILL, PLUGIN }
+
+data class ConfigDocument(
+    val kind: ConfigItemKind,
+    /** Existing on-disk key. Null means this is a new entry. */
+    val key: String? = null,
+    val name: String = "",
+    val description: String = "",
+    val content: String = "",
+    val tools: List<String> = emptyList(),
+    val model: String = "",
+    val version: String = "1.0.0",
+    val author: String = "",
+    val category: String = "",
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class ConfigAgentContent(
+    val name: String,
+    val description: String = "",
+    val tools: List<String> = emptyList(),
+    val model: String? = null,
+    val prompt: String = "",
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class ConfigSkillContent(
+    val name: String,
+    val description: String = "",
+    val allowedTools: List<String> = emptyList(),
+    val model: String? = null,
+    val content: String = "",
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class ConfigPluginContent(
+    val name: String,
+    val description: String = "",
+    val version: String = "1.0.0",
+    val author: String? = null,
+    val category: String? = null,
+    val content: String = "",
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class SaveConfigAgentInput(
+    val name: String,
+    val description: String,
+    val tools: List<String> = emptyList(),
+    val model: String? = null,
+    val prompt: String,
+)
+
+@Serializable
+data class SaveConfigSkillInput(
+    val name: String,
+    val description: String,
+    val allowedTools: List<String> = emptyList(),
+    val model: String? = null,
+    val content: String,
+)
+
+@Serializable
+data class SaveConfigPluginInput(
+    val name: String,
+    val description: String,
+    val version: String = "1.0.0",
+    val author: String? = null,
+    val category: String? = null,
+    val content: String,
+)
+
+@Serializable
+data class MarketplacePlugin(
+    val name: String,
+    val description: String = "",
+    val version: String = "1.0.0",
+    val category: String? = null,
+)
+
+@Serializable
+data class MarketplaceSource(
+    val source: String,
+    val repo: String? = null,
+    val url: String? = null,
+)
+
+@Serializable
+data class ConfigMarketplace(
+    val id: String,
+    val name: String,
+    val source: MarketplaceSource,
+    val lastUpdated: String = "",
+    val plugins: List<MarketplacePlugin> = emptyList(),
+)
+
+@Serializable
+data class InstallPluginInput(
+    val pluginName: String,
+    val marketplaceId: String,
+)

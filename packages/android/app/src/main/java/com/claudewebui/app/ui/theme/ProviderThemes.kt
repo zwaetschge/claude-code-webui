@@ -19,6 +19,7 @@ enum class CliProvider(val displayName: String, val id: String) {
     OPENCODE("OpenCode", "opencode"),
     PI("Pi", "pi"),
     KIMI("Kimi", "kimi"),
+    ZAI("Z.AI", "zai"),
     UNKNOWN("Unknown", "unknown"),
     ;
 
@@ -96,6 +97,16 @@ object ProviderThemes {
             onContainerColorDark = Color(0xFF9BC9FF),
             icon = Icons.Filled.Bedtime,
             displayName = "Kimi",
+        ),
+        CliProvider.ZAI to ProviderTheme(
+            color = Color(0xFF4F9A37),
+            colorDark = Color(0xFF8BE76C),
+            containerColor = Color(0xFFEAF8E5),
+            containerColorDark = Color(0xFF173A12),
+            onContainerColor = Color(0xFF28621C),
+            onContainerColorDark = Color(0xFFA8F28F),
+            icon = Icons.Filled.AutoAwesome,
+            displayName = "Z.AI",
         ),
     )
 

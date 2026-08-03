@@ -55,6 +55,10 @@ class ApiClient {
 
     private fun url(path: String): String = "$baseUrl$path"
 
+    /** Encode one Express route segment without turning spaces into '+'. */
+    private fun pathSegment(value: String): String =
+        java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+
     // ========================================================================
     // Auth
     // ========================================================================
@@ -137,6 +141,19 @@ class ApiClient {
     suspend fun setSessionReasoning(id: String, reasoning: String?): ApiResponse<Session> =
         client.patch(url("/api/sessions/$id/reasoning")) {
             setBody(mapOf("reasoning" to reasoning))
+        }.body()
+
+    suspend fun getAllowedDirectories(id: String): ApiResponse<List<String>> =
+        client.get(url("/api/sessions/$id/allowed-directories")).body()
+
+    suspend fun addAllowedDirectory(id: String, directory: String): ApiResponse<List<String>> =
+        client.post(url("/api/sessions/$id/allowed-directories")) {
+            setBody(mapOf("directory" to directory))
+        }.body()
+
+    suspend fun removeAllowedDirectory(id: String, directory: String): ApiResponse<List<String>> =
+        client.delete(url("/api/sessions/$id/allowed-directories")) {
+            parameter("directory", directory)
         }.body()
 
     /** GET /api/sessions/:id/messages */
@@ -514,15 +531,87 @@ class ApiClient {
      * reports which way it landed. Admin-only on the server.
      */
     suspend fun toggleConfigSkill(name: String): ApiResponse<ToggleResult> =
-        client.put(url("/api/claude-config/skill/$name/toggle")).body()
+        client.put(url("/api/claude-config/skill/${pathSegment(name)}/toggle")).body()
 
     /** PUT /api/claude-config/agent/:name/toggle */
     suspend fun toggleConfigAgent(name: String): ApiResponse<ToggleResult> =
-        client.put(url("/api/claude-config/agent/$name/toggle")).body()
+        client.put(url("/api/claude-config/agent/${pathSegment(name)}/toggle")).body()
 
     /** PUT /api/claude-config/plugin/:name/toggle */
     suspend fun toggleConfigPlugin(name: String): ApiResponse<ToggleResult> =
-        client.put(url("/api/claude-config/plugin/$name/toggle")).body()
+        client.put(url("/api/claude-config/plugin/${pathSegment(name)}/toggle")).body()
+
+    suspend fun getConfigAgent(name: String): ApiResponse<ConfigAgentContent> =
+        client.get(url("/api/claude-config/agent/${pathSegment(name)}")).body()
+
+    suspend fun saveConfigAgent(
+        key: String?,
+        input: SaveConfigAgentInput,
+    ): ApiResponse<ConfigAgent> = if (key == null) {
+        client.post(url("/api/claude-config/agents")) { setBody(input) }.body()
+    } else {
+        client.put(url("/api/claude-config/agent/${pathSegment(key)}")) { setBody(input) }.body()
+    }
+
+    suspend fun deleteConfigAgent(name: String): ApiResponse<Unit> =
+        client.delete(url("/api/claude-config/agent/${pathSegment(name)}")).body()
+
+    suspend fun getConfigSkill(name: String): ApiResponse<ConfigSkillContent> =
+        client.get(url("/api/claude-config/skill/${pathSegment(name)}")).body()
+
+    suspend fun saveConfigSkill(
+        key: String?,
+        input: SaveConfigSkillInput,
+    ): ApiResponse<ConfigSkill> = if (key == null) {
+        client.post(url("/api/claude-config/skills")) { setBody(input) }.body()
+    } else {
+        client.put(url("/api/claude-config/skill/${pathSegment(key)}")) { setBody(input) }.body()
+    }
+
+    suspend fun deleteConfigSkill(name: String): ApiResponse<Unit> =
+        client.delete(url("/api/claude-config/skill/${pathSegment(name)}")).body()
+
+    suspend fun getConfigPlugin(name: String): ApiResponse<ConfigPluginContent> =
+        client.get(url("/api/claude-config/plugin/${pathSegment(name)}")).body()
+
+    suspend fun saveConfigPlugin(
+        key: String?,
+        input: SaveConfigPluginInput,
+    ): ApiResponse<ConfigPlugin> = if (key == null) {
+        client.post(url("/api/claude-config/plugins")) { setBody(input) }.body()
+    } else {
+        client.put(url("/api/claude-config/plugin/${pathSegment(key)}")) { setBody(input) }.body()
+    }
+
+    suspend fun deleteConfigPlugin(id: String): ApiResponse<Unit> =
+        client.delete(url("/api/claude-config/plugin/${pathSegment(id)}")).body()
+
+    suspend fun getConfigMarketplaces(): ApiResponse<List<ConfigMarketplace>> =
+        client.get(url("/api/claude-config/marketplaces")).body()
+
+    suspend fun installConfigPlugin(input: InstallPluginInput): ApiResponse<ConfigPlugin> =
+        client.post(url("/api/claude-config/plugins/install")) { setBody(input) }.body()
+
+    suspend fun getZaiApi(): ApiResponse<ZaiApiStatus> =
+        client.get(url("/api/settings/zai-api")).body()
+
+    suspend fun updateZaiApi(input: UpdateZaiApiInput): ApiResponse<ZaiApiStatus> =
+        client.put(url("/api/settings/zai-api")) { setBody(input) }.body()
+
+    suspend fun deleteZaiApi(): ApiResponse<Unit> =
+        client.delete(url("/api/settings/zai-api")).body()
+
+    suspend fun getOpenCodeProviders(): ApiResponse<List<OpenCodeProvider>> =
+        client.get(url("/api/opencode/providers")).body()
+
+    suspend fun saveOpenCodeProvider(input: SaveOpenCodeProviderInput): ApiResponse<OpenCodeProvider> =
+        client.put(url("/api/opencode/providers")) { setBody(input) }.body()
+
+    suspend fun deleteOpenCodeProvider(id: String): ApiResponse<Unit> =
+        client.delete(url("/api/opencode/providers/${pathSegment(id)}")).body()
+
+    suspend fun testOpenCodeProvider(id: String): ApiResponse<OpenCodeProviderTest> =
+        client.post(url("/api/opencode/providers/${pathSegment(id)}/test")).body()
 
     // ========================================================================
     // Slash commands

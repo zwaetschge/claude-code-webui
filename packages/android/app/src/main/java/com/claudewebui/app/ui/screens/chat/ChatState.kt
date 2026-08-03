@@ -53,6 +53,8 @@ data class ChatUiState(
     val availableModels: List<String> = emptyList(),
     val isApplyingSettings: Boolean = false,
     val settingsNotice: String? = null,
+    val allowedDirectories: List<String> = emptyList(),
+    val directoriesLoading: Boolean = false,
 
     // UI state
     val error: String? = null,

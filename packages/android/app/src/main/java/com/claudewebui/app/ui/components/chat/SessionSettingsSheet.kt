@@ -17,8 +17,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,13 +60,18 @@ fun SessionSettingsSheet(
     mode: SessionMode,
     availableModels: List<String>,
     isApplying: Boolean,
+    allowedDirectories: List<String>,
+    directoriesLoading: Boolean,
     onProviderChange: (CLIProvider) -> Unit,
     onModelChange: (String?) -> Unit,
     onReasoningChange: (String?) -> Unit,
     onModeChange: (SessionMode) -> Unit,
+    onAddAllowedDirectory: (String) -> Unit,
+    onRemoveAllowedDirectory: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var newDirectory by remember { mutableStateOf("") }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -140,6 +151,57 @@ fun SessionSettingsSheet(
                         enabled = !isApplying,
                     ) { onReasoningChange(level.id) }
                 }
+            }
+
+            SettingsGroup("Allowed directories", "Enforced per session") {
+                Text(
+                    "Adds explicit read/write roots beyond the session workspace.",
+                    color = PlumMuted,
+                    fontSize = 11.sp,
+                )
+                allowedDirectories.forEach { directory ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(PlumSubtleFill)
+                            .border(1.dp, PlumBorder, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            directory,
+                            color = PlumText,
+                            fontSize = 11.sp,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(
+                            onClick = { onRemoveAllowedDirectory(directory) },
+                            enabled = !directoriesLoading,
+                        ) { Text("Remove") }
+                    }
+                }
+                if (allowedDirectories.isEmpty()) {
+                    Text("No additional roots", color = PlumMuted, fontSize = 11.sp)
+                }
+                OutlinedTextField(
+                    value = newDirectory,
+                    onValueChange = { newDirectory = it },
+                    label = { Text("Server directory path") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        TextButton(
+                            onClick = {
+                                onAddAllowedDirectory(newDirectory)
+                                newDirectory = ""
+                            },
+                            enabled = newDirectory.isNotBlank() && !directoriesLoading,
+                        ) { Text("Add") }
+                    },
+                )
             }
         }
     }

@@ -168,7 +168,7 @@ fun SettingsScreen(
                             CompactSettingRow(Icons.Outlined.Security, "Encrypted tokens", "Stored securely", PlumAccent) {
                                 PlumSwitch(true, null)
                             }
-                            CompactSettingRow(Icons.Outlined.Lock, "Permission mode", state.defaultPermissionMode.name.lowercase(), PlumAccent, onNavigateToPermissions)
+                            CompactSettingRow(Icons.Outlined.Lock, "Permissions", "Per session", PlumAccent, onNavigateToPermissions)
                         }
                         SettingsGroup("Appearance", Modifier.weight(1f)) {
                             CompactSettingRow(

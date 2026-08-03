@@ -317,10 +317,14 @@ fun ChatScreen(
                 mode = uiState.sessionMode,
                 availableModels = uiState.availableModels,
                 isApplying = uiState.isApplyingSettings,
+                allowedDirectories = uiState.allowedDirectories,
+                directoriesLoading = uiState.directoriesLoading,
                 onProviderChange = viewModel::switchProvider,
                 onModelChange = viewModel::setModel,
                 onReasoningChange = viewModel::setReasoning,
                 onModeChange = viewModel::setMode,
+                onAddAllowedDirectory = viewModel::addAllowedDirectory,
+                onRemoveAllowedDirectory = viewModel::removeAllowedDirectory,
                 onDismiss = { showSessionSettings = false },
             )
         }

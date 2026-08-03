@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +59,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import com.claudewebui.app.data.model.CliLoginSession
+import com.claudewebui.app.data.model.ZaiApiStatus
 import com.claudewebui.app.ui.components.common.PlumRed
 
 /**
@@ -147,6 +149,49 @@ fun CliProviderDetailScreen(
                     )
                 }
 
+                if (providerId.lowercase() in setOf("codex", "opencode", "pi")) {
+                    item {
+                        RuntimeDefaultsPanel(
+                            providerId = providerId.lowercase(),
+                            reasoning = state.userSettings?.cliProviderReasoning
+                                ?.get(providerId.lowercase()) ?: "medium",
+                            codexWebSearch = state.userSettings?.codexWebSearch ?: "auto",
+                            codexFast = state.userSettings?.cliProviderServiceTiers
+                                ?.get("codex") == "fast",
+                            onReasoning = { viewModel.setProviderReasoning(providerId, it) },
+                            onWebSearch = viewModel::setCodexWebSearch,
+                            onFastTier = viewModel::setCodexFastTier,
+                        )
+                    }
+                }
+
+                if (providerId.equals("zai", ignoreCase = true)) {
+                    item {
+                        ZaiApiPanel(
+                            status = state.zaiApi,
+                            saving = state.zaiApiSaving,
+                            error = state.error,
+                            onSave = viewModel::saveZaiApi,
+                            onReset = viewModel::resetZaiApi,
+                        )
+                    }
+                }
+
+                if (providerId.equals("opencode", ignoreCase = true)) {
+                    item {
+                        OpenCodeProvidersPanel(
+                            providers = state.openCodeProviders,
+                            saving = state.openCodeSaving,
+                            tests = state.openCodeTestResults,
+                            testMessages = state.openCodeTestMessages,
+                            error = state.error,
+                            onSave = viewModel::saveOpenCodeProvider,
+                            onDelete = viewModel::deleteOpenCodeProvider,
+                            onTest = viewModel::testOpenCodeProvider,
+                        )
+                    }
+                }
+
                 if (!config?.models.isNullOrEmpty()) {
                     item {
                         Text(
@@ -210,6 +255,153 @@ fun CliProviderDetailScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ZaiApiPanel(
+    status: ZaiApiStatus?,
+    saving: Boolean,
+    error: String?,
+    onSave: (String, String, String, String, String) -> Unit,
+    onReset: () -> Unit,
+) {
+    var baseUrl by remember(status?.baseUrl) {
+        mutableStateOf(status?.baseUrl?.ifBlank { "https://api.z.ai/api/anthropic" }
+            ?: "https://api.z.ai/api/anthropic")
+    }
+    var token by remember(status?.authTokenPreview) { mutableStateOf("") }
+    var opus by remember(status?.opusModel) { mutableStateOf(status?.opusModel.orEmpty()) }
+    var sonnet by remember(status?.sonnetModel) { mutableStateOf(status?.sonnetModel.orEmpty()) }
+    var haiku by remember(status?.haikuModel) { mutableStateOf(status?.haikuModel.orEmpty()) }
+    val canSave = baseUrl.isNotBlank() && (status?.configured == true || token.isNotBlank()) && !saving
+
+    GlassPanel(Modifier.fillMaxWidth(), radius = 19.dp) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Z.AI endpoint", color = PlumText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Separate from Claude subscription sessions.",
+                        color = PlumMuted,
+                        fontSize = 11.sp,
+                    )
+                }
+                StatusPill(if (status?.configured == true) "Configured" else "Not configured", if (status?.configured == true) PlumGreen else PlumMuted)
+            }
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it },
+                label = { Text("Base URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = { Text(if (status?.hasAuthToken == true) "New API token (leave blank to keep)" else "API token") },
+                supportingText = status?.authTokenPreview?.let { preview -> { Text("Stored: $preview") } },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(value = opus, onValueChange = { opus = it }, label = { Text("Opus model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = sonnet, onValueChange = { sonnet = it }, label = { Text("Sonnet model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = haiku, onValueChange = { haiku = it }, label = { Text("Haiku model") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            error?.let { Text(it, color = PlumRed, fontSize = 11.sp) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                if (status?.configured == true) ActionButton("Reset", enabled = !saving, onClick = onReset)
+                ActionButton("Save", enabled = canSave) {
+                    onSave(baseUrl, token, opus, sonnet, haiku)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuntimeDefaultsPanel(
+    providerId: String,
+    reasoning: String,
+    codexWebSearch: String,
+    codexFast: Boolean,
+    onReasoning: (String) -> Unit,
+    onWebSearch: (String) -> Unit,
+    onFastTier: (Boolean) -> Unit,
+) {
+    val reasoningOptions = if (providerId == "codex") {
+        listOf("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+    } else {
+        listOf("low", "medium", "high", "max")
+    }
+
+    GlassPanel(Modifier.fillMaxWidth(), radius = 19.dp) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Text("Runtime defaults", color = PlumText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Applied to new sessions and the next provider turn.",
+                color = PlumMuted,
+                fontSize = 12.sp,
+            )
+            Text("Reasoning", color = PlumMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            reasoningOptions.chunked(4).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    row.forEach { option ->
+                        ChoiceChip(
+                            label = option,
+                            selected = reasoning == option,
+                            modifier = Modifier.weight(1f),
+                        ) { onReasoning(option) }
+                    }
+                    repeat(4 - row.size) { Box(Modifier.weight(1f)) }
+                }
+            }
+
+            if (providerId == "codex") {
+                Text("Web search", color = PlumMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    listOf("auto", "cached", "live", "disabled").forEach { option ->
+                        ChoiceChip(
+                            label = option,
+                            selected = codexWebSearch == option,
+                            modifier = Modifier.weight(1f),
+                        ) { onWebSearch(option) }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Fast service tier", color = PlumText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("Uses priority processing when the model supports it.", color = PlumMuted, fontSize = 11.sp)
+                    }
+                    Switch(checked = codexFast, onCheckedChange = onFastTier)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) PlumAccent.copy(alpha = .22f) else PlumSubtleFill)
+            .border(1.dp, if (selected) PlumAccent else PlumBorder, RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (selected) PlumAccent else PlumText,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 

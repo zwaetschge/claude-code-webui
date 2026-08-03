@@ -11,6 +11,9 @@ import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CLIProviderConfig
 import com.claudewebui.app.data.model.CliLoginSession
 import com.claudewebui.app.data.model.ConfigAgent
+import com.claudewebui.app.data.model.ConfigDocument
+import com.claudewebui.app.data.model.ConfigItemKind
+import com.claudewebui.app.data.model.ConfigMarketplace
 import com.claudewebui.app.data.model.ConfigPlugin
 import com.claudewebui.app.data.model.ConfigSkill
 import com.claudewebui.app.data.model.CreateMcpServerInput
@@ -18,7 +21,7 @@ import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.McpServerType
-import com.claudewebui.app.data.model.PermissionAction
+import com.claudewebui.app.data.model.OpenCodeProvider
 import com.claudewebui.app.data.model.ProviderType
 import com.claudewebui.app.data.model.SlashCommand
 import com.claudewebui.app.data.model.Theme
@@ -26,6 +29,9 @@ import com.claudewebui.app.data.model.UpdateCustomAgentInput
 import com.claudewebui.app.data.model.UpdateMcpServerInput
 import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UserSettings
+import com.claudewebui.app.data.model.UpdateZaiApiInput
+import com.claudewebui.app.data.model.SaveOpenCodeProviderInput
+import com.claudewebui.app.data.model.ZaiApiStatus
 import com.claudewebui.app.data.repository.AuthRepository
 import com.claudewebui.app.data.repository.SettingsRepository
 import com.claudewebui.app.ui.theme.AppThemeOption
@@ -46,17 +52,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-
-// ── Local preference rule (not a server model) ────────────────────────────────
-
-data class PermissionRule(
-    val id: String,
-    val toolPattern: String,
-    val action: PermissionAction,
-    val scope: PermissionScope,
-)
-
-enum class PermissionScope { SESSION, GLOBAL }
 
 // ── CLI tool (opaque from the API but we surface key fields) ──────────────────
 
@@ -106,6 +101,12 @@ data class SettingsUiState(
     val providers: List<AIProvider> = emptyList(),
     val cliProviders: List<CLIProviderConfig> = emptyList(),
     val providerTestResults: Map<String, TestResult> = emptyMap(),
+    val zaiApi: ZaiApiStatus? = null,
+    val zaiApiSaving: Boolean = false,
+    val openCodeProviders: List<OpenCodeProvider> = emptyList(),
+    val openCodeSaving: Boolean = false,
+    val openCodeTestResults: Map<String, TestResult> = emptyMap(),
+    val openCodeTestMessages: Map<String, String> = emptyMap(),
 
     // MCP
     val mcpServers: List<McpServer> = emptyList(),
@@ -124,14 +125,16 @@ data class SettingsUiState(
     val configAgents: List<ConfigAgent> = emptyList(),
     val configSkills: List<ConfigSkill> = emptyList(),
     val configPlugins: List<ConfigPlugin> = emptyList(),
+    val configMarketplaces: List<ConfigMarketplace> = emptyList(),
+    val marketplaceBusyIds: Set<String> = emptySet(),
     val designStyles: List<ConfigSkill> = emptyList(),
     val writingStyles: List<ConfigSkill> = emptyList(),
     val commands: List<SlashCommand> = emptyList(),
     val libraryLoading: Boolean = false,
-
-    // Permissions
-    val permissionRules: List<PermissionRule> = emptyList(),
-    val defaultPermissionMode: PermissionAction = PermissionAction.ALLOW_ONCE,
+    val libraryEditorKind: ConfigItemKind? = null,
+    val libraryDocument: ConfigDocument? = null,
+    val libraryEditorLoading: Boolean = false,
+    val librarySaving: Boolean = false,
 
     // CLI harness login in progress
     val cliLogin: CliLoginSession? = null,
@@ -163,7 +166,6 @@ private const val KEY_FONT_SIZE = "font_size"
 private const val KEY_NOTIFICATIONS = "notifications_enabled"
 private const val KEY_BIOMETRIC = "biometric_enabled"
 private const val KEY_SESSION_TIMEOUT = "session_timeout_minutes"
-private const val KEY_DEFAULT_PERMISSION_MODE = "default_permission_mode"
 
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
@@ -187,10 +189,6 @@ class SettingsViewModel(
 
     private fun loadLocalPrefs() {
         val fontSizeName = prefs.getString(KEY_FONT_SIZE, FontSize.MEDIUM.name) ?: FontSize.MEDIUM.name
-        val permissionModeName = prefs.getString(
-            KEY_DEFAULT_PERMISSION_MODE, PermissionAction.ALLOW_ONCE.name
-        ) ?: PermissionAction.ALLOW_ONCE.name
-
         _uiState.update {
             it.copy(
                 serverUrl = TokenStore.getServerUrl() ?: "",
@@ -199,9 +197,6 @@ class SettingsViewModel(
                 notificationsEnabled = prefs.getBoolean(KEY_NOTIFICATIONS, true),
                 biometricEnabled = prefs.getBoolean(KEY_BIOMETRIC, false),
                 sessionTimeoutMinutes = prefs.getInt(KEY_SESSION_TIMEOUT, 30),
-                defaultPermissionMode = PermissionAction.entries.firstOrNull { e ->
-                    e.name == permissionModeName
-                } ?: PermissionAction.ALLOW_ONCE,
             )
         }
     }
@@ -237,6 +232,14 @@ class SettingsViewModel(
                 launch {
                     settingsRepository.getCLIProviders()
                         .onSuccess { providers -> _uiState.update { it.copy(cliProviders = providers) } }
+                }
+                launch {
+                    settingsRepository.getZaiApi()
+                        .onSuccess { status -> _uiState.update { it.copy(zaiApi = status) } }
+                }
+                launch {
+                    settingsRepository.getOpenCodeProviders()
+                        .onSuccess { providers -> _uiState.update { it.copy(openCodeProviders = providers) } }
                 }
                 launch {
                     settingsRepository.getMcpServers()
@@ -293,6 +296,12 @@ class SettingsViewModel(
             launch {
                 settingsRepository.getConfigPlugins()
                     .onSuccess { plugins -> _uiState.update { it.copy(configPlugins = plugins) } }
+            }
+            launch {
+                settingsRepository.getConfigMarketplaces()
+                    .onSuccess { marketplaces ->
+                        _uiState.update { it.copy(configMarketplaces = marketplaces) }
+                    }
             }
             launch {
                 settingsRepository.getStyleLibrary()
@@ -388,14 +397,16 @@ class SettingsViewModel(
     // The server flips these itself and reports the resulting state, so we patch
     // the matching entry with what came back rather than what the UI requested.
 
-    fun toggleConfigSkill(name: String) {
+    fun toggleConfigSkill(key: String) {
         viewModelScope.launch {
-            settingsRepository.toggleConfigSkill(name)
+            settingsRepository.toggleConfigSkill(key)
                 .onSuccess { enabled ->
                     _uiState.update { state ->
                         state.copy(
                             configSkills = state.configSkills.map {
-                                if (it.name == name) it.copy(enabled = enabled) else it
+                                if (it.baseName == key || it.id.removePrefix("user-") == key) {
+                                    it.copy(enabled = enabled)
+                                } else it
                             },
                         )
                     }
@@ -404,14 +415,14 @@ class SettingsViewModel(
         }
     }
 
-    fun toggleConfigAgent(name: String) {
+    fun toggleConfigAgent(key: String) {
         viewModelScope.launch {
-            settingsRepository.toggleConfigAgent(name)
+            settingsRepository.toggleConfigAgent(key)
                 .onSuccess { enabled ->
                     _uiState.update { state ->
                         state.copy(
                             configAgents = state.configAgents.map {
-                                if (it.name == name) it.copy(enabled = enabled) else it
+                                if (it.id.removePrefix("user-") == key) it.copy(enabled = enabled) else it
                             },
                         )
                     }
@@ -420,14 +431,14 @@ class SettingsViewModel(
         }
     }
 
-    fun toggleConfigPlugin(name: String) {
+    fun toggleConfigPlugin(key: String) {
         viewModelScope.launch {
-            settingsRepository.toggleConfigPlugin(name)
+            settingsRepository.toggleConfigPlugin(key)
                 .onSuccess { enabled ->
                     _uiState.update { state ->
                         state.copy(
                             configPlugins = state.configPlugins.map {
-                                if (it.name == name) it.copy(enabled = enabled) else it
+                                if (it.id.removePrefix("user-") == key) it.copy(enabled = enabled) else it
                             },
                         )
                     }
@@ -435,6 +446,101 @@ class SettingsViewModel(
                 .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
         }
     }
+
+    fun createConfigDocument(kind: ConfigItemKind) {
+        _uiState.update {
+            it.copy(
+                libraryEditorKind = kind,
+                libraryDocument = ConfigDocument(kind = kind),
+                libraryEditorLoading = false,
+            )
+        }
+    }
+
+    fun openConfigDocument(kind: ConfigItemKind, key: String) {
+        _uiState.update {
+            it.copy(
+                libraryEditorKind = kind,
+                libraryDocument = null,
+                libraryEditorLoading = true,
+                error = null,
+            )
+        }
+        viewModelScope.launch {
+            settingsRepository.getConfigDocument(kind, key)
+                .onSuccess { document ->
+                    _uiState.update {
+                        it.copy(libraryDocument = document, libraryEditorLoading = false)
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            libraryEditorKind = null,
+                            libraryEditorLoading = false,
+                            error = error.message,
+                        )
+                    }
+                }
+        }
+    }
+
+    fun dismissConfigEditor() {
+        _uiState.update {
+            it.copy(
+                libraryEditorKind = null,
+                libraryDocument = null,
+                libraryEditorLoading = false,
+                librarySaving = false,
+            )
+        }
+    }
+
+    fun saveConfigDocument(document: ConfigDocument) {
+        _uiState.update { it.copy(librarySaving = true, error = null) }
+        viewModelScope.launch {
+            settingsRepository.saveConfigDocument(document)
+                .onSuccess {
+                    dismissConfigEditor()
+                    _uiState.update { it.copy(toastMessage = "${document.kind.label()} saved") }
+                    loadConfigLibraryInternal()
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(librarySaving = false, error = error.message) }
+                }
+        }
+    }
+
+    fun deleteConfigDocument(document: ConfigDocument) {
+        _uiState.update { it.copy(librarySaving = true, error = null) }
+        viewModelScope.launch {
+            settingsRepository.deleteConfigDocument(document)
+                .onSuccess {
+                    dismissConfigEditor()
+                    _uiState.update { it.copy(toastMessage = "${document.kind.label()} removed") }
+                    loadConfigLibraryInternal()
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(librarySaving = false, error = error.message) }
+                }
+        }
+    }
+
+    fun installMarketplacePlugin(pluginName: String, marketplaceId: String) {
+        val id = "$pluginName@$marketplaceId"
+        _uiState.update { it.copy(marketplaceBusyIds = it.marketplaceBusyIds + id, error = null) }
+        viewModelScope.launch {
+            settingsRepository.installConfigPlugin(pluginName, marketplaceId)
+                .onSuccess {
+                    _uiState.update { it.copy(toastMessage = "$pluginName installed") }
+                    loadConfigLibraryInternal()
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+            _uiState.update { it.copy(marketplaceBusyIds = it.marketplaceBusyIds - id) }
+        }
+    }
+
+    private fun ConfigItemKind.label(): String = name.lowercase().replaceFirstChar { it.uppercase() }
 
     // ── Theme / appearance ────────────────────────────────────────────────────
 
@@ -567,6 +673,170 @@ class SettingsViewModel(
                     }
                 }
                 .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun setProviderReasoning(providerId: String, reasoning: String) {
+        viewModelScope.launch {
+            val current = _uiState.value.userSettings?.cliProviderReasoning ?: emptyMap()
+            val merged = current + (providerId.lowercase() to reasoning)
+            settingsRepository.updateSettings(cliProviderReasoning = merged)
+                .onSuccess { settings ->
+                    _uiState.update {
+                        it.copy(userSettings = settings, toastMessage = "Reasoning set to $reasoning")
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun setCodexWebSearch(mode: String) {
+        viewModelScope.launch {
+            settingsRepository.updateSettings(codexWebSearch = mode)
+                .onSuccess { settings ->
+                    _uiState.update {
+                        it.copy(userSettings = settings, toastMessage = "Web search set to $mode")
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun setCodexFastTier(enabled: Boolean) {
+        viewModelScope.launch {
+            val current = _uiState.value.userSettings?.cliProviderServiceTiers ?: emptyMap()
+            val merged = if (enabled) current + ("codex" to "fast") else current - "codex"
+            settingsRepository.updateSettings(cliProviderServiceTiers = merged)
+                .onSuccess { settings ->
+                    _uiState.update {
+                        it.copy(
+                            userSettings = settings,
+                            toastMessage = if (enabled) "Fast tier enabled" else "Default tier restored",
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(error = error.message) } }
+        }
+    }
+
+    fun saveZaiApi(
+        baseUrl: String,
+        authToken: String,
+        opusModel: String,
+        sonnetModel: String,
+        haikuModel: String,
+    ) {
+        _uiState.update { it.copy(zaiApiSaving = true, error = null) }
+        viewModelScope.launch {
+            settingsRepository.updateZaiApi(
+                UpdateZaiApiInput(
+                    baseUrl = baseUrl.trim(),
+                    authToken = authToken.trim().takeIf { it.isNotBlank() },
+                    opusModel = opusModel.trim().takeIf { it.isNotBlank() },
+                    sonnetModel = sonnetModel.trim().takeIf { it.isNotBlank() },
+                    haikuModel = haikuModel.trim().takeIf { it.isNotBlank() },
+                ),
+            ).onSuccess { status ->
+                _uiState.update {
+                    it.copy(zaiApi = status, zaiApiSaving = false, toastMessage = "Z.AI configuration saved")
+                }
+            }.onFailure { error ->
+                _uiState.update { it.copy(zaiApiSaving = false, error = error.message) }
+            }
+        }
+    }
+
+    fun resetZaiApi() {
+        _uiState.update { it.copy(zaiApiSaving = true, error = null) }
+        viewModelScope.launch {
+            settingsRepository.deleteZaiApi()
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(zaiApi = ZaiApiStatus(), zaiApiSaving = false, toastMessage = "Z.AI configuration removed")
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(zaiApiSaving = false, error = error.message) }
+                }
+        }
+    }
+
+    fun saveOpenCodeProvider(
+        id: String,
+        name: String,
+        apiKey: String,
+        baseUrl: String,
+        enabled: Boolean,
+    ) {
+        _uiState.update { it.copy(openCodeSaving = true, error = null) }
+        viewModelScope.launch {
+            settingsRepository.saveOpenCodeProvider(
+                SaveOpenCodeProviderInput(
+                    id = id.trim(),
+                    name = name.trim(),
+                    apiKey = apiKey.trim().takeIf { it.isNotBlank() },
+                    baseUrl = baseUrl.trim().takeIf { it.isNotBlank() },
+                    enabled = enabled,
+                ),
+            ).onSuccess { provider ->
+                _uiState.update { state ->
+                    state.copy(
+                        openCodeProviders = state.openCodeProviders
+                            .filterNot { it.id == provider.id } + provider,
+                        openCodeSaving = false,
+                        toastMessage = "${provider.name} saved",
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update { it.copy(openCodeSaving = false, error = error.message) }
+            }
+        }
+    }
+
+    fun deleteOpenCodeProvider(id: String) {
+        _uiState.update { it.copy(openCodeSaving = true, error = null) }
+        viewModelScope.launch {
+            settingsRepository.deleteOpenCodeProvider(id)
+                .onSuccess {
+                    _uiState.update {
+                        it.copy(
+                            openCodeProviders = it.openCodeProviders.filterNot { provider -> provider.id == id },
+                            openCodeSaving = false,
+                            toastMessage = "OpenCode provider removed",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(openCodeSaving = false, error = error.message) }
+                }
+        }
+    }
+
+    fun testOpenCodeProvider(id: String) {
+        _uiState.update {
+            it.copy(openCodeTestResults = it.openCodeTestResults + (id to TestResult.Testing))
+        }
+        viewModelScope.launch {
+            settingsRepository.testOpenCodeProvider(id)
+                .onSuccess { test ->
+                    _uiState.update {
+                        it.copy(
+                            openCodeTestResults = it.openCodeTestResults + (
+                                id to if (test.connected) TestResult.Success else TestResult.Failure(test.message)
+                            ),
+                            openCodeTestMessages = it.openCodeTestMessages + (id to test.message),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    val message = error.message ?: "Test failed"
+                    _uiState.update {
+                        it.copy(
+                            openCodeTestResults = it.openCodeTestResults + (id to TestResult.Failure(message)),
+                            openCodeTestMessages = it.openCodeTestMessages + (id to message),
+                        )
+                    }
+                }
         }
     }
 
@@ -783,44 +1053,6 @@ class SettingsViewModel(
         _uiState.update { state ->
             state.copy(agents = state.agents + copy, toastMessage = "Agent duplicated")
         }
-    }
-
-    // ── Permissions ───────────────────────────────────────────────────────────
-
-    fun addPermissionRule(toolPattern: String, action: PermissionAction, scope: PermissionScope) {
-        val rule = PermissionRule(
-            id = java.util.UUID.randomUUID().toString(),
-            toolPattern = toolPattern,
-            action = action,
-            scope = scope,
-        )
-        _uiState.update { it.copy(permissionRules = it.permissionRules + rule) }
-    }
-
-    fun updatePermissionRule(id: String, toolPattern: String, action: PermissionAction, scope: PermissionScope) {
-        _uiState.update { state ->
-            state.copy(
-                permissionRules = state.permissionRules.map { rule ->
-                    if (rule.id == id) rule.copy(toolPattern = toolPattern, action = action, scope = scope)
-                    else rule
-                }
-            )
-        }
-    }
-
-    fun deletePermissionRule(id: String) {
-        _uiState.update { state ->
-            state.copy(permissionRules = state.permissionRules.filter { it.id != id })
-        }
-    }
-
-    fun setDefaultPermissionMode(action: PermissionAction) {
-        prefs.edit().putString(KEY_DEFAULT_PERMISSION_MODE, action.name).apply()
-        _uiState.update { it.copy(defaultPermissionMode = action) }
-    }
-
-    fun resetAllPermissions() {
-        _uiState.update { it.copy(permissionRules = emptyList(), toastMessage = "All permissions reset") }
     }
 
     // ── CLI harness login ─────────────────────────────────────────────────────

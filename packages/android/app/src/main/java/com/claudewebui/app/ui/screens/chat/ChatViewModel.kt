@@ -52,6 +52,7 @@ class ChatViewModel(
                     isSessionReady = true
                     observeSocketEvents()
                     loadDraft()
+                    loadAllowedDirectories()
                     if (socketManager.connectionState.value == ConnectionState.CONNECTED) {
                         socketManager.subscribeToSession(sessionId)
                     }
@@ -446,6 +447,58 @@ class ChatViewModel(
     fun setMode(mode: SessionMode) {
         socketManager.setMode(sessionId, mode)
         _uiState.update { it.copy(sessionMode = mode, settingsNotice = "Mode set to ${mode.label}") }
+    }
+
+    fun loadAllowedDirectories() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(directoriesLoading = true) }
+            sessionRepository.getAllowedDirectories(sessionId)
+                .onSuccess { directories ->
+                    _uiState.update { it.copy(allowedDirectories = directories, directoriesLoading = false) }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(directoriesLoading = false, error = error.message) }
+                }
+        }
+    }
+
+    fun addAllowedDirectory(directory: String) {
+        if (directory.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(directoriesLoading = true) }
+            sessionRepository.addAllowedDirectory(sessionId, directory.trim())
+                .onSuccess { directories ->
+                    _uiState.update {
+                        it.copy(
+                            allowedDirectories = directories,
+                            directoriesLoading = false,
+                            settingsNotice = "Directory allowed for this session",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(directoriesLoading = false, error = error.message) }
+                }
+        }
+    }
+
+    fun removeAllowedDirectory(directory: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(directoriesLoading = true) }
+            sessionRepository.removeAllowedDirectory(sessionId, directory)
+                .onSuccess { directories ->
+                    _uiState.update {
+                        it.copy(
+                            allowedDirectories = directories,
+                            directoriesLoading = false,
+                            settingsNotice = "Directory access removed",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(directoriesLoading = false, error = error.message) }
+                }
+        }
     }
 
     private fun applySessionChange(notice: String, block: suspend () -> Result<Session>) {

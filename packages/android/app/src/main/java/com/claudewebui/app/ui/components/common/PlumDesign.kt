@@ -516,6 +516,7 @@ fun providerColor(provider: CLIProvider): Color = when (provider) {
     CLIProvider.OPENCODE -> PlumAccent
     CLIProvider.PI -> PlumBlue
     CLIProvider.KIMI -> Color(0xFF2582ED)
+    CLIProvider.ZAI -> Color(0xFF7ED957)
     CLIProvider.CLAUDE -> PlumAmber
 }
 
@@ -524,6 +525,7 @@ fun providerLabel(provider: CLIProvider): String = when (provider) {
     CLIProvider.OPENCODE -> "OPENCODE"
     CLIProvider.PI -> "PI"
     CLIProvider.KIMI -> "KIMI"
+    CLIProvider.ZAI -> "Z.AI"
     CLIProvider.CLAUDE -> "CLAUDE"
 }
 
@@ -532,6 +534,7 @@ fun providerModel(provider: CLIProvider): String = when (provider) {
     CLIProvider.OPENCODE -> "glm-5.1"
     CLIProvider.PI -> "glm-5.1"
     CLIProvider.KIMI -> "kimi-for-coding"
+    CLIProvider.ZAI -> "opus"
     CLIProvider.CLAUDE -> "sonnet"
 }
 

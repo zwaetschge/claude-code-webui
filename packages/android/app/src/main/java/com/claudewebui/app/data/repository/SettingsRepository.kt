@@ -8,6 +8,9 @@ import com.claudewebui.app.data.model.CLIProviderConfig
 import com.claudewebui.app.data.model.CLIProviderStatus
 import com.claudewebui.app.data.model.CliLoginSession
 import com.claudewebui.app.data.model.ConfigAgent
+import com.claudewebui.app.data.model.ConfigDocument
+import com.claudewebui.app.data.model.ConfigItemKind
+import com.claudewebui.app.data.model.ConfigMarketplace
 import com.claudewebui.app.data.model.ConfigPlugin
 import com.claudewebui.app.data.model.ConfigSkill
 import com.claudewebui.app.data.model.CreateCategoryInput
@@ -17,7 +20,13 @@ import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.McpTestResult
+import com.claudewebui.app.data.model.OpenCodeProvider
+import com.claudewebui.app.data.model.OpenCodeProviderTest
+import com.claudewebui.app.data.model.InstallPluginInput
 import com.claudewebui.app.data.model.ProviderTestResult
+import com.claudewebui.app.data.model.SaveConfigAgentInput
+import com.claudewebui.app.data.model.SaveConfigPluginInput
+import com.claudewebui.app.data.model.SaveConfigSkillInput
 import com.claudewebui.app.data.model.SlashCommand
 import com.claudewebui.app.data.model.StyleLibrary
 import com.claudewebui.app.data.model.Theme
@@ -28,6 +37,9 @@ import com.claudewebui.app.data.model.UpdateMcpServerInput
 import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UpdateSettingsInput
 import com.claudewebui.app.data.model.UserSettings
+import com.claudewebui.app.data.model.UpdateZaiApiInput
+import com.claudewebui.app.data.model.SaveOpenCodeProviderInput
+import com.claudewebui.app.data.model.ZaiApiStatus
 import kotlinx.serialization.json.JsonElement
 
 /**
@@ -59,7 +71,10 @@ class SettingsRepository(
         customSystemPrompt: String? = null,
         uiProvider: UiProvider? = null,
         defaultCliProvider: CLIProvider? = null,
-        cliProviderModels: Map<String, String>? = null
+        cliProviderModels: Map<String, String>? = null,
+        cliProviderReasoning: Map<String, String>? = null,
+        cliProviderServiceTiers: Map<String, String>? = null,
+        codexWebSearch: String? = null,
     ): Result<UserSettings> = runCatching {
         val input = UpdateSettingsInput(
             theme = theme,
@@ -68,11 +83,65 @@ class SettingsRepository(
             customSystemPrompt = customSystemPrompt,
             uiProvider = uiProvider,
             defaultCliProvider = defaultCliProvider,
-            cliProviderModels = cliProviderModels
+            cliProviderModels = cliProviderModels,
+            cliProviderReasoning = cliProviderReasoning,
+            cliProviderServiceTiers = cliProviderServiceTiers,
+            codexWebSearch = codexWebSearch,
         )
         val response = api.updateSettings(input)
         if (!response.success || response.data == null) {
             error(response.error?.message ?: "Failed to update settings")
+        }
+        response.data
+    }
+
+    suspend fun getZaiApi(): Result<ZaiApiStatus> = runCatching {
+        val response = api.getZaiApi()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch Z.AI configuration")
+        }
+        response.data
+    }
+
+    suspend fun updateZaiApi(input: UpdateZaiApiInput): Result<ZaiApiStatus> = runCatching {
+        val response = api.updateZaiApi(input)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to save Z.AI configuration")
+        }
+        response.data
+    }
+
+    suspend fun deleteZaiApi(): Result<Unit> = runCatching {
+        val response = api.deleteZaiApi()
+        if (!response.success) error(response.error?.message ?: "Failed to reset Z.AI configuration")
+    }
+
+    suspend fun getOpenCodeProviders(): Result<List<OpenCodeProvider>> = runCatching {
+        val response = api.getOpenCodeProviders()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch OpenCode providers")
+        }
+        response.data
+    }
+
+    suspend fun saveOpenCodeProvider(input: SaveOpenCodeProviderInput): Result<OpenCodeProvider> =
+        runCatching {
+            val response = api.saveOpenCodeProvider(input)
+            if (!response.success || response.data == null) {
+                error(response.error?.message ?: "Failed to save OpenCode provider")
+            }
+            response.data
+        }
+
+    suspend fun deleteOpenCodeProvider(id: String): Result<Unit> = runCatching {
+        val response = api.deleteOpenCodeProvider(id)
+        if (!response.success) error(response.error?.message ?: "Failed to delete OpenCode provider")
+    }
+
+    suspend fun testOpenCodeProvider(id: String): Result<OpenCodeProviderTest> = runCatching {
+        val response = api.testOpenCodeProvider(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to test OpenCode provider")
         }
         response.data
     }
@@ -250,6 +319,20 @@ class SettingsRepository(
         response.data
     }
 
+    suspend fun getConfigMarketplaces(): Result<List<ConfigMarketplace>> = runCatching {
+        val response = api.getConfigMarketplaces()
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to fetch marketplaces")
+        }
+        response.data
+    }
+
+    suspend fun installConfigPlugin(pluginName: String, marketplaceId: String): Result<Unit> =
+        runCatching {
+            val response = api.installConfigPlugin(InstallPluginInput(pluginName, marketplaceId))
+            if (!response.success) error(response.error?.message ?: "Failed to install plugin")
+        }
+
     suspend fun getStyleLibrary(): Result<StyleLibrary> = runCatching {
         val response = api.getStyleLibrary()
         if (!response.success || response.data == null) {
@@ -281,6 +364,117 @@ class SettingsRepository(
             error(response.error?.message ?: "Failed to toggle plugin")
         }
         response.data.enabled
+    }
+
+    suspend fun getConfigDocument(kind: ConfigItemKind, key: String): Result<ConfigDocument> =
+        runCatching {
+            when (kind) {
+                ConfigItemKind.AGENT -> {
+                    val response = api.getConfigAgent(key)
+                    val item = response.data
+                        ?.takeIf { response.success }
+                        ?: error(response.error?.message ?: "Failed to fetch agent")
+                    ConfigDocument(
+                        kind = kind,
+                        key = key,
+                        name = item.name,
+                        description = item.description,
+                        content = item.prompt,
+                        tools = item.tools,
+                        model = item.model.orEmpty(),
+                        enabled = item.enabled,
+                    )
+                }
+                ConfigItemKind.SKILL -> {
+                    val response = api.getConfigSkill(key)
+                    val item = response.data
+                        ?.takeIf { response.success }
+                        ?: error(response.error?.message ?: "Failed to fetch skill")
+                    ConfigDocument(
+                        kind = kind,
+                        key = key,
+                        name = item.name,
+                        description = item.description,
+                        content = item.content,
+                        tools = item.allowedTools,
+                        model = item.model.orEmpty(),
+                        enabled = item.enabled,
+                    )
+                }
+                ConfigItemKind.PLUGIN -> {
+                    val response = api.getConfigPlugin(key)
+                    val item = response.data
+                        ?.takeIf { response.success }
+                        ?: error(response.error?.message ?: "Failed to fetch plugin")
+                    ConfigDocument(
+                        kind = kind,
+                        key = key,
+                        name = item.name,
+                        description = item.description,
+                        content = item.content,
+                        version = item.version,
+                        author = item.author.orEmpty(),
+                        category = item.category.orEmpty(),
+                        enabled = item.enabled,
+                    )
+                }
+            }
+        }
+
+    suspend fun saveConfigDocument(document: ConfigDocument): Result<Unit> = runCatching {
+        when (document.kind) {
+            ConfigItemKind.AGENT -> {
+                val response = api.saveConfigAgent(
+                    document.key,
+                    SaveConfigAgentInput(
+                        name = document.name,
+                        description = document.description,
+                        tools = document.tools,
+                        model = document.model.takeIf { it.isNotBlank() },
+                        prompt = document.content,
+                    ),
+                )
+                if (!response.success) error(response.error?.message ?: "Failed to save agent")
+            }
+            ConfigItemKind.SKILL -> {
+                val response = api.saveConfigSkill(
+                    document.key,
+                    SaveConfigSkillInput(
+                        name = document.name,
+                        description = document.description,
+                        allowedTools = document.tools,
+                        model = document.model.takeIf { it.isNotBlank() },
+                        content = document.content,
+                    ),
+                )
+                if (!response.success) error(response.error?.message ?: "Failed to save skill")
+            }
+            ConfigItemKind.PLUGIN -> {
+                val response = api.saveConfigPlugin(
+                    document.key,
+                    SaveConfigPluginInput(
+                        name = document.name,
+                        description = document.description,
+                        version = document.version.ifBlank { "1.0.0" },
+                        author = document.author.takeIf { it.isNotBlank() },
+                        category = document.category.takeIf { it.isNotBlank() },
+                        content = document.content,
+                    ),
+                )
+                if (!response.success) error(response.error?.message ?: "Failed to save plugin")
+            }
+        }
+    }
+
+    suspend fun deleteConfigDocument(document: ConfigDocument): Result<Unit> = runCatching {
+        val key = document.key ?: error("Unsaved entries cannot be deleted")
+        val response = when (document.kind) {
+            ConfigItemKind.AGENT -> api.deleteConfigAgent(key)
+            ConfigItemKind.SKILL -> api.deleteConfigSkill(key)
+            // This delete route expects user-<slug> for local plugins.
+            ConfigItemKind.PLUGIN -> api.deleteConfigPlugin("user-$key")
+        }
+        if (!response.success) error(response.error?.message ?: "Failed to delete entry")
     }
 
     /** Custom CLI tools registered on the server. Payloads stay opaque JSON. */

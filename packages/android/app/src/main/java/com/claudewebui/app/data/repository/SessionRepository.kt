@@ -185,6 +185,30 @@ class SessionRepository(
         response.data
     }
 
+    suspend fun getAllowedDirectories(id: String): Result<List<String>> = runCatching {
+        val response = api.getAllowedDirectories(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to load allowed directories")
+        }
+        response.data
+    }
+
+    suspend fun addAllowedDirectory(id: String, directory: String): Result<List<String>> = runCatching {
+        val response = api.addAllowedDirectory(id, directory)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to allow directory")
+        }
+        response.data
+    }
+
+    suspend fun removeAllowedDirectory(id: String, directory: String): Result<List<String>> = runCatching {
+        val response = api.removeAllowedDirectory(id, directory)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to remove directory")
+        }
+        response.data
+    }
+
     /**
      * Update the category for a session.
      */

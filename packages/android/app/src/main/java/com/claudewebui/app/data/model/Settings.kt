@@ -64,3 +64,23 @@ data class HomePaths(
     val home: String,
     val defaultWorkingDir: String? = null
 )
+
+@Serializable
+data class ZaiApiStatus(
+    val configured: Boolean = false,
+    val baseUrl: String = "",
+    val hasAuthToken: Boolean = false,
+    val authTokenPreview: String? = null,
+    val opusModel: String = "",
+    val sonnetModel: String = "",
+    val haikuModel: String = "",
+)
+
+@Serializable
+data class UpdateZaiApiInput(
+    val baseUrl: String,
+    val authToken: String? = null,
+    val opusModel: String? = null,
+    val sonnetModel: String? = null,
+    val haikuModel: String? = null,
+)
