@@ -46,6 +46,7 @@ import com.claudewebui.app.ui.screens.filemanager.FileEditorScreen
 import com.claudewebui.app.ui.screens.notes.NotesScreen
 import com.claudewebui.app.ui.screens.settings.IntegrationsScreen
 import com.claudewebui.app.ui.screens.operations.OperationsScreen
+import com.claudewebui.app.ui.screens.devtools.DevToolsScreen
 import com.claudewebui.app.ui.screens.memory.MemoryScreen
 import com.claudewebui.app.ui.screens.settings.CliProviderDetailScreen
 import com.claudewebui.app.ui.screens.settings.McpSettingsScreen
@@ -222,6 +223,9 @@ fun AppNavigation(
                 onNavigateToCheckpoints = { sid ->
                     navController.navigate(Routes.CheckpointManager.createRoute(sid))
                 },
+                onNavigateToDevTools = { workingDirectory ->
+                    navController.navigate(Routes.DevTools.createRoute(workingDirectory))
+                },
                 onNavigateToMemory = { workingDirectory ->
                     navController.navigate(Routes.Memory.createRoute(workingDirectory))
                 },
@@ -327,6 +331,18 @@ fun AppNavigation(
         composable(route = Routes.Operations.route) {
             OperationsScreen(
                 viewModel = koinViewModel(),
+                onNavigateBack = { navController.popBackStack() },
+            )
+        }
+
+        // ---- Dev tools ----
+
+        composable(route = Routes.DevTools.ROUTE) { entry ->
+            val encoded =
+                entry.arguments?.getString(Routes.DevTools.ARG_WORKING_DIRECTORY).orEmpty()
+            val workingDirectory = java.net.URLDecoder.decode(encoded, "UTF-8")
+            DevToolsScreen(
+                viewModel = koinViewModel { parametersOf(workingDirectory) },
                 onNavigateBack = { navController.popBackStack() },
             )
         }

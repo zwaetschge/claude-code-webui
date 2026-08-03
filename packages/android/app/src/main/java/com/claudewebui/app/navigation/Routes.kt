@@ -75,6 +75,16 @@ sealed class Routes(val route: String) {
     /** Tool permissions */
     object SettingsPermissions : Routes("settings/permissions")
 
+    /** Dev-server preview ports and GitHub for one session's working directory */
+    data class DevTools(val workingDirectory: String) : Routes(ROUTE) {
+        companion object {
+            const val ROUTE = "devtools/{workingDirectory}"
+            const val ARG_WORKING_DIRECTORY = "workingDirectory"
+            fun createRoute(workingDirectory: String) =
+                "devtools/" + java.net.URLEncoder.encode(workingDirectory, "UTF-8")
+        }
+    }
+
     /** ComfyUI / Discord / Home Assistant status and connection probes */
     object SettingsIntegrations : Routes("settings/integrations")
 

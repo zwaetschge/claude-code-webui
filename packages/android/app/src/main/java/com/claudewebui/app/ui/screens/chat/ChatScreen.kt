@@ -70,6 +70,7 @@ fun ChatScreen(
     onNavigateToCheckpoints: (String) -> Unit = {},
     onNavigateToNotes: (String) -> Unit = {},
     onNavigateToMemory: (String) -> Unit = {},
+    onNavigateToDevTools: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel: ChatViewModel = koinViewModel(parameters = { parametersOf(sessionId) })
@@ -147,6 +148,9 @@ fun ChatScreen(
                 // Memory files hang off the working directory, not the session.
                 onNavigateToMemory = {
                     onNavigateToMemory(displaySession?.workingDirectory ?: "")
+                },
+                onNavigateToDevTools = {
+                    onNavigateToDevTools(displaySession?.workingDirectory ?: "")
                 },
                 isEditingTitle = uiState.isEditingTitle,
             )
@@ -340,6 +344,7 @@ private fun ChatTopBar(
     onOpenSessionSettings: () -> Unit,
     onNavigateToNotes: () -> Unit,
     onNavigateToMemory: () -> Unit,
+    onNavigateToDevTools: () -> Unit,
     isEditingTitle: Boolean,
 ) {
     var editTitleText by remember(session?.name) { mutableStateOf(session?.name ?: "") }
@@ -459,6 +464,11 @@ private fun ChatTopBar(
                         text = { Text("Memory") },
                         leadingIcon = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
                         onClick = { showMenu = false; onNavigateToMemory() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Dev tools") },
+                        leadingIcon = { Icon(Icons.Outlined.Dns, contentDescription = null) },
+                        onClick = { showMenu = false; onNavigateToDevTools() },
                     )
                     DropdownMenuItem(
                         text = { Text("Checkpoints") },

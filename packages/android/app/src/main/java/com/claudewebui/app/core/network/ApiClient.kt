@@ -701,6 +701,71 @@ class ApiClient {
         }.body()
 
     // ========================================================================
+    // Web preview
+    //
+    // These routes answer with the bare object rather than the ApiResponse
+    // envelope used elsewhere, so the return types are the payloads directly.
+    // ========================================================================
+
+    /** GET /api/preview/config */
+    suspend fun getPreviewConfig(): PreviewConfig =
+        client.get(url("/api/preview/config")).body()
+
+    /** GET /api/preview/ports — probes the common dev-server ports. */
+    suspend fun getPreviewPorts(projectPath: String? = null): PreviewPortScan =
+        client.get(url("/api/preview/ports")) {
+            projectPath?.let { parameter("projectPath", it) }
+        }.body()
+
+    /** POST /api/preview/start */
+    suspend fun startPreview(projectPath: String, script: String = ""): PreviewProcess =
+        client.post(url("/api/preview/start")) {
+            setBody(PreviewStartInput(projectPath, script))
+        }.body()
+
+    /** POST /api/preview/stop */
+    suspend fun stopPreview(projectPath: String, script: String = ""): PreviewProcess =
+        client.post(url("/api/preview/stop")) {
+            setBody(PreviewStartInput(projectPath, script))
+        }.body()
+
+    // ========================================================================
+    // GitHub
+    // ========================================================================
+
+    /** GET /api/github/token/validate */
+    suspend fun validateGitHubToken(): ApiResponse<GitHubTokenStatus> =
+        client.get(url("/api/github/token/validate")).body()
+
+    /** GET /api/github/user */
+    suspend fun getGitHubUser(): ApiResponse<GitHubUser> =
+        client.get(url("/api/github/user")).body()
+
+    /** GET /api/github/repos */
+    suspend fun getGitHubRepos(): ApiResponse<GitHubRepoPage> =
+        client.get(url("/api/github/repos")).body()
+
+    /** POST /api/github/clone */
+    suspend fun cloneGitHubRepo(
+        repoUrl: String,
+        targetDir: String,
+        branch: String? = null,
+    ): ApiResponse<JsonElement> =
+        client.post(url("/api/github/clone")) {
+            setBody(CloneRepoInput(repoUrl, targetDir, branch))
+        }.body()
+
+    /** POST /api/github/push */
+    suspend fun pushToGitHub(
+        workingDirectory: String,
+        remote: String? = null,
+        branch: String? = null,
+    ): ApiResponse<JsonElement> =
+        client.post(url("/api/github/push")) {
+            setBody(PushInput(workingDirectory, remote, branch))
+        }.body()
+
+    // ========================================================================
     // Health
     // ========================================================================
 

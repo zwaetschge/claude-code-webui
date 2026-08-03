@@ -15,6 +15,7 @@ import com.claudewebui.app.ui.screens.chat.GitViewModel
 import com.claudewebui.app.ui.screens.chat.UsageViewModel
 import com.claudewebui.app.ui.screens.dashboard.DashboardViewModel
 import com.claudewebui.app.ui.screens.filemanager.FileManagerViewModel
+import com.claudewebui.app.ui.screens.devtools.DevToolsViewModel
 import com.claudewebui.app.ui.screens.memory.MemoryViewModel
 import com.claudewebui.app.ui.screens.operations.OperationsViewModel
 import com.claudewebui.app.ui.screens.settings.IntegrationsViewModel
@@ -76,6 +77,9 @@ val viewModelModule = module {
 
     // MemoryViewModel(workingDirectory, apiClient)
     viewModel { (workingDirectory: String) -> MemoryViewModel(workingDirectory, get()) }
+
+    // DevToolsViewModel(workingDirectory, apiClient)
+    viewModel { (workingDirectory: String) -> DevToolsViewModel(workingDirectory, get()) }
 
     // OperationsViewModel(apiClient)
     viewModel { OperationsViewModel(get()) }
