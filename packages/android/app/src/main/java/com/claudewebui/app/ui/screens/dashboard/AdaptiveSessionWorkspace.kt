@@ -60,6 +60,7 @@ import com.claudewebui.app.ui.components.common.PlumAmber
 import com.claudewebui.app.ui.components.common.PlumGreen
 import com.claudewebui.app.ui.components.common.PlumIconButton
 import com.claudewebui.app.ui.components.common.PlumText
+import com.claudewebui.app.ui.components.common.fadingEdges
 import com.claudewebui.app.ui.components.common.glassSurface
 import com.claudewebui.app.ui.components.dashboard.NewSessionDialog
 import com.claudewebui.app.ui.screens.chat.ChatScreen
@@ -184,7 +185,9 @@ fun AdaptiveSessionWorkspace(
                 }
                 HorizontalDivider(color = PlumBorder)
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    // Cards dissolve at both ends instead of being sliced by
+                    // the divider above and the screen edge below.
+                    modifier = Modifier.fillMaxSize().fadingEdges(top = 14.dp, bottom = 40.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     if (state.searchScope == DashboardSearchScope.MESSAGES) {

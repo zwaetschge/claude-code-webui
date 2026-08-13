@@ -71,6 +71,7 @@ import com.claudewebui.app.ui.components.common.PlumMuted
 import com.claudewebui.app.ui.components.common.PlumRed
 import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.components.common.PlumTrackFill
+import com.claudewebui.app.ui.components.common.fadingEdges
 import com.claudewebui.app.ui.components.common.glassSurface
 import com.claudewebui.app.ui.components.common.providerColor
 import com.claudewebui.app.ui.components.common.providerLabel
@@ -625,7 +626,11 @@ fun ChatScreen(
                 } else {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        // Bubbles dissolve into the header and the composer
+                        // rather than disappearing at the scrim's edge.
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .fadingEdges(top = 20.dp, bottom = 20.dp),
                         contentPadding = PaddingValues(
                             top = padding.calculateTopPadding() + 8.dp,
                             bottom = padding.calculateBottomPadding() + 8.dp,
@@ -1032,8 +1037,8 @@ private fun ChatTopBar(
             .fillMaxWidth()
             .background(
                 Brush.verticalGradient(
-                    0f to palette.background.copy(alpha = .97f),
-                    .92f to palette.background.copy(alpha = .95f),
+                    0f to palette.background,
+                    .88f to palette.background,
                     1f to Color.Transparent,
                 ),
             )

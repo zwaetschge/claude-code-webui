@@ -52,10 +52,14 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
@@ -243,6 +247,63 @@ fun Modifier.glassSurface(
         .background(Brush.verticalGradient(listOf(palette.glassFillTop, palette.glassFill)))
         .border(1.dp, borderColor ?: palette.border, shape)
 }
+
+/**
+ * Dissolves a scroll container's edges instead of clipping them. A list that
+ * ends in a hard line reads as a rendering fault — especially a horizontal row
+ * cut mid-word, or a card sliced by a divider. The content is masked with a
+ * gradient alpha, so the item fades into the backdrop as it scrolls out.
+ *
+ * Offscreen compositing is required: DstIn needs a layer to blend against.
+ */
+fun Modifier.fadingEdges(
+    top: Dp = 0.dp,
+    bottom: Dp = 0.dp,
+    start: Dp = 0.dp,
+    end: Dp = 0.dp,
+): Modifier = this
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        if (top > 0.dp) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.Transparent, Color.Black),
+                    endY = top.toPx(),
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        if (bottom > 0.dp) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.Black, Color.Transparent),
+                    startY = size.height - bottom.toPx(),
+                    endY = size.height,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        if (start > 0.dp) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, Color.Black),
+                    endX = start.toPx(),
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        if (end > 0.dp) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Black, Color.Transparent),
+                    startX = size.width - end.toPx(),
+                    endX = size.width,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+    }
 
 @Composable
 fun PlumIconButton(

@@ -102,6 +102,7 @@ import com.claudewebui.app.ui.components.common.PlumRed
 import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
 import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.components.common.SectionHeading
+import com.claudewebui.app.ui.components.common.fadingEdges
 import com.claudewebui.app.ui.components.common.glassSurface
 import com.claudewebui.app.ui.components.common.isShortWindow
 import com.claudewebui.app.ui.components.common.listColumns
@@ -211,7 +212,9 @@ fun DashboardScreen(
             ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
-                modifier = Modifier.fillMaxSize(),
+                // Cards fade out under the floating nav bar instead of ending
+                // in a straight line across the glass.
+                modifier = Modifier.fillMaxSize().fadingEdges(bottom = 36.dp),
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
@@ -1124,9 +1127,10 @@ internal fun QuickSwitchRow(sessions: List<Session>, onOpen: (String) -> Unit) {
             fontWeight = FontWeight.SemiBold,
         )
         LazyRow(
+            // Chips scroll past both edges, so both edges fade: a chip cut
+            // mid-word at a hard boundary reads as a rendering fault.
+            modifier = Modifier.fadingEdges(start = 16.dp, end = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            // Without trailing padding the last chip ends flush against the
-            // pane edge and reads as a rendering fault rather than as "scroll".
             contentPadding = PaddingValues(end = 12.dp),
         ) {
             items(sessions, key = { it.id }) { session ->
