@@ -3,9 +3,12 @@ package com.claudewebui.app.navigation
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
@@ -24,6 +27,8 @@ import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import com.claudewebui.app.BuildConfig
 import com.claudewebui.app.core.network.SocketManager
+import com.claudewebui.app.core.deeplink.DeepLinkDestination
+import com.claudewebui.app.core.deeplink.DeepLinkHandler
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.ui.screens.analytics.AnalyticsScreen
 import com.claudewebui.app.ui.screens.activity.ActivityScreen
@@ -36,6 +41,9 @@ import com.claudewebui.app.ui.screens.chat.GitScreen
 import com.claudewebui.app.ui.screens.chat.GitViewModel
 import com.claudewebui.app.ui.screens.chat.UsageScreen
 import com.claudewebui.app.ui.screens.chat.UsageViewModel
+import com.claudewebui.app.ui.components.common.WindowWidth
+import com.claudewebui.app.ui.components.common.rememberWindowWidth
+import com.claudewebui.app.ui.screens.dashboard.AdaptiveSessionWorkspace
 import com.claudewebui.app.ui.screens.dashboard.DashboardScreen
 import com.claudewebui.app.ui.screens.filemanager.FileManagerScreen
 import com.claudewebui.app.ui.screens.library.LibraryScreen
@@ -53,39 +61,70 @@ import com.claudewebui.app.ui.screens.settings.McpSettingsScreen
 import com.claudewebui.app.ui.screens.settings.PermissionsScreen
 import com.claudewebui.app.ui.screens.settings.ProviderSettingsScreen
 import com.claudewebui.app.ui.screens.settings.SettingsScreen
+import com.claudewebui.app.ui.theme.LocalReduceMotion
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 
-// Transition duration in ms
-private const val TRANSITION_DURATION = 300
+// Material 3 Expressive motion: emphasized easing instead of linear tweens.
+// Spec values from the M3 motion tokens (emphasized decelerate/accelerate).
+private const val ENTER_DURATION = 450
+private const val EXIT_DURATION = 350
+private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+private val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+
+// Bottom-nav tabs are siblings — they cross-fade instead of pushing
+// horizontally like a drill-down.
+private val TAB_ROUTES = setOf("dashboard", "activity", "analytics", "library", "settings")
+
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch(): Boolean =
+    initialState.destination.route?.substringBefore('?') in TAB_ROUTES &&
+        targetState.destination.route?.substringBefore('?') in TAB_ROUTES
 
 private fun enterSlide(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-    slideInHorizontally(
-        initialOffsetX = { fullWidth -> fullWidth },
-        animationSpec = tween(TRANSITION_DURATION)
-    ) + fadeIn(animationSpec = tween(TRANSITION_DURATION))
+    if (isTabSwitch()) {
+        fadeIn(animationSpec = tween(220, easing = LinearOutSlowInEasing)) +
+            scaleIn(initialScale = 0.96f, animationSpec = tween(220, easing = EmphasizedDecelerate))
+    } else {
+        slideInHorizontally(
+            initialOffsetX = { fullWidth -> fullWidth },
+            animationSpec = tween(ENTER_DURATION, easing = EmphasizedDecelerate)
+        ) + fadeIn(animationSpec = tween(ENTER_DURATION / 2))
+    }
 }
 
 private fun exitSlide(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-    slideOutHorizontally(
-        targetOffsetX = { fullWidth -> -fullWidth / 3 },
-        animationSpec = tween(TRANSITION_DURATION)
-    ) + fadeOut(animationSpec = tween(TRANSITION_DURATION))
+    if (isTabSwitch()) {
+        fadeOut(animationSpec = tween(180))
+    } else {
+        slideOutHorizontally(
+            targetOffsetX = { fullWidth -> -fullWidth / 4 },
+            animationSpec = tween(EXIT_DURATION, easing = EmphasizedAccelerate)
+        ) + fadeOut(animationSpec = tween(EXIT_DURATION))
+    }
 }
 
 private fun popEnterSlide(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-    slideInHorizontally(
-        initialOffsetX = { fullWidth -> -fullWidth / 3 },
-        animationSpec = tween(TRANSITION_DURATION)
-    ) + fadeIn(animationSpec = tween(TRANSITION_DURATION))
+    if (isTabSwitch()) {
+        fadeIn(animationSpec = tween(220, easing = LinearOutSlowInEasing)) +
+            scaleIn(initialScale = 0.96f, animationSpec = tween(220, easing = EmphasizedDecelerate))
+    } else {
+        slideInHorizontally(
+            initialOffsetX = { fullWidth -> -fullWidth / 4 },
+            animationSpec = tween(ENTER_DURATION, easing = EmphasizedDecelerate)
+        ) + fadeIn(animationSpec = tween(ENTER_DURATION / 2))
+    }
 }
 
 private fun popExitSlide(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-    slideOutHorizontally(
-        targetOffsetX = { fullWidth -> fullWidth },
-        animationSpec = tween(TRANSITION_DURATION)
-    ) + fadeOut(animationSpec = tween(TRANSITION_DURATION))
+    if (isTabSwitch()) {
+        fadeOut(animationSpec = tween(180))
+    } else {
+        slideOutHorizontally(
+            targetOffsetX = { fullWidth -> fullWidth },
+            animationSpec = tween(EXIT_DURATION, easing = EmphasizedAccelerate)
+        ) + fadeOut(animationSpec = tween(EXIT_DURATION))
+    }
 }
 
 @Composable
@@ -94,6 +133,7 @@ fun AppNavigation(
     deepLinkUri: String? = null
 ) {
     val socketManager = koinInject<SocketManager>()
+    val reduceMotion = LocalReduceMotion.current
     val isAnalyticsPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview-analytics"
     val startDestination = remember(deepLinkUri) {
         val isDesignPreview = BuildConfig.DEBUG && deepLinkUri == "claudewebui://preview"
@@ -110,6 +150,26 @@ fun AppNavigation(
         if (TokenStore.isLoggedIn) socketManager.connect()
     }
 
+    // Warm-start deep links: onNewIntent only updates the state — without this
+    // a widget/notification tap while the app is already running went nowhere.
+    LaunchedEffect(deepLinkUri) {
+        val raw = deepLinkUri ?: return@LaunchedEffect
+        if (!TokenStore.isLoggedIn) return@LaunchedEffect
+        when (val dest = DeepLinkHandler.resolve(android.net.Uri.parse(raw))) {
+            is DeepLinkDestination.Session ->
+                navController.navigate(Routes.Chat.createRoute(dest.sessionId)) {
+                    launchSingleTop = true
+                }
+            is DeepLinkDestination.Analytics ->
+                navController.navigate(
+                    Routes.Analytics.route + (dest.range?.let { "?range=$it" } ?: "")
+                ) {
+                    launchSingleTop = true
+                }
+            else -> Unit
+        }
+    }
+
     // Shared across the settings screens: a per-destination instance would
     // refetch everything on each navigation and render its empty state first,
     // which reads as "not configured" rather than "loading".
@@ -119,10 +179,10 @@ fun AppNavigation(
     NavHost(
         navController = navController,
         startDestination = startDestination,
-        enterTransition = enterSlide(),
-        exitTransition = exitSlide(),
-        popEnterTransition = popEnterSlide(),
-        popExitTransition = popExitSlide()
+        enterTransition = if (reduceMotion) ({ EnterTransition.None }) else enterSlide(),
+        exitTransition = if (reduceMotion) ({ ExitTransition.None }) else exitSlide(),
+        popEnterTransition = if (reduceMotion) ({ EnterTransition.None }) else popEnterSlide(),
+        popExitTransition = if (reduceMotion) ({ ExitTransition.None }) else popExitSlide()
     ) {
 
         // ---- Auth ----
@@ -161,9 +221,42 @@ fun AppNavigation(
         // ---- Dashboard ----
 
         composable(route = Routes.Dashboard.route) {
+            // On a tablet or unfolded device there is room for the session list
+            // and the chat at once; pushing a full-screen chat there wastes half
+            // the display and loses the list on every switch.
+            if (rememberWindowWidth() == WindowWidth.EXPANDED) {
+                AdaptiveSessionWorkspace(
+                    onNavigateToSettings = { navController.navigate(SETTINGS_GRAPH) },
+                    onNavigateMain = { navController.navigateMain(it) },
+                    onNavigateToFiles = { sessionId, dir ->
+                        navController.navigate(Routes.FileManager.createRoute(sessionId, dir))
+                    },
+                    onNavigateToGit = { sessionId ->
+                        navController.navigate(Routes.GitManager.createRoute(sessionId))
+                    },
+                    onNavigateToCheckpoints = { sessionId ->
+                        navController.navigate(Routes.CheckpointManager.createRoute(sessionId))
+                    },
+                    onNavigateToNotes = { sessionId ->
+                        navController.navigate(Routes.Notes.createRoute(sessionId))
+                    },
+                    onNavigateToMemory = { workingDirectory ->
+                        navController.navigate(Routes.Memory.createRoute(workingDirectory))
+                    },
+                    onNavigateToDevTools = { sessionId, workingDirectory ->
+                        navController.navigate(
+                            Routes.DevTools.createRoute(sessionId, workingDirectory)
+                        )
+                    },
+                )
+                return@composable
+            }
             DashboardScreen(
                 onNavigateToChat = { sessionId ->
                     navController.navigate(Routes.Chat.createRoute(sessionId))
+                },
+                onNavigateToMessage = { sessionId, messageId, chatId ->
+                    navController.navigate(Routes.Chat.createRoute(sessionId, messageId, chatId))
                 },
                 onNavigateToSettings = {
                     navController.navigate(SETTINGS_GRAPH)
@@ -201,7 +294,17 @@ fun AppNavigation(
         composable(
             route = Routes.Chat.ROUTE,
             arguments = listOf(
-                navArgument(Routes.Chat.ARG_SESSION_ID) { type = NavType.StringType }
+                navArgument(Routes.Chat.ARG_SESSION_ID) { type = NavType.StringType },
+                navArgument(Routes.Chat.ARG_MESSAGE_ID) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument(Routes.Chat.ARG_CHAT_ID) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
             deepLinks = listOf(
                 navDeepLink { uriPattern = "claudewebui://session/{sessionId}" }
@@ -211,14 +314,20 @@ fun AppNavigation(
                 ?: return@composable
             ChatScreen(
                 sessionId = sessionId,
+                initialMessageId = backStackEntry.arguments?.getString(Routes.Chat.ARG_MESSAGE_ID),
+                initialChatId = backStackEntry.arguments?.getString(Routes.Chat.ARG_CHAT_ID),
                 onNavigateBack = { navController.popBackStack() },
                 // ChatScreen hands over the session's working directory; the
                 // session id comes from this destination's own arguments.
                 onNavigateToFiles = { dir ->
                     navController.navigate(Routes.FileManager.createRoute(sessionId, dir))
                 },
-                onNavigateToGit = { sid ->
-                    navController.navigate(Routes.GitManager.createRoute(sid))
+                // ChatScreen passes the working DIRECTORY here — routing it as
+                // the session id built "git//mnt/…" which matches no route and
+                // crashed with IllegalArgumentException. The destination only
+                // needs the session id it already has.
+                onNavigateToGit = { _ ->
+                    navController.navigate(Routes.GitManager.createRoute(sessionId))
                 },
                 onNavigateToCheckpoints = { sid ->
                     navController.navigate(Routes.CheckpointManager.createRoute(sid))
@@ -409,10 +518,23 @@ fun AppNavigation(
 
         // ---- Analytics ----
 
-        composable(route = Routes.Analytics.route) {
+        composable(
+            route = Routes.Analytics.route + "?range={range}",
+            arguments = listOf(
+                navArgument("range") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            ),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "claudewebui://analytics?range={range}" }
+            ),
+        ) { backStackEntry ->
             AnalyticsScreen(
                 onNavigateMain = { navController.navigateMain(it) },
                 designPreview = isAnalyticsPreview,
+                initialRange = backStackEntry.arguments?.getString("range"),
             )
         }
 

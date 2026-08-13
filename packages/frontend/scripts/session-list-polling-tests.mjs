@@ -19,6 +19,11 @@ assert.match(
   /const SESSION_LIST_FALLBACK_INTERVAL_MS = 30_000;/,
   'the shell should use a slow session-list recovery poll'
 );
+assert.match(
+  layoutSource,
+  /const SESSION_DETAIL_FALLBACK_INTERVAL_MS = 15_000;/,
+  'the shell session header should use the same slow detail recovery poll as the chat'
+);
 
 const layoutSessionQuery = layoutSource.match(
   /queryKey: \['sessions'\],[\s\S]*?refetchIntervalInBackground: false,\n\s*}\);/
@@ -33,6 +38,31 @@ assert.match(
   layoutSessionQuery,
   /refetchIntervalInBackground: false/,
   'hidden tabs must not poll the full session list'
+);
+assert.doesNotMatch(
+  layoutSessionQuery,
+  /setSessions\(/,
+  'the shared session query must remain pure regardless of which observer fetches it'
+);
+assert.match(
+  layoutSource,
+  /const \{ data: shellSessions \} = useQuery\([\s\S]*?useEffect\(\(\) => \{\s*if \(shellSessions !== undefined\) \{\s*setSessions\(shellSessions\);\s*\}\s*\}, \[setSessions, shellSessions\]\);/,
+  'the shell must mirror shared query data into the sidebar store deterministically'
+);
+
+const routeSessionQuery = layoutSource.match(
+  /queryKey: \['session', routeSessionId\],[\s\S]*?refetchIntervalInBackground: false,\n\s*}\);/
+)?.[0];
+assert.ok(routeSessionQuery, 'the shell route-session query should remain present');
+assert.match(
+  routeSessionQuery,
+  /refetchInterval: SESSION_DETAIL_FALLBACK_INTERVAL_MS/,
+  'the header observer must not force the shared chat query back to a four-second cadence'
+);
+assert.match(
+  routeSessionQuery,
+  /refetchIntervalInBackground: false/,
+  'hidden tabs must not poll session telemetry through the header observer'
 );
 
 const dashboardSessionQuery = dashboardSource.match(

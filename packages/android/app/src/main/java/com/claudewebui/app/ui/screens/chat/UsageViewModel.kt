@@ -42,25 +42,31 @@ class UsageViewModel(
             runCatching {
                 val response = apiClient.getSessionUsage(sessionId)
                 if (response.success && response.data != null) {
+                    // /api/analytics/sessions/:id shape: {session, totals{...},
+                    // history[{total_tokens, model, ...}], events}
                     val root = response.data.jsonObject
-                    val summary = root["summary"]?.jsonObject
-                    val usageData = summary?.let { s ->
+                    val totals = root["totals"]?.jsonObject
+                    val historyArray = root["history"]?.jsonArray
+                    val latestModel = historyArray?.firstOrNull()
+                        ?.jsonObject?.get("model")?.jsonPrimitive?.content
+                    val usageData = totals?.let { t ->
                         UsageData(
                             sessionId = sessionId,
-                            inputTokens = s["inputTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
-                            outputTokens = s["outputTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
-                            cacheReadTokens = s["cacheReadTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
-                            cacheCreationTokens = s["cacheCreationTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
-                            totalTokens = s["totalTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
-                            contextWindow = s["contextWindow"]?.jsonPrimitive?.longOrNull ?: 0L,
-                            contextUsedPercent = s["contextUsedPercent"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                            totalCostUsd = s["totalCostUsd"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                            model = s["model"]?.jsonPrimitive?.content ?: ""
+                            inputTokens = t["inputTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
+                            outputTokens = t["outputTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
+                            cacheReadTokens = t["cacheReadTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
+                            cacheCreationTokens = t["cacheCreationTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
+                            totalTokens = t["totalTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
+                            contextWindow = 0L,
+                            contextUsedPercent = 0.0,
+                            totalCostUsd = t["recordedCost"]?.jsonPrimitive?.doubleOrNull
+                                ?: t["totalCost"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
+                            model = latestModel ?: ""
                         )
                     }
-                    // Build usage history from timeline array if present
-                    val history = root["timeline"]?.jsonArray?.mapIndexed { idx, el ->
-                        val tokens = el.jsonObject["totalTokens"]?.jsonPrimitive?.longOrNull ?: 0L
+                    // History rows arrive newest-first in snake_case
+                    val history = historyArray?.reversed()?.mapIndexed { idx, el ->
+                        val tokens = el.jsonObject["total_tokens"]?.jsonPrimitive?.longOrNull ?: 0L
                         Pair(idx, tokens)
                     } ?: emptyList()
 

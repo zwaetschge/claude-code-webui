@@ -10,6 +10,10 @@
     "test:pi-settings": "node scripts/pi-settings-tab-tests.mjs",
     "test:recent-sessions": "node scripts/recent-sessions-limit-tests.mjs",
     "test:session-list-polling": "node scripts/session-list-polling-tests.mjs",
+    "test:chat-delivery": "tsx scripts/chat-delivery-regression-tests.ts",
+    "test:dashboard-ux": "node scripts/dashboard-ux-regression-tests.mjs",
+    "test:message-history": "node scripts/message-history-regression-tests.mjs && ../backend/node_modules/.bin/tsx scripts/message-history-merge-tests.ts",
+    "test:web-ux": "node scripts/web-ux-regression-tests.mjs",
     "test:analytics-model-breakdown": "node scripts/analytics-model-breakdown-tests.mjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -60,6 +64,7 @@
     "monaco-editor": "^0.52.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.6"
   }

@@ -36,6 +36,12 @@ data class GitFileDiff(
     val staged: Boolean
 )
 
+/** `GET /api/git/diff` returns `{diff}` — one raw unified-diff string. */
+@Serializable
+data class GitDiffText(
+    val diff: String = ""
+)
+
 @Serializable
 data class GitCommitResult(
     val hash: String,
@@ -59,4 +65,12 @@ data class GitCommitInput(
 data class GitPushInput(
     val remote: String = "origin",
     val branch: String? = null
+)
+
+/** `POST /api/git/checkout` — switches branches, optionally creating one. */
+@Serializable
+data class GitCheckoutInput(
+    val path: String,
+    val branch: String,
+    val create: Boolean = false,
 )

@@ -6,6 +6,8 @@ import com.claudewebui.app.core.network.ApiClient
 import com.claudewebui.app.data.model.ComfyUiSettings
 import com.claudewebui.app.data.model.DiscordSettings
 import com.claudewebui.app.data.model.HomeAssistantSettings
+import com.claudewebui.app.data.model.UpdateDiscordSettingsInput
+import com.claudewebui.app.data.model.UpdateHomeAssistantSettingsInput
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,15 +31,18 @@ data class IntegrationsUiState(
     val comfyTest: TestState = TestState(),
     val discordTest: TestState = TestState(),
     val haTest: TestState = TestState(),
+    val isSaving: Boolean = false,
+    val saveError: String? = null,
+    val savedNotice: String? = null,
 )
 
 /**
- * Read-only view of the ComfyUI, Discord and Home Assistant integrations plus
- * their connection probes.
+ * ComfyUI, Discord and Home Assistant integrations: status, connection probes
+ * and editing.
  *
- * Credentials are deliberately not editable here: the backend only ever returns
- * `*Configured` flags, never the token itself, so a mobile edit form could not
- * round-trip a value it is never shown.
+ * Secrets are write-only. The backend returns `*Configured` flags but never the
+ * token itself, so an empty field means "leave as is" — clearing a stored
+ * secret needs the explicit clear flag rather than submitting a blank value.
  */
 class IntegrationsViewModel(private val api: ApiClient) : ViewModel() {
 
@@ -105,5 +110,35 @@ class IntegrationsViewModel(private val api: ApiClient) : ViewModel() {
                 )
             }
         }
+    }
+
+    // ── Writes ──────────────────────────────────────────────────────────────
+
+    private fun save(notice: String, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true, saveError = null, savedNotice = null) }
+            val result = runCatching { block() }
+            _uiState.update {
+                it.copy(
+                    isSaving = false,
+                    saveError = result.exceptionOrNull()?.message,
+                    savedNotice = if (result.isSuccess) notice else null,
+                )
+            }
+            if (result.isSuccess) load()
+        }
+    }
+
+    fun saveComfyUi(url: String?, enabled: Boolean?) =
+        save("ComfyUI saved") { api.updateComfyUiSettings(url, enabled) }
+
+    fun saveDiscord(input: UpdateDiscordSettingsInput) =
+        save("Discord saved") { api.updateDiscordSettings(input) }
+
+    fun saveHomeAssistant(input: UpdateHomeAssistantSettingsInput) =
+        save("Home Assistant saved") { api.updateHomeAssistantSettings(input) }
+
+    fun dismissSaveNotice() {
+        _uiState.update { it.copy(savedNotice = null, saveError = null) }
     }
 }

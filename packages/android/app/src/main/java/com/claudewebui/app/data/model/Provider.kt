@@ -59,16 +59,6 @@ data class UpdateProviderInput(
     val enabled: Boolean? = null
 )
 
-@Serializable
-data class CLIProviderStatus(
-    val claude: Boolean = false,
-    val codex: Boolean = false,
-    val opencode: Boolean = false,
-    val pi: Boolean = false,
-    val kimi: Boolean = false,
-    val zai: Boolean = false,
-)
-
 /** Result of `POST /api/providers/:id/test`. */
 @Serializable
 data class ProviderTestResult(

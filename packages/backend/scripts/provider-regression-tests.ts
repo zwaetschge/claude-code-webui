@@ -21,6 +21,7 @@ import {
 import {
   classifyAttachment,
   extensionForAttachment,
+  sanitizeAttachmentDisplayName,
   sanitizeAttachmentFilename,
 } from '../src/services/attachments.js';
 import {
@@ -112,6 +113,10 @@ import {
   readKimiUsageSince,
 } from '../src/utils/kimiTurnUsage.js';
 import {
+  hasExactManagedPlaceholderSequence,
+  resolveMemoryOptimizerMemoryDir,
+} from '../src/services/memoryOptimizer.js';
+import {
   CODEX_ROLLOUT_TAIL_MAX_BYTES,
   ClaudeProcessManager,
   applyClaudeResultUsage,
@@ -150,6 +155,11 @@ import {
 import { estimateModelCost, resolveModelPricing } from '../../shared/src/types/llm-pricing.js';
 
 type ClaudeProcessManagerIo = ConstructorParameters<typeof ClaudeProcessManager>[0];
+
+function createTestEventSequenceAllocator(): (sessionId: string) => number {
+  let sequence = 0;
+  return () => ++sequence;
+}
 
 type EmittedSocketEvent = {
   event: string;
@@ -204,6 +214,31 @@ type OpenCodeQueueProcessStub = {
   claudeSessionId: string | null;
   lastActivityAt: number;
   disconnectedAt: number | null;
+};
+
+type CodexQueueTurnStub = {
+  queueId: string;
+  queuedAt: string;
+  originalMessage: string;
+  messageForClaude: string;
+  updateLastMessage: boolean;
+  codexImagePaths: string[];
+  codexNativeSlashCommand: boolean;
+};
+
+type CodexQueueProcessStub = {
+  cliProvider: 'codex';
+  codexIdle: boolean;
+  codexQueuedTurns: CodexQueueTurnStub[];
+  codexSteerDraining: boolean;
+  codexPreemptingForSteer: boolean;
+};
+
+type KimiQueueProcessStub = {
+  cliProvider: 'kimi';
+  kimiIdle: boolean;
+  kimiQueueDraining: boolean;
+  kimiQueuedTurns: CodexQueueTurnStub[];
 };
 
 type OpenCodeMcpEntry = {
@@ -483,7 +518,7 @@ function testContextUsageIncludesAssistantOutput() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, () => 1);
   const harness = asUsageHarness(manager);
   const sessionId = 'session-context';
   const proc: UsageProcessStub = {
@@ -525,7 +560,7 @@ function testCodexUsageUsesNormalizedContextWindow() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, () => 1);
   const harness = asUsageHarness(manager);
   const sessionId = 'session-codex-context';
   const proc: UsageProcessStub = {
@@ -567,7 +602,7 @@ function testContextUsageCapsAtWindow() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, () => 1);
   const harness = asUsageHarness(manager);
   const sessionId = 'session-context-cap';
   const proc: UsageProcessStub = {
@@ -614,7 +649,7 @@ function testCodexFreshExecUsageDoesNotDelta() {
       emit: () => undefined,
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -661,13 +696,13 @@ function testCodexFreshExecUsageDoesNotDelta() {
   assert.equal(translated?.usage?.output_tokens, 125);
 }
 
-function testCodexUsageDoesNotClampLargeAgenticTurns() {
+function testCodexUsageClampsEachLargeTurnField() {
   const ioStub = {
     to: () => ({
       emit: () => undefined,
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -708,8 +743,8 @@ function testCodexUsageDoesNotClampLargeAgenticTurns() {
     },
   }) as { usage?: Record<string, number> } | null;
 
-  assert.equal(translated?.usage?.input_tokens, 1_500_000);
-  assert.equal(translated?.usage?.cache_read_input_tokens, 22_500_000);
+  assert.equal(translated?.usage?.input_tokens, 1_000_000);
+  assert.equal(translated?.usage?.cache_read_input_tokens, 1_000_000);
   assert.equal(translated?.usage?.output_tokens, 500_000);
 }
 
@@ -719,7 +754,7 @@ function testCodexUsageIncludesDescendantThreadDelta() {
       emit: () => undefined,
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1203,7 +1238,7 @@ async function testCodexTurnCompletedRollsUpDescendantsWithoutKnownThreadId() {
   });
   const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1253,7 +1288,7 @@ async function testCodexTurnFailedBooksUsageFromThreadState() {
   });
   const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const saved: Array<Record<string, unknown>> = [];
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
@@ -1303,7 +1338,7 @@ function makePiManagerFixture(sessionId: string, overrides: Record<string, unkno
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     emitCompact: (...args: unknown[]) => void;
@@ -1623,7 +1658,7 @@ async function testCodexContextFallbackUsesThreadState() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1708,7 +1743,7 @@ async function testCodexContextFallbackCapsThreadStateAtWindow() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1789,7 +1824,7 @@ function testCodexCompactEventRetainsCompactedContext() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1874,7 +1909,7 @@ function testCodexImplicitCompactDetectedFromContextDrop() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1976,7 +2011,7 @@ function testCodexImplicitCompactDetectedFromMidWindowReset() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -2646,6 +2681,7 @@ function testAttachmentNormalization() {
   assert.equal(classifyAttachment('application/octet-stream', 'README.md'), 'text');
   assert.equal(extensionForAttachment('image/jpeg'), 'jpg');
   assert.equal(sanitizeAttachmentFilename('../bad name?.png'), '.._bad_name_.png');
+  assert.equal(sanitizeAttachmentDisplayName('../Überblick 2026.pdf'), 'Überblick 2026.pdf');
 }
 
 function testOpenCodePromptContext() {
@@ -2744,7 +2780,7 @@ function testOpenCodeRuntimePrompt() {
 
 function testDangerModeProvidesAutonomousExecutionContract() {
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const prompt = (
     manager as unknown as { getModePrompt: (mode: 'danger') => string | null }
   ).getModePrompt('danger');
@@ -2806,7 +2842,7 @@ async function testExplicitWorkspaceImagesBecomePathFreePendingMedia() {
 
 async function testCodexImageGenerationEventQueuesOnlyManagedOutput() {
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
@@ -4155,7 +4191,7 @@ function testDisconnectedSessionStaysRunning() {
   const ioStub = {
     to: () => ({ emit: () => undefined }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const harness = asProcessStore<DisconnectProcessStub>(manager);
   const sessionId = 'headless-session';
 
@@ -4171,7 +4207,7 @@ async function testOpenCodeRestartCleanupAbortsAndUnsubscribesRemoteTurn() {
   const ioStub = {
     to: () => ({ emit: () => undefined }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const restartHarness = manager as unknown as {
     detachProcessForRestart: (proc: Record<string, unknown>) => void;
   };
@@ -4219,7 +4255,7 @@ function testOpenCodeQueueStateAndRuntime() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo);
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
   const harness = asProcessStore<OpenCodeQueueProcessStub>(manager);
   const queueHarness = manager as unknown as {
     emitQueueState: (sessionId: string, proc: OpenCodeQueueProcessStub) => void;
@@ -4274,6 +4310,101 @@ function testOpenCodeQueueStateAndRuntime() {
   assert.equal(runtime.queueDepth, 1);
   assert.equal(runtime.busy, true);
   assert.equal(runtime.activitySummary, '1 turn queued');
+}
+
+function queuedTurn(id: string): CodexQueueTurnStub {
+  return {
+    queueId: id,
+    queuedAt: `2026-08-09T00:00:0${id.length}.000Z`,
+    originalMessage: id,
+    messageForClaude: id,
+    updateLastMessage: true,
+    codexImagePaths: [],
+    codexNativeSlashCommand: false,
+  };
+}
+
+function testCodexQueueModeIsFifoAndSteeringPreservesAcceptedTurns() {
+  const ioStub = { to: () => ({ emit: () => undefined }) };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const queueHarness = manager as unknown as {
+    queueCodexTurn: (
+      sessionId: string,
+      proc: CodexQueueProcessStub,
+      turn: CodexQueueTurnStub,
+      mode: 'queue' | 'steer'
+    ) => void;
+  };
+  const proc: CodexQueueProcessStub = {
+    cliProvider: 'codex',
+    codexIdle: false,
+    codexQueuedTurns: [],
+    codexSteerDraining: false,
+    codexPreemptingForSteer: false,
+  };
+
+  queueHarness.queueCodexTurn('codex-queue-session', proc, queuedTurn('queued-1'), 'queue');
+  queueHarness.queueCodexTurn('codex-queue-session', proc, queuedTurn('queued-2'), 'queue');
+  assert.deepEqual(
+    proc.codexQueuedTurns.map((turn) => turn.queueId),
+    ['queued-1', 'queued-2'],
+    'queue-mode follow-ups must remain FIFO'
+  );
+
+  queueHarness.queueCodexTurn('codex-queue-session', proc, queuedTurn('steer-1'), 'steer');
+  queueHarness.queueCodexTurn('codex-queue-session', proc, queuedTurn('steer-2'), 'steer');
+  assert.deepEqual(
+    proc.codexQueuedTurns.map((turn) => turn.queueId),
+    ['steer-2', 'steer-1', 'queued-1', 'queued-2'],
+    'steering may move ahead but must retain every previously accepted follow-up'
+  );
+}
+
+async function testKimiQueueDrainsEveryWaitingFollowup() {
+  const ioStub = { to: () => ({ emit: () => undefined }) };
+  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const queueHarness = manager as unknown as {
+    drainKimiQueuedTurns: (sessionId: string, proc: KimiQueueProcessStub) => Promise<void>;
+    dispatchKimiAcpTurn: (
+      sessionId: string,
+      proc: KimiQueueProcessStub,
+      turn: CodexQueueTurnStub
+    ) => Promise<void>;
+  };
+  const proc: KimiQueueProcessStub = {
+    cliProvider: 'kimi',
+    kimiIdle: true,
+    kimiQueueDraining: false,
+    kimiQueuedTurns: [queuedTurn('kimi-1'), queuedTurn('kimi-2'), queuedTurn('kimi-3')],
+  };
+  const dispatched: string[] = [];
+  queueHarness.dispatchKimiAcpTurn = async (_sessionId, current, turn) => {
+    current.kimiIdle = false;
+    await Promise.resolve();
+    dispatched.push(turn.queueId);
+    current.kimiIdle = true;
+  };
+
+  await queueHarness.drainKimiQueuedTurns('kimi-queue-session', proc);
+
+  assert.deepEqual(dispatched, ['kimi-1', 'kimi-2', 'kimi-3']);
+  assert.equal(proc.kimiQueuedTurns.length, 0);
+  assert.equal(proc.kimiQueueDraining, false);
+}
+
+function testMemoryOptimizerUsesConfigHomeAndStrictManagedPlaceholders() {
+  const configHome = path.join(os.tmpdir(), 'plum-custom-config-home');
+  assert.equal(
+    resolveMemoryOptimizerMemoryDir('/workspace/demo.project', configHome),
+    path.join(configHome, 'projects', '-workspace-demo-project', 'memory')
+  );
+
+  const block0 = '<!-- __PLUM_MANAGED_BLOCK_0__ -->';
+  const block1 = '<!-- __PLUM_MANAGED_BLOCK_1__ -->';
+  assert.equal(hasExactManagedPlaceholderSequence(`${block0}\ntext\n${block1}`, 2), true);
+  assert.equal(hasExactManagedPlaceholderSequence(`${block0}\n${block0}\n${block1}`, 2), false);
+  assert.equal(hasExactManagedPlaceholderSequence(`${block1}\n${block0}`, 2), false);
+  assert.equal(hasExactManagedPlaceholderSequence(block0, 2), false);
 }
 
 function testLatestContextSnapshotOrdering() {
@@ -5093,8 +5224,22 @@ async function testOracleMcpStartsEmbeddedBrowserForManualMode() {
 
 function testPricingTable() {
   assert.deepEqual(resolveModelPricing('gpt-5.6-sol')?.input, 5);
-  assert.deepEqual(resolveModelPricing('gpt-5.6-terra')?.output, 15);
-  assert.deepEqual(resolveModelPricing('gpt-5.6-luna')?.cacheWrite, 1.25);
+  assert.deepEqual(resolveModelPricing('gpt-5.6-terra'), {
+    input: 2.5,
+    output: 15,
+    cacheRead: 0.25,
+    cacheWrite: 3.125,
+    source: 'OpenAI API pricing, 2026-07-09',
+    label: 'GPT-5.6 Terra',
+  });
+  assert.deepEqual(resolveModelPricing('gpt-5.6-luna'), {
+    input: 1,
+    output: 6,
+    cacheRead: 0.1,
+    cacheWrite: 1.25,
+    source: 'OpenAI API pricing, 2026-07-09',
+    label: 'GPT-5.6 Luna',
+  });
   assert.deepEqual(resolveModelPricing('gpt-5.5')?.input, 5);
   assert.deepEqual(resolveModelPricing('gpt-5.4-mini')?.output, 4.5);
   assert.deepEqual(resolveModelPricing('gpt-5.2')?.input, 1.75);
@@ -5116,6 +5261,15 @@ function testPricingTable() {
   assert.deepEqual(resolveModelPricing('glm-4.7')?.output, 2.2);
   assert.deepEqual(resolveModelPricing('opencode-go/kimi-k2.7-code')?.cacheRead, 0.19);
   assert.deepEqual(resolveModelPricing('opencode/kimi-k2.7-code')?.output, 4);
+  assert.deepEqual(resolveModelPricing('kimi-code/k3'), {
+    input: 3,
+    output: 15,
+    cacheRead: 0.3,
+    cacheWrite: 0,
+    source: 'Kimi K3 API pricing, 2026-07-18',
+    label: 'Kimi K3',
+  });
+  assert.deepEqual(resolveModelPricing('moonshot/kimi-k3')?.input, 3);
   assert.deepEqual(resolveModelPricing('deepseek/deepseek-v4-flash')?.cacheRead, 0.0028);
   assert.deepEqual(resolveModelPricing('deepseek/deepseek-v4-pro')?.output, 0.87);
   assert.deepEqual(resolveModelPricing('gemini-3.1-pro-preview')?.cacheRead, 0.2);
@@ -5251,7 +5405,7 @@ testContextUsageIncludesAssistantOutput();
 testCodexUsageUsesNormalizedContextWindow();
 testContextUsageCapsAtWindow();
 testCodexFreshExecUsageDoesNotDelta();
-testCodexUsageDoesNotClampLargeAgenticTurns();
+testCodexUsageClampsEachLargeTurnField();
 testCodexUsageIncludesDescendantThreadDelta();
 await testCodexThreadStateReaderMatchesPrompt();
 await testCodexContextSnapshotReadsRolloutTokenCount();
@@ -5341,6 +5495,9 @@ testCodexSessionIdExtraction();
 testDisconnectedSessionStaysRunning();
 await testOpenCodeRestartCleanupAbortsAndUnsubscribesRemoteTurn();
 testOpenCodeQueueStateAndRuntime();
+testCodexQueueModeIsFifoAndSteeringPreservesAcceptedTurns();
+await testKimiQueueDrainsEveryWaitingFollowup();
+testMemoryOptimizerUsesConfigHomeAndStrictManagedPlaceholders();
 testLatestContextSnapshotOrdering();
 await testCodexConfigSyncIdempotence();
 await testDefaultMcpServerSeeding();

@@ -1,12 +1,13 @@
 import { memo, useCallback, useState } from 'react';
-import { FileText, FileCode, File as FileIcon, Copy, Check } from 'lucide-react';
+import { FileText, FileCode, File as FileIcon, Copy, Check, Quote } from 'lucide-react';
 import { MemoizedMarkdown } from './MemoizedMarkdown';
-import { ChatMediaImage } from './ChatMediaImage';
+import { buildChatMediaUrl, ChatMediaImage } from './ChatMediaImage';
 import { InteractiveOptions, detectOptions, isChoicePrompt } from './InteractiveOptions';
 import { DirectoryAccessPrompt } from '@/components/session/AllowedDirectoriesDialog';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { useAuthStore } from '@/stores/authStore';
 import { socketService } from '@/services/socket';
+import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { normalizeClaudeDisplayContent } from '@/lib/claudeDisplay';
 import type { Message, MessageImage, MessageAttachment } from '@plum-code-webui/shared';
@@ -47,12 +48,28 @@ function formatMessageTime(iso: string): string {
 }
 
 function mediaSignature(message: Message): string {
-  return (message.media ?? [])
+  const durable = (message.media ?? [])
     .map(
       (media) =>
         `${media.id}\u0000${media.filename}\u0000${media.mimeType}\u0000${media.byteSize}\u0000${media.altText ?? ''}\u0000${media.source}`
     )
     .join('\u0001');
+  const legacyImages = (message.images ?? [])
+    .map((image) => `${image.filename}\u0000${image.path}`)
+    .join('\u0001');
+  const legacyAttachments = (message.attachments ?? [])
+    .map(
+      (attachment) =>
+        `${attachment.filename}\u0000${attachment.path}\u0000${attachment.mimeType}\u0000${attachment.type}`
+    )
+    .join('\u0001');
+  return `${durable}\u0002${legacyImages}\u0002${legacyAttachments}`;
+}
+
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export const MessageBubble = memo(
@@ -89,6 +106,29 @@ export const MessageBubble = memo(
       }
     }, [message.content]);
 
+    /**
+     * Pull this message into the composer as a Markdown quote — the usual way
+     * to say "about this specific part" without retyping it.
+     */
+    const handleQuote = useCallback(() => {
+      const selected = window.getSelection?.()?.toString().trim();
+      window.dispatchEvent(
+        new CustomEvent('plum:quote-message', {
+          detail: { text: selected || message.content },
+        })
+      );
+    }, [message.content]);
+
+    const handleMediaDownload = useCallback(async (mediaId: string, filename: string) => {
+      const response = await api.download(buildChatMediaUrl(sessionId, mediaId));
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename || 'attachment';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }, [sessionId]);
+
     const token = useAuthStore.getState().token || '';
     const timestamp = formatMessageTime(message.createdAt);
     const displayContent =
@@ -96,23 +136,52 @@ export const MessageBubble = memo(
         ? normalizeClaudeDisplayContent(message.content)
         : { message: message.content, providerTools: [], providerToolComplete: false };
 
-    const assistantMedia = message.role === 'assistant' ? (message.media ?? []) : [];
-    const assistantMediaFilenames = new Set(assistantMedia.map((media) => media.filename));
-    const legacyImages =
-      message.role === 'assistant'
-        ? message.images?.filter((image) => !assistantMediaFilenames.has(image.filename))
-        : message.images;
-    const legacyAttachments =
-      message.role === 'assistant'
-        ? message.attachments?.filter(
-            (attachment) => !assistantMediaFilenames.has(attachment.filename)
-          )
-        : message.attachments;
+    const durableMedia = message.media ?? [];
+    const durableMediaFilenames = new Set(durableMedia.map((media) => media.filename));
+    const legacyImages = message.images?.filter(
+      (image) => !durableMediaFilenames.has(image.filename)
+    );
+    const legacyAttachments = message.attachments?.filter(
+      (attachment) => !durableMediaFilenames.has(attachment.filename)
+    );
 
     const renderAttachments = () => {
-      if (!legacyImages?.length && !legacyAttachments?.length) return null;
+      if (!durableMedia.length && !legacyImages?.length && !legacyAttachments?.length) return null;
       return (
         <div className="flex flex-wrap gap-2 mb-3">
+          {durableMedia.map((media) => {
+            if (media.mimeType.startsWith('image/')) {
+              return <ChatMediaImage key={media.id} media={media} sessionId={sessionId} />;
+            }
+            const MediaIcon =
+              media.mimeType === 'application/pdf'
+                ? FileText
+                : media.mimeType.startsWith('text/')
+                  ? FileCode
+                  : FileIcon;
+            return (
+              <button
+                type="button"
+                key={media.id}
+                onClick={() => void handleMediaDownload(media.id, media.filename)}
+                className={cn(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2 transition-opacity hover:opacity-90',
+                  message.role === 'user' ? 'border-white/20 bg-white/10' : 'border-border bg-muted'
+                )}
+                title={media.filename}
+              >
+                <MediaIcon
+                  className={cn('h-5 w-5', media.mimeType === 'application/pdf' && 'text-red-500')}
+                />
+                <span className="min-w-0">
+                  <span className="block max-w-40 truncate text-xs">{media.filename}</span>
+                  <span className="block text-[10px] opacity-65">
+                    {formatAttachmentSize(media.byteSize)}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
           {(!legacyAttachments || legacyAttachments.length === 0) &&
             legacyImages?.map((img: MessageImage, imgIndex: number) => {
               const imageUrl = `/api/sessions/${sessionId}/images/${img.filename}?token=${encodeURIComponent(token)}`;
@@ -170,6 +239,14 @@ export const MessageBubble = memo(
         <div className="turn-user animate-fade-in">
           <div>
             <div className="message-copy-shell">
+              <button
+                onClick={handleQuote}
+                className="message-copy-button"
+                title="Quote in composer"
+                aria-label="Quote message in composer"
+              >
+                <Quote className="h-3 w-3" />
+              </button>
               <button onClick={handleCopy} className="message-copy-button" title="Copy message">
                 {copied ? (
                   <Check className="h-3 w-3 text-emerald-500" />
@@ -202,9 +279,19 @@ export const MessageBubble = memo(
     }
 
     const copyButton = (
-      <button onClick={handleCopy} className="message-copy-button" title="Copy message">
-        {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-      </button>
+      <>
+        <button
+          onClick={handleQuote}
+          className="message-copy-button"
+          title="Quote in composer"
+          aria-label="Quote message in composer"
+        >
+          <Quote className="h-3 w-3" />
+        </button>
+        <button onClick={handleCopy} className="message-copy-button" title="Copy message">
+          {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+        </button>
+      </>
     );
 
     // Assistant turn
@@ -220,13 +307,6 @@ export const MessageBubble = memo(
             </div>
           )}
           {renderAttachments()}
-          {assistantMedia.length > 0 && (
-            <div className="chat-media-grid">
-              {assistantMedia.map((media) => (
-                <ChatMediaImage key={media.id} media={media} sessionId={sessionId} />
-              ))}
-            </div>
-          )}
           {displayContent.message && (
             <MemoizedMarkdown
               content={displayContent.message}

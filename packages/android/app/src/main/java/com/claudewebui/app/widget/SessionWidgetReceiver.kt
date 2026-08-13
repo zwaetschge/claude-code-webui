@@ -1,25 +1,11 @@
 package com.claudewebui.app.widget
 
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
-import android.content.Context
-import android.widget.RemoteViews
-import com.claudewebui.app.R
-
 /**
- * Minimal AppWidgetProvider that displays a static "Claude WebUI" widget
- * using standard RemoteViews (no Glance dependency required).
+ * The original "Sessions" widget, kept under its historical class name so
+ * widgets already placed on a home screen keep updating after the app update.
+ * Shows active sessions, which provider/agent is working, and the pending
+ * approval count.
  */
-class SessionWidgetReceiver : AppWidgetProvider() {
-
-    override fun onUpdate(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray
-    ) {
-        for (appWidgetId in appWidgetIds) {
-            val views = RemoteViews(context.packageName, R.layout.widget_session)
-            appWidgetManager.updateAppWidget(appWidgetId, views)
-        }
-    }
+class SessionWidgetReceiver : BaseWidgetProvider() {
+    override val kind = WidgetKind.SESSIONS
 }

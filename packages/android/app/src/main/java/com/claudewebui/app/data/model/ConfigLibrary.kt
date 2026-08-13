@@ -180,3 +180,6 @@ data class InstallPluginInput(
     val pluginName: String,
     val marketplaceId: String,
 )
+
+/** Which presentation preset slot a session-level style change targets. */
+enum class StyleKind { DESIGN, WRITING }

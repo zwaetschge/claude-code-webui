@@ -8,8 +8,15 @@
     <!-- POST_NOTIFICATIONS required on Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Keep the socket alive while agent turns run (AgentWatchService) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <!-- Required to use the Quick Settings tile -->
     <uses-permission android:name="android.permission.BIND_QUICK_SETTINGS_TILE" />
+
+    <!-- Dictation in the chat composer; requested at first use. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Vibration for high-priority permission-request notifications -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -22,7 +29,21 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.ClaudeCode"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:enableOnBackInvokedCallback="true">
+
+        <!-- Authenticated chat downloads and APK updates are materialized into
+             app-private storage, then shared with Android through this narrow
+             content URI boundary. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- ── MainActivity ────────────────────────────────────────────────── -->
         <!--
@@ -111,14 +132,51 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.claudewebui.app.action.APPROVE_PERMISSION" />
+                <action android:name="com.claudewebui.app.action.DENY_PERMISSION" />
+                <action android:name="com.claudewebui.app.action.ANSWER_QUESTION" />
                 <action android:name="com.claudewebui.app.action.DISMISS" />
             </intent-filter>
         </receiver>
 
-        <!-- ── SessionWidgetReceiver ────────────────────────────────────────── -->
+        <!-- Approve/Deny straight from the Approvals widget -->
+        <receiver
+            android:name=".widget.WidgetActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.claudewebui.app.widget.APPROVE" />
+                <action android:name="com.claudewebui.app.widget.DENY" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Per-instance widget options, launched by the widget host on placement -->
+        <activity
+            android:name=".widget.WidgetConfigActivity"
+            android:exported="true"
+            android:theme="@style/Theme.ClaudeCode.Translucent"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <!-- Wear OS bridge: receives approval/question answers sent from the watch -->
+        <service
+            android:name=".wear.WearBridgeService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/plum" />
+            </intent-filter>
+        </service>
+
+        <!-- ── Home-screen widgets ──────────────────────────────────────────── -->
         <!--
-            GlanceAppWidgetReceiver for the session home-screen widget.
-            android:name must point to the GlanceAppWidgetReceiver subclass.
+            Ten RemoteViews widgets sharing one snapshot cache; refreshed by
+            WidgetRefreshWorker. SessionWidgetReceiver keeps its historical
+            class name so already-placed widgets survive the update.
         -->
         <receiver
             android:name=".widget.SessionWidgetReceiver"
@@ -131,6 +189,122 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/session_widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".widget.ApprovalsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_approvals">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/approvals_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.QuickGlanceWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_quick_glance">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_glance_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TokensTodayWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_tokens_today">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tokens_today_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.CostTodayWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_cost_today">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/cost_today_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ProvidersWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_providers">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/providers_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ModelsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_models">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/models_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.LimitsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_limits">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/limits_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.WeekChartWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_week_chart">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_chart_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TopSessionsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_top_sessions">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/top_sessions_widget_info" />
+        </receiver>
+
+        <!-- ── AgentWatchService ────────────────────────────────────────────── -->
+        <!-- Keeps the socket alive while agent turns run so completion
+             notifications arrive even when the app is backgrounded. -->
+        <service
+            android:name=".core.notifications.AgentWatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- ── QuickTileService ─────────────────────────────────────────────── -->
         <!--

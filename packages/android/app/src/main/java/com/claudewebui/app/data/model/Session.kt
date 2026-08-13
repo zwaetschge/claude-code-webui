@@ -50,10 +50,28 @@ data class Session(
     val cliModel: String? = null,
     /** Reasoning level, where the provider supports one. */
     val cliReasoning: String? = null,
+    /** Codex "fast" service tier; null everywhere else. */
+    val cliServiceTier: String? = null,
+    /** Permission mode persisted on the session row. */
+    val mode: SessionMode = SessionMode.AUTO_ACCEPT,
+    /** Presentation presets applied to this session's turns; null = none. */
+    val designStyleSkill: String? = null,
+    val writingStyleSkill: String? = null,
+    val surface: String = "code",
     val category: String? = null,
     val createdAt: String,
-    val updatedAt: String
+    val updatedAt: String,
+    /** Local/server read marker merged into the Room-backed dashboard model. */
+    val unreadCount: Int = 0,
 )
+
+/** `PATCH /api/sessions/:id/star` returns only the flag, not the session. */
+@Serializable
+data class StarResult(val starred: Boolean = false)
+
+/** `PATCH /api/sessions/:id/category` returns only the assignment. */
+@Serializable
+data class CategoryAssignment(val category: String? = null)
 
 /**
  * Reasoning levels offered in the session settings.
@@ -62,17 +80,49 @@ data class Session(
  * and clears the column, so it is sent as-is rather than translated here.
  */
 enum class ReasoningLevel(val id: String, val label: String) {
+    NONE("none", "None"),
     MINIMAL("minimal", "Minimal"),
     LOW("low", "Low"),
     MEDIUM("medium", "Medium"),
     HIGH("high", "High"),
+    XHIGH("xhigh", "XHigh"),
+    MAX("max", "Max"),
+    ULTRA("ultra", "Ultra");
+
+    companion object {
+        /**
+         * Which levels a provider actually accepts — mirrors `reasoningOptions`
+         * in the WebUI's SessionPage/DashboardPage. Offering a level the
+         * harness rejects silently downgrades the turn, so the lists must match.
+         */
+        fun forProvider(provider: CLIProvider): List<ReasoningLevel> = when (provider) {
+            CLIProvider.CLAUDE, CLIProvider.ZAI -> listOf(LOW, MEDIUM, HIGH, MAX)
+            CLIProvider.OPENCODE, CLIProvider.PI -> listOf(MINIMAL, LOW, MEDIUM, HIGH, MAX)
+            else -> listOf(NONE, MINIMAL, LOW, MEDIUM, HIGH, XHIGH, MAX, ULTRA)
+        }
+
+        fun fromId(id: String?): ReasoningLevel? =
+            id?.trim()?.takeIf { it.isNotEmpty() }?.let { value ->
+                entries.firstOrNull { it.id.equals(value, ignoreCase = true) }
+            }
+    }
+}
+
+/**
+ * Codex service tier. `fast` trades reasoning depth for latency and lives in
+ * its own column server-side, so it is a separate control rather than another
+ * reasoning level.
+ */
+enum class ServiceTier(val id: String, val label: String) {
+    FAST("fast", "Fast"),
 }
 
 @Serializable
 data class CreateSessionInput(
     val name: String,
     val workingDirectory: String? = null,
-    val cliProvider: CLIProvider? = null
+    val cliProvider: CLIProvider? = null,
+    val mode: SessionMode? = null
 )
 
 @Serializable
@@ -84,4 +134,20 @@ data class UpdateSessionInput(
 @Serializable
 data class SwitchProviderInput(
     val cliProvider: CLIProvider
+)
+
+// ── Multi-chat threads ───────────────────────────────────────────────────────
+
+@Serializable
+data class SessionChat(
+    val id: String,
+    val title: String,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
+)
+
+@Serializable
+data class SessionChatList(
+    val chats: List<SessionChat> = emptyList(),
+    val activeChatId: String? = null
 )

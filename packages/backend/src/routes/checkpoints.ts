@@ -27,7 +27,7 @@ router.get('/sessions/:sessionId', async (req: Request, res: Response) => {
     const checkpoints = db
       .prepare(
         `
-      SELECT id, name, description, message_count, created_at
+      SELECT id, session_id, name, description, message_count, created_at
       FROM session_checkpoints
       WHERE session_id = ?
       ORDER BY created_at DESC
@@ -160,7 +160,7 @@ router.post('/', async (req: Request, res: Response) => {
     const checkpoint = db
       .prepare(
         `
-      SELECT id, name, description, message_count, created_at
+      SELECT id, session_id, name, description, message_count, created_at
       FROM session_checkpoints
       WHERE id = ?
     `
@@ -213,7 +213,7 @@ router.put('/:checkpointId', async (req: Request, res: Response) => {
     const updated = db
       .prepare(
         `
-      SELECT id, name, description, message_count, created_at
+      SELECT id, session_id, name, description, message_count, created_at
       FROM session_checkpoints
       WHERE id = ?
     `

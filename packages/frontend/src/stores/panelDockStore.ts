@@ -10,7 +10,12 @@ export type DockablePanel =
   | 'writingStyle'
   | 'android'
   | 'tools'
-  | 'browser';
+  | 'browser'
+  | 'git'
+  | 'checkpoints'
+  | 'notes'
+  | 'preview'
+  | 'toolLog';
 
 interface PanelDockState {
   pinned: Record<DockablePanel, boolean>;
@@ -32,6 +37,11 @@ export const usePanelDockStore = create<PanelDockState>()(
         android: false,
         tools: false,
         browser: false,
+        git: false,
+        checkpoints: false,
+        notes: false,
+        preview: false,
+        toolLog: false,
       },
       togglePin: (panel) =>
         set((state) => ({
@@ -53,6 +63,11 @@ export const usePanelDockStore = create<PanelDockState>()(
             android: false,
             tools: false,
             browser: false,
+            git: false,
+            checkpoints: false,
+            notes: false,
+            preview: false,
+            toolLog: false,
           },
         }),
     }),

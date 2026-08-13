@@ -2,10 +2,10 @@ package com.claudewebui.app.data.local.dao
 
 import androidx.room.Dao
 import androidx.room.Delete
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import com.claudewebui.app.data.local.entity.SessionEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -29,15 +29,27 @@ interface SessionDao {
     fun getStarred(): Flow<List<SessionEntity>>
 
     /**
-     * Insert or replace a session. Uses REPLACE strategy so that a full
-     * refresh from the network can be done with a simple insertAll call.
+     * Insert or update a session. Must NOT use OnConflictStrategy.REPLACE:
+     * SQLite implements REPLACE as DELETE+INSERT, which cascades the
+     * messages/drafts foreign keys and wipes the cached chat history on
+     * every session refresh.
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insert(session: SessionEntity)
 
-    /** Insert or replace multiple sessions in a single transaction. */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /** Insert or update multiple sessions in a single transaction. */
+    @Upsert
     suspend fun insertAll(sessions: List<SessionEntity>)
+
+    /** Replace the remote snapshot without deleting still-valid parent rows first. */
+    @Transaction
+    suspend fun syncRemote(sessions: List<SessionEntity>) {
+        insertAll(sessions)
+        if (sessions.isEmpty()) deleteAll() else deleteNotIn(sessions.map { it.id })
+    }
+
+    @Query("DELETE FROM sessions WHERE id NOT IN (:ids)")
+    suspend fun deleteNotIn(ids: List<String>)
 
     @Update
     suspend fun update(session: SessionEntity)

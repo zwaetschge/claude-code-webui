@@ -2,6 +2,8 @@ package com.claudewebui.app.ui.screens.devtools
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,7 +74,11 @@ fun DevToolsScreen(
     LaunchedEffect(Unit) { viewModel.ensureLoaded() }
 
     PlumBackdrop {
-        Scaffold(containerColor = Color.Transparent) { padding ->
+        Scaffold(
+            containerColor = Color.Transparent,
+            // Include the IME so editors/fields lift above the keyboard.
+            contentWindowInsets = WindowInsets.safeDrawing,
+        ) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(
@@ -114,6 +120,9 @@ fun DevToolsScreen(
                         }
                         TabChip("Oracle", state.tab == DevToolsTab.ORACLE) {
                             viewModel.selectTab(DevToolsTab.ORACLE)
+                        }
+                        TabChip("Devices", state.tab == DevToolsTab.DEVICES) {
+                            viewModel.selectTab(DevToolsTab.DEVICES)
                         }
                     }
                 }
@@ -267,6 +276,10 @@ fun DevToolsScreen(
 
                     DevToolsTab.ORACLE -> item {
                         OracleBrowserPanel(state = state, viewModel = viewModel)
+                    }
+
+                    DevToolsTab.DEVICES -> item {
+                        AndroidDevicesPanel(state = state, viewModel = viewModel)
                     }
                 }
             }

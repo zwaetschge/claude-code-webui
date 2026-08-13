@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.claudewebui.app.core.notifications.LocalNotificationManager
+import com.claudewebui.app.core.notifications.NotificationPreferences
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.AuthUser
@@ -91,6 +93,7 @@ data class SettingsUiState(
     val theme: AppThemeOption = AppThemeOption.SYSTEM,
     val fontSize: FontSize = FontSize.MEDIUM,
     val notificationsEnabled: Boolean = true,
+    val notificationsAllowedBySystem: Boolean = true,
     val biometricEnabled: Boolean = false,
     val sessionTimeoutMinutes: Int = 30,
 
@@ -163,7 +166,6 @@ enum class FontSize(val label: String, val scale: Float) {
 private const val PREFS_NAME = "settings_prefs"
 // The theme key is owned by AppThemeStore — deliberately not duplicated here.
 private const val KEY_FONT_SIZE = "font_size"
-private const val KEY_NOTIFICATIONS = "notifications_enabled"
 private const val KEY_BIOMETRIC = "biometric_enabled"
 private const val KEY_SESSION_TIMEOUT = "session_timeout_minutes"
 
@@ -194,7 +196,8 @@ class SettingsViewModel(
                 serverUrl = TokenStore.getServerUrl() ?: "",
                 theme = AppThemeStore.theme.value,
                 fontSize = FontSize.entries.firstOrNull { e -> e.name == fontSizeName } ?: FontSize.MEDIUM,
-                notificationsEnabled = prefs.getBoolean(KEY_NOTIFICATIONS, true),
+                notificationsEnabled = NotificationPreferences.isEnabled(context),
+                notificationsAllowedBySystem = NotificationPreferences.systemAllowsNotifications(context),
                 biometricEnabled = prefs.getBoolean(KEY_BIOMETRIC, false),
                 sessionTimeoutMinutes = prefs.getInt(KEY_SESSION_TIMEOUT, 30),
             )
@@ -220,7 +223,16 @@ class SettingsViewModel(
                 }
                 launch {
                     settingsRepository.getSettings()
-                        .onSuccess { settings -> _uiState.update { it.copy(userSettings = settings) } }
+                        .onSuccess { settings ->
+                            _uiState.update { it.copy(userSettings = settings) }
+                            // Only follows the account when the user enabled
+                            // appearance sync in the WebUI.
+                            AppThemeStore.applyServerTheme(
+                                context,
+                                settings.theme.name.lowercase(),
+                                settings.appearanceSync,
+                            )
+                        }
                         .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
                     // Depends on the allowedTools allowlist from the call above.
                     loadCliToolsInternal()
@@ -562,9 +574,66 @@ class SettingsViewModel(
 
     // ── Notifications / security ──────────────────────────────────────────────
 
+    /**
+     * Mirror the account-wide alert thresholds into the widget prefs so the
+     * background worker applies them without another settings request.
+     */
+    /** Persist alert thresholds account-wide; both clients read them. */
+    fun updateUsageAlerts(
+        enabled: Boolean? = null,
+        quotaPercent: Int? = null,
+        dailyCostUsd: Double? = null,
+    ) {
+        viewModelScope.launch {
+            val current = _uiState.value.userSettings?.usageAlerts
+                ?: com.claudewebui.app.data.model.UsageAlertSettings()
+            val next = current.copy(
+                enabled = enabled ?: current.enabled,
+                quotaPercent = quotaPercent ?: current.quotaPercent,
+                dailyCostUsd = dailyCostUsd ?: current.dailyCostUsd,
+            )
+            runCatching {
+                settingsRepository.updateSettings(usageAlerts = next)
+            }
+        }
+    }
+
+    fun cacheUsageAlerts(context: android.content.Context) {
+        _uiState.value.userSettings?.usageAlerts?.let {
+            com.claudewebui.app.widget.UsageAlerts.cacheServerSettings(context, it)
+        }
+    }
+
     fun setNotificationsEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_NOTIFICATIONS, enabled).apply()
-        _uiState.update { it.copy(notificationsEnabled = enabled) }
+        NotificationPreferences.setEnabled(context, enabled)
+        LocalNotificationManager.onNotificationsPreferenceChanged()
+        _uiState.update {
+            it.copy(
+                notificationsEnabled = enabled,
+                notificationsAllowedBySystem = NotificationPreferences.systemAllowsNotifications(context),
+            )
+        }
+    }
+
+    fun onNotificationPermissionResult(granted: Boolean) {
+        NotificationPreferences.setEnabled(context, granted)
+        val allowedBySystem = NotificationPreferences.systemAllowsNotifications(context)
+        LocalNotificationManager.onNotificationsPreferenceChanged()
+        _uiState.update {
+            it.copy(
+                notificationsEnabled = granted,
+                notificationsAllowedBySystem = allowedBySystem,
+            )
+        }
+    }
+
+    fun refreshNotificationPermission() {
+        LocalNotificationManager.onNotificationsPreferenceChanged()
+        _uiState.update {
+            it.copy(
+                notificationsAllowedBySystem = NotificationPreferences.systemAllowsNotifications(context),
+            )
+        }
     }
 
     fun setBiometricEnabled(enabled: Boolean) {

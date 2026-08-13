@@ -18,9 +18,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.AssistChip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,6 +34,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,21 +59,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.claudewebui.app.data.model.Category
+import com.claudewebui.app.data.model.SessionTemplate
 import com.claudewebui.app.data.model.CLIProvider
+import com.claudewebui.app.data.model.SessionMode
+import com.claudewebui.app.data.repository.SessionLaunchSetup
+import com.claudewebui.app.data.repository.SessionPreset
+import com.claudewebui.app.data.repository.DEFAULT_SESSION_PRESETS
 import com.claudewebui.app.ui.components.common.BadgeSize
 import com.claudewebui.app.ui.components.common.ProviderBadge
 import com.claudewebui.app.ui.theme.CliProvider
 import com.claudewebui.app.ui.theme.ClaudeWebUITheme
 import com.claudewebui.app.ui.theme.ProviderThemes
-
-// ── Session Modes ─────────────────────────────────────────────────────────────
-
-enum class SessionMode(val label: String, val description: String) {
-    NORMAL("Normal", "Standard single-agent session"),
-}
 
 // ── NewSessionDialog ──────────────────────────────────────────────────────────
 
@@ -77,20 +85,54 @@ enum class SessionMode(val label: String, val description: String) {
 fun NewSessionDialog(
     categories: List<Category>,
     providers: List<CLIProvider> = CLIProvider.active,
+    presets: List<SessionPreset> = DEFAULT_SESSION_PRESETS,
+    templates: List<SessionTemplate> = emptyList(),
+    lastSetup: SessionLaunchSetup = SessionLaunchSetup(),
+    isCreating: Boolean = false,
+    creationError: String? = null,
     onDismiss: () -> Unit,
-    onCreate: (name: String, provider: CLIProvider, workingDirectory: String?) -> Unit,
+    onCreate: (
+        name: String,
+        provider: CLIProvider,
+        workingDirectory: String?,
+        mode: SessionMode,
+        categoryId: String?,
+    ) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var sessionName by remember { mutableStateOf("") }
-    var selectedProvider by remember { mutableStateOf(CLIProvider.CODEX) }
-    var selectedMode by remember { mutableStateOf(SessionMode.NORMAL) }
-    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var workingDirectory by remember { mutableStateOf(lastSetup.workingDirectory.orEmpty()) }
+    var selectedProvider by remember {
+        mutableStateOf<CLIProvider?>(lastSetup.provider.takeIf { it in providers } ?: providers.firstOrNull())
+    }
+    var selectedMode by remember { mutableStateOf(lastSetup.mode) }
+    var selectedCategoryId by remember { mutableStateOf(lastSetup.categoryId) }
     var showAdvanced by remember { mutableStateOf(false) }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
 
+    LaunchedEffect(providers) {
+        val currentProvider = selectedProvider
+        if (currentProvider == null || currentProvider !in providers) {
+            selectedProvider = providers.firstOrNull()
+        }
+    }
+
+    val availableProvider = selectedProvider?.takeIf { it in providers }
+    val createSession: () -> Unit = {
+        if (availableProvider != null) {
+            onCreate(
+                sessionName,
+                availableProvider,
+                workingDirectory.trim().takeIf { it.isNotEmpty() },
+                selectedMode,
+                selectedCategoryId,
+            )
+        }
+    }
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isCreating) onDismiss() },
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = {
@@ -128,24 +170,68 @@ fun NewSessionDialog(
             SectionLabel("Provider")
             Spacer(modifier = Modifier.height(10.dp))
 
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                providers.forEach { provider ->
-                    ProviderOption(
-                        provider = provider,
-                        isSelected = selectedProvider == provider,
-                        onClick = {
-                            selectedProvider = provider
-                            // Quick-start: if no title typed yet, create with defaults immediately
-                        },
-                        onQuickStart = {
-                            onCreate(sessionName, provider, null)
-                            onDismiss()
-                        },
+            if (providers.isEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(
+                        text = "No providers are enabled. Enable one in Settings to start a session.",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            } else {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    providers.forEach { provider ->
+                        ProviderOption(
+                            provider = provider,
+                            isSelected = selectedProvider == provider,
+                            onClick = { selectedProvider = provider },
+                        )
+                    }
+                }
+            }
+
+            // ── Templates ────────────────────────────────────────────────────
+            // A saved template fills provider, mode and directory in one tap;
+            // everything stays editable afterwards.
+            if (templates.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(20.dp))
+                SectionLabel("Start from a template")
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    templates.forEach { template ->
+                        AssistChip(
+                            onClick = {
+                                template.cliProvider
+                                    ?.let { CLIProvider.fromId(it) }
+                                    ?.takeIf { it in providers }
+                                    ?.let { selectedProvider = it }
+                                template.mode
+                                    ?.let { modeId ->
+                                        SessionMode.entries.firstOrNull { m ->
+                                            m.name.equals(modeId.replace('-', '_'), true)
+                                        }
+                                    }
+                                    ?.let { selectedMode = it }
+                                template.workingDirectory?.let { workingDirectory = it }
+                                if (sessionName.isBlank()) sessionName = template.name
+                            },
+                            label = { Text(template.name) },
+                        )
+                    }
                 }
             }
 
@@ -170,10 +256,7 @@ fun NewSessionDialog(
                     imeAction = ImeAction.Done,
                 ),
                 keyboardActions = KeyboardActions(
-                    onDone = {
-                        onCreate(sessionName, selectedProvider, null)
-                        onDismiss()
-                    }
+                    onDone = { createSession() },
                 ),
                 shape = RoundedCornerShape(12.dp),
             )
@@ -200,6 +283,34 @@ fun NewSessionDialog(
                 exit = shrinkVertically() + fadeOut(),
             ) {
                 Column {
+                    // ── Workspace directory ──────────────────────────────────
+                    SectionLabel("Workspace directory (optional)")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = workingDirectory,
+                        onValueChange = { workingDirectory = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(
+                                text = "/workspace/project",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = null,
+                            )
+                        },
+                        supportingText = { Text("Leave empty to use the default workspace") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { createSession() }),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     // ── Mode selector ────────────────────────────────────────
                     SectionLabel("Mode")
                     Spacer(modifier = Modifier.height(8.dp))
@@ -296,27 +407,49 @@ fun NewSessionDialog(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            creationError?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+
             // ── Create button ────────────────────────────────────────────────
             Button(
-                onClick = {
-                    onCreate(sessionName, selectedProvider, null)
-                    onDismiss()
-                },
+                onClick = createSession,
+                enabled = availableProvider != null && !isCreating,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
+                    .heightIn(min = 52.dp),
                 shape = RoundedCornerShape(14.dp),
             ) {
-                ProviderBadge(
-                    provider = selectedProvider.toCliProvider(),
-                    size = BadgeSize.SMALL,
-                    showLabel = false,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Start with ${selectedProvider.toCliProvider().displayName}",
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                if (isCreating) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Creating session…")
+                } else if (availableProvider != null) {
+                    ProviderBadge(
+                        provider = availableProvider.toCliProvider(),
+                        size = BadgeSize.SMALL,
+                        showLabel = false,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Start with ${availableProvider.toCliProvider().displayName}",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                } else {
+                    Text(
+                        text = "No provider available",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
             }
         }
     }
@@ -329,7 +462,6 @@ private fun ProviderOption(
     provider: CLIProvider,
     isSelected: Boolean,
     onClick: () -> Unit,
-    onQuickStart: () -> Unit,
 ) {
     val isDark = isSystemInDarkTheme()
     val cliProvider = provider.toCliProvider()
@@ -356,7 +488,11 @@ private fun ProviderOption(
                         shape = RoundedCornerShape(12.dp),
                     )
                 } else Modifier
-            ),
+            )
+            .semantics {
+                selected = isSelected
+                role = Role.Button
+            },
         color = containerColor,
         shape = RoundedCornerShape(12.dp),
         onClick = onClick,
@@ -392,7 +528,12 @@ private fun ModeChip(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.clip(RoundedCornerShape(10.dp)),
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .semantics {
+                selected = isSelected
+                role = Role.Button
+            },
         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
         else MaterialTheme.colorScheme.surfaceContainer,
         shape = RoundedCornerShape(10.dp),
@@ -493,7 +634,7 @@ private fun NewSessionDialogPreview() {
                 ),
             ),
             onDismiss = {},
-            onCreate = { _, _, _ -> },
+            onCreate = { _, _, _, _, _ -> },
         )
     }
 }

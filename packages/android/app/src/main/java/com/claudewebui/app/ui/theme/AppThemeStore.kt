@@ -43,4 +43,21 @@ object AppThemeStore {
             .apply()
         _theme.value = option
     }
+
+    /**
+     * Adopt the account theme, but only when the user turned on appearance sync
+     * in the WebUI. Without that guard the server default would silently
+     * override whatever was chosen on this phone.
+     */
+    fun applyServerTheme(context: Context, serverTheme: String?, syncEnabled: Boolean) {
+        if (!syncEnabled || serverTheme.isNullOrBlank()) return
+        val option = when (serverTheme.lowercase()) {
+            "dark" -> AppThemeOption.DARK
+            "light" -> AppThemeOption.LIGHT
+            "eink" -> AppThemeOption.EINK
+            "system" -> AppThemeOption.SYSTEM
+            else -> return
+        }
+        if (option != _theme.value) set(context, option)
+    }
 }

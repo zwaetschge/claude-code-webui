@@ -513,7 +513,7 @@ function runMigrations(db: Database.Database): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- Persisted raster media attached to chat messages. The storage key is an
+    -- Persisted files attached to chat messages. The storage key is an
     -- opaque backend-generated name; host paths are never stored in message
     -- payloads or returned to clients. Repeating the same content for another
     -- message reuses the physical storage key, while the per-message unique
@@ -529,7 +529,7 @@ function runMigrations(db: Database.Database): void {
       byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
       sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
       alt_text TEXT,
-      source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui')),
+      source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui', 'user')),
       source_id TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(message_id, sha256)
@@ -785,6 +785,8 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
   `);
 
+  migrateMessageMediaUserSource(db);
+
   // Initialize default basic auth credentials
   initializeBasicAuth(db);
 
@@ -847,6 +849,32 @@ function runMigrations(db: Database.Database): void {
   } catch {
     // Column already exists, ignore error
   }
+
+  // Migration: multi-chat threads inside one session. chat_id NULL on both
+  // sessions.active_chat_id and messages.chat_id means the legacy main chat,
+  // so existing sessions need no data rewrite.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN active_chat_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN chat_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_chats (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      provider_session_id TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_chats_session ON session_chats(session_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_session_chat ON messages(session_id, chat_id);
+  `);
 
   // Vibe was removed as a first-class provider. Keep existing chats accessible by
   // moving them to OpenCode, but clear provider-native resume/model state because
@@ -938,6 +966,184 @@ function runMigrations(db: Database.Database): void {
     // Column already exists, ignore error
   }
 
+  // Durable chat delivery/reconnect cursors. These columns are additive so
+  // older clients can continue using timestamp-based replay while newer
+  // clients use a monotone, restart-safe cursor and snapshot revision.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN event_sequence INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN snapshot_revision INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN client_message_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN event_sequence INTEGER DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_delivery
+      ON messages(session_id, client_message_id)
+      WHERE client_message_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_messages_session_sequence
+      ON messages(session_id, event_sequence)
+      WHERE event_sequence IS NOT NULL;
+
+    -- A client-generated delivery id remains authoritative across sockets and
+    -- backend restarts. ack_json stores the exact terminal acknowledgement so
+    -- retries receive the same answer without dispatching another model turn.
+    CREATE TABLE IF NOT EXISTS message_deliveries (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      client_message_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL CHECK (length(payload_hash) = 64),
+      status TEXT NOT NULL CHECK (status IN ('processing', 'accepted', 'rejected')),
+      message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      disposition TEXT CHECK (disposition IS NULL OR disposition IN ('dispatched', 'queued')),
+      ack_json TEXT,
+      error TEXT,
+      retryable INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 1,
+      accepted_at DATETIME,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, session_id, client_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_deliveries_session_updated
+      ON message_deliveries(session_id, updated_at DESC);
+
+    -- Resumable uploads are assembled only after every validated chunk exists;
+    -- completed uploads are then atomically linked to the persisted message.
+    CREATE TABLE IF NOT EXISTS chat_uploads (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
+      sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+      chunk_size INTEGER NOT NULL CHECK (chunk_size > 0),
+      total_chunks INTEGER NOT NULL CHECK (total_chunks > 0),
+      received_bytes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'complete', 'cancelled', 'failed')),
+      error TEXT,
+      reserved_delivery_id TEXT,
+      consumed_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS chat_upload_chunks (
+      upload_id TEXT NOT NULL REFERENCES chat_uploads(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+      byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+      sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(upload_id, chunk_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_uploads_owner_session
+      ON chat_uploads(user_id, session_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_uploads_expiry
+      ON chat_uploads(status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS session_reads (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      chat_key TEXT NOT NULL DEFAULT '',
+      last_read_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(user_id, session_id, chat_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_reads_session
+      ON session_reads(session_id, chat_key, updated_at DESC);
+    CREATE TRIGGER IF NOT EXISTS trg_session_reads_validate_insert
+    BEFORE INSERT ON session_reads
+    WHEN NOT EXISTS (
+      SELECT 1 FROM sessions s
+       WHERE s.id = NEW.session_id AND s.user_id = NEW.user_id
+    ) OR (
+      NEW.last_read_message_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM messages m
+         WHERE m.id = NEW.last_read_message_id
+           AND m.session_id = NEW.session_id
+           AND COALESCE(m.chat_id, '') = NEW.chat_key
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'session read ownership mismatch');
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_session_reads_validate_update
+    BEFORE UPDATE ON session_reads
+    WHEN NOT EXISTS (
+      SELECT 1 FROM sessions s
+       WHERE s.id = NEW.session_id AND s.user_id = NEW.user_id
+    ) OR (
+      NEW.last_read_message_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM messages m
+         WHERE m.id = NEW.last_read_message_id
+           AND m.session_id = NEW.session_id
+           AND COALESCE(m.chat_id, '') = NEW.chat_key
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'session read ownership mismatch');
+    END;
+
+    -- Message history revisions deliberately include edits/deletes as well as
+    -- inserts. The trigger avoids touching sessions.updated_at so background
+    -- metadata changes do not reorder the dashboard.
+    CREATE TRIGGER IF NOT EXISTS trg_messages_snapshot_insert
+    AFTER INSERT ON messages BEGIN
+      UPDATE sessions
+         SET snapshot_revision = snapshot_revision + 1
+       WHERE id = NEW.session_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_messages_snapshot_update
+    AFTER UPDATE OF role, content, chat_id, client_message_id ON messages BEGIN
+      UPDATE sessions
+         SET snapshot_revision = snapshot_revision + 1
+       WHERE id = NEW.session_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_messages_snapshot_delete
+    AFTER DELETE ON messages BEGIN
+      UPDATE sessions
+         SET snapshot_revision = snapshot_revision + 1
+       WHERE id = OLD.session_id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_messages_cancel_consumed_uploads
+    BEFORE DELETE ON messages BEGIN
+      UPDATE chat_uploads
+         SET status = 'cancelled', reserved_delivery_id = NULL,
+             error = 'Consumed message removed', updated_at = CURRENT_TIMESTAMP
+       WHERE consumed_message_id = OLD.id;
+    END;
+  `);
+  db.exec(`
+    UPDATE sessions
+       SET snapshot_revision = (
+         SELECT COUNT(*) FROM messages WHERE messages.session_id = sessions.id
+       )
+     WHERE snapshot_revision = 0
+       AND EXISTS (SELECT 1 FROM messages WHERE messages.session_id = sessions.id)
+  `);
+  try {
+    db.exec(`ALTER TABLE chat_uploads ADD COLUMN reserved_delivery_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
   // Create session_categories table
   db.exec(`
     CREATE TABLE IF NOT EXISTS session_categories (
@@ -983,10 +1189,11 @@ function runMigrations(db: Database.Database): void {
         INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS trg_messages_fts_update
+      DROP TRIGGER IF EXISTS trg_messages_fts_update;
+      CREATE TRIGGER trg_messages_fts_update
       AFTER UPDATE ON messages BEGIN
         INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (new.rowid, new.content);
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
       END;
     `);
 
@@ -1354,8 +1561,175 @@ function runMigrations(db: Database.Database): void {
     }
   }
 
+  // ── Session templates, notification centre, push, drafts, archive ────────
+  // One place for the newer feature tables so their shape is easy to compare.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_templates (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      cli_provider TEXT,
+      cli_model TEXT,
+      cli_reasoning TEXT,
+      mode TEXT,
+      working_directory TEXT,
+      design_style_skill TEXT,
+      writing_style_skill TEXT,
+      surface TEXT DEFAULT 'code',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_templates_user ON session_templates(user_id);
+
+    -- Durable "what happened" feed; the transient socket events are lost on
+    -- reload, this is what the notification centre reads.
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      read_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+      ON notifications(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+    -- Composer drafts follow the read-state model: server-side, per session and
+    -- chat thread, so a draft started on the desktop continues on the phone.
+    CREATE TABLE IF NOT EXISTS session_drafts (
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (session_id, user_id, chat_id)
+    );
+
+    -- Turn diffs: what the working tree looked like before/after one turn.
+    CREATE TABLE IF NOT EXISTS turn_diffs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      turn_id TEXT,
+      files_changed INTEGER DEFAULT 0,
+      insertions INTEGER DEFAULT 0,
+      deletions INTEGER DEFAULT 0,
+      summary TEXT,
+      diff TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_turn_diffs_session
+      ON turn_diffs(session_id, created_at DESC);
+  `);
+
+  // Archive instead of delete — sessions accumulate and deleting is lossy.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN archived INTEGER DEFAULT 0`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Carries the payload a notification needs to be acted on in place — an
+  // approval row keeps its requestId so the feed can answer without opening
+  // the session.
+  try {
+    db.exec(`ALTER TABLE notifications ADD COLUMN data TEXT`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
   repriceUsageHistoryCosts(db);
   backfillGpt55ContextSnapshotWindows(db);
+}
+
+/**
+ * SQLite cannot alter a CHECK constraint in place. Builds predating user-upload
+ * history created `message_media.source` without the `user` value, so every
+ * uploaded image failed persistence even though the TypeScript type accepted
+ * it. Rebuild the table once, preserving all existing rows and indexes.
+ */
+export function migrateMessageMediaUserSource(database: Database.Database): boolean {
+  const table = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'message_media'")
+    .get() as { sql: string | null } | undefined;
+  if (!table?.sql || table.sql.includes("'user'")) return false;
+
+  database.transaction(() => {
+    database.exec(`
+      DROP TRIGGER IF EXISTS trg_message_media_validate_ownership;
+      ALTER TABLE message_media RENAME TO message_media_before_user_source;
+
+      CREATE TABLE message_media (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        storage_key TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
+        sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+        alt_text TEXT,
+        source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui', 'user')),
+        source_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(message_id, sha256)
+      );
+
+      INSERT INTO message_media (
+        id, message_id, session_id, user_id, storage_key, filename,
+        mime_type, byte_size, sha256, alt_text, source, source_id, created_at
+      )
+      SELECT
+        id, message_id, session_id, user_id, storage_key, filename,
+        mime_type, byte_size, sha256, alt_text, source, source_id, created_at
+      FROM message_media_before_user_source;
+
+      DROP TABLE message_media_before_user_source;
+
+      CREATE TRIGGER trg_message_media_validate_ownership
+      BEFORE INSERT ON message_media
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM messages m
+        JOIN sessions s ON s.id = m.session_id
+        WHERE m.id = NEW.message_id
+          AND m.session_id = NEW.session_id
+          AND s.user_id = NEW.user_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'message media ownership mismatch');
+      END;
+
+      CREATE INDEX idx_message_media_message_created
+        ON message_media(message_id, created_at, id);
+      CREATE INDEX idx_message_media_session
+        ON message_media(session_id, id);
+      CREATE INDEX idx_message_media_owner_hash
+        ON message_media(user_id, sha256);
+      CREATE INDEX idx_message_media_storage_key
+        ON message_media(storage_key);
+      CREATE UNIQUE INDEX idx_message_media_source_id
+        ON message_media(session_id, source, source_id)
+        WHERE source_id IS NOT NULL;
+    `);
+  })();
+
+  console.log('[DB] Migrated message_media to support durable user attachments.');
+  return true;
 }
 
 function repriceUsageHistoryCosts(database: Database.Database): void {

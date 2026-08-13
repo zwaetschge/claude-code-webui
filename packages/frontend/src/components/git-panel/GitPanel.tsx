@@ -197,6 +197,30 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
     },
   });
 
+  /**
+   * Switch to an existing branch. The server refuses while the tree is dirty,
+   * which surfaces here as a toast rather than silently dragging changes over.
+   */
+  const checkoutMutation = useMutation({
+    mutationFn: async (branch: string) => {
+      const response = await api.post<ApiResponse<{ branch: string }>>('/api/git/checkout', {
+        path: workingDirectory,
+        branch,
+      });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['git-branches', workingDirectory] });
+      queryClient.invalidateQueries({ queryKey: ['git-status', workingDirectory] });
+      queryClient.invalidateQueries({ queryKey: ['git-log', workingDirectory] });
+      toast({ title: 'Branch switched', description: `Now on ${data.data?.branch ?? ''}` });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Checkout failed', description: error.message, variant: 'destructive' });
+    },
+  });
+
+
   const handleFileSelect = (file: string, staged: boolean) => {
     setSelectedDiff({ file, staged });
   };
@@ -240,7 +264,40 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <GitBranch className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium">{currentBranch?.name || status.branch}</span>
+            {/* Listing branches without being able to switch made the panel
+                read-only in practice; this is the actual checkout. */}
+            <select
+              value={currentBranch?.name || status.branch}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (next && next !== (currentBranch?.name || status.branch)) {
+                  checkoutMutation.mutate(next);
+                }
+              }}
+              disabled={checkoutMutation.isPending}
+              className="max-w-[10rem] truncate rounded border border-border/60 bg-transparent px-1 py-0.5 text-sm font-medium"
+              title="Switch branch"
+            >
+              {(branches ?? []).map((branch) => (
+                <option key={branch.name} value={branch.name}>
+                  {branch.name}
+                </option>
+              ))}
+              {!branches?.some((b) => b.name === (currentBranch?.name || status.branch)) && (
+                <option value={currentBranch?.name || status.branch}>
+                  {currentBranch?.name || status.branch}
+                </option>
+              )}
+            </select>
+            <button
+              type="button"
+              onClick={() => pullMutation.mutate()}
+              disabled={pullMutation.isPending}
+              className="text-xs text-muted-foreground hover:text-foreground"
+              title="Pull from remote"
+            >
+              {pullMutation.isPending ? '…' : 'Pull'}
+            </button>
             {changesCount > 0 && (
               <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500">
                 {changesCount}

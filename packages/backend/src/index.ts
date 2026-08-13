@@ -69,6 +69,9 @@ import memoriesRoutes from './routes/memories.js';
 import taskRoutes from './routes/tasks.js';
 import devicesRoutes from './routes/devices.js';
 import androidRoutes from './routes/android.js';
+import appRoutes from './routes/app.js';
+import workspaceRoutes from './routes/workspace.js';
+import transcribeRoutes from './routes/transcribe.js';
 import previewRoutes from './routes/preview.js';
 import adminRoutes from './routes/admin.js';
 import comfyuiRoutes from './routes/comfyui.js';
@@ -81,9 +84,11 @@ import { initTaskManager } from './services/tasks/index.js';
 import discordRoutes from './routes/discord.js';
 import homeAssistantRoutes from './routes/home-assistant.js';
 import { initDiscordOutboxWorker } from './services/discord/index.js';
+import { attachNotificationIo } from './services/notifications/notificationCenter.js';
 import { buildReadinessReport } from './services/readiness.js';
 import { SqliteSessionStore } from './services/SqliteSessionStore.js';
 import { initUsageLimitHistoryCollector } from './services/usage-limit-history-collector.js';
+import { cleanupExpiredChatUploads } from './services/chatUploads.js';
 
 function parseBooleanEnv(value?: string): boolean {
   if (!value) return false;
@@ -177,6 +182,14 @@ async function main() {
 
   // Initialize database
   initDatabase();
+  try {
+    const removedUploads = await cleanupExpiredChatUploads();
+    if (removedUploads > 0) {
+      console.log(`[UPLOAD] Removed ${removedUploads} expired/orphaned staged upload(s).`);
+    }
+  } catch (error) {
+    console.warn('[UPLOAD] Startup cleanup skipped:', error);
+  }
   ensureCliPath();
   try {
     const providerEnv = await sanitizeClaudeSettingsProviderEnv();
@@ -220,6 +233,7 @@ async function main() {
 
   // Setup WebSocket
   const io = setupWebSocket(httpServer);
+  attachNotificationIo(io);
 
   // Initialize task delegation system
   initTaskManager();
@@ -367,6 +381,9 @@ async function main() {
   app.use('/api/tasks', taskRoutes);
   app.use('/api/devices', devicesRoutes);
   app.use('/api/android', androidRoutes);
+  app.use('/api/app', appRoutes);
+  app.use('/api/workspace', workspaceRoutes);
+  app.use('/api/transcribe', transcribeRoutes);
   app.use('/api/preview', previewRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/comfyui', comfyuiRoutes);

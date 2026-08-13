@@ -52,9 +52,21 @@ export interface UserSettings {
   localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
   oracleBrowser?: OracleBrowserSettings;
   analytics?: AnalyticsSettings;
+  /** When true, theme and background follow the account onto every client. */
+  appearanceSync?: boolean;
+  usageAlerts?: UsageAlertSettings;
+}
+
+/** Account-wide spend/quota alarm thresholds, shared by WebUI and app. */
+export interface UsageAlertSettings {
+  enabled?: boolean;
+  quotaPercent?: number;
+  dailyCostUsd?: number;
 }
 
 export interface UpdateSettingsInput {
+  appearanceSync?: boolean;
+  usageAlerts?: UsageAlertSettings;
   theme?: Theme;
   defaultWorkingDir?: string | null;
   allowedTools?: string[];

@@ -2,9 +2,28 @@
 <resources>
     <string name="app_name">Plum Code</string>
 
-    <!-- Widget -->
-    <string name="widget_label">Plum Code Sessions</string>
-    <string name="widget_description">Shows active Plum Code sessions and lets you open or create sessions from your home screen.</string>
+    <!-- Widgets -->
+    <string name="widget_label">Sessions &amp; Agents</string>
+    <string name="widget_description">Active sessions, which agent is working, and pending approvals at a glance.</string>
+    <string name="widget_label_approvals">Approvals</string>
+    <string name="widget_desc_approvals">Pending permission requests — tap a row to jump into the session and approve.</string>
+    <string name="widget_label_quick_glance">Quick Glance</string>
+    <string name="widget_desc_quick_glance">Compact status: running sessions, pending approvals, today\'s tokens and cost.</string>
+    <string name="widget_label_tokens_today">Tokens Today</string>
+    <string name="widget_desc_tokens_today">Today\'s token usage split into input, output and cache reads.</string>
+    <string name="widget_label_cost_today">Cost</string>
+    <string name="widget_desc_cost_today">API-equivalent cost today and this week, plus request count.</string>
+    <string name="widget_label_providers">Provider Usage</string>
+    <string name="widget_desc_providers">This week\'s usage broken down by provider (Codex, OpenCode, Pi, Claude…).</string>
+    <string name="widget_label_models">Model Usage</string>
+    <string name="widget_desc_models">Top models this week by cost and tokens.</string>
+    <string name="widget_label_limits">Provider Limits</string>
+    <string name="widget_desc_limits">Live account quota bars — how much of each provider\'s rate limit is used.</string>
+    <string name="widget_label_week_chart">7-Day Activity</string>
+    <string name="widget_desc_week_chart">Bar chart of daily token usage over the last seven days.</string>
+    <string name="widget_label_top_sessions">Top Sessions</string>
+    <string name="widget_desc_top_sessions">Most expensive sessions this week by cost and tokens.</string>
+    <string name="widget_chart_description">Daily token usage chart</string>
 
     <!-- Quick Settings Tile -->
     <string name="tile_label">Plum Code</string>

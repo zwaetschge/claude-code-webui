@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Plum Code</string>
+    <string name="tile_label">Plum Code</string>
+    <string name="complication_label">Plum approvals</string>
+</resources>

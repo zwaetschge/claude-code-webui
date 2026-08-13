@@ -29,9 +29,11 @@ import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Token
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claudewebui.app.BuildConfig
 import com.claudewebui.app.ui.components.common.GlassPanel
+import com.claudewebui.app.ui.components.common.LocalPlumSnackbar
 import com.claudewebui.app.ui.components.common.MainDestination
 import com.claudewebui.app.ui.components.common.PlumAccent
 import com.claudewebui.app.ui.components.common.PlumAmber
@@ -76,7 +79,9 @@ import java.util.Locale
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -90,8 +95,20 @@ import kotlin.math.roundToInt
 fun AnalyticsScreen(
     onNavigateMain: (MainDestination) -> Unit = {},
     designPreview: Boolean = false,
+    initialRange: String? = null,
     viewModel: AnalyticsViewModel = koinViewModel(),
 ) {
+    // Deep links (widgets, usage alerts) preselect the time range once.
+    LaunchedEffect(initialRange) {
+        val range = when (initialRange) {
+            "24h" -> AnalyticsTimeRange.TODAY
+            "7d" -> AnalyticsTimeRange.WEEK
+            "30d" -> AnalyticsTimeRange.MONTH
+            "all" -> AnalyticsTimeRange.ALL
+            else -> null
+        }
+        range?.let { viewModel.selectTimeRange(it) }
+    }
     val liveState by viewModel.uiState.collectAsState()
     val state = if (designPreview && BuildConfig.DEBUG) {
         previewAnalyticsState(chartMetric = liveState.chartMetric)
@@ -118,8 +135,13 @@ fun AnalyticsScreen(
     PlumBackdrop {
         PlumNavScaffold(MainDestination.ANALYTICS, onNavigateMain) { padding ->
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+                contentPadding = PaddingValues(
+                    start = 14.dp,
+                    end = 14.dp,
+                    top = 4.dp,
+                    bottom = 4.dp + padding.calculateBottomPadding(),
+                ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
@@ -138,6 +160,16 @@ fun AnalyticsScreen(
 
                 item {
                     ProviderLimitsPanel(state.providerLimits, state.limitsLoading)
+                }
+
+                state.dailyCostLimitUsd?.let { limit ->
+                    item {
+                        SpendAgainstLimitPanel(
+                            spent = state.latestBucketCostUsd,
+                            limit = limit,
+                            onTestAlert = { viewModel.sendTestAlert(it) },
+                        )
+                    }
                 }
 
                 item {
@@ -374,6 +406,72 @@ private fun AnalyticsMetric(
             }
             Text(value, color = PlumText, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(detail, color = PlumMuted, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * The daily spend threshold made visible. A cost figure on its own says nothing
+ * about whether an alert is about to fire.
+ */
+@Composable
+private fun SpendAgainstLimitPanel(
+    spent: Double,
+    limit: Double,
+    onTestAlert: ((Boolean) -> Unit) -> Unit,
+) {
+    val snackbar = LocalPlumSnackbar.current
+    val scope = rememberCoroutineScope()
+    val ratio = if (limit > 0) (spent / limit).coerceIn(0.0, 1.0).toFloat() else 0f
+    val tint = when {
+        ratio >= 1f -> PlumRed
+        ratio >= .8f -> PlumAmber
+        else -> PlumGreen
+    }
+    GlassPanel(Modifier.fillMaxWidth(), radius = 20.dp) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Spend vs alert limit",
+                        color = PlumText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "Latest period against the account threshold.",
+                        color = PlumMuted,
+                        fontSize = 12.sp,
+                    )
+                }
+                Text(
+                    "$${"%.2f".format(spent)} / $${"%.2f".format(limit)}",
+                    color = tint,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            LinearProgressIndicator(
+                progress = { ratio },
+                color = tint,
+                trackColor = PlumMuted.copy(alpha = .25f),
+                modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp)),
+            )
+            Text(
+                "Send test alert",
+                color = PlumAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable {
+                    onTestAlert { ok ->
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                if (ok) "Test alert sent" else "Test alert failed",
+                            )
+                        }
+                    }
+                },
+            )
         }
     }
 }

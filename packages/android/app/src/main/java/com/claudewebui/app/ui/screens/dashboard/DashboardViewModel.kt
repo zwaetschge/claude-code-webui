@@ -1,15 +1,26 @@
 package com.claudewebui.app.ui.screens.dashboard
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudewebui.app.core.network.ApiClient
+import com.claudewebui.app.data.model.AppNotification
+import com.claudewebui.app.data.model.BulkSessionInput
+import com.claudewebui.app.data.model.PermissionAction
+import com.claudewebui.app.data.model.PermissionResponse
+import com.claudewebui.app.data.model.CreateSessionTemplateInput
 import com.claudewebui.app.data.model.Category
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.CreateCategoryInput
 import com.claudewebui.app.data.model.CreateSessionInput
 import com.claudewebui.app.data.model.Session
+import com.claudewebui.app.data.model.SessionMode
 import com.claudewebui.app.data.model.UpdateCategoryInput
 import com.claudewebui.app.data.model.UpdateSessionInput
+import com.claudewebui.app.core.shortcuts.SessionShortcuts
+import com.claudewebui.app.data.repository.SessionRepository
+import com.claudewebui.app.data.repository.SessionLaunchPreferences
+import com.claudewebui.app.data.repository.SessionLaunchSetup
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -17,16 +28,25 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class DashboardViewModel(
     private val apiClient: ApiClient,
+    private val sessionRepository: SessionRepository,
+    context: Context,
 ) : ViewModel() {
+
+    private val launchPreferences = SessionLaunchPreferences(context)
+    private val appContext = context.applicationContext
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    private val _uiState = MutableStateFlow(DashboardUiState(isLoading = true))
+    private val _uiState = MutableStateFlow(
+        DashboardUiState(isLoading = true, lastSessionSetup = launchPreferences.load())
+    )
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
     private val _events = Channel<DashboardEvent>(Channel.BUFFERED)
@@ -40,7 +60,137 @@ class DashboardViewModel(
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
+        observeCachedSessions()
         loadData()
+        loadTemplates()
+        loadNotifications()
+    }
+
+    // ── Notification centre ─────────────────────────────────────────────────
+
+    fun loadNotifications() {
+        viewModelScope.launch {
+            val feed = runCatching { apiClient.getNotifications().data }.getOrNull() ?: return@launch
+            _uiState.update {
+                it.copy(notifications = feed.items, unreadNotifications = feed.unreadCount)
+            }
+        }
+    }
+
+    fun markNotificationsRead(ids: List<String> = emptyList()) {
+        viewModelScope.launch {
+            runCatching { apiClient.markNotificationsRead(ids) }
+            loadNotifications()
+        }
+    }
+
+    fun clearNotifications() {
+        viewModelScope.launch {
+            runCatching { apiClient.clearNotifications() }
+            loadNotifications()
+        }
+    }
+
+    /**
+     * Answer an approval straight from the feed. The agent is blocked while it
+     * waits, so opening the session first costs time exactly when it matters.
+     */
+    fun respondToApproval(notification: AppNotification, allow: Boolean) {
+        val sessionId = notification.sessionId ?: return
+        val requestId = notification.data?.requestId ?: return
+        viewModelScope.launch {
+            runCatching {
+                apiClient.respondToPermission(
+                    PermissionResponse(
+                        sessionId = sessionId,
+                        requestId = requestId,
+                        action = if (allow) PermissionAction.ALLOW_ONCE else PermissionAction.DENY,
+                    )
+                )
+            }.onFailure {
+                _uiState.update { state -> state.copy(error = it.message ?: "Approval failed") }
+            }
+            runCatching { apiClient.markNotificationsRead(listOf(notification.id)) }
+            loadNotifications()
+        }
+    }
+
+    // ── Templates ───────────────────────────────────────────────────────────
+
+    private fun loadTemplates() {
+        viewModelScope.launch {
+            val templates = runCatching { apiClient.getSessionTemplates().data }
+                .getOrNull().orEmpty()
+            _uiState.update { it.copy(sessionTemplates = templates) }
+        }
+    }
+
+    /** Save the current new-session setup so it can be reused with one tap. */
+    fun saveTemplate(input: CreateSessionTemplateInput) {
+        viewModelScope.launch {
+            runCatching { apiClient.createSessionTemplate(input) }
+            loadTemplates()
+        }
+    }
+
+    fun deleteTemplate(id: String) {
+        viewModelScope.launch {
+            runCatching { apiClient.deleteSessionTemplate(id) }
+            loadTemplates()
+        }
+    }
+
+    // ── Archive and bulk actions ────────────────────────────────────────────
+
+    fun toggleArchiveView() {
+        _uiState.update { it.copy(showArchived = !it.showArchived, selectedSessionIds = emptySet()) }
+        loadData()
+    }
+
+    fun toggleSessionSelection(id: String) {
+        _uiState.update { state ->
+            val next = state.selectedSessionIds.toMutableSet()
+            if (!next.add(id)) next.remove(id)
+            state.copy(selectedSessionIds = next)
+        }
+    }
+
+    fun clearSelection() {
+        _uiState.update { it.copy(selectedSessionIds = emptySet()) }
+    }
+
+    /** Apply one action to every selected session, then refresh the list. */
+    fun bulkAction(action: String, categoryId: String? = null) {
+        val ids = _uiState.value.selectedSessionIds.toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { apiClient.bulkSessions(BulkSessionInput(ids, action, categoryId)) }
+            _uiState.update { it.copy(selectedSessionIds = emptySet()) }
+            loadData()
+        }
+    }
+
+    private fun observeCachedSessions() {
+        sessionRepository.sessions
+            .onEach { sessions ->
+                _allSessions.value = sessions
+                // Published here rather than from a screen: the phone and the
+                // tablet render different dashboards, and the launcher menu
+                // must not depend on which one happens to be on screen.
+                SessionShortcuts.publish(appContext, sessions)
+                _uiState.update { state ->
+                    state.copy(
+                        sessions = sessions,
+                        filteredSessions = applyFilters(
+                            sessions = sessions,
+                            query = state.searchQuery,
+                            categoryId = state.selectedCategoryId,
+                            sortOrder = state.sortOrder,
+                        ),
+                    )
+                }
+            }
+            .launchIn(viewModelScope)
     }
 
     // ── Data Loading ──────────────────────────────────────────────────────────
@@ -66,22 +216,9 @@ class DashboardViewModel(
     }
 
     private suspend fun loadSessions() {
-        runCatching { apiClient.getSessions() }
-            .onSuccess { response ->
-                val sessions = response.data ?: emptyList()
-                _allSessions.value = sessions
-                _uiState.update { state ->
-                    state.copy(
-                        sessions = sessions,
-                        filteredSessions = applyFilters(
-                            sessions = sessions,
-                            query = state.searchQuery,
-                            categoryId = state.selectedCategoryId,
-                            sortOrder = state.sortOrder,
-                        ),
-                        isOffline = false,
-                    )
-                }
+        sessionRepository.getSessions()
+            .onSuccess {
+                _uiState.update { state -> state.copy(isOffline = false, error = null) }
             }
             .onFailure { error ->
                 val isNetwork = error is java.net.UnknownHostException ||
@@ -121,12 +258,55 @@ class DashboardViewModel(
     // ── Filtering & Sorting ───────────────────────────────────────────────────
 
     fun setSearchQuery(query: String) {
-        _uiState.update { it.copy(searchQuery = query) }
+        _uiState.update { it.copy(searchQuery = query, messageSearchError = null) }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(200)
-            applyCurrentFilters()
+            if (_uiState.value.searchScope == DashboardSearchScope.MESSAGES) {
+                searchMessages(query)
+            } else {
+                applyCurrentFilters()
+            }
         }
+    }
+
+    fun setSearchScope(scope: DashboardSearchScope) {
+        searchJob?.cancel()
+        _uiState.update {
+            it.copy(
+                searchScope = scope,
+                messageSearchResults = if (scope == DashboardSearchScope.MESSAGES) {
+                    it.messageSearchResults
+                } else emptyList(),
+                messageSearchError = null,
+            )
+        }
+        if (scope == DashboardSearchScope.MESSAGES) {
+            viewModelScope.launch { searchMessages(_uiState.value.searchQuery) }
+        } else applyCurrentFilters()
+    }
+
+    private suspend fun searchMessages(query: String) {
+        if (query.trim().length < 2) {
+            _uiState.update { it.copy(messageSearchResults = emptyList(), isSearchingMessages = false) }
+            return
+        }
+        _uiState.update { it.copy(isSearchingMessages = true) }
+        runCatching { apiClient.searchMessages(query.trim()) }
+            .onSuccess { response ->
+                _uiState.update {
+                    it.copy(
+                        isSearchingMessages = false,
+                        messageSearchResults = response.data.orEmpty(),
+                        messageSearchError = response.error?.message,
+                    )
+                }
+            }
+            .onFailure { error ->
+                _uiState.update {
+                    it.copy(isSearchingMessages = false, messageSearchError = error.message)
+                }
+            }
     }
 
     fun toggleSearch() {
@@ -187,35 +367,7 @@ class DashboardViewModel(
         categoryId: String?,
         sortOrder: SortOrder,
     ): List<Session> {
-        var result = sessions
-
-        if (categoryId != null) {
-            result = result.filter { it.category == categoryId }
-        }
-
-        if (query.isNotBlank()) {
-            val lower = query.lowercase()
-            result = result.filter { session ->
-                session.name.lowercase().contains(lower) ||
-                        session.lastMessage?.lowercase()?.contains(lower) == true
-            }
-        }
-
-        result = when (sortOrder) {
-            SortOrder.RECENT   -> result.sortedByDescending { it.updatedAt }
-            SortOrder.NAME     -> result.sortedBy { it.name.lowercase() }
-            SortOrder.STATUS   -> result.sortedWith(
-                compareByDescending<Session> {
-                    it.status == com.claudewebui.app.data.model.SessionStatus.RUNNING
-                }.thenByDescending { it.updatedAt }
-            )
-            SortOrder.PROVIDER -> result.sortedWith(
-                compareBy<Session> { it.cliProvider.name }
-                    .thenByDescending { it.updatedAt }
-            )
-        }
-
-        return result
+        return filterDashboardSessions(sessions, query, categoryId, sortOrder)
     }
 
     // ── Session CRUD ──────────────────────────────────────────────────────────
@@ -224,57 +376,64 @@ class DashboardViewModel(
         name: String,
         workingDirectory: String?,
         provider: CLIProvider,
+        mode: SessionMode? = null,
+        categoryId: String? = null,
     ) {
         viewModelScope.launch {
+            _uiState.update { it.copy(isCreatingSession = true, creationError = null) }
             runCatching {
-                apiClient.createSession(
+                val response = apiClient.createSession(
                     CreateSessionInput(
                         name = name.ifBlank { "Session ${System.currentTimeMillis() % 10000}" },
                         workingDirectory = workingDirectory,
                         cliProvider = provider,
+                        mode = mode,
                     )
                 )
+                // A {success:false} body is a failure, not "no session".
+                if (!response.success || response.data == null) {
+                    error(response.error?.message ?: "Server rejected the session")
+                }
+                if (categoryId != null) {
+                    runCatching { apiClient.updateSessionCategory(response.data.id, categoryId) }
+                }
+                response
             }.onSuccess { response ->
                 response.data?.let { session ->
-                    val updated = listOf(session) + _allSessions.value
-                    _allSessions.value = updated
-                    _uiState.update { state ->
-                        state.copy(
-                            sessions = updated,
-                            filteredSessions = applyFilters(
-                                sessions = updated,
-                                query = state.searchQuery,
-                                categoryId = state.selectedCategoryId,
-                                sortOrder = state.sortOrder,
-                            )
+                    val cached = session.copy(category = categoryId ?: session.category)
+                    sessionRepository.cacheSession(cached)
+                    val setup = SessionLaunchSetup(provider, mode ?: SessionMode.AUTO_ACCEPT, workingDirectory, categoryId)
+                    launchPreferences.save(setup)
+                    _uiState.update {
+                        it.copy(
+                            isCreatingSession = false,
+                            creationError = null,
+                            lastSessionSetup = setup,
                         )
                     }
-                    _events.send(DashboardEvent.SessionCreated(session))
-                    _events.send(DashboardEvent.NavigateToChat(session.id))
+                    _events.send(DashboardEvent.SessionCreated(cached))
+                    _events.send(DashboardEvent.NavigateToChat(cached.id))
                 }
             }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isCreatingSession = false,
+                        creationError = error.message ?: "Session creation failed",
+                    )
+                }
                 _events.send(DashboardEvent.ShowError("Failed to create session: ${error.message}"))
             }
         }
     }
 
+    fun clearCreationError() {
+        _uiState.update { it.copy(creationError = null) }
+    }
+
     fun deleteSession(id: String) {
         viewModelScope.launch {
-            runCatching { apiClient.deleteSession(id) }
+            sessionRepository.deleteSession(id)
                 .onSuccess {
-                    val updated = _allSessions.value.filter { it.id != id }
-                    _allSessions.value = updated
-                    _uiState.update { state ->
-                        state.copy(
-                            sessions = updated,
-                            filteredSessions = applyFilters(
-                                sessions = updated,
-                                query = state.searchQuery,
-                                categoryId = state.selectedCategoryId,
-                                sortOrder = state.sortOrder,
-                            )
-                        )
-                    }
                     _events.send(DashboardEvent.SessionDeleted(id))
                 }
                 .onFailure { error ->
@@ -285,15 +444,8 @@ class DashboardViewModel(
 
     fun renameSession(id: String, newName: String) {
         viewModelScope.launch {
-            runCatching { apiClient.updateSession(id, UpdateSessionInput(name = newName)) }
-                .onSuccess { response ->
-                    response.data?.let { updated ->
-                        val newList = _allSessions.value.map { if (it.id == id) updated else it }
-                        _allSessions.value = newList
-                        applyCurrentFilters()
-                        _uiState.update { it.copy(sessions = newList) }
-                    }
-                }
+            sessionRepository.updateSession(id = id, name = newName)
+                .onSuccess { }
                 .onFailure { error ->
                     _events.send(DashboardEvent.ShowError("Failed to rename: ${error.message}"))
                 }
@@ -302,17 +454,19 @@ class DashboardViewModel(
 
     fun moveSessionToCategory(sessionId: String, categoryId: String?) {
         viewModelScope.launch {
-            runCatching { apiClient.updateSessionCategory(sessionId, categoryId) }
-                .onSuccess { response ->
-                    response.data?.let { updated ->
-                        val newList = _allSessions.value.map { if (it.id == sessionId) updated else it }
-                        _allSessions.value = newList
-                        applyCurrentFilters()
-                        _uiState.update { it.copy(sessions = newList) }
-                    }
-                }
+            sessionRepository.updateCategory(sessionId, categoryId)
+                .onSuccess { }
                 .onFailure { error ->
                     _events.send(DashboardEvent.ShowError("Failed to move: ${error.message}"))
+                }
+        }
+    }
+
+    fun toggleStar(id: String) {
+        viewModelScope.launch {
+            sessionRepository.starSession(id)
+                .onFailure { error ->
+                    _events.send(DashboardEvent.ShowError("Failed to update favorite: ${error.message}"))
                 }
         }
     }
@@ -383,6 +537,18 @@ class DashboardViewModel(
         viewModelScope.launch { _events.send(DashboardEvent.NavigateToChat(sessionId)) }
     }
 
+    fun onMessageResultTapped(result: com.claudewebui.app.data.model.MessageSearchResult) {
+        viewModelScope.launch {
+            _events.send(
+                DashboardEvent.NavigateToMessage(
+                    result.jump?.sessionId ?: result.sessionId,
+                    result.jump?.messageId ?: result.id,
+                    result.jump?.chatId,
+                )
+            )
+        }
+    }
+
     fun onNewSessionFabTapped() {
         viewModelScope.launch { _events.send(DashboardEvent.ShowNewSessionDialog) }
     }
@@ -402,5 +568,40 @@ class DashboardViewModel(
     /** Called by the Socket.IO listener when a session event arrives. */
     fun onSocketSessionEvent() {
         viewModelScope.launch { loadSessions() }
+    }
+}
+
+internal fun filterDashboardSessions(
+    sessions: List<Session>,
+    query: String,
+    categoryId: String?,
+    sortOrder: SortOrder,
+): List<Session> {
+    var result = sessions
+    if (categoryId != null) result = result.filter { it.category == categoryId }
+
+    if (query.isNotBlank()) {
+        val lower = query.trim().lowercase()
+        result = result.filter { session ->
+            session.name.lowercase().contains(lower) ||
+                session.lastMessage?.lowercase()?.contains(lower) == true ||
+                session.workingDirectory.lowercase().contains(lower) ||
+                session.cliProvider.displayName.lowercase().contains(lower) ||
+                session.cliProvider.name.lowercase().contains(lower) ||
+                session.cliModel?.lowercase()?.contains(lower) == true
+        }
+    }
+
+    return when (sortOrder) {
+        SortOrder.RECENT -> result.sortedByDescending { it.updatedAt }
+        SortOrder.NAME -> result.sortedBy { it.name.lowercase() }
+        SortOrder.STATUS -> result.sortedWith(
+            compareByDescending<Session> {
+                it.status == com.claudewebui.app.data.model.SessionStatus.RUNNING
+            }.thenByDescending { it.updatedAt }
+        )
+        SortOrder.PROVIDER -> result.sortedWith(
+            compareBy<Session> { it.cliProvider.name }.thenByDescending { it.updatedAt }
+        )
     }
 }

@@ -1,5 +1,8 @@
 package com.claudewebui.app.ui.screens.settings
 
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
@@ -57,10 +62,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.claudewebui.app.core.notifications.LocalNotificationManager
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.CLIProviderConfig
 import com.claudewebui.app.ui.components.common.GlassPanel
@@ -79,6 +86,9 @@ import com.claudewebui.app.ui.components.common.PlumScreenHeader
 import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
 import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.components.common.StatusPill
+import com.claudewebui.app.ui.components.common.PlumContentWidth
+import com.claudewebui.app.ui.components.common.rememberWindowWidth
+import com.claudewebui.app.ui.components.common.WindowWidth
 import com.claudewebui.app.ui.theme.AppThemeOption
 import com.claudewebui.app.ui.components.common.providerColor
 
@@ -97,16 +107,32 @@ fun SettingsScreen(
     onNavigateMain: (MainDestination) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showThemePicker by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> viewModel.onNotificationPermissionResult(granted) }
 
-    LaunchedEffect(Unit) { viewModel.ensureLoaded() }
+    LaunchedEffect(Unit) {
+        viewModel.ensureLoaded()
+        viewModel.refreshNotificationPermission()
+    }
 
     PlumBackdrop {
         PlumNavScaffold(MainDestination.SETTINGS, onNavigateMain) { padding ->
+            PlumContentWidth(
+                modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+                max = 1040.dp,
+            ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 4.dp,
+                    bottom = 4.dp + padding.calculateBottomPadding(),
+                ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
@@ -115,7 +141,6 @@ fun SettingsScreen(
                         subtitle = "Connection, providers and app preferences",
                         actions = {
                             PlumIconButton(Icons.Outlined.Refresh, "Refresh", viewModel::loadSettings)
-                            PlumIconButton(Icons.Outlined.HelpOutline, "Help", {})
                         },
                     )
                 }
@@ -160,17 +185,23 @@ fun SettingsScreen(
                     }
                 }
                 item {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SettingsGroup("Security", Modifier.weight(1f)) {
+                    ResponsiveSettingsPair(
+                        first = { groupModifier -> SettingsGroup("Security", groupModifier) {
                             CompactSettingRow(Icons.Outlined.Fingerprint, "Biometric lock", "Use fingerprint", PlumAccent) {
                                 PlumSwitch(state.biometricEnabled) { viewModel.setBiometricEnabled(it) }
                             }
                             CompactSettingRow(Icons.Outlined.Security, "Encrypted tokens", "Stored securely", PlumAccent) {
-                                PlumSwitch(true, null)
+                                Icon(Icons.Outlined.CloudDone, "Enabled", tint = PlumGreen)
                             }
-                            CompactSettingRow(Icons.Outlined.Lock, "Permissions", "Per session", PlumAccent, onNavigateToPermissions)
-                        }
-                        SettingsGroup("Appearance", Modifier.weight(1f)) {
+                            CompactSettingRow(
+                                Icons.Outlined.Lock,
+                                "Permissions",
+                                "Per session",
+                                PlumAccent,
+                                onClick = onNavigateToPermissions,
+                            )
+                        } },
+                        second = { groupModifier -> SettingsGroup("Appearance", groupModifier) {
                             CompactSettingRow(
                                 Icons.Outlined.Brightness4,
                                 "Theme",
@@ -178,29 +209,82 @@ fun SettingsScreen(
                                 PlumMuted,
                                 onClick = { showThemePicker = true },
                             )
-                            CompactSettingRow(
-                                Icons.Outlined.AutoAwesome,
-                                "Background effects",
-                                if (state.theme == AppThemeOption.EINK) "Off (E-Ink)" else "Subtle glow",
-                                PlumMuted,
-                            )
-                        }
-                    }
+                        } },
+                    )
                 }
                 item {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SettingsGroup("Notifications & Sync", Modifier.weight(1f)) {
-                            CompactSettingRow(Icons.Outlined.Notifications, "Push notifications", "Receive app updates", PlumAccent) {
-                                PlumSwitch(state.notificationsEnabled) { viewModel.setNotificationsEnabled(it) }
+                    ResponsiveSettingsPair(
+                        first = { groupModifier -> SettingsGroup("Notifications", groupModifier) {
+                            val notificationsActive = state.notificationsEnabled &&
+                                state.notificationsAllowedBySystem
+                            val notificationStatus = when {
+                                !state.notificationsAllowedBySystem -> "Blocked by Android settings"
+                                notificationsActive -> "Reply, goal and approval alerts"
+                                else -> "Off"
                             }
-                            CompactSettingRow(Icons.Outlined.Sync, "Background sync", "Keep data up to date", PlumAccent) {
-                                PlumSwitch(true, null)
+                            CompactSettingRow(Icons.Outlined.Notifications, "Push notifications", notificationStatus, PlumAccent) {
+                                PlumSwitch(notificationsActive) { enable ->
+                                    when {
+                                        !enable -> viewModel.setNotificationsEnabled(false)
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                            !LocalNotificationManager.hasNotificationPermission(context) ->
+                                            LocalNotificationManager.requestNotificationPermission(
+                                                notificationPermissionLauncher,
+                                            )
+                                        else -> viewModel.setNotificationsEnabled(true)
+                                    }
+                                }
                             }
-                            CompactSettingRow(Icons.Outlined.CloudQueue, "Offline cache", state.cacheSize, PlumAccent) {
-                                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = PlumMuted)
+                            var usageAlerts by remember {
+                                mutableStateOf(
+                                    com.claudewebui.app.widget.UsageAlerts.isEnabled(context)
+                                )
                             }
-                        }
-                        SettingsGroup("Advanced", Modifier.weight(1f)) {
+                            CompactSettingRow(
+                                Icons.Outlined.Notifications,
+                                "Usage alerts",
+                                "Quota ≥${com.claudewebui.app.widget.UsageAlerts.LIMIT_THRESHOLD_PERCENT}% " +
+                                    "or cost ≥$${"%.0f".format(com.claudewebui.app.widget.UsageAlerts.dailyCostThreshold(context))}/day",
+                                PlumAccent,
+                            ) {
+                                PlumSwitch(usageAlerts) { enable ->
+                                    usageAlerts = enable
+                                    com.claudewebui.app.widget.UsageAlerts.setEnabled(context, enable)
+                                    // Keep the account-wide setting authoritative so
+                                    // the WebUI sees the same thresholds.
+                                    viewModel.updateUsageAlerts(enabled = enable)
+                                }
+                            }
+                        } },
+                        second = { groupModifier -> SettingsGroup("Advanced", groupModifier) {
+                            // The update checker existed but nothing ever called
+                            // it — without this row the in-app update path was
+                            // unreachable and every install had to be sideloaded.
+                            val updateChecker: com.claudewebui.app.core.updates.AppUpdateChecker =
+                                org.koin.compose.koinInject()
+                            val updateState by updateChecker.updateState.collectAsState()
+                            CompactSettingRow(
+                                Icons.Outlined.Sync,
+                                "App update",
+                                when (val u = updateState) {
+                                    is com.claudewebui.app.core.updates.UpdateState.UpdateAvailable ->
+                                        "Version ${u.newVersion} available — tap to install"
+                                    com.claudewebui.app.core.updates.UpdateState.Checking -> "Checking…"
+                                    com.claudewebui.app.core.updates.UpdateState.UpToDate -> "Up to date"
+                                    is com.claudewebui.app.core.updates.UpdateState.Downloading ->
+                                        "Downloading… ${u.progress}%"
+                                    else -> "Version ${com.claudewebui.app.BuildConfig.VERSION_NAME} · tap to check"
+                                },
+                                PlumAccent,
+                                onClick = {
+                                    val current = updateState
+                                    if (current is com.claudewebui.app.core.updates.UpdateState.UpdateAvailable) {
+                                        updateChecker.downloadAndInstall(current.downloadUrl)
+                                    } else {
+                                        updateChecker.checkForUpdate()
+                                    }
+                                },
+                            )
                             CompactSettingRow(Icons.Outlined.SettingsEthernet, "MCP Servers", "${state.mcpServers.size} configured", PlumMuted, onNavigateToMcp)
                             CompactSettingRow(
                                 Icons.Outlined.SmartToy,
@@ -224,8 +308,8 @@ fun SettingsScreen(
                                 PlumMuted,
                                 onNavigateToOperations,
                             )
-                        }
-                    }
+                        } },
+                    )
                 }
                 item {
                     GlassPanel(
@@ -244,6 +328,7 @@ fun SettingsScreen(
                     }
                 }
                 item { Spacer(Modifier.height(5.dp)) }
+            }
             }
         }
     }
@@ -319,7 +404,14 @@ private fun ProviderRow(provider: CLIProvider, config: CLIProviderConfig?, onCli
         connected -> PlumGreen
         else -> PlumAmber
     }
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Box(Modifier.size(9.dp).background(providerColor(provider), CircleShape))
         Column(Modifier.weight(1f).padding(horizontal = 11.dp)) {
             Text(
@@ -331,6 +423,24 @@ private fun ProviderRow(provider: CLIProvider, config: CLIProviderConfig?, onCli
         }
         StatusPill(status, statusColor)
         Icon(Icons.Outlined.ChevronRight, null, tint = PlumMuted, modifier = Modifier.padding(start = 7.dp))
+    }
+}
+
+@Composable
+private fun ResponsiveSettingsPair(
+    first: @Composable (Modifier) -> Unit,
+    second: @Composable (Modifier) -> Unit,
+) {
+    if (rememberWindowWidth() == WindowWidth.COMPACT) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            first(Modifier.fillMaxWidth())
+            second(Modifier.fillMaxWidth())
+        }
+    } else {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            first(Modifier.weight(1f))
+            second(Modifier.weight(1f))
+        }
     }
 }
 
@@ -356,14 +466,15 @@ private fun CompactSettingRow(
     Row(
         Modifier
             .fillMaxWidth()
+            .heightIn(min = 56.dp)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(vertical = 9.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(19.dp))
-        Column(Modifier.weight(1f).padding(start = 6.dp)) {
-            Text(title, color = PlumText, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (subtitle.isNotBlank()) Text(subtitle, color = PlumMuted, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+            Text(title, color = PlumText, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) Text(subtitle, color = PlumMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         trailing?.invoke() ?: if (onClick != null) Icon(Icons.Outlined.ChevronRight, null, tint = PlumMuted, modifier = Modifier.size(17.dp)) else Unit
     }
@@ -371,19 +482,5 @@ private fun CompactSettingRow(
 
 @Composable
 private fun PlumSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?) {
-    Box(
-        modifier = Modifier
-            .size(width = 38.dp, height = 22.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (checked) PlumAccent else Color(0xFF3A3D40))
-            .border(1.dp, if (checked) PlumAccent else PlumBorder, RoundedCornerShape(12.dp))
-            .then(
-                if (onCheckedChange != null) Modifier.clickable { onCheckedChange(!checked) }
-                else Modifier
-            )
-            .padding(2.dp),
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        Box(Modifier.size(17.dp).background(Color.White, CircleShape))
-    }
+    Switch(checked = checked, onCheckedChange = onCheckedChange)
 }

@@ -32,6 +32,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.claudewebui.app.data.model.UpdateDiscordSettingsInput
+import com.claudewebui.app.data.model.UpdateHomeAssistantSettingsInput
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.claudewebui.app.ui.components.common.GlassPanel
 import com.claudewebui.app.ui.components.common.PlumAccent
 import com.claudewebui.app.ui.components.common.PlumBackdrop
@@ -149,9 +157,13 @@ fun IntegrationsScreen(
                     }
 
                     item {
+                        IntegrationEditor(state = state, viewModel = viewModel)
+                    }
+
+                    item {
                         Text(
-                            "Credentials are configured in the web UI — the server only " +
-                                "reports whether a token is present, never its value.",
+                            "Secrets are write-only: the server reports only whether a token " +
+                                "is present. Leave a field empty to keep the stored value.",
                             color = PlumMuted,
                             fontSize = 11.sp,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
@@ -256,4 +268,140 @@ private fun IntegrationCard(
             }
         }
     }
+}
+
+/**
+ * Edit form for the three integrations. Only non-empty fields are submitted, so
+ * a stored secret survives a save that leaves its field blank; the explicit
+ * "clear" toggles are the way to remove one.
+ */
+@Composable
+private fun IntegrationEditor(
+    state: IntegrationsUiState,
+    viewModel: IntegrationsViewModel,
+) {
+    var comfyUrl by remember(state.comfyUi?.url) { mutableStateOf(state.comfyUi?.url.orEmpty()) }
+    var comfyEnabled by remember(state.comfyUi?.enabled) {
+        mutableStateOf(state.comfyUi?.enabled ?: false)
+    }
+
+    var discordWebhook by remember { mutableStateOf("") }
+    var discordChannel by remember(state.discord?.channelId) {
+        mutableStateOf(state.discord?.channelId.orEmpty())
+    }
+    var discordEnabled by remember(state.discord?.enabled) {
+        mutableStateOf(state.discord?.enabled ?: false)
+    }
+
+    var haUrl by remember(state.homeAssistant?.baseUrl) {
+        mutableStateOf(state.homeAssistant?.baseUrl.orEmpty())
+    }
+    var haToken by remember { mutableStateOf("") }
+    var haEnabled by remember(state.homeAssistant?.enabled) {
+        mutableStateOf(state.homeAssistant?.enabled ?: false)
+    }
+
+    GlassPanel(Modifier.fillMaxWidth(), radius = 17.dp) {
+        Column(
+            Modifier.fillMaxWidth().padding(15.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Configure", color = PlumText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+
+            state.savedNotice?.let { Text(it, color = PlumGreen, fontSize = 12.sp) }
+            state.saveError?.let { Text(it, color = PlumRed, fontSize = 12.sp) }
+
+            // ComfyUI
+            Text("ComfyUI", color = PlumMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = comfyUrl,
+                onValueChange = { comfyUrl = it },
+                label = { Text("Base URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ToggleRow("Enabled", comfyEnabled) { comfyEnabled = it }
+            SaveRow(state.isSaving) {
+                viewModel.saveComfyUi(comfyUrl.trim().takeIf { it.isNotBlank() }, comfyEnabled)
+            }
+
+            // Discord
+            Text("Discord", color = PlumMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = discordWebhook,
+                onValueChange = { discordWebhook = it },
+                label = { Text("Webhook URL (leave blank to keep)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = discordChannel,
+                onValueChange = { discordChannel = it.filter(Char::isDigit) },
+                label = { Text("Channel ID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ToggleRow("Enabled", discordEnabled) { discordEnabled = it }
+            SaveRow(state.isSaving) {
+                viewModel.saveDiscord(
+                    UpdateDiscordSettingsInput(
+                        enabled = discordEnabled,
+                        webhookUrl = discordWebhook.trim().takeIf { it.isNotBlank() },
+                        channelId = discordChannel.trim().takeIf { it.isNotBlank() },
+                    )
+                )
+                discordWebhook = ""
+            }
+
+            // Home Assistant
+            Text("Home Assistant", color = PlumMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = haUrl,
+                onValueChange = { haUrl = it },
+                label = { Text("Base URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = haToken,
+                onValueChange = { haToken = it },
+                label = { Text("Long-lived token (leave blank to keep)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            ToggleRow("Enabled", haEnabled) { haEnabled = it }
+            SaveRow(state.isSaving) {
+                viewModel.saveHomeAssistant(
+                    UpdateHomeAssistantSettingsInput(
+                        enabled = haEnabled,
+                        baseUrl = haUrl.trim().takeIf { it.isNotBlank() },
+                        accessToken = haToken.trim().takeIf { it.isNotBlank() },
+                    )
+                )
+                haToken = ""
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = PlumText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun SaveRow(saving: Boolean, onSave: () -> Unit) {
+    Text(
+        if (saving) "Saving…" else "Save",
+        color = if (saving) PlumMuted else PlumAccent,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clickable(enabled = !saving, onClick = onSave)
+            .padding(vertical = 6.dp),
+    )
 }

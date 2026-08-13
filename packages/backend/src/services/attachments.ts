@@ -11,14 +11,21 @@ export type AttachmentType = 'image' | 'text' | 'pdf' | 'document';
 
 export interface MaterializedAttachmentFile {
   path: string;
+  /** Opaque on-disk basename used only by legacy download routes. */
   filename: string;
+  /** Sanitized user-facing filename, without the timestamp storage prefix. */
+  originalFilename: string;
   type: AttachmentType;
   mimeType: string;
   sizeBytes: number;
 }
 
 export interface InlineTextAttachment {
+  /** Sanitized identifier used inside the provider prompt. */
   filename: string;
+  /** User-facing basename retained for chat history. */
+  originalFilename: string;
+  mimeType: string;
   content: string;
   sizeBytes: number;
 }
@@ -84,6 +91,12 @@ export function sanitizeAttachmentFilename(filename: string): string {
   return cleaned || 'attachment';
 }
 
+export function sanitizeAttachmentDisplayName(filename: string): string {
+  const basename = path.basename(filename.replaceAll('\\', '/'));
+  const cleaned = basename.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 240);
+  return cleaned && !/^\.+$/.test(cleaned) ? cleaned : 'attachment';
+}
+
 export async function materializeAttachments(
   attachments: FileAttachmentData[] | undefined,
   workingDirectory: string
@@ -121,10 +134,13 @@ export async function materializeAttachments(
 
     const type = classifyAttachment(attachment.mimeType, attachment.filename);
     const safeName = sanitizeAttachmentFilename(originalName);
+    const displayName = sanitizeAttachmentDisplayName(originalName);
 
     if (type === 'text' && buffer.length < MAX_INLINE_TEXT_BYTES) {
       result.inlineText.push({
         filename: safeName,
+        originalFilename: displayName,
+        mimeType: attachment.mimeType,
         content: buffer.toString('utf-8'),
         sizeBytes: buffer.length,
       });
@@ -136,6 +152,7 @@ export async function materializeAttachments(
     result.files.push({
       path: filepath,
       filename: path.basename(filepath),
+      originalFilename: displayName,
       type,
       mimeType: attachment.mimeType,
       sizeBytes: buffer.length,

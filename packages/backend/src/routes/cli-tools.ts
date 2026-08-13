@@ -249,8 +249,9 @@ router.post('/:id/execute', requireAuth, requireAdmin, async (req, res) => {
   // Save user message if sessionId provided
   if (sessionId) {
     const userMsgId = nanoid();
-    db.prepare('INSERT INTO messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO messages (id, session_id, chat_id, role, content) VALUES (?, ?, (SELECT active_chat_id FROM sessions WHERE id = ?), ?, ?)').run(
       userMsgId,
+      sessionId,
       sessionId,
       'user',
       `[${tool.name}] ${prompt}`
@@ -317,8 +318,9 @@ router.post('/:id/execute', requireAuth, requireAdmin, async (req, res) => {
     if (sessionId) {
       const assistantMsgId = nanoid();
       const statusEmoji = execution.status === 'completed' ? '✓' : '✗';
-      db.prepare('INSERT INTO messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO messages (id, session_id, chat_id, role, content) VALUES (?, ?, (SELECT active_chat_id FROM sessions WHERE id = ?), ?, ?)').run(
         assistantMsgId,
+        sessionId,
         sessionId,
         'assistant',
         `**${tool.name}** ${statusEmoji}\n\n\`\`\`\n${execution.output || 'No output'}\n\`\`\``
@@ -336,8 +338,9 @@ router.post('/:id/execute', requireAuth, requireAdmin, async (req, res) => {
     if (sessionId) {
       const errorMsgId = nanoid();
       const statusEmoji = execution.status === 'timeout' ? '⏱' : '✗';
-      db.prepare('INSERT INTO messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO messages (id, session_id, chat_id, role, content) VALUES (?, ?, (SELECT active_chat_id FROM sessions WHERE id = ?), ?, ?)').run(
         errorMsgId,
+        sessionId,
         sessionId,
         'assistant',
         `**${tool.name}** ${statusEmoji}\n\n\`\`\`\n${execution.output || 'Error'}\n\`\`\``

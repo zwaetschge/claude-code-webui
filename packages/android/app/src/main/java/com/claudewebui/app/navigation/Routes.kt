@@ -26,11 +26,29 @@ sealed class Routes(val route: String) {
     object Library : Routes("library")
 
     /** Chat view for a specific session */
-    data class Chat(val sessionId: String) : Routes("chat/{sessionId}") {
+    data class Chat(val sessionId: String) : Routes(ROUTE) {
         companion object {
-            const val ROUTE = "chat/{sessionId}"
+            const val ROUTE = "chat/{sessionId}?messageId={messageId}&chatId={chatId}"
             const val ARG_SESSION_ID = "sessionId"
-            fun createRoute(sessionId: String) = "chat/$sessionId"
+            const val ARG_MESSAGE_ID = "messageId"
+            const val ARG_CHAT_ID = "chatId"
+            fun createRoute(
+                sessionId: String,
+                messageId: String? = null,
+                chatId: String? = null,
+            ): String = buildString {
+                append("chat/")
+                append(java.net.URLEncoder.encode(sessionId, "UTF-8"))
+                val parameters = buildList {
+                    messageId?.let {
+                        add("messageId=" + java.net.URLEncoder.encode(it, "UTF-8"))
+                    }
+                    chatId?.let {
+                        add("chatId=" + java.net.URLEncoder.encode(it, "UTF-8"))
+                    }
+                }
+                if (parameters.isNotEmpty()) append("?").append(parameters.joinToString("&"))
+            }
         }
     }
 

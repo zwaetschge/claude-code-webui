@@ -1615,11 +1615,33 @@ export function SettingsPage() {
     setStoredTheme(nextTheme);
     setCurrentTheme(nextTheme);
     applyTheme(nextTheme);
+    // Appearance is device-local unless the user opted into syncing, in which
+    // case the server copy has to follow along for the other clients.
+    if (settings?.appearanceSync) {
+      updateSettingsMutation.mutate({ theme: nextTheme });
+    }
   };
 
   const handleBackgroundAnimationChange = (backgroundAnimation: BackgroundAnimation) => {
     setCurrentBackgroundAnimation(backgroundAnimation);
     setBackgroundAnimation(backgroundAnimation);
+    if (settings?.appearanceSync) {
+      updateSettingsMutation.mutate({ backgroundAnimation });
+    }
+  };
+
+  /** Sends one sample notification through database, socket and web push. */
+  const sendTestAlert = async () => {
+    try {
+      await api.post('/api/workspace/notifications/test', {});
+      toast({ title: 'Test alert sent', description: 'Check the bell in the sidebar.' });
+    } catch (error) {
+      toast({
+        title: 'Test alert failed',
+        description: error instanceof Error ? error.message : undefined,
+        variant: 'destructive',
+      });
+    }
   };
 
   const saveOracleBrowserSettings = () => {
@@ -3532,6 +3554,105 @@ export function SettingsPage() {
                                   </button>
                                 );
                               })}
+                            </div>
+
+                            {/* Appearance stays per device by default; a phone
+                                and a desktop rarely want the same theme. */}
+                            <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium">
+                                  Sync appearance across devices
+                                </span>
+                                <span className="block text-xs text-muted-foreground">
+                                  Applies this theme and background to the Android app and every
+                                  other browser you sign in from.
+                                </span>
+                              </span>
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 shrink-0 accent-primary"
+                                checked={settings?.appearanceSync ?? false}
+                                onChange={(event) =>
+                                  updateSettingsMutation.mutate({
+                                    appearanceSync: event.target.checked,
+                                    ...(event.target.checked
+                                      ? {
+                                          theme: currentTheme,
+                                          backgroundAnimation: currentBackgroundAnimation,
+                                        }
+                                      : {}),
+                                  })
+                                }
+                              />
+                            </label>
+
+                            {/* Alert thresholds live on the account so the app
+                                and the WebUI cannot drift apart. */}
+                            <div className="space-y-3 rounded-xl border border-border bg-card px-4 py-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="min-w-0">
+                                  <span className="block text-sm font-medium">Usage alerts</span>
+                                  <span className="block text-xs text-muted-foreground">
+                                    Notify when a provider quota or the daily spend passes these
+                                    limits.
+                                  </span>
+                                </span>
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 shrink-0 accent-primary"
+                                  checked={settings?.usageAlerts?.enabled ?? true}
+                                  onChange={(event) =>
+                                    updateSettingsMutation.mutate({
+                                      usageAlerts: { enabled: event.target.checked },
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <label className="text-xs text-muted-foreground">
+                                  Quota warning at %
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    defaultValue={settings?.usageAlerts?.quotaPercent ?? 80}
+                                    onBlur={(event) => {
+                                      const value = Number(event.target.value);
+                                      if (value >= 1 && value <= 100) {
+                                        updateSettingsMutation.mutate({
+                                          usageAlerts: { quotaPercent: Math.round(value) },
+                                        });
+                                      }
+                                    }}
+                                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                                  />
+                                </label>
+                                <label className="text-xs text-muted-foreground">
+                                  Daily spend limit (USD)
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.5"
+                                    defaultValue={settings?.usageAlerts?.dailyCostUsd ?? 5}
+                                    onBlur={(event) => {
+                                      const value = Number(event.target.value);
+                                      if (Number.isFinite(value) && value >= 0) {
+                                        updateSettingsMutation.mutate({
+                                          usageAlerts: { dailyCostUsd: value },
+                                        });
+                                      }
+                                    }}
+                                    className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                                  />
+                                </label>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void sendTestAlert()}
+                                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-primary/40"
+                              >
+                                Send test alert
+                              </button>
                             </div>
                           </div>
                         </SettingsPanel>

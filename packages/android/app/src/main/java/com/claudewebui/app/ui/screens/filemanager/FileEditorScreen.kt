@@ -2,6 +2,8 @@ package com.claudewebui.app.ui.screens.filemanager
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +59,11 @@ fun FileEditorScreen(
     val state by viewModel.uiState.collectAsState()
 
     PlumBackdrop {
-        Scaffold(containerColor = Color.Transparent) { padding ->
+        Scaffold(
+            containerColor = Color.Transparent,
+            // Include the IME so editors/fields lift above the keyboard.
+            contentWindowInsets = WindowInsets.safeDrawing,
+        ) { padding ->
             Column(
                 Modifier.fillMaxSize().padding(padding).padding(horizontal = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),

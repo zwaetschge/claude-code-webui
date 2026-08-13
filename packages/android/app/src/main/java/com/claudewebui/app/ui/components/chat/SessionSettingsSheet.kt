@@ -34,8 +34,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claudewebui.app.data.model.CLIProvider
+import com.claudewebui.app.data.model.ConfigSkill
+import com.claudewebui.app.data.model.StyleKind
 import com.claudewebui.app.data.model.ReasoningLevel
+import com.claudewebui.app.data.model.ServiceTier
 import com.claudewebui.app.data.model.Session
+import com.claudewebui.app.data.model.SessionPeerLink
 import com.claudewebui.app.data.model.SessionMode
 import com.claudewebui.app.ui.components.common.PlumAccent
 import com.claudewebui.app.ui.components.common.PlumBorder
@@ -49,9 +53,9 @@ import com.claudewebui.app.ui.components.common.providerColor
  * Per-session controls: which harness runs it, on which model, at which
  * reasoning level, and how freely it may use tools.
  *
- * Provider, model and reasoning are persisted settings that the harness reads
- * when it starts, so changing them mid-run only takes effect after a restart —
- * the caller surfaces that. Mode is live and goes over the socket.
+ * Provider, model and reasoning are persisted settings. The backend reloads a
+ * running harness immediately while preserving its conversation context. Mode
+ * remains a live socket setting.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +72,15 @@ fun SessionSettingsSheet(
     onModeChange: (SessionMode) -> Unit,
     onAddAllowedDirectory: (String) -> Unit,
     onRemoveAllowedDirectory: (String) -> Unit,
+    designStyles: List<ConfigSkill> = emptyList(),
+    writingStyles: List<ConfigSkill> = emptyList(),
+    onStyleChange: (StyleKind, String?) -> Unit = { _, _ -> },
+    meshPeers: List<SessionPeerLink> = emptyList(),
+    /** Freeze this setup as a reusable template. */
+    onSaveTemplate: (String) -> Unit = {},
+    /** Hand the whole transcript to the system share sheet. */
+    onShareTranscript: () -> Unit = {},
+    isSharing: Boolean = false,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -99,7 +112,7 @@ fun SessionSettingsSheet(
                 }
             }
 
-            SettingsGroup("Provider", "Takes effect on the next run") {
+            SettingsGroup("Provider", "Applies immediately") {
                 CLIProvider.active.forEach { provider ->
                     OptionRow(
                         title = provider.displayName,
@@ -111,7 +124,7 @@ fun SessionSettingsSheet(
                 }
             }
 
-            SettingsGroup("Model", "Takes effect on the next run") {
+            SettingsGroup("Model", "Applies immediately") {
                 OptionRow(
                     title = "Provider default",
                     subtitle = null,
@@ -136,21 +149,96 @@ fun SessionSettingsSheet(
                 }
             }
 
-            SettingsGroup("Reasoning", "Takes effect on the next run") {
+            SettingsGroup("Reasoning", "Applies immediately") {
+                val levels = ReasoningLevel.forProvider(session.cliProvider)
+                val fastActive = session.cliServiceTier.equals(ServiceTier.FAST.id, ignoreCase = true)
                 OptionRow(
                     title = "Provider default",
                     subtitle = null,
-                    selected = session.cliReasoning.isNullOrBlank(),
+                    selected = session.cliReasoning.isNullOrBlank() && !fastActive,
                     enabled = !isApplying,
                 ) { onReasoningChange(null) }
-                ReasoningLevel.entries.forEach { level ->
+                levels.forEach { level ->
                     OptionRow(
                         title = level.label,
                         subtitle = null,
-                        selected = level.id.equals(session.cliReasoning, ignoreCase = true),
+                        selected = !fastActive &&
+                            level.id.equals(session.cliReasoning, ignoreCase = true),
                         enabled = !isApplying,
                     ) { onReasoningChange(level.id) }
                 }
+                // A level the server set but this provider no longer lists
+                // (e.g. after a provider switch) would otherwise vanish from the
+                // sheet and read as "Provider default".
+                ReasoningLevel.fromId(session.cliReasoning)
+                    ?.takeIf { it !in levels }
+                    ?.let { orphan ->
+                        OptionRow(
+                            title = orphan.label,
+                            subtitle = "Set on the server for another provider",
+                            selected = !fastActive,
+                            enabled = !isApplying,
+                        ) { onReasoningChange(orphan.id) }
+                    }
+                if (session.cliProvider == CLIProvider.CODEX) {
+                    OptionRow(
+                        title = ServiceTier.FAST.label,
+                        subtitle = "Codex service tier — lowest latency",
+                        selected = fastActive,
+                        enabled = !isApplying,
+                    ) { onReasoningChange(ServiceTier.FAST.id) }
+                }
+            }
+
+            if (designStyles.isNotEmpty() || writingStyles.isNotEmpty()) {
+                SettingsGroup("Presentation presets", "Applied to this session's turns") {
+                    StylePicker("Design", designStyles, session.designStyleSkill, isApplying) {
+                        onStyleChange(StyleKind.DESIGN, it)
+                    }
+                    StylePicker("Writing", writingStyles, session.writingStyleSkill, isApplying) {
+                        onStyleChange(StyleKind.WRITING, it)
+                    }
+                }
+            }
+
+            if (meshPeers.isNotEmpty()) {
+                SettingsGroup("Session mesh", "Sessions this one can delegate to") {
+                    meshPeers.forEach { peer ->
+                        OptionRow(
+                            title = peer.target?.name ?: peer.targetSessionId,
+                            subtitle = listOfNotNull(
+                                peer.role,
+                                peer.target?.status,
+                            ).joinToString(" · ").ifBlank { null },
+                            selected = peer.enabled,
+                            enabled = false,
+                        ) { }
+                    }
+                }
+            }
+
+            SettingsGroup("This session", "Reuse or hand it off") {
+                var templateName by remember(session.id) { mutableStateOf(session.name) }
+                Text(
+                    "A template keeps provider, model, mode and workspace — not the messages.",
+                    color = PlumMuted,
+                    fontSize = 11.sp,
+                )
+                OutlinedTextField(
+                    value = templateName,
+                    onValueChange = { templateName = it },
+                    singleLine = true,
+                    label = { Text("Template name") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                SheetActionRow(
+                    label = "Save as template",
+                    enabled = templateName.isNotBlank(),
+                ) { onSaveTemplate(templateName.trim()) }
+                SheetActionRow(
+                    label = if (isSharing) "Preparing transcript…" else "Share transcript",
+                    enabled = !isSharing,
+                ) { onShareTranscript() }
             }
 
             SettingsGroup("Allowed directories", "Enforced per session") {
@@ -222,6 +310,27 @@ private fun SettingsGroup(
     }
 }
 
+/** A plain action, as opposed to the selectable OptionRow above it. */
+@Composable
+private fun SheetActionRow(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(PlumSubtleFill)
+            .border(1.dp, PlumBorder, RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+    ) {
+        Text(
+            label,
+            color = if (enabled) PlumAccent else PlumMuted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
 @Composable
 private fun OptionRow(
     title: String,
@@ -258,6 +367,60 @@ private fun OptionRow(
                 overflow = TextOverflow.Ellipsis,
             )
             subtitle?.let { Text(it, color = PlumMuted, fontSize = 10.sp, maxLines = 1) }
+        }
+    }
+}
+
+/**
+ * One preset slot: "None" plus the catalogue entries. Collapsed to a scrollable
+ * list because the design library alone ships several dozen presets.
+ */
+@Composable
+private fun StylePicker(
+    label: String,
+    styles: List<ConfigSkill>,
+    selected: String?,
+    isApplying: Boolean,
+    onSelect: (String?) -> Unit,
+) {
+    if (styles.isEmpty()) return
+    var expanded by remember { mutableStateOf(false) }
+    val active = styles.firstOrNull { it.id == selected || it.name == selected }
+
+    OptionRow(
+        title = label,
+        subtitle = active?.name ?: "None",
+        selected = active != null,
+        enabled = !isApplying,
+    ) { expanded = !expanded }
+
+    if (expanded) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 240.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            OptionRow(
+                title = "None",
+                subtitle = null,
+                selected = active == null,
+                enabled = !isApplying,
+            ) {
+                onSelect(null)
+                expanded = false
+            }
+            styles.forEach { style ->
+                OptionRow(
+                    title = style.name,
+                    subtitle = style.description.takeIf { it.isNotBlank() },
+                    selected = style.id == selected || style.name == selected,
+                    enabled = !isApplying,
+                ) {
+                    onSelect(style.id)
+                    expanded = false
+                }
+            }
         }
     }
 }

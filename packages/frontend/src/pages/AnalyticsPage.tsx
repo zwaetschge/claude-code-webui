@@ -1261,6 +1261,26 @@ export function AnalyticsPage() {
   const errorMessage =
     summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
   const totalTokens = summary?.totals.totalTokens || 0;
+  // A cost figure alone says nothing about whether an alert is about to fire,
+  // so show the newest bucket against the account threshold — same panel the
+  // Android client shows, fed from the same account setting.
+  const spendLimit = userSettings?.usageAlerts?.enabled
+    ? (userSettings.usageAlerts.dailyCostUsd ?? 0)
+    : 0;
+  const latestBucketCost = timeline?.length ? (timeline[timeline.length - 1]?.cost ?? 0) : 0;
+  const [testAlertState, setTestAlertState] = useState<'idle' | 'sending' | 'sent' | 'failed'>(
+    'idle'
+  );
+  const sendTestAlert = useCallback(async () => {
+    setTestAlertState('sending');
+    try {
+      await api.post('/api/workspace/notifications/test', {});
+      setTestAlertState('sent');
+    } catch {
+      setTestAlertState('failed');
+    }
+  }, []);
+
   const totalCost = summary?.totals.totalCost || 0;
   const apiEquivalentCost = summary?.totals.apiEquivalentCost ?? totalCost;
   const costDelta = summary?.totals.costDelta ?? 0;
@@ -2078,6 +2098,52 @@ export function AnalyticsPage() {
             </p>
           </CardContent>
         </Card>
+
+        {spendLimit > 0 && (
+          <Card className="analytics-metric-card">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Spend vs alert limit
+              </CardTitle>
+              <Coins className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {formatCurrency(latestBucketCost)}
+                <span className="text-sm font-normal text-muted-foreground">
+                  {' '}
+                  / {formatCurrency(spendLimit)}
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`h-full rounded-full ${
+                    latestBucketCost >= spendLimit
+                      ? 'bg-destructive'
+                      : latestBucketCost >= spendLimit * 0.8
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500'
+                  }`}
+                  style={{
+                    width: `${Math.min(100, (latestBucketCost / spendLimit) * 100)}%`,
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void sendTestAlert()}
+                disabled={testAlertState === 'sending'}
+                className="mt-2 text-xs font-medium text-primary hover:underline disabled:opacity-60"
+              >
+                {testAlertState === 'sent'
+                  ? 'Test alert sent'
+                  : testAlertState === 'failed'
+                    ? 'Test alert failed — retry'
+                    : 'Send test alert'}
+              </button>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="analytics-metric-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2">

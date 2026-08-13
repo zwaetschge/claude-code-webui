@@ -37,8 +37,8 @@ android {
         applicationId = "com.claudewebui.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -143,6 +143,15 @@ dependencies {
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)
+
+    // WorkManager — periodic home-screen widget refresh
+    implementation(libs.work.runtime.ktx)
+
+    // Wear OS data layer (phone side of the watch bridge)
+    implementation(libs.play.services.wearable)
+
+    // Frosted glass (backdrop blur) for the floating nav bar
+    implementation(libs.haze)
 
     // Coil Image Loading
     implementation(libs.coil.compose)

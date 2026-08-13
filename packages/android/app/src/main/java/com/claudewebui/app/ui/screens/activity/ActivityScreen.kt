@@ -63,12 +63,13 @@ import com.claudewebui.app.ui.components.common.PlumIconButton
 import com.claudewebui.app.ui.components.common.PlumMuted
 import com.claudewebui.app.ui.components.common.PlumRed
 import com.claudewebui.app.ui.components.common.PlumScreenHeader
+import com.claudewebui.app.ui.components.common.PlumSubtleFill
 import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.components.common.SectionHeading
 import com.claudewebui.app.ui.components.common.Sparkline
 import com.claudewebui.app.ui.components.common.StatusPill
 import com.claudewebui.app.ui.components.common.providerColor
-import com.claudewebui.app.ui.components.common.providerModel
+import com.claudewebui.app.ui.components.common.sessionModel
 import com.claudewebui.app.ui.screens.dashboard.DashboardViewModel
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -99,8 +100,8 @@ fun ActivityScreen(
             badgeCount = errors,
         ) { padding ->
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(bottom = 18.dp),
+                modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+                contentPadding = PaddingValues(bottom = 18.dp + padding.calculateBottomPadding()),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 item {
@@ -114,6 +115,79 @@ fun ActivityScreen(
                         },
                     )
                 }
+                // Durable notification feed: what happened while the app was
+                // closed, not just what the live socket happens to deliver.
+                if (state.notifications.isNotEmpty()) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Notifications" +
+                                    if (state.unreadNotifications > 0) " (${state.unreadNotifications})" else "",
+                                color = PlumText,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "Mark read",
+                                color = PlumAccent,
+                                fontSize = 12.sp,
+                                modifier = Modifier
+                                    .clickable { viewModel.markNotificationsRead() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                            Text(
+                                "Clear",
+                                color = PlumMuted,
+                                fontSize = 12.sp,
+                                modifier = Modifier
+                                    .clickable { viewModel.clearNotifications() }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                    items(state.notifications.take(20), key = { it.id }) { note ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (note.readAt == null) PlumSubtleFill else Color.Transparent)
+                                .clickable {
+                                    viewModel.markNotificationsRead(listOf(note.id))
+                                    note.sessionId?.let(onOpenSession)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                note.title,
+                                color = when (note.kind) {
+                                    "error" -> PlumRed
+                                    "approval", "question", "usage_alert" -> PlumAmber
+                                    "goal" -> PlumGreen
+                                    else -> PlumText
+                                },
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            note.body?.takeIf { it.isNotBlank() }?.let {
+                                Text(
+                                    it,
+                                    color = PlumMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 14.dp),
@@ -254,7 +328,7 @@ private fun ActivityRow(session: Session, onClick: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text("${providerModel(session.cliProvider)}  •  ${session.workingDirectory.substringAfterLast('/')}", color = PlumMuted, fontSize = 11.sp)
+            Text("${sessionModel(session)}  •  ${session.workingDirectory.substringAfterLast('/')}", color = PlumMuted, fontSize = 11.sp)
         }
         Column(horizontalAlignment = Alignment.End) {
             StatusPill(label, color)

@@ -98,6 +98,10 @@ const componentSource = fs.readFileSync(
   new URL('../src/components/session/TaskWorkbench.tsx', import.meta.url),
   'utf8'
 );
+const chatInputSource = fs.readFileSync(
+  new URL('../src/components/chat/ChatInput.tsx', import.meta.url),
+  'utf8'
+);
 assert.match(componentSource, /title="Open run view"/);
 assert.match(componentSource, /title="Open goal and tasks"/);
 assert.match(
@@ -106,5 +110,15 @@ assert.match(
 );
 assert.match(componentSource, /mode === 'desktop' \? 'hidden md:flex' : 'md:hidden'/);
 assert.match(componentSource, /todo\.status === 'in_progress' && todo\.activeForm/);
+assert.match(
+  chatInputSource,
+  /queueDepth > 0 && isActive && onInterrupt && \([\s\S]*?onClick=\{onInterrupt\}[\s\S]*?Interrupt &amp; run now/,
+  'queued follow-ups should expose an explicit interrupt-and-run action'
+);
+assert.match(
+  chatInputSource,
+  /className="composer-brief-run"[\s\S]*?Details/,
+  'the run-view action should be labelled as details rather than execution'
+);
 
 console.log('Task workbench regression tests passed.');

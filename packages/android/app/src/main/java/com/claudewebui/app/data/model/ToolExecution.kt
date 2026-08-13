@@ -31,7 +31,10 @@ data class ToolExecutionEvent(
     val toolId: String? = null,
     val input: JsonElement? = null,
     val result: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    /** Server-side clock; use instead of the device clock to keep ordering stable. */
+    val timestamp: Long? = null,
+    val actionSummary: String? = null
 )
 
 @Serializable

@@ -2,6 +2,8 @@ package com.claudewebui.app.ui.screens.memory
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -104,7 +106,11 @@ fun MemoryScreen(
     }
 
     PlumBackdrop {
-        Scaffold(containerColor = Color.Transparent) { padding ->
+        Scaffold(
+            containerColor = Color.Transparent,
+            // Include the IME so editors/fields lift above the keyboard.
+            contentWindowInsets = WindowInsets.safeDrawing,
+        ) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(

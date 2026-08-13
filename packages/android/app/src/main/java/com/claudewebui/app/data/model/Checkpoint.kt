@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class Checkpoint(
     val id: String,
-    @SerialName("session_id") val sessionId: String,
+    @SerialName("session_id") val sessionId: String? = null,
     val name: String,
     val description: String? = null,
     @SerialName("message_count") val messageCount: Int,

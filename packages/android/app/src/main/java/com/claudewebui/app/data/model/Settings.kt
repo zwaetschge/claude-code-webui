@@ -14,6 +14,7 @@ enum class Theme {
 enum class UiProvider {
     @SerialName("plum") PLUM,
     @SerialName("claude") CLAUDE,
+    @SerialName("zai") ZAI,
     @SerialName("codex") CODEX,
     @SerialName("opencode") OPENCODE,
     @SerialName("pi") PI,
@@ -34,7 +35,11 @@ data class UserSettings(
     val cliProviderReasoning: Map<String, String>? = null,
     val cliProviderServiceTiers: Map<String, String>? = null,
     val codexWebSearch: String? = null,
-    val localUsageBudgets: Map<String, LocalUsageBudget>? = null
+    val localUsageBudgets: Map<String, LocalUsageBudget>? = null,
+    /** Account-wide alert thresholds shared with the WebUI. */
+    val usageAlerts: UsageAlertSettings? = null,
+    /** When true the account theme wins over this device's local choice. */
+    val appearanceSync: Boolean = false
 )
 
 @Serializable
@@ -50,7 +55,8 @@ data class UpdateSettingsInput(
     val cliProviderReasoning: Map<String, String>? = null,
     val cliProviderServiceTiers: Map<String, String>? = null,
     val codexWebSearch: String? = null,
-    val localUsageBudgets: Map<String, LocalUsageBudget>? = null
+    val localUsageBudgets: Map<String, LocalUsageBudget>? = null,
+    val usageAlerts: UsageAlertSettings? = null
 )
 
 @Serializable
@@ -59,10 +65,18 @@ data class LocalUsageBudget(
     val weeklyUsd: Double? = null
 )
 
+/** `GET /api/files/home` — the backend sends homeDir + path lists, nothing else. */
 @Serializable
 data class HomePaths(
-    val home: String,
-    val defaultWorkingDir: String? = null
+    val homeDir: String = "",
+    val allowedPaths: List<String> = emptyList(),
+    val commonPaths: List<NamedPath> = emptyList()
+)
+
+@Serializable
+data class NamedPath(
+    val name: String = "",
+    val path: String = ""
 )
 
 @Serializable

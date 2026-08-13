@@ -5,7 +5,6 @@ import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.Category
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.CLIProviderConfig
-import com.claudewebui.app.data.model.CLIProviderStatus
 import com.claudewebui.app.data.model.CliLoginSession
 import com.claudewebui.app.data.model.ConfigAgent
 import com.claudewebui.app.data.model.ConfigDocument
@@ -75,6 +74,7 @@ class SettingsRepository(
         cliProviderReasoning: Map<String, String>? = null,
         cliProviderServiceTiers: Map<String, String>? = null,
         codexWebSearch: String? = null,
+        usageAlerts: com.claudewebui.app.data.model.UsageAlertSettings? = null,
     ): Result<UserSettings> = runCatching {
         val input = UpdateSettingsInput(
             theme = theme,
@@ -87,6 +87,7 @@ class SettingsRepository(
             cliProviderReasoning = cliProviderReasoning,
             cliProviderServiceTiers = cliProviderServiceTiers,
             codexWebSearch = codexWebSearch,
+            usageAlerts = usageAlerts,
         )
         val response = api.updateSettings(input)
         if (!response.success || response.data == null) {
@@ -190,15 +191,6 @@ class SettingsRepository(
         if (!response.success) {
             error(response.error?.message ?: "Failed to delete provider")
         }
-    }
-
-    /** Fetch CLI provider availability status (which CLIs are installed). */
-    suspend fun getCLIProviderStatus(): Result<CLIProviderStatus> = runCatching {
-        val response = api.cliProviderStatus()
-        if (!response.success || response.data == null) {
-            error(response.error?.message ?: "Failed to fetch CLI status")
-        }
-        response.data
     }
 
     /** Fetch the canonical CLI provider registry, including enabled/auth status. */

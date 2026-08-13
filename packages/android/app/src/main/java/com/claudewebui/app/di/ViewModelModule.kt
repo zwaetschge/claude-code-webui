@@ -30,9 +30,9 @@ val viewModelModule = module {
 
     single { AuthRepository(get(), get()) }
 
-    single { SessionRepository(get(), get()) }
+    single { SessionRepository(get(), get(), get()) }
 
-    single { MessageRepository(get(), get(), get()) }
+    single { MessageRepository(get(), get(), get(), get(), get(), get()) }
 
     single { SettingsRepository(get()) }
 
@@ -43,11 +43,13 @@ val viewModelModule = module {
     // LoginViewModel(apiClient, context)
     viewModel { LoginViewModel(get(), androidContext()) }
 
-    // DashboardViewModel(apiClient)
-    viewModel { DashboardViewModel(get()) }
+    // DashboardViewModel(apiClient, sessionRepository)
+    viewModel { DashboardViewModel(get(), get(), androidContext()) }
 
-    // ChatViewModel(sessionId, messageRepository, sessionRepository, settingsRepository, socketManager)
-    viewModel { (sessionId: String) -> ChatViewModel(sessionId, get(), get(), get(), get()) }
+    // ChatViewModel(sessionId, messageRepository, sessionRepository, settingsRepository, socketManager, apiClient, context)
+    viewModel { (sessionId: String) ->
+        ChatViewModel(sessionId, get(), get(), get(), get(), get(), androidContext())
+    }
 
     // SettingsViewModel(settingsRepository, authRepository, context)
     viewModel { SettingsViewModel(get(), get(), androidContext()) }

@@ -1,7 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { z } from 'zod';
-import type { Server } from 'socket.io';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { addPatternToSettings } from './claude-settings.js';
@@ -9,6 +8,8 @@ import { getDatabase } from '../db/index.js';
 import { config } from '../config.js';
 import { opencodeServer } from '../services/opencode/OpencodeServer.js';
 import { auditFromRequest, recordAudit } from '../utils/auditLog.js';
+import { getProcessManager } from '../websocket/index.js';
+import { notify, resolveApprovalNotification } from '../services/notifications/notificationCenter.js';
 
 const router = Router();
 
@@ -149,15 +150,30 @@ router.post('/request', requireHookSecret, async (req: Request, res: Response) =
     },
   });
 
-  // Get Socket.IO instance and emit to frontend
-  const io: Server = req.app.get('io');
-  io.to(`session:${sessionId}`).emit('session:permission_request', {
+  getProcessManager().emitPermissionRequest(sessionId, {
     sessionId,
     requestId,
     toolName,
     toolInput,
     description: pendingRequest.description,
     suggestedPattern: pendingRequest.suggestedPattern,
+  });
+
+  // File it in the notification centre too: a permission prompt is the one
+  // event that actually blocks the agent, so it has to reach whoever is not
+  // currently looking at this session.
+  const sessionName = (
+    db.prepare('SELECT name FROM sessions WHERE id = ?').get(sessionId) as
+      | { name: string }
+      | undefined
+  )?.name;
+  notify({
+    userId: session.user_id,
+    sessionId,
+    kind: 'approval',
+    title: `Approval needed — ${sessionName || 'session'}`,
+    body: pendingRequest.description,
+    data: { requestId, toolName, suggestedPattern: pendingRequest.suggestedPattern },
   });
 
   console.log(`[PERMISSIONS] Request ${requestId} created for session ${sessionId}: ${toolName}`);
@@ -284,6 +300,7 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
         userId
       );
       if (handled) {
+        resolveApprovalNotification(requestId);
         auditFromRequest(req, 'permission.respond', {
           resourceType: 'permission_request',
           resourceId: requestId,
@@ -343,6 +360,7 @@ router.post('/respond', requireAuth, async (req: Request, res: Response) => {
   }
 
   console.log(`[PERMISSIONS] User responded to ${requestId}: ${action}`);
+  resolveApprovalNotification(requestId);
   auditFromRequest(req, 'permission.respond', {
     resourceType: 'session',
     resourceId: request.sessionId,

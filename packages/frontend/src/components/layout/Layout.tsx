@@ -17,12 +17,14 @@ import { CommandPalette } from '@/components/CommandPalette';
 import { getSessionRunState } from '@/lib/sessionRunState';
 import { cn } from '@/lib/utils';
 import { normalizeUsageSnapshot } from '@plum-code-webui/shared';
+import { GlobalMessageSearchDialog } from '@/components/search/GlobalMessageSearchDialog';
 
 // Socket events and mutation invalidations keep the session shell current during
 // normal use. This slower poll is only a recovery path for missed events or
 // changes made in another browser, and avoids transferring the full session list
 // every four seconds on read-only pages such as Settings.
 const SESSION_LIST_FALLBACK_INTERVAL_MS = 30_000;
+const SESSION_DETAIL_FALLBACK_INTERVAL_MS = 15_000;
 
 function selectFreshestUsage(
   storeUsage: UsageSnapshot | undefined,
@@ -91,25 +93,33 @@ export function Layout() {
     },
   });
 
+  // Only an account that opted into appearance sync lets the server dictate the
+  // look. Without that guard the stored account theme overwrote whatever the
+  // user had just picked on this device on every reload.
   useEffect(() => {
-    if (settings?.theme) {
+    if (!settings?.appearanceSync) return;
+    if (settings.theme) {
       const nextTheme = normalizeTheme(settings.theme);
       window.localStorage.setItem('theme', nextTheme);
       applyTheme(nextTheme);
     }
-    if (settings?.backgroundAnimation) {
+    if (settings.backgroundAnimation) {
       setBackgroundAnimation(settings.backgroundAnimation);
     }
-  }, [settings?.backgroundAnimation, settings?.theme, setBackgroundAnimation]);
+  }, [
+    settings?.appearanceSync,
+    settings?.backgroundAnimation,
+    settings?.theme,
+    setBackgroundAnimation,
+  ]);
 
   // Populate session list on every authenticated page so the sidebar works
   // when a user lands directly on a session URL (bypassing the dashboard).
-  useQuery({
+  const { data: shellSessions } = useQuery({
     queryKey: ['sessions'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
       if (response.data.success && response.data.data) {
-        setSessions(response.data.data);
         return response.data.data;
       }
       return [];
@@ -119,6 +129,12 @@ export function Layout() {
     refetchIntervalInBackground: false,
   });
 
+  useEffect(() => {
+    if (shellSessions !== undefined) {
+      setSessions(shellSessions);
+    }
+  }, [setSessions, shellSessions]);
+
   const { data: routeSession } = useQuery({
     queryKey: ['session', routeSessionId],
     queryFn: async () => {
@@ -127,8 +143,8 @@ export function Layout() {
       return response.data.success && response.data.data ? response.data.data : null;
     },
     enabled: !!routeSessionId,
-    refetchInterval: 4000,
-    refetchIntervalInBackground: true,
+    refetchInterval: SESSION_DETAIL_FALLBACK_INTERVAL_MS,
+    refetchIntervalInBackground: false,
   });
 
   const activeMeta = UI_PROVIDER_META.plum;
@@ -212,6 +228,7 @@ export function Layout() {
       {/* Desktop Sidebar */}
       <div className="hidden md:block relative z-10">
         <Sidebar
+          navigationOnly={location.pathname === '/'}
           contextUsage={isFullBleed ? headerUsage : undefined}
           contextStats={headerContextStats}
           contextSession={activeSession}
@@ -297,6 +314,7 @@ export function Layout() {
 
       {/* Global command palette (Cmd/Ctrl+K) */}
       <CommandPalette />
+      <GlobalMessageSearchDialog />
     </div>
   );
 }

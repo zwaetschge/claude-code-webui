@@ -1,4 +1,4 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, raw, type NextFunction, type Request, type Response } from 'express';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
 import path from 'path';
@@ -32,6 +32,18 @@ import {
 } from '../services/sessionIconThumbnail.js';
 import { applyUntrustedFileHeaders } from '../utils/untrustedFile.js';
 import { loadMessageMedia, resolveOwnedChatMedia } from '../services/chatMedia.js';
+import {
+  cancelChatUpload,
+  ChatUploadError,
+  createChatUpload,
+  getChatUpload,
+  putChatUploadChunk,
+} from '../services/chatUploads.js';
+import {
+  getMessageHistorySnapshot,
+  getSessionReadState,
+  setSessionReadState,
+} from '../services/sessionSync.js';
 import { getEnabledCliProvidersForUser, getZaiApiConfigForUser } from './settings.js';
 
 const router = Router();
@@ -327,6 +339,26 @@ function sessionIconSelect(prefix = ''): string {
               ${p}icon_source as iconSource`;
 }
 
+export function sessionUnreadCountSelect(alias = 's'): string {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(alias)) throw new Error('invalid SQL alias');
+  return `(
+    SELECT COUNT(*)
+      FROM messages unread_message
+     WHERE unread_message.session_id = ${alias}.id
+       AND unread_message.chat_id IS ${alias}.active_chat_id
+       AND unread_message.role = 'assistant'
+       AND unread_message.rowid > COALESCE((
+         SELECT marker.rowid
+           FROM session_reads read_state
+           JOIN messages marker ON marker.id = read_state.last_read_message_id
+          WHERE read_state.user_id = ${alias}.user_id
+            AND read_state.session_id = ${alias}.id
+            AND read_state.chat_key = COALESCE(${alias}.active_chat_id, '')
+          LIMIT 1
+       ), 0)
+  ) AS unreadCount`;
+}
+
 function getIconExtension(filename: string | undefined, mimetype?: string): string {
   const fromMime = mimetype ? ICON_EXT_BY_MIME[mimetype] : null;
   const fromName = path.extname(filename || '').toLowerCase();
@@ -381,12 +413,15 @@ function selectSessionById(
               s.claude_session_id as claudeSessionId, s.status, s.last_message as lastMessage,
               ${sessionIconSelect('s')},
               s.starred, s.category, s.cli_provider as cliProvider, s.mode, s.surface,
+              s.active_chat_id as activeChatId,
               s.cli_model as cliModel, s.cli_reasoning as cliReasoning,
               s.cli_service_tier as cliServiceTier,
               s.design_style_skill as designStyleSkill,
               s.writing_style_skill as writingStyleSkill,
               s.android_device_serial as androidDeviceSerial,
               s.home_assistant_entity_id as homeAssistantEntityId,
+              ${sessionUnreadCountSelect('s')},
+              COALESCE(s.archived, 0) as archived,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt
        FROM sessions s WHERE s.id = ? ${whereUser}`
@@ -925,18 +960,22 @@ router.get(
 
     // Sort by message activity (latest message wins) with updated_at as fallback for
     // sessions that have no messages yet. Starred sessions always float to the top.
+    // `?archived=1` swaps the list over to the archive rather than mixing both.
+    const includeArchived = String(req.query.archived ?? '') === '1';
     const sessions = db
       .prepare(
         `SELECT s.id, s.user_id as userId, s.name, s.working_directory as workingDirectory,
 	              s.claude_session_id as claudeSessionId, s.status, s.last_message as lastMessage,
 	              ${sessionIconSelect('s')},
 	              s.starred, s.category, s.cli_provider as cliProvider, s.mode, s.surface,
+              s.active_chat_id as activeChatId,
               s.cli_model as cliModel, s.cli_reasoning as cliReasoning,
               s.cli_service_tier as cliServiceTier,
               s.design_style_skill as designStyleSkill,
               s.writing_style_skill as writingStyleSkill,
               s.android_device_serial as androidDeviceSerial,
               s.home_assistant_entity_id as homeAssistantEntityId,
+              ${sessionUnreadCountSelect('s')},
               strftime('%Y-%m-%dT%H:%M:%fZ', s.created_at) as createdAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', s.updated_at) as updatedAt,
               strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(
@@ -944,10 +983,10 @@ router.get(
                 s.updated_at
               )) as lastActivity
        FROM sessions s
-       WHERE s.user_id = ?
+       WHERE s.user_id = ? AND COALESCE(s.archived, 0) = ?
        ORDER BY s.starred DESC, lastActivity DESC`
       )
-      .all(userId) as Array<Record<string, unknown>>;
+      .all(userId, includeArchived ? 1 : 0) as Array<Record<string, unknown>>;
 
     const sessionsWithDescriptions = await Promise.all(sessions.map(attachProjectDescription));
     const sessionsWithStarred = sessionsWithDescriptions.map((s) =>
@@ -1232,30 +1271,103 @@ router.patch('/:id/star', requireAuth, (req, res) => {
   res.json({ success: true, data: { starred: Boolean(newStarred) } });
 });
 
+/**
+ * Archive or restore sessions, and bulk-apply the destructive/organisational
+ * actions the dashboards offer. Archiving is preferred over deleting: the
+ * transcript and its usage history stay intact.
+ */
+router.post(
+  '/bulk',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const parsed = z
+      .object({
+        ids: z.array(z.string().trim().min(1)).min(1).max(500),
+        action: z.enum(['archive', 'unarchive', 'delete', 'star', 'unstar', 'category']),
+        categoryId: z.string().trim().min(1).nullable().optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) throw new AppError('Invalid bulk request', 400, 'VALIDATION_ERROR');
+
+    const { ids, action, categoryId } = parsed.data;
+    const db = getDatabase();
+    const marks = ids.map(() => '?').join(',');
+    // Scope every statement by user_id so ids from another account are no-ops.
+    const owned = db
+      .prepare(`SELECT id FROM sessions WHERE user_id = ? AND id IN (${marks})`)
+      .all(userId, ...ids) as Array<{ id: string }>;
+    const ownedIds = owned.map((row) => row.id);
+    if (ownedIds.length === 0) {
+      return res.json({ success: true, data: { affected: 0 } });
+    }
+    const ownedMarks = ownedIds.map(() => '?').join(',');
+
+    let affected = 0;
+    if (action === 'delete') {
+      // Stop anything running before the row disappears underneath it.
+      const processManager = getProcessManager();
+      for (const id of ownedIds) {
+        if (processManager.isSessionRunning(id)) {
+          try {
+            processManager.stopSession(id, userId);
+          } catch {
+            // Already gone — deletion proceeds regardless.
+          }
+        }
+      }
+      affected = db
+        .prepare(`DELETE FROM sessions WHERE user_id = ? AND id IN (${ownedMarks})`)
+        .run(userId, ...ownedIds).changes;
+    } else if (action === 'category') {
+      affected = db
+        .prepare(
+          `UPDATE sessions SET category = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = ? AND id IN (${ownedMarks})`
+        )
+        .run(categoryId ?? null, userId, ...ownedIds).changes;
+    } else {
+      const column = action === 'star' || action === 'unstar' ? 'starred' : 'archived';
+      const value = action === 'archive' || action === 'star' ? 1 : 0;
+      affected = db
+        .prepare(
+          `UPDATE sessions SET ${column} = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = ? AND id IN (${ownedMarks})`
+        )
+        .run(value, userId, ...ownedIds).changes;
+    }
+
+    res.json({ success: true, data: { affected } });
+  })
+);
+
 // Update session CLI provider
-router.patch('/:id/provider', requireAuth, (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const parsed = updateProviderSchema.safeParse(req.body);
+router.patch(
+  '/:id/provider',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const parsed = updateProviderSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
-  }
+    if (!parsed.success) {
+      throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+    }
 
-  const db = getDatabase();
-  const existing = db
-    .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
-    .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
+    const db = getDatabase();
+    const existing = db
+      .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
+      .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
 
-  if (!existing) {
-    throw new AppError('Session not found', 404, 'NOT_FOUND');
-  }
+    if (!existing) {
+      throw new AppError('Session not found', 404, 'NOT_FOUND');
+    }
 
-  const { cliProvider } = parsed.data;
-  assertProviderEnabled(userId, cliProvider);
+    const { cliProvider } = parsed.data;
+    assertProviderEnabled(userId, cliProvider);
 
-  if (existing.cliProvider !== cliProvider) {
-    db.prepare(
-      `UPDATE sessions
+    if (existing.cliProvider !== cliProvider) {
+      db.prepare(
+        `UPDATE sessions
        SET cli_provider = ?,
            claude_session_id = NULL,
            cli_model = NULL,
@@ -1263,155 +1375,428 @@ router.patch('/:id/provider', requireAuth, (req, res) => {
            cli_service_tier = NULL,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`
-    ).run(cliProvider, req.params.id);
+      ).run(cliProvider, req.params.id);
+
+      const processManager = getProcessManager();
+      if (processManager.isSessionRunning(req.params.id as string)) {
+        await processManager.restartSession(req.params.id as string, userId, {
+          preserveNativeContext: true,
+        });
+      }
+    }
+
+    const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
+      string,
+      unknown
+    >;
+
+    res.json({
+      success: true,
+      data: attachRuntimeAndTelemetry({
+        ...updatedSession,
+        starred: Boolean(updatedSession.starred),
+      }),
+    });
+  })
+);
+
+// ── Multi-chat threads inside one session ────────────────────────────────────
+// chat_id NULL on messages plus active_chat_id NULL on the session means the
+// legacy "main" thread. The first time a second chat is created the main
+// thread is materialised into session_chats so every thread has a real id.
+
+const createChatSchema = z.object({
+  title: z.string().trim().min(1).max(100).optional(),
+});
+
+const renameChatSchema = z.object({
+  title: z.string().trim().min(1).max(100),
+});
+
+function requireOwnedSession(db: ReturnType<typeof getDatabase>, id: string, userId: string) {
+  const session = db
+    .prepare(
+      `SELECT id, active_chat_id as activeChatId, claude_session_id as claudeSessionId
+       FROM sessions WHERE id = ? AND user_id = ?`
+    )
+    .get(id, userId) as
+    | { id: string; activeChatId: string | null; claudeSessionId: string | null }
+    | undefined;
+  if (!session) throw new AppError('Session not found', 404, 'NOT_FOUND');
+  return session;
+}
+
+function listSessionChats(db: ReturnType<typeof getDatabase>, sessionId: string) {
+  return db
+    .prepare(
+      `SELECT id, title, provider_session_id as providerSessionId,
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
+       FROM session_chats WHERE session_id = ? ORDER BY created_at ASC, rowid ASC`
+    )
+    .all(sessionId) as Array<{
+    id: string;
+    title: string;
+    providerSessionId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
+
+function chatListPayload(
+  db: ReturnType<typeof getDatabase>,
+  sessionId: string,
+  activeChatId: string | null
+) {
+  const rows = listSessionChats(db, sessionId);
+  if (rows.length === 0) {
+    // Legacy single-thread session: present the implicit main chat.
+    return {
+      chats: [{ id: 'main', title: 'Chat 1', createdAt: null, updatedAt: null }],
+      activeChatId: 'main',
+    };
+  }
+  return {
+    chats: rows.map(({ providerSessionId: _p, ...rest }) => rest),
+    activeChatId: activeChatId,
+  };
+}
+
+/** Move the implicit NULL main thread into a real session_chats row. */
+function materializeMainChat(
+  db: ReturnType<typeof getDatabase>,
+  session: { id: string; activeChatId: string | null; claudeSessionId: string | null }
+): string {
+  if (session.activeChatId !== null) return session.activeChatId;
+  const mainId = nanoid();
+  db.prepare(
+    'INSERT INTO session_chats (id, session_id, title, provider_session_id) VALUES (?, ?, ?, ?)'
+  ).run(mainId, session.id, 'Chat 1', session.claudeSessionId);
+  db.prepare('UPDATE messages SET chat_id = ? WHERE session_id = ? AND chat_id IS NULL').run(
+    mainId,
+    session.id
+  );
+  db.prepare('UPDATE sessions SET active_chat_id = ? WHERE id = ?').run(mainId, session.id);
+  return mainId;
+}
+
+/** Persist the outgoing chat's provider-native session id before switching. */
+function stashActiveProviderSession(
+  db: ReturnType<typeof getDatabase>,
+  sessionId: string,
+  activeChatId: string,
+  claudeSessionId: string | null
+) {
+  db.prepare(
+    'UPDATE session_chats SET provider_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND session_id = ?'
+  ).run(claudeSessionId, activeChatId, sessionId);
+}
+
+// List chat threads of a session
+router.get('/:id/chats', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const db = getDatabase();
+  const session = requireOwnedSession(db, req.params.id as string, userId);
+  res.json({ success: true, data: chatListPayload(db, session.id, session.activeChatId) });
+});
+
+// Create a new chat thread (fresh conversation context) and switch to it
+router.post('/:id/chats', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const parsed = createChatSchema.safeParse(req.body ?? {});
+  if (!parsed.success) throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+
+  const db = getDatabase();
+  const session = requireOwnedSession(db, req.params.id as string, userId);
+
+  const currentActiveId = materializeMainChat(db, session);
+  if (session.activeChatId !== null) {
+    stashActiveProviderSession(db, session.id, currentActiveId, session.claudeSessionId);
   }
 
-  const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
-    string,
-    unknown
-  >;
+  const chatCount = (
+    db.prepare('SELECT COUNT(*) as c FROM session_chats WHERE session_id = ?').get(session.id) as {
+      c: number;
+    }
+  ).c;
+  const chatId = nanoid();
+  const title = parsed.data.title || `Chat ${chatCount + 1}`;
+  db.prepare('INSERT INTO session_chats (id, session_id, title) VALUES (?, ?, ?)').run(
+    chatId,
+    session.id,
+    title
+  );
+  // Fresh thread: no provider-native context to resume.
+  db.prepare(
+    `UPDATE sessions SET active_chat_id = ?, claude_session_id = NULL,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).run(chatId, session.id);
 
-  res.json({
-    success: true,
-    data: attachRuntimeAndTelemetry({
-      ...updatedSession,
-      starred: Boolean(updatedSession.starred),
-    }),
-  });
+  // The running CLI holds the old thread's context; stop it so the next turn
+  // spawns clean. No-op when nothing is running.
+  try {
+    getProcessManager().stopSession(session.id, userId);
+  } catch {
+    /* not running */
+  }
+
+  res.json({ success: true, data: chatListPayload(db, session.id, chatId) });
+});
+
+// Switch to another chat thread
+router.post('/:id/chats/:chatId/activate', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const db = getDatabase();
+  const session = requireOwnedSession(db, req.params.id as string, userId);
+  const targetId = req.params.chatId as string;
+
+  if (targetId === 'main' && session.activeChatId === null) {
+    // Already on the implicit main thread.
+    return res.json({ success: true, data: chatListPayload(db, session.id, null) });
+  }
+
+  const target = db
+    .prepare(
+      'SELECT id, provider_session_id as providerSessionId FROM session_chats WHERE id = ? AND session_id = ?'
+    )
+    .get(targetId, session.id) as { id: string; providerSessionId: string | null } | undefined;
+  if (!target) throw new AppError('Chat not found', 404, 'NOT_FOUND');
+
+  if (session.activeChatId === target.id) {
+    return res.json({ success: true, data: chatListPayload(db, session.id, target.id) });
+  }
+
+  const currentActiveId = materializeMainChat(db, session);
+  stashActiveProviderSession(db, session.id, currentActiveId, session.claudeSessionId);
+
+  db.prepare(
+    `UPDATE sessions SET active_chat_id = ?, claude_session_id = ?,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).run(target.id, target.providerSessionId, session.id);
+
+  try {
+    getProcessManager().stopSession(session.id, userId);
+  } catch {
+    /* not running */
+  }
+
+  res.json({ success: true, data: chatListPayload(db, session.id, target.id) });
+});
+
+// Rename a chat thread
+router.patch('/:id/chats/:chatId', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const parsed = renameChatSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError('Invalid input', 400, 'VALIDATION_ERROR');
+
+  const db = getDatabase();
+  const session = requireOwnedSession(db, req.params.id as string, userId);
+  const result = db
+    .prepare(
+      'UPDATE session_chats SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND session_id = ?'
+    )
+    .run(parsed.data.title, req.params.chatId, session.id);
+  if (result.changes === 0) throw new AppError('Chat not found', 404, 'NOT_FOUND');
+  res.json({ success: true, data: chatListPayload(db, session.id, session.activeChatId) });
+});
+
+// Delete a chat thread and its messages
+router.delete('/:id/chats/:chatId', requireAuth, (req, res) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const db = getDatabase();
+  const session = requireOwnedSession(db, req.params.id as string, userId);
+  const targetId = req.params.chatId as string;
+
+  const target = db
+    .prepare('SELECT id FROM session_chats WHERE id = ? AND session_id = ?')
+    .get(targetId, session.id) as { id: string } | undefined;
+  if (!target) throw new AppError('Chat not found', 404, 'NOT_FOUND');
+
+  db.prepare('DELETE FROM messages WHERE session_id = ? AND chat_id = ?').run(session.id, targetId);
+  db.prepare('DELETE FROM session_chats WHERE id = ?').run(targetId);
+
+  if (session.activeChatId === targetId) {
+    // Fall back to the oldest remaining thread (or the empty implicit main).
+    const next = listSessionChats(db, session.id)[0] ?? null;
+    db.prepare(
+      `UPDATE sessions SET active_chat_id = ?, claude_session_id = ?,
+         updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(next?.id ?? null, next?.providerSessionId ?? null, session.id);
+    try {
+      getProcessManager().stopSession(session.id, userId);
+    } catch {
+      /* not running */
+    }
+  }
+
+  const updated = requireOwnedSession(db, session.id, userId);
+  res.json({ success: true, data: chatListPayload(db, session.id, updated.activeChatId) });
 });
 
 // Update the per-session model selection so different WebUI sessions can run
 // different provider/model pairs without changing any global provider default.
-router.patch('/:id/model', requireAuth, (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const parsed = updateSessionModelSchema.safeParse(req.body);
+router.patch(
+  '/:id/model',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const parsed = updateSessionModelSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    throw new AppError('Invalid model', 400, 'VALIDATION_ERROR');
-  }
+    if (!parsed.success) {
+      throw new AppError('Invalid model', 400, 'VALIDATION_ERROR');
+    }
 
-  const db = getDatabase();
-  const session = db
-    .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
-    .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
+    const db = getDatabase();
+    const session = db
+      .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
+      .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
 
-  if (!session) {
-    throw new AppError('Session not found', 404, 'NOT_FOUND');
-  }
+    if (!session) {
+      throw new AppError('Session not found', 404, 'NOT_FOUND');
+    }
 
-  const model = parsed.data.model?.trim() || null;
-  db.prepare('UPDATE sessions SET cli_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    model,
-    req.params.id
-  );
+    const model = parsed.data.model?.trim() || null;
+    db.prepare(
+      'UPDATE sessions SET cli_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(model, req.params.id);
 
-  const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
-    string,
-    unknown
-  >;
+    const processManager = getProcessManager();
+    if (processManager.isSessionRunning(req.params.id as string)) {
+      await processManager.restartSession(req.params.id as string, userId, {
+        preserveNativeContext: true,
+      });
+    }
 
-  res.json({
-    success: true,
-    data: attachRuntimeAndTelemetry({
-      ...updatedSession,
-      starred: Boolean(updatedSession.starred),
-    }),
-  });
-});
+    const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
+      string,
+      unknown
+    >;
+
+    res.json({
+      success: true,
+      data: attachRuntimeAndTelemetry({
+        ...updatedSession,
+        starred: Boolean(updatedSession.starred),
+      }),
+    });
+  })
+);
 
 // Update the per-session reasoning/effort selection. This intentionally mirrors
 // the model route: the session row is the source of truth, not user-wide settings.
-router.patch('/:id/reasoning', requireAuth, (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const parsed = updateSessionReasoningSchema.safeParse(req.body);
+router.patch(
+  '/:id/reasoning',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const parsed = updateSessionReasoningSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    throw new AppError('Invalid reasoning level', 400, 'VALIDATION_ERROR');
-  }
+    if (!parsed.success) {
+      throw new AppError('Invalid reasoning level', 400, 'VALIDATION_ERROR');
+    }
 
-  const db = getDatabase();
-  const session = db
-    .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
-    .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
+    const db = getDatabase();
+    const session = db
+      .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
+      .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
 
-  if (!session) {
-    throw new AppError('Session not found', 404, 'NOT_FOUND');
-  }
+    if (!session) {
+      throw new AppError('Session not found', 404, 'NOT_FOUND');
+    }
 
-  const reasoning = parsed.data.reasoning?.trim() || null;
-  if (session.cliProvider === 'codex' && reasoning?.toLowerCase() === 'fast') {
-    db.prepare(
-      `UPDATE sessions
+    const reasoning = parsed.data.reasoning?.trim() || null;
+    if (session.cliProvider === 'codex' && reasoning?.toLowerCase() === 'fast') {
+      db.prepare(
+        `UPDATE sessions
        SET cli_reasoning = NULL,
            cli_service_tier = 'fast',
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`
-    ).run(req.params.id);
-  } else {
-    db.prepare(
-      'UPDATE sessions SET cli_reasoning = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(reasoning, req.params.id);
-  }
+      ).run(req.params.id);
+    } else {
+      db.prepare(
+        'UPDATE sessions SET cli_reasoning = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).run(reasoning, req.params.id);
+    }
 
-  const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
-    string,
-    unknown
-  >;
+    const processManager = getProcessManager();
+    if (processManager.isSessionRunning(req.params.id as string)) {
+      await processManager.restartSession(req.params.id as string, userId, {
+        preserveNativeContext: true,
+      });
+    }
 
-  res.json({
-    success: true,
-    data: attachRuntimeAndTelemetry({
-      ...updatedSession,
-      starred: Boolean(updatedSession.starred),
-    }),
-  });
-});
+    const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
+      string,
+      unknown
+    >;
+
+    res.json({
+      success: true,
+      data: attachRuntimeAndTelemetry({
+        ...updatedSession,
+        starred: Boolean(updatedSession.starred),
+      }),
+    });
+  })
+);
 
 // Update the per-session Codex service/profile tier. This is separate from
 // reasoning so `/fast` can be combined with xhigh effort.
-router.patch('/:id/service-tier', requireAuth, (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  const parsed = updateSessionServiceTierSchema.safeParse(req.body);
+router.patch(
+  '/:id/service-tier',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const userId = (req as AuthenticatedRequest).userId;
+    const parsed = updateSessionServiceTierSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    throw new AppError('Invalid service tier', 400, 'VALIDATION_ERROR');
-  }
+    if (!parsed.success) {
+      throw new AppError('Invalid service tier', 400, 'VALIDATION_ERROR');
+    }
 
-  const db = getDatabase();
-  const session = db
-    .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
-    .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
+    const db = getDatabase();
+    const session = db
+      .prepare('SELECT id, cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
+      .get(req.params.id, userId) as { id: string; cliProvider: string } | undefined;
 
-  if (!session) {
-    throw new AppError('Session not found', 404, 'NOT_FOUND');
-  }
+    if (!session) {
+      throw new AppError('Session not found', 404, 'NOT_FOUND');
+    }
 
-  const serviceTier = parsed.data.serviceTier || null;
-  if (serviceTier && session.cliProvider !== 'codex') {
-    throw new AppError(
-      'Service tier is only supported for Codex sessions',
-      400,
-      'VALIDATION_ERROR'
-    );
-  }
+    const serviceTier = parsed.data.serviceTier || null;
+    if (serviceTier && session.cliProvider !== 'codex') {
+      throw new AppError(
+        'Service tier is only supported for Codex sessions',
+        400,
+        'VALIDATION_ERROR'
+      );
+    }
 
-  db.prepare(
-    'UPDATE sessions SET cli_service_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-  ).run(serviceTier, req.params.id);
+    db.prepare(
+      'UPDATE sessions SET cli_service_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(serviceTier, req.params.id);
 
-  const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
-    string,
-    unknown
-  >;
+    const processManager = getProcessManager();
+    if (processManager.isSessionRunning(req.params.id as string)) {
+      await processManager.restartSession(req.params.id as string, userId, {
+        preserveNativeContext: true,
+      });
+    }
 
-  res.json({
-    success: true,
-    data: attachRuntimeAndTelemetry({
-      ...updatedSession,
-      starred: Boolean(updatedSession.starred),
-    }),
-  });
-});
+    const updatedSession = selectSessionById(db, req.params.id as string, userId) as Record<
+      string,
+      unknown
+    >;
+
+    res.json({
+      success: true,
+      data: attachRuntimeAndTelemetry({
+        ...updatedSession,
+        starred: Boolean(updatedSession.starred),
+      }),
+    });
+  })
+);
 
 // Persist the session permission mode. Previously lived only in localStorage, so it
 // was lost when switching browser or device.
@@ -1788,92 +2173,349 @@ router.delete('/:id', requireAuth, (req, res) => {
 // blow up memory on the server or freeze the frontend on render.
 // Default returns the most recent `limit` messages in chronological order.
 // Use `before` (message id) to page backwards for infinite scroll.
+const createChatUploadSchema = z.object({
+  filename: z.string().min(1).max(240),
+  mimeType: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[\x20-\x7e]+$/)
+    .optional(),
+  byteSize: z.number().int().min(1).max(25 * 1024 * 1024),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  chunkSize: z.number().int().min(256 * 1024).max(4 * 1024 * 1024).optional(),
+});
+
+function throwChatUploadError(error: unknown): never {
+  if (error instanceof ChatUploadError) {
+    throw new AppError(error.message, error.statusCode, error.code);
+  }
+  throw error;
+}
+
+function parseContentRange(value: string | undefined):
+  | { start: number; end: number; total: number }
+  | undefined {
+  if (!value) return undefined;
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(value.trim());
+  if (!match) throw new AppError('Invalid Content-Range', 400, 'INVALID_CONTENT_RANGE');
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    !Number.isSafeInteger(total) ||
+    start < 0 ||
+    end < start ||
+    total <= end
+  ) {
+    throw new AppError('Invalid Content-Range', 400, 'INVALID_CONTENT_RANGE');
+  }
+  return { start, end, total };
+}
+
+router.post(
+  '/:id/uploads',
+  requireAuth,
+  rateLimiters.upload,
+  asyncHandler(async (req, res) => {
+    const parsed = createChatUploadSchema.safeParse(req.body);
+    if (!parsed.success) throw new AppError('Invalid upload metadata', 400, 'VALIDATION_ERROR');
+    try {
+      const upload = await createChatUpload(
+        (req as AuthenticatedRequest).userId,
+        req.params.id as string,
+        parsed.data
+      );
+      res.status(201).json({ success: true, data: upload });
+    } catch (error) {
+      throwChatUploadError(error);
+    }
+  })
+);
+
+router.put(
+  '/:id/uploads/:uploadId/chunks/:chunkIndex',
+  requireAuth,
+  rateLimiters.uploadChunk,
+  raw({ type: 'application/octet-stream', limit: '4mb' }),
+  asyncHandler(async (req, res) => {
+    const index = z.coerce.number().int().min(0).max(99).safeParse(req.params.chunkIndex);
+    const sha = req.header('x-chunk-sha256');
+    if (!index.success || !Buffer.isBuffer(req.body)) {
+      throw new AppError('Invalid upload chunk', 400, 'VALIDATION_ERROR');
+    }
+    if (!sha || !/^[a-f0-9]{64}$/i.test(sha)) {
+      throw new AppError('Invalid chunk SHA-256', 400, 'VALIDATION_ERROR');
+    }
+    const contentRange = parseContentRange(req.header('content-range'));
+    if (!contentRange) {
+      throw new AppError('Content-Range is required', 400, 'INVALID_CONTENT_RANGE');
+    }
+    try {
+      const upload = await putChatUploadChunk(
+        (req as AuthenticatedRequest).userId,
+        req.params.id as string,
+        req.params.uploadId as string,
+        index.data,
+        req.body,
+        sha,
+        contentRange
+      );
+      res.json({ success: true, data: upload });
+    } catch (error) {
+      throwChatUploadError(error);
+    }
+  })
+);
+
+router.get('/:id/uploads/:uploadId', requireAuth, (req, res) => {
+  try {
+    const upload = getChatUpload(
+      (req as AuthenticatedRequest).userId,
+      req.params.id as string,
+      req.params.uploadId as string
+    );
+    res.json({ success: true, data: upload });
+  } catch (error) {
+    throwChatUploadError(error);
+  }
+});
+
+router.delete(
+  '/:id/uploads/:uploadId',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    try {
+      const upload = await cancelChatUpload(
+        (req as AuthenticatedRequest).userId,
+        req.params.id as string,
+        req.params.uploadId as string
+      );
+      res.json({ success: true, data: upload });
+    } catch (error) {
+      throwChatUploadError(error);
+    }
+  })
+);
+
+const readStateQuerySchema = z.object({
+  chatId: z.string().max(160).optional(),
+});
+const readStateUpdateSchema = z.object({
+  chatId: z.string().max(160).nullable().optional(),
+  lastReadMessageId: z.string().max(160).nullable().optional(),
+});
+
+router.get('/:id/read-state', requireAuth, (req, res) => {
+  const parsed = readStateQuerySchema.safeParse(req.query);
+  if (!parsed.success) throw new AppError('Invalid read-state query', 400, 'VALIDATION_ERROR');
+  try {
+    const readState = getSessionReadState(
+      (req as AuthenticatedRequest).userId,
+      req.params.id as string,
+      parsed.data.chatId === '' ? null : parsed.data.chatId
+    );
+    res.json({ success: true, data: readState });
+  } catch {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+});
+
+router.put('/:id/read-state', requireAuth, (req, res) => {
+  const parsed = readStateUpdateSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError('Invalid read-state payload', 400, 'VALIDATION_ERROR');
+  try {
+    const readState = setSessionReadState(
+      (req as AuthenticatedRequest).userId,
+      req.params.id as string,
+      parsed.data
+    );
+    res.json({ success: true, data: readState });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Invalid read marker';
+    const notFound = message === 'Session not found';
+    throw new AppError(message, notFound ? 404 : 400, notFound ? 'NOT_FOUND' : 'INVALID_MARKER');
+  }
+});
+
 const messagesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(2000).default(500),
-  before: z.string().max(64).optional(),
+  before: z.string().min(1).max(64).optional(),
+  after: z.string().min(1).max(64).optional(),
+  around: z.string().min(1).max(64).optional(),
+  chatId: z.string().max(160).optional(),
 });
 
 router.get('/:id/messages', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const db = getDatabase();
-
-  const session = db
-    .prepare('SELECT id FROM sessions WHERE id = ? AND user_id = ?')
-    .get(req.params.id, userId);
-
-  if (!session) {
-    throw new AppError('Session not found', 404, 'NOT_FOUND');
-  }
-
   const parsed = messagesQuerySchema.safeParse(req.query);
   if (!parsed.success) throw new AppError('Invalid query', 400, 'VALIDATION_ERROR');
-  const { limit, before } = parsed.data;
-
-  let cursorRowId: number | null = null;
-  if (before) {
-    const row = db
-      .prepare('SELECT rowid as rid FROM messages WHERE id = ? AND session_id = ?')
-      .get(before, req.params.id) as { rid: number } | undefined;
-    if (row) cursorRowId = row.rid;
+  const { limit, before, after, around, chatId: requestedChatId } = parsed.data;
+  if ([before, after, around].filter(Boolean).length > 1) {
+    throw new AppError(
+      'before, after and around are mutually exclusive',
+      400,
+      'VALIDATION_ERROR'
+    );
   }
 
-  // Fetch newest-first (so `limit` keeps the tail window), reverse for the client.
-  // `created_at` is formatted as ISO 8601 UTC so the browser parses it as a real
-  // moment in time. SQLite's `CURRENT_TIMESTAMP` default writes `YYYY-MM-DD HH:MM:SS`
-  // without a TZ marker — which `new Date(...)` interprets as LOCAL time, shifting
-  // messages by the user's UTC offset and breaking timeline ordering against
-  // backend-clock-stamped tool events. See websocket.ts: emitToolUse().
-  const rows =
-    cursorRowId !== null
-      ? (db
-          .prepare(
-            `SELECT id, session_id as sessionId, role, content,
-                strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt, rowid as rid
-         FROM messages WHERE session_id = ? AND rowid < ?
-         ORDER BY rowid DESC LIMIT ?`
-          )
-          .all(req.params.id, cursorRowId, limit) as Array<{ rid: number; [k: string]: unknown }>)
-      : (db
-          .prepare(
-            `SELECT id, session_id as sessionId, role, content,
-                strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt, rowid as rid
-         FROM messages WHERE session_id = ?
-         ORDER BY rowid DESC LIMIT ?`
-          )
-          .all(req.params.id, limit) as Array<{ rid: number; [k: string]: unknown }>);
-
-  const total = (
-    db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(req.params.id) as {
-      c: number;
+  const payload = db.transaction(() => {
+    // One SQLite read transaction makes the rows, revision and newest id one
+    // coherent snapshot even if another backend process is writing concurrently.
+    const session = db
+      .prepare(
+        `SELECT id, active_chat_id AS activeChatId
+           FROM sessions WHERE id = ? AND user_id = ?`
+      )
+      .get(req.params.id, userId) as { id: string; activeChatId: string | null } | undefined;
+    if (!session) throw new AppError('Session not found', 404, 'NOT_FOUND');
+    const activeChatId =
+      requestedChatId === undefined
+        ? session.activeChatId
+        : requestedChatId === ''
+          ? null
+          : requestedChatId;
+    if (
+      activeChatId !== null &&
+      !db
+        .prepare(`SELECT 1 FROM session_chats WHERE id = ? AND session_id = ?`)
+        .get(activeChatId, req.params.id)
+    ) {
+      throw new AppError('Chat not found in this session', 404, 'NOT_FOUND');
     }
-  ).c;
+    const total = (
+      db
+        .prepare('SELECT COUNT(*) AS count FROM messages WHERE session_id = ? AND chat_id IS ?')
+        .get(req.params.id, activeChatId) as { count: number }
+    ).count;
+    const baseSelect = `SELECT id, session_id AS sessionId, chat_id AS chatId, role, content,
+                               client_message_id AS clientMessageId,
+                               event_sequence AS eventSequence,
+                               strftime('%Y-%m-%dT%H:%M:%fZ', created_at) AS createdAt,
+                               rowid AS rid
+                          FROM messages`;
+    type HistoryRow = { rid: number; id: string; [key: string]: unknown };
+    let ordered: HistoryRow[];
+    let anchorIndex: number | null = null;
+    let requestedCursorRowId: number | null = null;
 
-  const ordered = rows.slice().reverse();
-  const oldestRid = ordered[0]?.rid ?? null;
-  const hasMore =
-    oldestRid !== null &&
-    rows.length === limit &&
-    db
-      .prepare('SELECT 1 FROM messages WHERE session_id = ? AND rowid < ? LIMIT 1')
-      .get(req.params.id, oldestRid) !== undefined;
+    if (around) {
+      const anchor = db
+        .prepare(
+          `SELECT rowid AS rid FROM messages
+            WHERE id = ? AND session_id = ? AND chat_id IS ?`
+        )
+        .get(around, req.params.id, activeChatId) as { rid: number } | undefined;
+      if (!anchor) {
+        throw new AppError('Message not found in the active chat', 404, 'NOT_FOUND');
+      }
+      const ordinal = (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM messages
+              WHERE session_id = ? AND chat_id IS ? AND rowid <= ?`
+          )
+          .get(req.params.id, activeChatId, anchor.rid) as { count: number }
+      ).count;
+      const offset = Math.max(0, Math.min(ordinal - Math.ceil(limit / 2), total - limit));
+      ordered = db
+        .prepare(
+          `${baseSelect}
+            WHERE session_id = ? AND chat_id IS ?
+            ORDER BY rowid ASC LIMIT ? OFFSET ?`
+        )
+        .all(req.params.id, activeChatId, limit, offset) as HistoryRow[];
+      anchorIndex = ordered.findIndex((row) => row.id === around);
+    } else {
+      let cursorRowId: number | null = null;
+      if (before || after) {
+        const cursor = db
+          .prepare(
+            `SELECT rowid AS rid FROM messages
+              WHERE id = ? AND session_id = ? AND chat_id IS ?`
+          )
+          .get(before ?? after, req.params.id, activeChatId) as { rid: number } | undefined;
+        if (!cursor) {
+          throw new AppError('Message cursor not found in the active chat', 400, 'INVALID_CURSOR');
+        }
+        cursorRowId = cursor.rid;
+        requestedCursorRowId = cursor.rid;
+      }
+      if (after && cursorRowId !== null) {
+        ordered = db
+          .prepare(
+            `${baseSelect}
+              WHERE session_id = ? AND chat_id IS ? AND rowid > ?
+              ORDER BY rowid ASC LIMIT ?`
+          )
+          .all(req.params.id, activeChatId, cursorRowId, limit) as HistoryRow[];
+      } else {
+        const newestFirst = (
+          cursorRowId === null
+            ? db
+                .prepare(
+                  `${baseSelect}
+                    WHERE session_id = ? AND chat_id IS ?
+                    ORDER BY rowid DESC LIMIT ?`
+                )
+                .all(req.params.id, activeChatId, limit)
+            : db
+                .prepare(
+                  `${baseSelect}
+                    WHERE session_id = ? AND chat_id IS ? AND rowid < ?
+                    ORDER BY rowid DESC LIMIT ?`
+                )
+                .all(req.params.id, activeChatId, cursorRowId, limit)
+        ) as HistoryRow[];
+        ordered = newestFirst.reverse();
+      }
+    }
 
-  // Strip the synthetic `rid` and hydrate durable, path-free media metadata.
-  const mediaByMessage = loadMessageMedia(ordered.map((row) => String(row.id)));
-  const messages = ordered.map(({ rid: _rid, ...rest }) => {
-    const media = mediaByMessage.get(String(rest.id));
-    return media?.length ? { ...rest, media } : rest;
-  });
+    const oldestRid = ordered[0]?.rid ?? requestedCursorRowId;
+    const newestRid = ordered.at(-1)?.rid ?? requestedCursorRowId;
+    const hasMoreBefore =
+      oldestRid !== null &&
+      db
+        .prepare(
+          `SELECT 1 FROM messages
+            WHERE session_id = ? AND chat_id IS ? AND rowid < ? LIMIT 1`
+        )
+        .get(req.params.id, activeChatId, oldestRid) !== undefined;
+    const hasMoreAfter =
+      newestRid !== null &&
+      db
+        .prepare(
+          `SELECT 1 FROM messages
+            WHERE session_id = ? AND chat_id IS ? AND rowid > ? LIMIT 1`
+        )
+        .get(req.params.id, activeChatId, newestRid) !== undefined;
+    const mediaByMessage = loadMessageMedia(ordered.map((row) => row.id));
+    const messages = ordered.map(({ rid: _rid, ...message }) => {
+      const media = mediaByMessage.get(message.id);
+      return media?.length ? { ...message, media } : message;
+    });
+    return {
+      success: true,
+      data: messages,
+      snapshot: getMessageHistorySnapshot(req.params.id as string, userId, activeChatId, db),
+      readState: getSessionReadState(userId, req.params.id as string, activeChatId, db),
+      pagination: {
+        total,
+        limit,
+        hasMore: hasMoreBefore,
+        hasMoreBefore,
+        hasMoreAfter,
+        oldestId: messages[0]?.id ?? null,
+        newestId: messages.at(-1)?.id ?? null,
+        ...(around ? { aroundId: around, anchorIndex } : {}),
+      },
+    };
+  })();
 
-  res.json({
-    success: true,
-    data: messages,
-    pagination: {
-      total,
-      limit,
-      hasMore,
-      oldestId: messages.length ? (messages[0] as { id: string }).id : null,
-    },
-  });
+  res.json(payload);
 });
 
 // Rewind session to a specific message (deletes that message and all later ones,
@@ -2119,11 +2761,12 @@ router.get(
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
 
-    const safeName = media.filename.replace(/[\r\n"]/g, '') || 'image';
-    const asciiFallback = safeName.replace(/[^\x20-\x7e]/g, '_') || 'image';
+    const safeName = media.filename.replace(/[\r\n"]/g, '') || 'attachment';
+    const asciiFallback = safeName.replace(/[^\x20-\x7e]/g, '_') || 'attachment';
+    const disposition = media.mimeType.startsWith('image/') ? 'inline' : 'attachment';
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
+      `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(safeName)}`
     );
 
     if (req.header('if-none-match') === etag) {
@@ -2276,14 +2919,17 @@ router.patch('/:id/category', requireAuth, (req, res) => {
 // Build an FTS5 MATCH expression that does prefix search on every whitespace-separated
 // token. Strips control chars + double-quotes (which are FTS5 phrase delimiters) to
 // keep user input from injecting operators. Result example: `hello* world*`.
-function buildFtsMatch(query: string): string | null {
-  const tokens = query
-    .replace(/["'\u0000-\u001f]/g, ' ')
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .map((t) => `${t}*`);
-  return tokens.length > 0 ? tokens.join(' ') : null;
+export function buildFtsMatch(query: string): string | null {
+  // Extract words instead of forwarding FTS syntax. Quoting every term makes
+  // inputs such as `foo*`, `OR`, parentheses or unterminated quotes harmless.
+  const tokens = (query.normalize('NFKC').match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .slice(0, 24)
+    .map((token) => token.slice(0, 64));
+  return tokens.length > 0 ? tokens.map((token) => `"${token}"*`).join(' AND ') : null;
+}
+
+export function escapeMessageSearchLike(query: string): string {
+  return query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 // FTS5 is created by the schema migration but only when the SQLite build supports it.
@@ -2302,12 +2948,16 @@ function ftsAvailable(db: ReturnType<typeof getDatabase>): boolean {
 // Search messages in a session
 router.get('/:id/messages/search', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
-  const query = req.query.q as string;
-  const limit = parseInt(req.query.limit as string) || 50;
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const requestedLimit = Number(req.query.limit ?? 50);
+  const limit = Math.min(
+    100,
+    Math.max(1, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 50)
+  );
   const db = getDatabase();
 
-  if (!query || query.length < 2) {
-    throw new AppError('Query must be at least 2 characters', 400, 'INVALID_QUERY');
+  if (query.length < 2 || query.length > 200) {
+    throw new AppError('Query must be between 2 and 200 characters', 400, 'INVALID_QUERY');
   }
 
   // Verify session ownership
@@ -2325,7 +2975,8 @@ router.get('/:id/messages/search', requireAuth, (req, res) => {
   const messages = useFts
     ? db
         .prepare(
-          `SELECT m.id, m.session_id as sessionId, m.role, m.content,
+          `SELECT m.id, m.session_id as sessionId, m.chat_id AS chatId, m.role,
+                  substr(snippet(messages_fts, 0, '', '', ' … ', 64), 1, 2000) AS content,
                   strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at) as createdAt
            FROM messages_fts f
            JOIN messages m ON m.rowid = f.rowid
@@ -2336,27 +2987,42 @@ router.get('/:id/messages/search', requireAuth, (req, res) => {
         .all(ftsExpr, req.params.id, limit)
     : db
         .prepare(
-          `SELECT id, session_id as sessionId, role, content,
+          `SELECT id, session_id as sessionId, chat_id AS chatId, role,
+                  substr(content, max(1, instr(lower(content), lower(?)) - 400), 1600) AS content,
                   strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt
            FROM messages
-           WHERE session_id = ? AND content LIKE ?
+           WHERE session_id = ? AND content LIKE ? ESCAPE '\\'
            ORDER BY created_at DESC, rowid DESC
            LIMIT ?`
         )
-        .all(req.params.id, `%${query}%`, limit);
+        .all(query, req.params.id, `%${escapeMessageSearchLike(query)}%`, limit);
 
-  res.json({ success: true, data: messages });
+  const data = (messages as Array<{ id: string; sessionId: string; chatId: string | null }>).map(
+    (message) => ({
+      ...message,
+      jump: {
+        sessionId: message.sessionId,
+        chatId: message.chatId,
+        messageId: message.id,
+      },
+    })
+  );
+  res.json({ success: true, data });
 });
 
 // Search all messages across all sessions
 router.get('/messages/search', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
-  const query = req.query.q as string;
-  const limit = parseInt(req.query.limit as string) || 50;
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const requestedLimit = Number(req.query.limit ?? 50);
+  const limit = Math.min(
+    100,
+    Math.max(1, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 50)
+  );
   const db = getDatabase();
 
-  if (!query || query.length < 2) {
-    throw new AppError('Query must be at least 2 characters', 400, 'INVALID_QUERY');
+  if (query.length < 2 || query.length > 200) {
+    throw new AppError('Query must be between 2 and 200 characters', 400, 'INVALID_QUERY');
   }
 
   const ftsExpr = buildFtsMatch(query);
@@ -2365,7 +3031,8 @@ router.get('/messages/search', requireAuth, (req, res) => {
   const messages = useFts
     ? db
         .prepare(
-          `SELECT m.id, m.session_id as sessionId, m.role, m.content,
+          `SELECT m.id, m.session_id as sessionId, m.chat_id AS chatId, m.role,
+                  substr(snippet(messages_fts, 0, '', '', ' … ', 64), 1, 2000) AS content,
                   strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at) as createdAt,
                   s.name as sessionName
            FROM messages_fts f
@@ -2378,18 +3045,96 @@ router.get('/messages/search', requireAuth, (req, res) => {
         .all(ftsExpr, userId, limit)
     : db
         .prepare(
-          `SELECT m.id, m.session_id as sessionId, m.role, m.content,
+          `SELECT m.id, m.session_id as sessionId, m.chat_id AS chatId, m.role,
+                  substr(m.content, max(1, instr(lower(m.content), lower(?)) - 400), 1600) AS content,
                   strftime('%Y-%m-%dT%H:%M:%fZ', m.created_at) as createdAt,
                   s.name as sessionName
            FROM messages m
            JOIN sessions s ON m.session_id = s.id
-           WHERE s.user_id = ? AND m.content LIKE ?
+           WHERE s.user_id = ? AND m.content LIKE ? ESCAPE '\\'
            ORDER BY m.created_at DESC
            LIMIT ?`
         )
-        .all(userId, `%${query}%`, limit);
+        .all(query, userId, `%${escapeMessageSearchLike(query)}%`, limit);
 
-  res.json({ success: true, data: messages });
+  const data = (messages as Array<{ id: string; sessionId: string; chatId: string | null }>).map(
+    (message) => ({
+      ...message,
+      jump: {
+        sessionId: message.sessionId,
+        chatId: message.chatId,
+        messageId: message.id,
+      },
+    })
+  );
+  res.json({ success: true, data });
+});
+
+/**
+ * GET /api/sessions/:id/export
+ * Whole transcript as Markdown. Served as a download so the browser saves a
+ * file, and consumed verbatim by the Android share sheet.
+ */
+router.get('/:id/export', requireAuth, (req: Request, res: Response) => {
+  const userId = (req as AuthenticatedRequest).userId;
+  const db = getDatabase();
+  const session = db
+    .prepare(
+      `SELECT id, name, cli_provider AS cliProvider, cli_model AS cliModel,
+              working_directory AS workingDirectory,
+              strftime('%Y-%m-%dT%H:%M:%SZ', created_at) AS createdAt
+         FROM sessions WHERE id = ? AND user_id = ?`
+    )
+    .get(req.params.id, userId) as
+    | {
+        id: string;
+        name: string;
+        cliProvider: string | null;
+        cliModel: string | null;
+        workingDirectory: string | null;
+        createdAt: string;
+      }
+    | undefined;
+  if (!session) {
+    throw new AppError('Session not found', 404, 'NOT_FOUND');
+  }
+
+  const chatId = typeof req.query.chatId === 'string' ? req.query.chatId : null;
+  const rows = db
+    .prepare(
+      `SELECT role, content, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) AS createdAt
+         FROM messages
+        WHERE session_id = ?${chatId ? ' AND chat_id = ?' : ''}
+        ORDER BY created_at ASC, rowid ASC`
+    )
+    .all(...(chatId ? [session.id, chatId] : [session.id])) as Array<{
+    role: string;
+    content: string;
+    createdAt: string;
+  }>;
+
+  const lines = [
+    `# ${session.name}`,
+    '',
+    `- Session: \`${session.id}\``,
+    `- Provider: ${session.cliProvider || 'unknown'}${session.cliModel ? ` (${session.cliModel})` : ''}`,
+    `- Workspace: \`${session.workingDirectory || '—'}\``,
+    `- Started: ${session.createdAt}`,
+    `- Messages: ${rows.length}`,
+    '',
+    '---',
+    '',
+  ];
+  for (const row of rows) {
+    const who = row.role === 'user' ? 'You' : row.role === 'assistant' ? 'Agent' : row.role;
+    lines.push(`### ${who} · ${row.createdAt}`, '', row.content.trim(), '');
+  }
+
+  // Keep the filename safe for every OS rather than trusting the session name.
+  const slug = session.name.replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'session';
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${slug}.md"`);
+  res.send(lines.join('\n'));
 });
 
 export default router;

@@ -145,8 +145,8 @@ fun LibraryScreen(
     PlumBackdrop {
         PlumNavScaffold(MainDestination.LIBRARY, onNavigateMain) { padding ->
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(bottom = 18.dp),
+                modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+                contentPadding = PaddingValues(bottom = 18.dp + padding.calculateBottomPadding()),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 item {

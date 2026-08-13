@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark brand base used behind the adaptive Plum Code launcher foreground. -->
+    <color name="ic_launcher_background">#070514</color>
+</resources>

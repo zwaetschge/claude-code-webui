@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useDeferredValue,
   useMemo,
   useRef,
   useState,
@@ -34,14 +35,19 @@ import {
   Hand,
   CheckCircle,
   SlidersHorizontal,
+  ChevronLeft,
   ChevronRight,
   Search,
   X,
+  WifiOff,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
+import { SessionCategories } from '@/components/session-categories';
+import { DiscoveredProjects } from '@/components/projects';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
 import { SessionIcon } from '@/components/session/SessionIcon';
@@ -255,6 +261,10 @@ export function DashboardPage() {
   const { categories, fetchCategories, createCategory } = useCategoryStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
+  const [isComposerExpanded, setIsComposerExpanded] = useState(searchParams.get('new') === 'true');
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  );
   const [newSessionPrompt, setNewSessionPrompt] = useState('');
   const [newSessionName, setNewSessionName] = useState('');
   const [sessionMode, setSessionMode] = useState<'new' | 'existing'>('new');
@@ -281,6 +291,19 @@ export function DashboardPage() {
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState(
     () => searchParams.get('q') || ''
   );
+  const [dashboardDockCollapsed, setDashboardDockCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('plum-dashboard-dock-collapsed') === '1';
+  });
+  useEffect(() => {
+    window.localStorage.setItem(
+      'plum-dashboard-dock-collapsed',
+      dashboardDockCollapsed ? '1' : '0'
+    );
+  }, [dashboardDockCollapsed]);
+
+  // Category filter driven by the SessionCategories rail; null = all sessions.
+  const [dashboardCategoryFilter, setDashboardCategoryFilter] = useState<string | null>(null);
   const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() =>
     getDashboardDefaultProvider(undefined)
   );
@@ -309,6 +332,17 @@ export function DashboardPage() {
   }, [fetchCategories]);
 
   useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!showNewSession || !providerSelectedExplicitlyRef.current) {
       setSelectedCliProvider(dashboardDefaultProvider);
     }
@@ -332,17 +366,23 @@ export function DashboardPage() {
   }, [newSessionPrompt]);
 
   // Fetch sessions
-  const { isLoading } = useQuery({
+  const sessionsQuery = useQuery({
     queryKey: ['sessions'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
       if (response.data.success && response.data.data) {
-        setSessions(response.data.data);
         return response.data.data;
       }
       return [];
     },
+    retry: 1,
   });
+
+  useEffect(() => {
+    if (sessionsQuery.data !== undefined) {
+      setSessions(sessionsQuery.data);
+    }
+  }, [sessionsQuery.data, setSessions]);
 
   // Fetch available CLI providers
   interface CLIProviderInfo {
@@ -422,15 +462,19 @@ export function DashboardPage() {
   });
 
   const hasDefaultDir = !!settings?.defaultWorkingDir;
-  const normalizedDashboardSearch = dashboardSearchQuery.trim().toLocaleLowerCase();
+  const deferredDashboardSearch = useDeferredValue(dashboardSearchQuery);
+  const normalizedDashboardSearch = deferredDashboardSearch.trim().toLocaleLowerCase();
   const dashboardCategoryNames = useMemo(
     () => new Map(categories.map((category) => [category.id, category.name])),
     [categories]
   );
   const filteredSessions = useMemo(() => {
-    if (!normalizedDashboardSearch) return sessions;
+    const byCategory = dashboardCategoryFilter
+      ? sessions.filter((session) => session.category === dashboardCategoryFilter)
+      : sessions;
+    if (!normalizedDashboardSearch) return byCategory;
 
-    return sessions.filter((session) => {
+    return byCategory.filter((session) => {
       const searchableValues = [
         session.name,
         session.workingDirectory,
@@ -450,7 +494,7 @@ export function DashboardPage() {
         return words.includes(normalizedDashboardSearch);
       });
     });
-  }, [dashboardCategoryNames, normalizedDashboardSearch, sessions]);
+  }, [dashboardCategoryFilter, dashboardCategoryNames, normalizedDashboardSearch, sessions]);
   const sessionRunStates = useMemo(
     () =>
       new Map(
@@ -525,6 +569,8 @@ export function DashboardPage() {
     }
 
     for (const session of filteredSessions) {
+      if (usedSessionIds.has(session.id)) continue;
+
       const groupId =
         session.category && knownCategoryIds.has(session.category)
           ? session.category
@@ -925,7 +971,7 @@ export function DashboardPage() {
     if (!sessionNameEditedRef.current || !newSessionName.trim()) {
       setNewSessionName(workflow.shortTitle);
     }
-    window.setTimeout(() => promptInputRef.current?.focus(), 0);
+    window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
   };
 
   const handleSurfaceChange = (surface: SessionSurface) => {
@@ -1021,7 +1067,8 @@ export function DashboardPage() {
     if (searchParams.get('new') === 'true') {
       providerSelectedExplicitlyRef.current = false;
       setShowNewSession(true);
-      window.setTimeout(() => promptInputRef.current?.focus(), 0);
+      setIsComposerExpanded(true);
+      window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
     }
   }, [searchParams]);
 
@@ -1029,12 +1076,14 @@ export function DashboardPage() {
     providerSelectedExplicitlyRef.current = !!provider;
     setSelectedCliProvider(provider ?? dashboardDefaultProvider);
     setShowNewSession(true);
-    window.setTimeout(() => promptInputRef.current?.focus(), 0);
+    setIsComposerExpanded(true);
+    window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
   };
 
   const closeNewSession = () => {
     providerSelectedExplicitlyRef.current = false;
     setShowNewSession(false);
+    setIsComposerExpanded(false);
     setSessionMode('new');
     setSelectedFolder(null);
     setNewSessionPrompt('');
@@ -1050,16 +1099,18 @@ export function DashboardPage() {
     }));
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    );
-  }
+  const isInitialSessionLoad = isOnline && sessionsQuery.isLoading && sessions.length === 0;
+  const isSessionListUnavailable = (!isOnline || sessionsQuery.isError) && sessions.length === 0;
+  const isShowingCachedSessions = sessions.length > 0 && (!isOnline || sessionsQuery.isError);
+  const sessionLoadMessage = !isOnline
+    ? 'You are offline. Reconnect to refresh your sessions.'
+    : sessionsQuery.error instanceof Error
+      ? sessionsQuery.error.message
+      : 'Plum could not load your sessions.';
 
   return (
-    <div className="dashboard-shell space-y-5">
+    <div className="dashboard-layout">
+      <div className="dashboard-shell space-y-5">
       <section className="dashboard-command">
         <div className="dashboard-command-header">
           <div className="dashboard-hero-main">
@@ -1107,8 +1158,49 @@ export function DashboardPage() {
 
         <form
           onSubmit={handleCreateSession}
-          className="dashboard-start-composer dashboard-chatbar glass-chrome relative"
+          className={cn(
+            'dashboard-start-composer dashboard-chatbar glass-chrome relative',
+            isComposerExpanded && 'is-composer-expanded'
+          )}
         >
+          <button
+            type="button"
+            className="dashboard-composer-mobile-toggle"
+            onClick={() => {
+              const nextExpanded = !isComposerExpanded;
+              setIsComposerExpanded(nextExpanded);
+              if (nextExpanded) {
+                window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
+              }
+            }}
+            aria-expanded={isComposerExpanded}
+          >
+            <span className="dashboard-composer-mobile-icon">
+              {isComposerExpanded ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
+            </span>
+            <span className="dashboard-composer-mobile-copy">
+              <strong>
+                {isComposerExpanded
+                  ? 'Minimize session composer'
+                  : newSessionPrompt.trim()
+                    ? 'Continue session draft'
+                    : 'Start a new session'}
+              </strong>
+              <small>
+                {newSessionPrompt.trim()
+                  ? `${newSessionPrompt.trim().slice(0, 72)}${newSessionPrompt.trim().length > 72 ? '…' : ''}`
+                  : 'Code or task · choose provider after opening'}
+              </small>
+            </span>
+            {(newSessionFiles.length > 0 || newSessionPrompt.trim()) && !isComposerExpanded && (
+              <span className="dashboard-composer-mobile-draft">Draft</span>
+            )}
+            <ChevronRight
+              className={cn('dashboard-composer-mobile-chevron', isComposerExpanded && 'is-open')}
+              aria-hidden="true"
+            />
+          </button>
+
           <div className="dashboard-chatbar-topline">
             <div
               className="dashboard-surface-switch dashboard-chatbar-segment"
@@ -1483,18 +1575,59 @@ export function DashboardPage() {
       {/* Sessions */}
       <div className="dashboard-content-row">
         <div className="dashboard-session-sections">
-          {normalizedDashboardSearch && filteredSessions.length === 0 && (
-            <div className="dashboard-search-empty" role="status">
-              <Search aria-hidden="true" />
+          {isShowingCachedSessions && (
+            <div className="dashboard-data-state is-cached" role="status">
+              <WifiOff aria-hidden="true" />
               <div>
-                <strong>No sessions found</strong>
-                <span>Try a session name, project path, provider, model, or category.</span>
+                <strong>{isOnline ? 'Refresh failed' : 'Offline'}</strong>
+                <span>Showing your last loaded sessions. New server changes may be missing.</span>
               </div>
-              <button type="button" onClick={() => setDashboardSearchQuery('')}>
-                Clear search
+              <button type="button" onClick={() => void sessionsQuery.refetch()}>
+                <RotateCcw aria-hidden="true" />
+                Retry
               </button>
             </div>
           )}
+
+          {isInitialSessionLoad && (
+            <div className="dashboard-data-state is-loading" role="status" aria-live="polite">
+              <Loader2 className="animate-spin" aria-hidden="true" />
+              <div>
+                <strong>Loading sessions</strong>
+                <span>Restoring your latest workspaces…</span>
+              </div>
+            </div>
+          )}
+
+          {isSessionListUnavailable && !isInitialSessionLoad && (
+            <div className="dashboard-data-state is-error" role="alert">
+              {isOnline ? <AlertCircle aria-hidden="true" /> : <WifiOff aria-hidden="true" />}
+              <div>
+                <strong>{isOnline ? 'Sessions unavailable' : 'You are offline'}</strong>
+                <span>{sessionLoadMessage}</span>
+              </div>
+              <button type="button" onClick={() => void sessionsQuery.refetch()}>
+                <RotateCcw aria-hidden="true" />
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!isInitialSessionLoad &&
+            !isSessionListUnavailable &&
+            normalizedDashboardSearch &&
+            filteredSessions.length === 0 && (
+              <div className="dashboard-search-empty" role="status">
+                <Search aria-hidden="true" />
+                <div>
+                  <strong>No sessions found</strong>
+                  <span>Try a session name, project path, provider, model, or category.</span>
+                </div>
+                <button type="button" onClick={() => setDashboardSearchQuery('')}>
+                  Clear search
+                </button>
+              </div>
+            )}
           {dashboardSessionGroups.map((group) => {
             const groupCollapsed = normalizedDashboardSearch
               ? false
@@ -1549,6 +1682,10 @@ export function DashboardPage() {
                     {group.sessions.map((session) => {
                       const runState =
                         sessionRunStates.get(session.id) ?? getSessionRunState(session);
+                      const unreadCount = Math.max(
+                        0,
+                        Number((session as Session & { unreadCount?: number }).unreadCount) || 0
+                      );
                       return (
                         <Card
                           key={session.id}
@@ -1565,6 +1702,16 @@ export function DashboardPage() {
                             if (suppressDashboardCardClickRef.current) return;
                             navigate(`/session/${session.id}`);
                           }}
+                          onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget) return;
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              navigate(`/session/${session.id}`);
+                            }
+                          }}
+                          role="link"
+                          tabIndex={0}
+                          aria-label={`Open session ${session.name}`}
                         >
                           <CardHeader className="dashboard-session-header">
                             <div className="dashboard-session-heading">
@@ -1589,7 +1736,7 @@ export function DashboardPage() {
                                   <div
                                     className="dashboard-session-action-stack"
                                     data-dashboard-no-drag="true"
-                                    onClick={(e) => e.stopPropagation()}
+                                    onClick={(event) => event.stopPropagation()}
                                   >
                                     <div className="dashboard-session-card-actions">
                                       <div className="dashboard-run-state" title={runState.detail}>
@@ -1601,16 +1748,23 @@ export function DashboardPage() {
                                         />
                                         <span>{runState.label}</span>
                                       </div>
+                                      {unreadCount > 0 && (
+                                        <span
+                                          className="dashboard-session-unread"
+                                          aria-label={`${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`}
+                                        >
+                                          {unreadCount > 99 ? '99+' : unreadCount}
+                                        </span>
+                                      )}
                                       <button
                                         type="button"
                                         className={cn(
                                           'dashboard-session-star-button',
                                           session.starred && 'is-starred'
                                         )}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          void handleToggleStar(session.id, session.starred);
-                                        }}
+                                        onClick={() =>
+                                          void handleToggleStar(session.id, session.starred)
+                                        }
                                         aria-label={
                                           session.starred
                                             ? `Unstar ${session.name}`
@@ -1735,7 +1889,12 @@ export function DashboardPage() {
             );
           })}
 
-          <div className="dashboard-category-create-slot">
+          <div
+            className={cn(
+              'dashboard-category-create-slot',
+              (isInitialSessionLoad || isSessionListUnavailable) && 'hidden'
+            )}
+          >
             {creatingDashboardCategory ? (
               <form
                 className="dashboard-category-create-form"
@@ -1804,18 +1963,21 @@ export function DashboardPage() {
             )}
           </div>
 
-          {filteredSessions.length === 0 && !showNewSession && (
-            <Card className="dashboard-empty-card">
-              <CardContent className="flex flex-col items-center justify-center py-8">
-                <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
-                <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
-                <Button size="sm" onClick={() => openNewSession()}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Create your first session
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+          {!isInitialSessionLoad &&
+            !isSessionListUnavailable &&
+            !normalizedDashboardSearch &&
+            filteredSessions.length === 0 && (
+              <Card className="dashboard-empty-card">
+                <CardContent className="flex flex-col items-center justify-center py-8">
+                  <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
+                  <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
+                  <Button size="sm" onClick={() => openNewSession()}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    Create your first session
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
         </div>
       </div>
 
@@ -1826,6 +1988,16 @@ export function DashboardPage() {
           if (!open) setRenamingSession(null);
         }}
       />
+      {/* The right dock is desktop-only, so phones get the same options inline
+          below the list rather than losing access to them. */}
+      <div className="dashboard-mobile-options md:hidden">
+        <SessionCategories
+          selectedCategory={dashboardCategoryFilter}
+          onCategorySelect={setDashboardCategoryFilter}
+        />
+        <DiscoveredProjects cliProvider={selectedCliProvider} />
+      </div>
+
       <input
         ref={iconUploadInputRef}
         type="file"
@@ -1833,6 +2005,49 @@ export function DashboardPage() {
         className="hidden"
         onChange={(event) => handleIconUploadFile(event.target.files?.[0])}
       />
+      </div>
+
+      {/* Right-hand options menu, mirroring the session screen: the left rail
+          is app navigation, the right dock is always "options for what you are
+          looking at" — here that is category management and project discovery. */}
+      <div
+        className={cn(
+          'session-right-dock dashboard-right-dock hidden md:flex',
+          dashboardDockCollapsed && 'is-collapsed'
+        )}
+      >
+        <nav className="session-right-menu" aria-label="Dashboard options">
+          <div className="session-right-menu-header">
+            <button
+              type="button"
+              className="session-right-collapse-button"
+              onClick={() => setDashboardDockCollapsed((prev) => !prev)}
+              title={dashboardDockCollapsed ? 'Expand options' : 'Collapse options'}
+              aria-label={dashboardDockCollapsed ? 'Expand options' : 'Collapse options'}
+            >
+              {dashboardDockCollapsed ? (
+                <ChevronLeft className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+
+          {!dashboardDockCollapsed && (
+            <div className="session-side-menu-scroll">
+              <div className="session-side-menu-embed">
+                <SessionCategories
+                  selectedCategory={dashboardCategoryFilter}
+                  onCategorySelect={setDashboardCategoryFilter}
+                />
+              </div>
+              <div className="session-side-menu-embed">
+                <DiscoveredProjects cliProvider={selectedCliProvider} />
+              </div>
+            </div>
+          )}
+        </nav>
+      </div>
     </div>
   );
 }

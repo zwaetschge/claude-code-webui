@@ -16,7 +16,17 @@ const MIME_TO_EXTENSION: Record<string, string> = {
 };
 
 const STORAGE_KEY_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpg|webp|gif)$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpg|webp|gif|bin)$/i;
+
+const TEXT_MIME_TYPES = new Set([
+  'application/json',
+  'application/xml',
+  'application/javascript',
+  'application/typescript',
+  'application/x-yaml',
+  'application/yaml',
+  'application/x-sh',
+]);
 
 interface PendingChatMediaBase {
   filename?: string;
@@ -123,12 +133,16 @@ export function detectChatMediaMime(bytes: Buffer): string | null {
 }
 
 function cleanFilename(filename: string | undefined, mimeType: string): string {
-  const extension = MIME_TO_EXTENSION[mimeType]!;
-  const raw = path.basename(filename || `image${extension}`);
+  const imageExtension = MIME_TO_EXTENSION[mimeType];
+  const fallback = imageExtension ? `image${imageExtension}` : 'attachment';
+  const raw = path.basename(filename || fallback);
   const withoutControls = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim();
-  const compact = (withoutControls || `image${extension}`).slice(0, 240);
+  const compact = (withoutControls && !/^\.+$/.test(withoutControls) ? withoutControls : fallback)
+    .slice(0, 240)
+    .trim();
+  if (!imageExtension) return compact || fallback;
   const stem = path.basename(compact, path.extname(compact)).trim() || 'image';
-  return `${stem.slice(0, 220)}${extension}`;
+  return `${stem.slice(0, 220)}${imageExtension}`;
 }
 
 function cleanAltText(altText: string | undefined): string | null {
@@ -159,11 +173,31 @@ function validateBytes(
   if (bytes.length === 0) throw new Error('chat media is empty');
   if (bytes.length > MAX_CHAT_MEDIA_BYTES) throw new Error('chat media exceeds 25 MB');
 
-  const mimeType = detectChatMediaMime(bytes);
-  if (!mimeType) throw new Error('chat media is not a supported raster image');
   const declared = declaredMimeType?.split(';', 1)[0]?.trim().toLowerCase();
-  if (declared && declared !== mimeType) {
-    throw new Error(`chat media type mismatch (declared ${declared}, detected ${mimeType})`);
+  const detectedImage = detectChatMediaMime(bytes);
+  let mimeType: string;
+
+  if (detectedImage) {
+    if (declared && declared !== detectedImage && declared !== 'application/octet-stream') {
+      throw new Error(`chat media type mismatch (declared ${declared}, detected ${detectedImage})`);
+    }
+    mimeType = detectedImage;
+  } else if (bytes.length >= 5 && bytes.subarray(0, 5).toString('ascii') === '%PDF-') {
+    if (declared && declared !== 'application/pdf' && declared !== 'application/octet-stream') {
+      throw new Error(`chat media type mismatch (declared ${declared}, detected application/pdf)`);
+    }
+    mimeType = 'application/pdf';
+  } else if (declared?.startsWith('text/') || (declared && TEXT_MIME_TYPES.has(declared))) {
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      mimeType = declared;
+    } catch {
+      mimeType = 'application/octet-stream';
+    }
+  } else {
+    // Unknown documents stay downloadable but never inherit a client supplied
+    // executable MIME type. The route serves them as attachments with nosniff.
+    mimeType = 'application/octet-stream';
   }
 
   return {
@@ -266,7 +300,7 @@ async function ensureStoredBlob(
   const userDirectory = userStorageDirectory(userId);
   await mkdir(userDirectory, { recursive: true, mode: 0o700 });
 
-  const extension = MIME_TO_EXTENSION[prepared.mimeType]!;
+  const extension = MIME_TO_EXTENSION[prepared.mimeType] ?? '.bin';
   const storageKey =
     reusableStorageKey && STORAGE_KEY_PATTERN.test(reusableStorageKey)
       ? reusableStorageKey
@@ -406,7 +440,7 @@ export function loadMessageMedia(messageIds: string[]): Map<string, ChatMedia[]>
       .prepare(
         `${MEDIA_SELECT}
          WHERE message_id IN (${placeholders})
-         ORDER BY created_at ASC, id ASC`
+         ORDER BY created_at ASC, message_media.rowid ASC`
       )
       .all(...batch) as MessageMediaRow[];
     for (const row of rows) {

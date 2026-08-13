@@ -16,10 +16,13 @@ enum class PermissionAction {
 data class PermissionRequest(
     val sessionId: String,
     val requestId: String,
-    val toolName: String,
+    val toolName: String = "tool",
     val toolInput: JsonElement? = null,
-    val description: String,
-    val suggestedPattern: String
+    // Not every emitter includes these (OpenCode vs hook payloads differ);
+    // a missing field must not kill the whole prompt.
+    val description: String = "",
+    val suggestedPattern: String = "",
+    val eventSequence: Long? = null,
 )
 
 @Serializable
@@ -41,5 +44,62 @@ data class PermissionDenial(
 data class PermissionRequestData(
     val sessionId: String,
     val denials: List<PermissionDenial>,
-    val originalMessage: String
+    val originalMessage: String,
+    val eventSequence: Long? = null,
+)
+
+/** One entry from `GET /api/permissions/pending/:sessionId`. */
+@Serializable
+data class PendingPermissionItem(
+    val sessionId: String = "",
+    val requestId: String = "",
+    val toolName: String = "tool",
+    val description: String = "",
+)
+
+/** `POST /api/permissions/respond` result — flat, no data envelope. */
+@Serializable
+data class PermissionRespondResult(
+    val success: Boolean = false,
+    val action: String? = null,
+    val pattern: String? = null
+)
+
+// ── OpenCode question prompts (session:question_request) ─────────────────────
+
+@Serializable
+data class QuestionOption(
+    val label: String = "",
+    val description: String? = null
+)
+
+@Serializable
+data class QuestionItem(
+    val question: String = "",
+    val header: String? = null,
+    val options: List<QuestionOption> = emptyList(),
+    val multiple: Boolean = false,
+    val custom: Boolean = false
+)
+
+@Serializable
+data class QuestionRequestEvent(
+    val sessionId: String,
+    val requestId: String,
+    val providerSessionId: String? = null,
+    val questions: List<QuestionItem> = emptyList(),
+    val eventSequence: Long? = null,
+)
+
+@Serializable
+data class QuestionRespondInput(
+    val requestId: String,
+    val answers: List<List<String>>,
+    val providerSessionId: String? = null
+)
+
+@Serializable
+data class QuestionRejectInput(
+    val requestId: String,
+    val providerSessionId: String? = null
 )

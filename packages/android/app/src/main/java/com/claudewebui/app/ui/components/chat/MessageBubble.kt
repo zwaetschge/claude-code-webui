@@ -1,5 +1,7 @@
 package com.claudewebui.app.ui.components.chat
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -9,9 +11,11 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -19,27 +23,39 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.claudewebui.app.data.model.AttachmentType
 import com.claudewebui.app.data.model.Message
 import com.claudewebui.app.data.model.MessageRole
 import com.claudewebui.app.ui.components.common.PlumAccent
 import com.claudewebui.app.ui.components.common.PlumBorder
 import com.claudewebui.app.ui.components.common.PlumGreen
 import com.claudewebui.app.ui.components.common.PlumMuted
-import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
 import com.claudewebui.app.ui.components.common.PlumText
+import com.claudewebui.app.ui.components.common.glassSurface
 import com.claudewebui.app.ui.theme.JetBrainsMonoFamily
+import com.claudewebui.app.ui.theme.LocalPlumPalette
 
 // ── Message Group Metadata ────────────────────────────────────────────────────
 
@@ -56,28 +72,44 @@ fun MessageBubble(
     groupInfo: MessageGroupInfo = MessageGroupInfo(),
     modifier: Modifier = Modifier,
     isStreaming: Boolean = false,
+    onAttachmentClick: (HistoryAttachmentItem) -> Unit = {},
+    /** Pull this message into the composer as a Markdown quote. */
+    onQuote: (String) -> Unit = {},
 ) {
     val clipboardManager = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     var showTimestamp by remember { mutableStateOf(false) }
     var showActions by remember { mutableStateOf(false) }
+    var previewImageUrl by remember { mutableStateOf<String?>(null) }
+
+    // A long press that opens a menu should be felt, not just seen — otherwise
+    // it reads as an accidental tap until the dialog appears.
+    val openActions = {
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        showActions = true
+    }
 
     when (message.role) {
         MessageRole.USER -> UserBubble(
             message = message,
             groupInfo = groupInfo,
             modifier = modifier,
-            onLongPress = { showActions = true },
+            onLongPress = openActions,
             showTimestamp = showTimestamp,
             onTap = { showTimestamp = !showTimestamp },
+            onImageClick = { previewImageUrl = it },
+            onAttachmentClick = onAttachmentClick,
         )
         MessageRole.ASSISTANT -> AssistantBubble(
             message = message,
             groupInfo = groupInfo,
             modifier = modifier,
             isStreaming = isStreaming,
-            onLongPress = { showActions = true },
+            onLongPress = openActions,
             showTimestamp = showTimestamp,
             onTap = { showTimestamp = !showTimestamp },
+            onImageClick = { previewImageUrl = it },
+            onAttachmentClick = onAttachmentClick,
         )
         MessageRole.SYSTEM -> SystemMessage(
             message = message,
@@ -94,7 +126,16 @@ fun MessageBubble(
                 clipboardManager.setText(AnnotatedString(message.content))
                 showActions = false
             },
+            onQuote = {
+                onQuote(message.content)
+                showActions = false
+            },
         )
+    }
+
+
+    previewImageUrl?.let { url ->
+        FullScreenImageDialog(url = url, onDismiss = { previewImageUrl = null })
     }
 }
 
@@ -108,6 +149,8 @@ private fun UserBubble(
     onLongPress: () -> Unit,
     showTimestamp: Boolean,
     onTap: () -> Unit,
+    onImageClick: (String) -> Unit,
+    onAttachmentClick: (HistoryAttachmentItem) -> Unit,
 ) {
     Column(
         modifier = modifier
@@ -121,39 +164,58 @@ private fun UserBubble(
         horizontalAlignment = Alignment.End,
     ) {
         // Image attachments
-        message.images?.takeIf { it.isNotEmpty() }?.forEach { image ->
-            AttachmentImage(
-                path = image.path,
-                modifier = Modifier
-                    .widthIn(max = 240.dp)
-                    .padding(bottom = 4.dp),
-            )
-        }
+        val durableFilenames = message.media.orEmpty().mapTo(mutableSetOf()) { it.filename }
+        message.images
+            ?.filterNot { it.filename in durableFilenames }
+            ?.takeIf { it.isNotEmpty() }
+            ?.forEach { image ->
+                AttachmentImage(
+                    path = image.path,
+                    onClick = { onImageClick(image.path) },
+                    modifier = Modifier
+                        .widthIn(max = 240.dp)
+                        .padding(bottom = 4.dp),
+                )
+            }
+        MessageMediaImages(message, onImageClick)
+        MessageFileAttachments(message, onAttachmentClick)
 
-        // Text bubble
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = if (groupInfo.isFirst) 4.dp else 16.dp,
-                bottomEnd = if (groupInfo.isLast) 16.dp else 4.dp,
-                bottomStart = 16.dp,
-            ),
-            color = Color(0xFF6F3CA5),
-            modifier = Modifier
-                .wrapContentWidth()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { onTap() },
-                        onLongPress = { onLongPress() },
+        // Text bubble — accent-tinted frosted glass over the backdrop.
+        val bubbleShape = RoundedCornerShape(
+            topStart = 16.dp,
+            topEnd = if (groupInfo.isFirst) 4.dp else 16.dp,
+            bottomEnd = if (groupInfo.isLast) 16.dp else 4.dp,
+            bottomStart = 16.dp,
+        )
+        val palette = LocalPlumPalette.current
+        if (message.content.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .wrapContentWidth()
+                    .clip(bubbleShape)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                palette.accent.copy(alpha = .30f),
+                                palette.accentDeep.copy(alpha = .18f),
+                            ),
+                        ),
                     )
-                },
-        ) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+                    .border(1.dp, palette.accent.copy(alpha = .45f), bubbleShape)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { onTap() },
+                            onLongPress = { onLongPress() },
+                        )
+                    },
+            ) {
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = PlumText,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
         }
 
         // Timestamp
@@ -180,6 +242,8 @@ private fun AssistantBubble(
     onLongPress: () -> Unit,
     showTimestamp: Boolean,
     onTap: () -> Unit,
+    onImageClick: (String) -> Unit,
+    onAttachmentClick: (HistoryAttachmentItem) -> Unit,
 ) {
     Row(
         modifier = modifier
@@ -216,19 +280,18 @@ private fun AssistantBubble(
             horizontalAlignment = Alignment.Start,
             modifier = Modifier.weight(1f),
         ) {
-            // Bubble
-            Surface(
-                shape = RoundedCornerShape(
-                    topStart = if (groupInfo.isFirst) 4.dp else 16.dp,
-                    topEnd = 16.dp,
-                    bottomEnd = 16.dp,
-                    bottomStart = if (groupInfo.isLast) 16.dp else 4.dp,
-                ),
-                color = PlumSurfaceStrong,
-                border = BorderStroke(1.dp, PlumBorder),
+            // Bubble — frosted glass over the backdrop.
+            Box(
                 modifier = Modifier
-                    .wrapContentWidth()
                     .fillMaxWidth()
+                    .glassSurface(
+                        RoundedCornerShape(
+                            topStart = if (groupInfo.isFirst) 4.dp else 16.dp,
+                            topEnd = 16.dp,
+                            bottomEnd = 16.dp,
+                            bottomStart = if (groupInfo.isLast) 16.dp else 4.dp,
+                        ),
+                    )
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = { onTap() },
@@ -240,10 +303,14 @@ private fun AssistantBubble(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    MarkdownContent(
-                        text = message.content,
-                        isStreaming = isStreaming,
-                    )
+                    MessageMediaImages(message, onImageClick)
+                    MessageFileAttachments(message, onAttachmentClick)
+                    if (message.content.isNotBlank()) {
+                        MarkdownContent(
+                            text = message.content,
+                            isStreaming = isStreaming,
+                        )
+                    }
 
                     // Streaming cursor
                     if (isStreaming) {
@@ -317,6 +384,7 @@ private fun StreamingCursor() {
 @Composable
 private fun AttachmentImage(
     path: String,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AsyncImage(
@@ -325,9 +393,184 @@ private fun AttachmentImage(
         contentScale = ContentScale.Crop,
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
             .aspectRatio(1f),
     )
 }
+
+/**
+ * Renders the durable `media` list the REST layer hydrates onto messages.
+ * Auth comes from the app-wide Coil ImageLoader (see ClaudeWebUIApp).
+ */
+@Composable
+private fun MessageMediaImages(message: Message, onImageClick: (String) -> Unit) {
+    val serverUrl = com.claudewebui.app.core.security.TokenStore.getServerUrl()?.trimEnd('/')
+        ?: return
+    message.media?.filter { it.mimeType.startsWith("image/") }?.forEach { media ->
+        val url = "$serverUrl/api/sessions/${message.sessionId}/media/${media.id}"
+        AsyncImage(
+            model = url,
+            contentDescription = media.altText ?: media.filename,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .widthIn(max = 240.dp)
+                .padding(bottom = 4.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { onImageClick(url) }
+                .aspectRatio(1f),
+        )
+    }
+}
+
+enum class HistoryAttachmentKind {
+    IMAGE,
+    PDF,
+    TEXT,
+    DOCUMENT,
+}
+
+data class HistoryAttachmentItem(
+    val key: String,
+    val mediaId: String? = null,
+    val legacyPath: String? = null,
+    val filename: String,
+    val mimeType: String,
+    val byteSize: Long?,
+    val kind: HistoryAttachmentKind,
+)
+
+internal fun historyFileAttachments(message: Message): List<HistoryAttachmentItem> {
+    val durableKeys = message.media.orEmpty().mapTo(mutableSetOf()) {
+        it.filename to it.mimeType
+    }
+    val durable = message.media.orEmpty()
+        .filterNot { it.mimeType.startsWith("image/") }
+        .map { media ->
+            HistoryAttachmentItem(
+                key = "media:${media.id}",
+                mediaId = media.id,
+                filename = media.filename.ifBlank { "attachment" },
+                mimeType = media.mimeType,
+                byteSize = media.byteSize.takeIf { it > 0 },
+                kind = attachmentKind(media.mimeType, null),
+            )
+        }
+    val legacy = message.attachments.orEmpty()
+        .filterNot { (it.filename to it.mimeType) in durableKeys }
+        .mapIndexed { index, attachment ->
+            HistoryAttachmentItem(
+                key = "legacy:$index:${attachment.filename}",
+                legacyPath = attachment.path,
+                filename = attachment.filename.ifBlank { "attachment" },
+                mimeType = attachment.mimeType,
+                byteSize = null,
+                kind = attachmentKind(attachment.mimeType, attachment.type),
+            )
+        }
+    return durable + legacy
+}
+
+internal fun attachmentKind(
+    mimeType: String,
+    legacyType: AttachmentType?,
+): HistoryAttachmentKind = when {
+    mimeType.startsWith("image/") || legacyType == AttachmentType.IMAGE -> HistoryAttachmentKind.IMAGE
+    mimeType == "application/pdf" || legacyType == AttachmentType.PDF -> HistoryAttachmentKind.PDF
+    mimeType.startsWith("text/") ||
+        mimeType in HISTORY_TEXT_MIME_TYPES ||
+        legacyType == AttachmentType.TEXT -> HistoryAttachmentKind.TEXT
+    else -> HistoryAttachmentKind.DOCUMENT
+}
+
+@Composable
+private fun MessageFileAttachments(
+    message: Message,
+    onAttachmentClick: (HistoryAttachmentItem) -> Unit,
+) {
+    val attachments = remember(message.media, message.attachments) {
+        historyFileAttachments(message)
+    }
+    if (attachments.isEmpty()) return
+
+    Column(
+        modifier = Modifier.widthIn(max = 280.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        attachments.forEach { attachment ->
+            Surface(
+                onClick = { onAttachmentClick(attachment) },
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = when (attachment.kind) {
+                            HistoryAttachmentKind.IMAGE -> Icons.Outlined.Image
+                            HistoryAttachmentKind.PDF -> Icons.Outlined.PictureAsPdf
+                            HistoryAttachmentKind.TEXT -> Icons.Outlined.Description
+                            HistoryAttachmentKind.DOCUMENT -> Icons.Outlined.InsertDriveFile
+                        },
+                        contentDescription = null,
+                        tint = if (attachment.kind == HistoryAttachmentKind.PDF) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = attachment.filename,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = attachmentSubtitle(attachment),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun attachmentSubtitle(attachment: HistoryAttachmentItem): String {
+    val type = when (attachment.kind) {
+        HistoryAttachmentKind.IMAGE -> "Image"
+        HistoryAttachmentKind.PDF -> "PDF"
+        HistoryAttachmentKind.TEXT -> "Text"
+        HistoryAttachmentKind.DOCUMENT -> "File"
+    }
+    val size = attachment.byteSize?.let(::formatAttachmentSize)
+    return if (size == null) type else "$type · $size"
+}
+
+internal fun formatAttachmentSize(bytes: Long): String = when {
+    bytes < 1_024 -> "$bytes B"
+    bytes < 1_048_576 -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "%.1f MB".format(bytes / 1_048_576.0)
+}
+
+private val HISTORY_TEXT_MIME_TYPES = setOf(
+    "application/json",
+    "application/xml",
+    "application/javascript",
+    "application/typescript",
+    "application/x-yaml",
+    "application/yaml",
+    "application/x-sh",
+)
 
 // ── Message Actions Dialog ────────────────────────────────────────────────────
 
@@ -336,19 +579,98 @@ private fun MessageActionsDialog(
     message: Message,
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
+    onQuote: () -> Unit,
 ) {
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = null,
-        text = null,
-        confirmButton = {},
-        dismissButton = {},
-        modifier = Modifier.wrapContentSize(),
-    ) // Simplified — in production use a ModalBottomSheet with action items
-    // Placeholder; replace with bottom sheet containing: Copy, Share, Delete
-    LaunchedEffect(Unit) {
-        // Auto-dismiss for now; real implementation uses bottom sheet
-        onDismiss()
+        title = { Text("Message actions") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(
+                    onClick = onCopy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Copy text", modifier = Modifier.weight(1f))
+                }
+                TextButton(
+                    onClick = onQuote,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Outlined.FormatQuote, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Quote in composer", modifier = Modifier.weight(1f))
+                }
+                TextButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, message.content)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share message"))
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Outlined.Share, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Share", modifier = Modifier.weight(1f))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun FullScreenImageDialog(url: String, onDismiss: () -> Unit) {
+    var scale by remember(url) { mutableFloatStateOf(1f) }
+    var offset by remember(url) { mutableStateOf(Offset.Zero) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .pointerInput(url) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale = (scale * zoom).coerceIn(1f, 5f)
+                        offset = if (scale <= 1f) Offset.Zero else offset + pan
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            AsyncImage(
+                model = url,
+                contentDescription = "Attachment preview",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
+            )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = .55f), CircleShape),
+            ) {
+                Icon(Icons.Outlined.Close, contentDescription = "Close image", tint = Color.White)
+            }
+        }
     }
 }
 
@@ -369,15 +691,14 @@ fun MarkdownContent(
         for (block in parsed) {
             when (block) {
                 is MarkdownBlock.Paragraph -> {
-                    Text(
+                    LinkedText(
                         text = block.annotated,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
                         color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 22.sp,
                     )
                 }
                 is MarkdownBlock.Heading -> {
-                    Text(
+                    LinkedText(
                         text = block.annotated,
                         style = when (block.level) {
                             1 -> MaterialTheme.typography.titleLarge
@@ -410,11 +731,12 @@ fun MarkdownContent(
                                     RoundedCornerShape(2.dp),
                                 )
                         )
-                        Text(
+                        LinkedText(
                             text = block.annotated,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontStyle = FontStyle.Italic,
+                            ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontStyle = FontStyle.Italic,
                         )
                     }
                 }
@@ -429,7 +751,7 @@ fun MarkdownContent(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.width(20.dp),
                         )
-                        Text(
+                        LinkedText(
                             text = block.annotated,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -446,6 +768,27 @@ fun MarkdownContent(
             }
         }
     }
+}
+
+@Composable
+private fun LinkedText(
+    text: AnnotatedString,
+    style: androidx.compose.ui.text.TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val uriHandler = LocalUriHandler.current
+    ClickableText(
+        text = text,
+        style = style.copy(color = color),
+        modifier = modifier,
+        onClick = { offset ->
+            text.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                .firstOrNull()
+                ?.item
+                ?.let { url -> runCatching { uriHandler.openUri(url) } }
+        },
+    )
 }
 
 // ── Markdown Parser ───────────────────────────────────────────────────────────
@@ -618,6 +961,8 @@ fun parseInline(text: String): AnnotatedString = buildAnnotatedString {
                 val closeParen = text.indexOf(')', closeBracket + 2)
                 if (closeParen > closeBracket + 2) {
                     val linkText = text.substring(i + 1, closeBracket)
+                    val linkUrl = text.substring(closeBracket + 2, closeParen)
+                    pushStringAnnotation(tag = "URL", annotation = linkUrl)
                     withStyle(
                         SpanStyle(
                             color = Color(0xFF3B82F6),
@@ -626,6 +971,7 @@ fun parseInline(text: String): AnnotatedString = buildAnnotatedString {
                     ) {
                         append(linkText)
                     }
+                    pop()
                     i = closeParen + 1
                     continue
                 }

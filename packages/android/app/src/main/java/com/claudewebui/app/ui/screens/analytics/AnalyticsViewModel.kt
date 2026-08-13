@@ -163,6 +163,10 @@ data class AnalyticsUiState(
     val missingPricing: List<MissingPricingItem> = emptyList(),
     val providerLimits: List<ProviderLimitItem> = emptyList(),
     val limitsLoading: Boolean = false,
+    /** Account-wide daily spend limit; numbers alone say nothing without it. */
+    val dailyCostLimitUsd: Double? = null,
+    /** Spend inside the most recent timeline bucket, compared to that limit. */
+    val latestBucketCostUsd: Double = 0.0,
     val error: String? = null,
 )
 
@@ -284,6 +288,26 @@ class AnalyticsViewModel(
         loadProviderLimits()
     }
 
+    /**
+     * The account's daily spend threshold. Kept out of the main try/catch: a
+     * missing limit only removes a comparison, it must not fail the screen.
+     */
+    private fun loadSpendLimit() {
+        viewModelScope.launch {
+            val alerts = runCatching { api.getSettings().data?.usageAlerts }.getOrNull() ?: return@launch
+            if (!alerts.enabled) return@launch
+            _uiState.value = _uiState.value.copy(dailyCostLimitUsd = alerts.dailyCostUsd)
+        }
+    }
+
+    /** Fire one sample alert to prove the whole delivery chain works. */
+    fun sendTestAlert(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = runCatching { api.sendTestNotification() }.isSuccess
+            onResult(ok)
+        }
+    }
+
     fun loadAnalytics(timeRange: AnalyticsTimeRange) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -329,7 +353,9 @@ class AnalyticsViewModel(
                     timeline = parsed.timeline,
                     topSessions = parsed.topSessions,
                     missingPricing = parsed.missingPricing,
+                    latestBucketCostUsd = parsed.timeline.lastOrNull()?.costUsd ?: 0.0,
                 )
+                loadSpendLimit()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {

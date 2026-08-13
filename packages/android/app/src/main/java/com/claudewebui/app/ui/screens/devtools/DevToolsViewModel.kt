@@ -3,6 +3,10 @@ package com.claudewebui.app.ui.screens.devtools
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudewebui.app.core.network.ApiClient
+import com.claudewebui.app.data.model.AndroidConnectInput
+import com.claudewebui.app.data.model.AndroidDeviceSnapshot
+import com.claudewebui.app.data.model.AndroidEmulatorStatus
+import com.claudewebui.app.data.model.AndroidPairInput
 import com.claudewebui.app.data.model.CreateRepoInput
 import com.claudewebui.app.data.model.GitHubRepo
 import com.claudewebui.app.data.model.GitHubTokenStatus
@@ -17,7 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class DevToolsTab { PREVIEW, GITHUB, ORACLE }
+enum class DevToolsTab { PREVIEW, GITHUB, ORACLE, DEVICES }
 
 data class DevToolsUiState(
     val tab: DevToolsTab = DevToolsTab.PREVIEW,
@@ -33,6 +37,11 @@ data class DevToolsUiState(
     val oracleFrame: ByteArray? = null,
     val isLoadingOracle: Boolean = false,
     val isOracleActionPending: Boolean = false,
+    // Android test devices (ADB + shared emulator)
+    val deviceSnapshot: AndroidDeviceSnapshot? = null,
+    val emulatorStatus: AndroidEmulatorStatus? = null,
+    val isLoadingDevices: Boolean = false,
+    val isDeviceActionPending: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
 )
@@ -64,6 +73,9 @@ class DevToolsViewModel(
 
     fun selectTab(tab: DevToolsTab) {
         _uiState.update { it.copy(tab = tab) }
+        // Devices are polled lazily — the builder bridge is often unreachable
+        // and a failed probe on every DevTools open would be pure noise.
+        if (tab == DevToolsTab.DEVICES && _uiState.value.deviceSnapshot == null) loadDevices()
     }
 
     fun scanPorts() {
@@ -295,13 +307,14 @@ class DevToolsViewModel(
         }
     }
 
-    fun startPreview(script: String = "") {
+    fun startPreview(script: String = "dev") {
         if (workingDirectory.isBlank()) {
             _uiState.update { it.copy(error = "This session has no working directory") }
             return
         }
         viewModelScope.launch {
-            runCatching { api.startPreview(workingDirectory, script) }
+            // The route requires a script name; "dev" is the convention.
+            runCatching { api.startPreview(workingDirectory, script.ifBlank { "dev" }) }
                 .onSuccess { process ->
                     _uiState.update {
                         it.copy(
@@ -318,4 +331,63 @@ class DevToolsViewModel(
     fun dismissError() {
         _uiState.update { it.copy(error = null, notice = null) }
     }
+
+    // ── Android test devices ────────────────────────────────────────────────
+
+    /** Live + remembered ADB devices plus the shared emulator's state. */
+    fun loadDevices() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingDevices = true) }
+            val snapshot = runCatching { api.getAndroidDevices(sessionId).data }.getOrNull()
+            val emulator = runCatching { api.getAndroidEmulatorStatus().data }.getOrNull()
+            _uiState.update {
+                it.copy(
+                    deviceSnapshot = snapshot ?: it.deviceSnapshot,
+                    emulatorStatus = emulator ?: it.emulatorStatus,
+                    isLoadingDevices = false,
+                    error = if (snapshot == null) "Android builder unreachable" else it.error,
+                )
+            }
+        }
+    }
+
+    /** Runs one device mutation, then refreshes so the list reflects reality. */
+    private fun deviceAction(notice: String, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeviceActionPending = true, error = null) }
+            val result = runCatching { block() }
+            _uiState.update {
+                it.copy(
+                    isDeviceActionPending = false,
+                    notice = if (result.isSuccess) notice else it.notice,
+                    error = result.exceptionOrNull()?.message ?: it.error,
+                )
+            }
+            loadDevices()
+        }
+    }
+
+    fun pairDevice(host: String, port: Int, code: String) = deviceAction("Device paired") {
+        api.pairAndroidDevice(AndroidPairInput(sessionId, host, port, code))
+    }
+
+    fun connectDevice(host: String, port: Int) = deviceAction("Device connected") {
+        api.connectAndroidDevice(AndroidConnectInput(sessionId, host, port))
+    }
+
+    fun reconnectDevices() = deviceAction("Reconnect attempted") {
+        api.reconnectAndroidDevices()
+    }
+
+    fun disconnectDevice(serial: String) = deviceAction("Device disconnected") {
+        api.disconnectAndroidDevice(serial)
+    }
+
+    fun forgetDevice(serial: String) = deviceAction("Device forgotten") {
+        api.forgetAndroidDevice(serial)
+    }
+
+    fun startEmulator() = deviceAction("Emulator starting") { api.startAndroidEmulator() }
+
+    fun stopEmulator() = deviceAction("Emulator stopping") { api.stopAndroidEmulator() }
 }

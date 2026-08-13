@@ -8,7 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDown,
@@ -47,10 +47,27 @@ import {
   Link2,
   SendHorizontal,
   Lightbulb,
+  GitBranch,
+  History,
+  StickyNote,
+  MonitorPlay,
+  ScrollText,
+  BookmarkPlus,
+  Download,
 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { StreamingContent } from '@/components/chat/StreamingContent';
 import { AllowedDirectoriesDialog } from '@/components/session/AllowedDirectoriesDialog';
 import { PermissionRequestCard } from '@/components/session/PermissionRequestCard';
@@ -67,6 +84,11 @@ import { ToolExecutionCard } from '@/components/chat/ToolExecutionCard';
 import { ToolDetailDialog } from '@/components/session/ToolDetailDialog';
 import { AndroidDevicePanel } from '@/components/session/AndroidDevicePanel';
 import { SessionStyleLibraryPanel } from '@/components/session/SessionStyleLibraryPanel';
+import { CheckpointsPanel } from '@/components/session/CheckpointsPanel';
+import { ToolLogPanel } from '@/components/session/ToolLogPanel';
+import { GitPanel } from '@/components/git-panel';
+import { Notepad } from '@/components/notepad';
+import { WebPreview } from '@/components/preview';
 import { TaskWorkbenchHeader, TodoFloatingStrip } from '@/components/session/TaskWorkbench';
 import {
   getActiveTodoPresentation,
@@ -83,8 +105,20 @@ import {
 } from '@/stores/sessionStore';
 import { usePanelDockStore, type DockablePanel } from '@/stores/panelDockStore';
 import { useShallow } from 'zustand/react/shallow';
-import { api } from '@/services/api';
+import { api, ApiError } from '@/services/api';
+import { ChatThreadSwitcher } from '@/components/chat/ChatThreadSwitcher';
+import {
+  getMessageSearchTarget,
+  type MessageSearchResult,
+} from '@/components/session/MessageSearch';
 import { socketService } from '@/services/socket';
+import {
+  isMessageSnapshotStale,
+  loadThenCommit,
+  messageBelongsToChat,
+  mergeMessageHistorySnapshot,
+  normalizeMessageChatId,
+} from '@/lib/messageHistory';
 import type {
   Session,
   Message,
@@ -105,11 +139,13 @@ import type {
   HomeAssistantIntegrationSettings,
   HomeAssistantLightEntity,
   HomeAssistantStatus,
+  SessionReadState,
+  MessageHistorySnapshot,
 } from '@plum-code-webui/shared';
 import { normalizeUsageSnapshot } from '@plum-code-webui/shared';
 import { cn } from '@/lib/utils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import { ChatInput } from '@/components/chat/ChatInput';
+import { ChatInput, type ChatSendOptions } from '@/components/chat/ChatInput';
 import { PermissionApprovalDialog } from '@/components/chat/PermissionApprovalDialog';
 import { QuestionApprovalDialog } from '@/components/chat/QuestionApprovalDialog';
 import {
@@ -136,7 +172,7 @@ const EMPTY_AGENT_RUNS: SubagentRun[] = [];
 const IDLE_ACTIVITY: ActivityState = { type: 'idle' };
 type WorkspaceSheetPanel = Exclude<DockablePanel, 'files' | 'tools'>;
 type MobileSheetPanel = WorkspaceSheetPanel | 'settings';
-type RightMenuGroupId = 'view' | 'runtime' | 'styles' | 'workspace';
+type RightMenuGroupId = 'chat' | 'session' | 'view' | 'runtime' | 'styles' | 'workspace';
 const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = [
   'tasks',
   'mesh',
@@ -144,19 +180,53 @@ const DOCKED_PANEL_KEYS: WorkspaceSheetPanel[] = [
   'writingStyle',
   'android',
   'browser',
+  'git',
+  'checkpoints',
+  'notes',
+  'preview',
+  'toolLog',
 ];
 const STYLE_PANEL_KEYS: WorkspaceSheetPanel[] = ['designStyle', 'writingStyle'];
 const DEFAULT_RIGHT_MENU_GROUPS: Record<RightMenuGroupId, boolean> = {
+  chat: true,
+  session: true,
   view: true,
   runtime: true,
   styles: true,
   workspace: false,
 };
 const ACTIVE_FOLLOWUP_MODE_DEFAULT: ActiveFollowupMode = 'queue';
+const MESSAGE_HISTORY_PAGE_SIZE = 500;
+const MESSAGE_JUMP_WINDOW_SIZE = 160;
+const MESSAGE_HISTORY_FIRST_INDEX = 1_000_000;
+const SESSION_DETAIL_FALLBACK_INTERVAL_MS = 15_000;
 const AUTO_GOAL_MIN_CHARS = 220;
 const AUTO_GOAL_MAX_CHARS = 3200;
 const AUTO_GOAL_ACTION_HINT =
   /\b(add|build|connect|create|debug|design|finish|fix|implement|integrate|migrate|polish|refactor|rewrite|ship|test|update|wire)\b/i;
+
+interface MessageHistoryPagination {
+  total: number;
+  limit: number;
+  hasMore: boolean;
+  hasMoreBefore?: boolean;
+  hasMoreAfter?: boolean;
+  oldestId: string | null;
+  newestId?: string | null;
+  aroundId?: string;
+  anchorIndex?: number | null;
+}
+
+interface MessageHistoryResponse extends ApiResponse<Message[]> {
+  pagination?: MessageHistoryPagination;
+  snapshot?: MessageHistorySnapshot;
+  readState?: SessionReadState;
+}
+
+interface SessionChatListPayload {
+  chats: Array<{ id: string; title: string }>;
+  activeChatId: string | null;
+}
 
 const SESSION_MODE_OPTIONS: Array<{
   value: SessionMode;
@@ -315,12 +385,44 @@ function TimelineContinuation({ children }: { children: ReactNode }) {
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [isSending, setIsSending] = useState(false);
   const [sessionMode, setSessionMode] = useState<SessionMode>('auto-accept');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [isAtTop, setIsAtTop] = useState(false);
   const [visibleTimelineRange, setVisibleTimelineRange] = useState({ startIndex: 0, endIndex: 0 });
+  const [historyFirstItemIndex, setHistoryFirstItemIndex] = useState(MESSAGE_HISTORY_FIRST_INDEX);
+  const [historyPagination, setHistoryPagination] = useState<MessageHistoryPagination>({
+    total: 0,
+    limit: MESSAGE_HISTORY_PAGE_SIZE,
+    hasMore: false,
+    oldestId: null,
+  });
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
+  const [isLoadingLatestMessages, setIsLoadingLatestMessages] = useState(false);
+  const [isSearchHistoryWindow, setIsSearchHistoryWindow] = useState(false);
+  const [olderMessagesError, setOlderMessagesError] = useState<string | null>(null);
+  const [pendingMessageJump, setPendingMessageJump] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [messageJumpStatus, setMessageJumpStatus] = useState('');
+  const handledUrlJumpRef = useRef('');
+  const lastReadSentRef = useRef('');
+  const messageSnapshotRef = useRef<MessageHistorySnapshot>();
+  const messageHistoryEpochRef = useRef(0);
+  const activeChatIdRef = useRef<string | null | undefined>(undefined);
+  const historyOwnerSessionIdRef = useRef(id);
+  if (historyOwnerSessionIdRef.current !== id) {
+    historyOwnerSessionIdRef.current = id;
+    activeChatIdRef.current = undefined;
+    messageSnapshotRef.current = undefined;
+    messageHistoryEpochRef.current += 1;
+  }
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  );
   // Floating header + input overlay: measure their heights so the scroll area
   // below gets matching top/bottom padding. Without this, content scrolls
   // completely behind the bars and the top/bottom rows are permanently hidden.
@@ -379,6 +481,7 @@ export function SessionPage() {
   const autoGoalBySessionRef = useRef<Record<string, string>>({});
   const [showAllowedDirsDialog, setShowAllowedDirsDialog] = useState(false);
   const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [templateNameDraft, setTemplateNameDraft] = useState<string | null>(null);
   const [mobileSheetPanel, setMobileSheetPanel] = useState<MobileSheetPanel | null>(null);
   const [goalDraft, setGoalDraft] = useState('');
   const [meshTargetSessionId, setMeshTargetSessionId] = useState('');
@@ -743,14 +846,44 @@ export function SessionPage() {
     );
   }, [hasLiveAssistantTimelinePoint, timeline]);
 
-  const jumpToMessage = useCallback((messageId: string) => {
-    const idx = timelineRef.current.findIndex(
-      (item) => item.type === 'message' && (item.data as { id?: string }).id === messageId
-    );
-    if (idx >= 0) {
-      virtuosoRef.current?.scrollToIndex({ index: idx, behavior: 'smooth', align: 'start' });
-    }
-  }, []);
+  const jumpToMessage = useCallback(
+    (messageId: string) => {
+      const idx = timelineRef.current.findIndex(
+        (item) => item.type === 'message' && (item.data as { id?: string }).id === messageId
+      );
+      if (idx >= 0) {
+        virtuosoRef.current?.scrollToIndex({
+          index: historyFirstItemIndex + idx,
+          behavior:
+            typeof window !== 'undefined' &&
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches
+              ? 'auto'
+              : 'smooth',
+          align: 'start',
+        });
+        setHighlightedMessageId(messageId);
+        setMessageJumpStatus('Moved to the matching message.');
+        window.setTimeout(() => {
+          document.getElementById(`chat-message-${messageId}`)?.focus({ preventScroll: true });
+        }, 180);
+        return true;
+      }
+      return false;
+    },
+    [historyFirstItemIndex]
+  );
+
+  useEffect(() => {
+    if (!pendingMessageJump) return;
+    if (!jumpToMessage(pendingMessageJump)) return;
+    setPendingMessageJump(null);
+  }, [jumpToMessage, pendingMessageJump, timeline]);
+
+  useEffect(() => {
+    if (!highlightedMessageId) return;
+    const timeout = window.setTimeout(() => setHighlightedMessageId(null), 2_800);
+    return () => window.clearTimeout(timeout);
+  }, [highlightedMessageId]);
 
   const jumpToTimelineIndex = useCallback((index: number) => {
     virtuosoRef.current?.scrollToIndex({ index, behavior: 'smooth', align: 'start' });
@@ -983,6 +1116,14 @@ export function SessionPage() {
                             <span>.</span>
                             <span>.</span>
                           </span>
+                          {/* The elapsed time used to disappear whenever the
+                              detail line was hidden, which is exactly the case
+                              where a long wait feels stuck. */}
+                          {footerActivity.messageStartedAt && (
+                            <span className="pl-thinking-elapsed">
+                              {deps.formatElapsed(footerNow - footerActivity.messageStartedAt)}
+                            </span>
+                          )}
                         </>
                       )}
                     </div>
@@ -1067,7 +1208,13 @@ export function SessionPage() {
   );
 
   // Fetch session details
-  const { data: session, isLoading: sessionLoading } = useQuery({
+  const {
+    data: session,
+    isLoading: sessionLoading,
+    isError: sessionQueryFailed,
+    error: sessionQueryError,
+    refetch: retrySession,
+  } = useQuery({
     queryKey: ['session', id],
     queryFn: async () => {
       const response = await api.get<ApiResponse<Session>>(`/api/sessions/${id}`);
@@ -1077,8 +1224,10 @@ export function SessionPage() {
       return null;
     },
     enabled: !!id,
-    refetchInterval: 4000,
-    refetchIntervalInBackground: true,
+    // Runtime events arrive over the socket. This slower foreground-only poll is
+    // a recovery path and avoids repeatedly parsing large Codex rollouts.
+    refetchInterval: SESSION_DETAIL_FALLBACK_INTERVAL_MS,
+    refetchIntervalInBackground: false,
   });
 
   const sessionProvider = session?.cliProvider ?? toCliProvider();
@@ -1153,7 +1302,7 @@ export function SessionPage() {
           if (message.id?.startsWith('compact-')) return null;
           return {
             key: `message-${message.id || item.timestamp}`,
-            index,
+            index: historyFirstItemIndex + index,
             time,
             title: message.role === 'user' ? 'You' : providerLabel,
             kind: message.role === 'user' ? 'user' : 'assistant',
@@ -1162,7 +1311,7 @@ export function SessionPage() {
         if (item.type === 'tool') {
           return {
             key: `tool-${item.data.toolId}`,
-            index,
+            index: historyFirstItemIndex + index,
             time,
             title: item.data.actionSummary?.title || item.data.toolName,
             kind: 'tool',
@@ -1170,7 +1319,7 @@ export function SessionPage() {
         }
         return {
           key: `image-${item.data.timestamp}`,
-          index,
+          index: historyFirstItemIndex + index,
           time,
           title: 'Generated image',
           kind: 'image',
@@ -1192,7 +1341,7 @@ export function SessionPage() {
       }
     }
     return sampled;
-  }, [providerLabel, timeline]);
+  }, [historyFirstItemIndex, providerLabel, timeline]);
   const visibleTimelineIndex = Math.round(
     (visibleTimelineRange.startIndex + visibleTimelineRange.endIndex) / 2
   );
@@ -1340,18 +1489,130 @@ export function SessionPage() {
       { value: 'ultra', label: 'Ultra' },
     ];
   }, [sessionProvider]);
-  // Fetch messages
-  const { isLoading: messagesLoading } = useQuery({
-    queryKey: ['messages', id],
+
+  const { data: sessionChatList, isSuccess: sessionChatsReady } = useQuery({
+    queryKey: ['session-chats', id],
     queryFn: async () => {
-      const response = await api.get<ApiResponse<Message[]>>(`/api/sessions/${id}/messages`);
+      const response = await api.get<ApiResponse<SessionChatListPayload>>(
+        `/api/sessions/${id}/chats`
+      );
+      if (!response.data.success || !response.data.data) {
+        throw new Error('Chat threads could not be loaded.');
+      }
+      return response.data.data;
+    },
+    enabled: !!id,
+  });
+
+  const activeHistoryChatId = normalizeMessageChatId(sessionChatList?.activeChatId) ?? null;
+  const activeHistoryChatKey = activeHistoryChatId ?? 'main';
+
+  useEffect(() => {
+    if (!id || !sessionChatsReady) return;
+    activeChatIdRef.current = activeHistoryChatId;
+    socketService.setSessionChat(id, activeHistoryChatId);
+  }, [activeHistoryChatId, id, sessionChatsReady]);
+
+  const resolveActiveHistoryChatId = useCallback(async (): Promise<string | null> => {
+    if (!id) throw new Error('Session unavailable.');
+    if (activeChatIdRef.current !== undefined) return activeChatIdRef.current;
+    const cached = queryClient.getQueryData<SessionChatListPayload>(['session-chats', id]);
+    let payload = cached;
+    if (!payload) {
+      const response = await api.get<ApiResponse<SessionChatListPayload>>(
+        `/api/sessions/${id}/chats`
+      );
+      if (!response.data.success || !response.data.data) {
+        throw new Error('Chat threads could not be loaded.');
+      }
+      payload = response.data.data;
+      queryClient.setQueryData(['session-chats', id], payload);
+    }
+    const chatId = normalizeMessageChatId(payload.activeChatId) ?? null;
+    activeChatIdRef.current = chatId;
+    socketService.setSessionChat(id, chatId);
+    return chatId;
+  }, [id, queryClient]);
+
+  const applyMessageHistory = useCallback(
+    (
+      response: MessageHistoryResponse,
+      options?: {
+        replaceWindow?: boolean;
+        preserveAfterSequence?: number;
+        completeFullResync?: boolean;
+      }
+    ): Message[] => {
+      if (!id) return [];
+      const responseChatId = normalizeMessageChatId(response.snapshot?.chatId) ?? null;
+      const snapshotMessages = (response.data ?? []).filter((message) =>
+        messageBelongsToChat(message, responseChatId)
+      );
+      const liveMessages = (useSessionStore.getState().messages[id] ?? []).filter((message) => {
+        if (!messageBelongsToChat(message, responseChatId)) return false;
+        if (!options?.replaceWindow) return true;
+        return (message.eventSequence ?? 0) > (options.preserveAfterSequence ?? 0);
+      });
+      const cursor = socketService.getSessionCursor(id);
+      const stale = isMessageSnapshotStale(response.snapshot, messageSnapshotRef.current, cursor);
+      const reconciled = mergeMessageHistorySnapshot(snapshotMessages, liveMessages);
+
+      // Even a stale response can safely contribute persisted rows once it is
+      // merged with the live store; it must never replace newer socket events.
+      setMessages(id, reconciled);
+      if (response.snapshot) {
+        socketService.recordSessionSnapshot(
+          id,
+          response.snapshot.highWatermark,
+          responseChatId,
+          options?.completeFullResync
+        );
+        const currentChatId = normalizeMessageChatId(messageSnapshotRef.current?.chatId);
+        if (!stale || currentChatId !== responseChatId) {
+          messageSnapshotRef.current = { ...response.snapshot, chatId: responseChatId };
+        }
+        activeChatIdRef.current = responseChatId;
+      }
+      return reconciled;
+    },
+    [id, setMessages]
+  );
+
+  // Fetch messages
+  const {
+    isLoading: messagesLoading,
+    isError: messagesQueryFailed,
+    refetch: retryMessages,
+  } = useQuery({
+    queryKey: ['messages', id, activeHistoryChatKey],
+    queryFn: async () => {
+      const requestEpoch = messageHistoryEpochRef.current;
+      const params = new URLSearchParams({
+        limit: String(MESSAGE_HISTORY_PAGE_SIZE),
+        chatId: activeHistoryChatId ?? '',
+      });
+      const response = await api.get<MessageHistoryResponse>(
+        `/api/sessions/${id}/messages?${params.toString()}`
+      );
       if (response.data.success && response.data.data) {
-        setMessages(id!, response.data.data);
-        return response.data.data;
+        if (requestEpoch !== messageHistoryEpochRef.current) return response.data.data;
+        if (normalizeMessageChatId(response.data.snapshot?.chatId) !== activeHistoryChatId) {
+          throw new Error('The chat changed while its history was loading.');
+        }
+        const reconciled = applyMessageHistory(response.data, { completeFullResync: true });
+        setHistoryPagination(
+          response.data.pagination ?? {
+            total: reconciled.length,
+            limit: MESSAGE_HISTORY_PAGE_SIZE,
+            hasMore: false,
+            oldestId: reconciled[0]?.id ?? null,
+          }
+        );
+        return reconciled;
       }
       return [];
     },
-    enabled: !!id,
+    enabled: !!id && sessionChatsReady && !isSearchHistoryWindow,
   });
 
   // Fetch available commands
@@ -1366,7 +1627,413 @@ export function SessionPage() {
     enabled: !!session,
   });
 
-  const queryClient = useQueryClient();
+  const loadOlderMessages = useCallback(async () => {
+    if (
+      !id ||
+      isLoadingOlderMessages ||
+      !historyPagination.hasMore ||
+      !historyPagination.oldestId
+    ) {
+      return;
+    }
+
+    const requestEpoch = messageHistoryEpochRef.current;
+    setIsLoadingOlderMessages(true);
+    setOlderMessagesError(null);
+    try {
+      const historyChatId = normalizeMessageChatId(messageSnapshotRef.current?.chatId) ?? null;
+      const params = new URLSearchParams({
+        limit: String(MESSAGE_HISTORY_PAGE_SIZE),
+        before: historyPagination.oldestId,
+        chatId: historyChatId ?? '',
+      });
+      const response = await api.get<MessageHistoryResponse>(
+        `/api/sessions/${id}/messages?${params.toString()}`
+      );
+      if (requestEpoch !== messageHistoryEpochRef.current) return;
+      if (normalizeMessageChatId(response.data.snapshot?.chatId) !== historyChatId) {
+        throw new Error('The chat changed while older messages were loading.');
+      }
+      const olderMessages = response.data.data ?? [];
+      const currentMessages = useSessionStore.getState().messages[id] ?? [];
+      const currentIds = new Set(currentMessages.map((message) => message.id));
+      const uniqueOlderMessages = olderMessages.filter((message) => !currentIds.has(message.id));
+
+      if (uniqueOlderMessages.length > 0) {
+        setMessages(id, [...uniqueOlderMessages, ...currentMessages]);
+        setHistoryFirstItemIndex((current) => current - uniqueOlderMessages.length);
+      }
+
+      setHistoryPagination(
+        response.data.pagination ?? {
+          total: currentMessages.length + uniqueOlderMessages.length,
+          limit: MESSAGE_HISTORY_PAGE_SIZE,
+          hasMore: false,
+          oldestId: uniqueOlderMessages[0]?.id ?? historyPagination.oldestId,
+        }
+      );
+      if (response.data.snapshot) {
+        socketService.recordSessionSnapshot(
+          id,
+          response.data.snapshot.highWatermark,
+          historyChatId
+        );
+        if (
+          !isMessageSnapshotStale(
+            response.data.snapshot,
+            messageSnapshotRef.current,
+            socketService.getSessionCursor(id)
+          )
+        ) {
+          messageSnapshotRef.current = response.data.snapshot;
+        }
+      }
+    } catch (error) {
+      setOlderMessagesError(
+        error instanceof Error ? error.message : 'Older messages could not be loaded.'
+      );
+    } finally {
+      setIsLoadingOlderMessages(false);
+    }
+  }, [
+    historyPagination.hasMore,
+    historyPagination.oldestId,
+    id,
+    isLoadingOlderMessages,
+    setMessages,
+  ]);
+
+  const activateSearchTargetChat = useCallback(
+    async (targetChatId: string | null): Promise<SessionChatListPayload> => {
+      if (!id) throw new Error('Session unavailable.');
+      const targetId = targetChatId ?? 'main';
+      messageHistoryEpochRef.current += 1;
+      await queryClient.cancelQueries({ queryKey: ['messages', id] });
+      // Activation is intentionally idempotent and unconditional. A cached chat
+      // list can be stale when another device changed the active thread.
+      const response = await api.post<ApiResponse<SessionChatListPayload>>(
+        `/api/sessions/${id}/chats/${encodeURIComponent(targetId)}/activate`
+      );
+      if (!response.data.success) throw new Error('The matching chat could not be activated.');
+      if (!response.data.data) throw new Error('The matching chat could not be activated.');
+      const activatedChatId = normalizeMessageChatId(response.data.data.activeChatId) ?? null;
+      activeChatIdRef.current = activatedChatId;
+      socketService.setSessionChat(id, activatedChatId);
+      await queryClient.invalidateQueries({ queryKey: ['session', id] });
+      return response.data.data;
+    },
+    [id, queryClient]
+  );
+
+  const openMessageSearchResult = useCallback(
+    async (result: MessageSearchResult) => {
+      if (!id) return;
+      const target = getMessageSearchTarget(result);
+      if (target.sessionId !== id) {
+        const params = new URLSearchParams({ message: target.messageId });
+        if (target.chatId) params.set('chat', target.chatId);
+        navigate(`/session/${target.sessionId}?${params.toString()}`);
+        return;
+      }
+
+      setMainView('chat');
+
+      setMessageJumpStatus('Loading the matching part of the conversation…');
+      setPendingMessageJump(target.messageId);
+      let previousChatId = activeChatIdRef.current;
+      let previousChatList = sessionChatList;
+      const previousStreamingContent = useSessionStore.getState().streamingContent[id] ?? '';
+      const targetChatId = normalizeMessageChatId(target.chatId) ?? null;
+      const cursorBeforeRequest = socketService.getSessionCursor(id);
+      let activatedPayload: SessionChatListPayload | null = null;
+      try {
+        if (previousChatId === undefined) {
+          previousChatId = await resolveActiveHistoryChatId();
+          previousChatList = queryClient.getQueryData<SessionChatListPayload>([
+            'session-chats',
+            id,
+          ]);
+        }
+        activatedPayload = await activateSearchTargetChat(targetChatId);
+        if (previousChatId === targetChatId && jumpToMessage(target.messageId)) {
+          queryClient.setQueryData(['session-chats', id], activatedPayload);
+          setPendingMessageJump(null);
+          return;
+        }
+        const requestEpoch = messageHistoryEpochRef.current;
+        const params = new URLSearchParams({
+          limit: String(MESSAGE_JUMP_WINDOW_SIZE),
+          around: target.messageId,
+          chatId: targetChatId ?? '',
+        });
+        await loadThenCommit(
+          async () => {
+            const response = await api.get<MessageHistoryResponse>(
+              `/api/sessions/${id}/messages?${params.toString()}`
+            );
+            if (requestEpoch !== messageHistoryEpochRef.current) {
+              throw new Error('The chat changed while the result was loading.');
+            }
+            const windowMessages = response.data.data ?? [];
+            if (!response.data.success || windowMessages.length === 0) {
+              throw new Error('The matching message is no longer available.');
+            }
+            if (normalizeMessageChatId(response.data.snapshot?.chatId) !== targetChatId) {
+              throw new Error('The matching message belongs to a different chat.');
+            }
+            return response.data;
+          },
+          (history) => {
+            // Commit only after the complete pinned snapshot succeeded. Until
+            // this point the previous conversation remains visible and intact.
+            clearStreamingContent(id);
+            messageSnapshotRef.current = undefined;
+            setHistoryFirstItemIndex(MESSAGE_HISTORY_FIRST_INDEX);
+            setHistoryPagination(
+              history.pagination ?? {
+                total: history.data?.length ?? 0,
+                limit: MESSAGE_JUMP_WINDOW_SIZE,
+                hasMore: false,
+                hasMoreAfter: false,
+                oldestId: history.data?.[0]?.id ?? null,
+                newestId: history.data?.at(-1)?.id ?? null,
+              }
+            );
+            setIsSearchHistoryWindow(true);
+            applyMessageHistory(history, {
+              replaceWindow: true,
+              preserveAfterSequence: cursorBeforeRequest,
+            });
+            queryClient.setQueryData(['session-chats', id], activatedPayload);
+          }
+        );
+      } catch (error) {
+        if (activatedPayload && previousChatId !== undefined && previousChatId !== targetChatId) {
+          messageHistoryEpochRef.current += 1;
+          try {
+            const restoredChatId = previousChatId;
+            const restoreId = restoredChatId ?? 'main';
+            await api.post(`/api/sessions/${id}/chats/${encodeURIComponent(restoreId)}/activate`);
+            activeChatIdRef.current = restoredChatId;
+            socketService.setSessionChat(id, restoredChatId);
+            const sessionStore = useSessionStore.getState();
+            sessionStore.clearStreamingContent(id);
+            if (previousStreamingContent) {
+              sessionStore.appendStreamingContent(id, previousStreamingContent);
+            }
+            setMessages(
+              id,
+              (useSessionStore.getState().messages[id] ?? []).filter((message) =>
+                messageBelongsToChat(message, restoredChatId)
+              )
+            );
+            if (previousChatList) {
+              queryClient.setQueryData(['session-chats', id], previousChatList);
+            } else {
+              await queryClient.invalidateQueries({ queryKey: ['session-chats', id] });
+            }
+          } catch {
+            await queryClient.invalidateQueries({ queryKey: ['session-chats', id] });
+          }
+        }
+        setPendingMessageJump(null);
+        setMessageJumpStatus(
+          error instanceof Error ? error.message : 'The matching message could not be loaded.'
+        );
+        toast({
+          title: 'Could not jump to message',
+          description:
+            error instanceof Error ? error.message : 'The matching message could not be loaded.',
+          variant: 'destructive',
+        });
+      }
+    },
+    [
+      activateSearchTargetChat,
+      applyMessageHistory,
+      clearStreamingContent,
+      id,
+      jumpToMessage,
+      navigate,
+      queryClient,
+      resolveActiveHistoryChatId,
+      sessionChatList,
+      setMessages,
+    ]
+  );
+
+  const returnToLatestConversation = useCallback(async () => {
+    if (!id || isLoadingLatestMessages) return;
+    if (!historyPagination.hasMoreAfter) {
+      scrollToBottom();
+      return;
+    }
+    const chatId = normalizeMessageChatId(messageSnapshotRef.current?.chatId) ?? null;
+    const requestEpoch = messageHistoryEpochRef.current;
+    const cursorBeforeRequest = socketService.getSessionCursor(id);
+    const params = new URLSearchParams({
+      limit: String(MESSAGE_HISTORY_PAGE_SIZE),
+      chatId: chatId ?? '',
+    });
+    setIsLoadingLatestMessages(true);
+    setMessageJumpStatus('Loading the latest messages…');
+    try {
+      await loadThenCommit(
+        async () => {
+          const response = await api.get<MessageHistoryResponse>(
+            `/api/sessions/${id}/messages?${params.toString()}`
+          );
+          if (
+            requestEpoch !== messageHistoryEpochRef.current ||
+            !response.data.success ||
+            !response.data.data ||
+            normalizeMessageChatId(response.data.snapshot?.chatId) !== chatId
+          ) {
+            throw new Error('The latest conversation could not be verified.');
+          }
+          return response.data;
+        },
+        (history) => {
+          const reconciled = applyMessageHistory(history, {
+            replaceWindow: true,
+            preserveAfterSequence: cursorBeforeRequest,
+            completeFullResync: true,
+          });
+          setHistoryFirstItemIndex(MESSAGE_HISTORY_FIRST_INDEX);
+          setHistoryPagination(
+            history.pagination ?? {
+              total: reconciled.length,
+              limit: MESSAGE_HISTORY_PAGE_SIZE,
+              hasMore: false,
+              hasMoreAfter: false,
+              oldestId: reconciled[0]?.id ?? null,
+              newestId: reconciled.at(-1)?.id ?? null,
+            }
+          );
+          setIsSearchHistoryWindow(false);
+        }
+      );
+      setMessageJumpStatus('Moved to the latest messages.');
+      window.requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'auto' });
+        setIsAtBottom(true);
+      });
+    } catch (error) {
+      const description =
+        error instanceof Error ? error.message : 'The latest messages could not be loaded.';
+      setMessageJumpStatus(description);
+      toast({ title: 'Could not load latest messages', description, variant: 'destructive' });
+    } finally {
+      setIsLoadingLatestMessages(false);
+    }
+  }, [
+    applyMessageHistory,
+    historyPagination.hasMoreAfter,
+    id,
+    isLoadingLatestMessages,
+    scrollToBottom,
+  ]);
+
+  useEffect(() => {
+    const messageId = searchParams.get('message');
+    if (!id || !messageId) return;
+    const jumpKey = `${id}:${messageId}`;
+    if (handledUrlJumpRef.current === jumpKey) return;
+    handledUrlJumpRef.current = jumpKey;
+    void openMessageSearchResult({
+      id: messageId,
+      sessionId: id,
+      chatId: searchParams.get('chat'),
+      role: 'system',
+      content: '',
+      createdAt: new Date(0).toISOString(),
+    });
+  }, [id, openMessageSearchResult, searchParams]);
+
+  useEffect(() => {
+    const handleFullResync = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      if (!id || detail?.sessionId !== id) return;
+      setMessageJumpStatus('Refreshing the conversation after reconnect…');
+      const requestEpoch = messageHistoryEpochRef.current;
+      void loadThenCommit(
+        async () => {
+          const chatId = await resolveActiveHistoryChatId();
+          const params = new URLSearchParams({
+            limit: String(MESSAGE_HISTORY_PAGE_SIZE),
+            chatId: chatId ?? '',
+          });
+          const response = await api.get<MessageHistoryResponse>(
+            `/api/sessions/${id}/messages?${params.toString()}`
+          );
+          if (
+            requestEpoch !== messageHistoryEpochRef.current ||
+            !response.data.success ||
+            !response.data.data ||
+            normalizeMessageChatId(response.data.snapshot?.chatId) !== chatId
+          ) {
+            throw new Error('The reconnect snapshot could not be verified.');
+          }
+          return response.data;
+        },
+        (history) => {
+          const reconciled = applyMessageHistory(history, { completeFullResync: true });
+          setHistoryFirstItemIndex(MESSAGE_HISTORY_FIRST_INDEX);
+          setHistoryPagination(
+            history.pagination ?? {
+              total: reconciled.length,
+              limit: MESSAGE_HISTORY_PAGE_SIZE,
+              hasMore: false,
+              hasMoreAfter: false,
+              oldestId: reconciled[0]?.id ?? null,
+              newestId: reconciled.at(-1)?.id ?? null,
+            }
+          );
+          setIsSearchHistoryWindow(false);
+        }
+      )
+        .then(() => {
+          setMessageJumpStatus('Conversation refreshed.');
+          void retrySession();
+        })
+        .catch((error) => {
+          setMessageJumpStatus(
+            error instanceof Error ? error.message : 'Conversation refresh failed.'
+          );
+        });
+    };
+    window.addEventListener('plum:session-full-resync', handleFullResync);
+    return () => window.removeEventListener('plum:session-full-resync', handleFullResync);
+  }, [applyMessageHistory, id, resolveActiveHistoryChatId, retrySession]);
+
+  const latestMessageId = sessionMessages[sessionMessages.length - 1]?.id ?? null;
+  useEffect(() => {
+    if (!id || !isAtBottom || historyPagination.hasMoreAfter || !latestMessageId) return;
+    const readKey = `${id}:${latestMessageId}`;
+    if (lastReadSentRef.current === readKey) return;
+    const timeout = window.setTimeout(() => {
+      lastReadSentRef.current = readKey;
+      void api
+        .put<ApiResponse<SessionReadState>>(`/api/sessions/${id}/read-state`, {
+          chatId: activeChatIdRef.current ?? null,
+          lastReadMessageId: latestMessageId,
+        })
+        .then(() => {
+          // REST is the single authoritative read-marker write. Presence only
+          // advertises that this web client is viewing the conversation.
+          socketService.setSessionPresence(id, 'active');
+          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        })
+        .catch((error) => {
+          socketService.setSessionPresence(id, 'active');
+          // Legacy servers do not expose read state. Presence and chat remain usable.
+          if (!(error instanceof ApiError) || error.status !== 404) {
+            console.warn('[READ-STATE] Could not persist read position:', error);
+          }
+        });
+    }, 650);
+    return () => window.clearTimeout(timeout);
+  }, [historyPagination.hasMoreAfter, id, isAtBottom, latestMessageId, queryClient]);
 
   const homeAssistantLightMutation = useMutation({
     mutationFn: async (entityId: string | null) => {
@@ -1422,12 +2089,9 @@ export function SessionPage() {
         queryClient.setQueryData(['session', id], data.data);
         useSessionStore.getState().updateSession(id, data.data);
         queryClient.invalidateQueries({ queryKey: ['sessions'] });
-        if (session?.status === 'running') {
-          socketService.restartSession(id);
-        }
         toast({
           title: 'Provider switched',
-          description: 'Session restarted with the new provider. Resend the last prompt if needed.',
+          description: 'The running session was reloaded with the new provider.',
         });
       }
     },
@@ -1449,12 +2113,9 @@ export function SessionPage() {
           title: 'Model updated',
           description:
             session?.status === 'running'
-              ? 'Restarting session to apply the new model.'
-              : 'Restart the session to apply the new model.',
+              ? 'The running session was reloaded with the new model.'
+              : 'The new model will be used when the session starts.',
         });
-        if (session?.status === 'running') {
-          socketService.restartSession(id);
-        }
       }
     },
   });
@@ -1475,12 +2136,9 @@ export function SessionPage() {
           title: 'Reasoning updated',
           description:
             session?.status === 'running'
-              ? 'Restarting session to apply the new reasoning level.'
-              : 'Restart the session to apply the new reasoning level.',
+              ? 'The running session was reloaded with the new reasoning level.'
+              : 'The new reasoning level will be used when the session starts.',
         });
-        if (session?.status === 'running') {
-          socketService.restartSession(id);
-        }
       }
     },
   });
@@ -1501,12 +2159,9 @@ export function SessionPage() {
           title: data.data.cliServiceTier === 'fast' ? 'Fast enabled' : 'Fast disabled',
           description:
             session?.status === 'running'
-              ? 'Restarting session to apply Fast mode.'
-              : 'Restart the session to apply Fast mode.',
+              ? 'The running session was reloaded to apply Fast mode.'
+              : 'Fast mode will be applied when the session starts.',
         });
-        if (session?.status === 'running') {
-          socketService.restartSession(id);
-        }
       }
     },
   });
@@ -1620,6 +2275,8 @@ export function SessionPage() {
         console.log('[TAB] Tab became visible, reconnecting to session...');
         const lastTimestamp = useSessionStore.getState().lastMessageTimestamp[id];
         socketService.reconnectToSession(id, lastTimestamp);
+      } else {
+        socketService.setSessionPresence(id, 'idle');
       }
     };
 
@@ -1662,6 +2319,31 @@ export function SessionPage() {
     setActiveSession(id);
     return () => setActiveSession(null);
   }, [id, setActiveSession]);
+
+  useEffect(() => {
+    setHistoryFirstItemIndex(MESSAGE_HISTORY_FIRST_INDEX);
+    setHistoryPagination({
+      total: 0,
+      limit: MESSAGE_HISTORY_PAGE_SIZE,
+      hasMore: false,
+      oldestId: null,
+    });
+    setIsLoadingOlderMessages(false);
+    setIsLoadingLatestMessages(false);
+    setIsSearchHistoryWindow(false);
+    setOlderMessagesError(null);
+  }, [id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateNetworkState = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateNetworkState);
+    window.addEventListener('offline', updateNetworkState);
+    return () => {
+      window.removeEventListener('online', updateNetworkState);
+      window.removeEventListener('offline', updateNetworkState);
+    };
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -1727,28 +2409,64 @@ export function SessionPage() {
 
   // Callbacks for ChatInput
   const handleSendMessage = useCallback(
-    (message: string) => {
+    async (message: string, options?: ChatSendOptions) => {
       if (!id) return;
+      await resolveActiveHistoryChatId();
       maybeAutoSetGoal(message);
-      socketService.sendMessage(id, message, undefined, activeSendFollowupMode);
-      clearStreamingContent(id);
+      const acknowledgement = await socketService.sendMessage(
+        id,
+        message,
+        undefined,
+        activeSendFollowupMode,
+        options?.clientMessageId
+      );
+      if (acknowledgement.status !== 'rejected') {
+        clearStreamingContent(id);
+      }
+      return acknowledgement;
     },
-    [id, maybeAutoSetGoal, activeSendFollowupMode, clearStreamingContent]
+    [
+      id,
+      maybeAutoSetGoal,
+      activeSendFollowupMode,
+      clearStreamingContent,
+      resolveActiveHistoryChatId,
+    ]
   );
 
   const handleSendMessageWithFiles = useCallback(
-    async (message: string, files: File[]) => {
+    async (message: string, files: File[], options?: ChatSendOptions) => {
       if (!id) return;
       setIsSending(true);
       try {
+        await resolveActiveHistoryChatId();
         maybeAutoSetGoal(message);
-        await socketService.sendMessageWithFiles(id, message, files, activeSendFollowupMode);
-        clearStreamingContent(id);
+        const acknowledgement = await socketService.sendMessageWithFiles(
+          id,
+          message,
+          files,
+          activeSendFollowupMode,
+          options?.clientMessageId,
+          {
+            signal: options?.signal,
+            onProgress: options?.onUploadProgress,
+          }
+        );
+        if (acknowledgement.status !== 'rejected') {
+          clearStreamingContent(id);
+        }
+        return acknowledgement;
       } finally {
         setIsSending(false);
       }
     },
-    [id, maybeAutoSetGoal, activeSendFollowupMode, clearStreamingContent]
+    [
+      id,
+      maybeAutoSetGoal,
+      activeSendFollowupMode,
+      clearStreamingContent,
+      resolveActiveHistoryChatId,
+    ]
   );
 
   const handleCommandExecute = useCallback(
@@ -1759,6 +2477,7 @@ export function SessionPage() {
         addMessage(id, {
           id: generateId(),
           sessionId: id,
+          chatId: activeChatIdRef.current ?? null,
           role: 'assistant',
           content,
           createdAt: new Date().toISOString(),
@@ -2058,6 +2777,52 @@ export function SessionPage() {
     [id, sessionModeStorageKey]
   );
 
+  /**
+   * Download the whole transcript as Markdown. Goes through fetch rather than a
+   * plain link so the session cookie and the auth interceptor both apply.
+   */
+  const handleExportSession = useCallback(async () => {
+    if (!id) return;
+    try {
+      const response = await api.download(`/api/sessions/${id}/export`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${(session?.name || 'session').replace(/[^a-zA-Z0-9-_]+/g, '-')}.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed', error);
+      toast({ title: 'Export failed', variant: 'destructive' });
+    }
+  }, [id, session?.name]);
+
+  /** Freeze this session's provider/model/directory setup as a reusable start. */
+  const handleSaveTemplate = useCallback(
+    async (name: string) => {
+      if (!session) return;
+      try {
+        await api.post('/api/workspace/templates', {
+          name,
+          cliProvider: session.cliProvider ?? null,
+          cliModel: session.cliModel ?? null,
+          cliReasoning: session.cliReasoning ?? null,
+          mode: session.mode ?? null,
+          workingDirectory: session.workingDirectory ?? null,
+          designStyleSkill: session.designStyleSkill ?? null,
+          writingStyleSkill: session.writingStyleSkill ?? null,
+        });
+        toast({ title: 'Template saved', description: name });
+      } catch (error) {
+        console.error('Template save failed', error);
+        toast({ title: 'Could not save template', variant: 'destructive' });
+      }
+    },
+    [session]
+  );
+
   // Handler for hooks-based permission response
   const handlePermissionResponse = useCallback(
     async (action: PermissionAction, pattern?: string) => {
@@ -2187,7 +2952,12 @@ export function SessionPage() {
   const pendingTasksCount = currentTodos.filter((t) => t.status !== 'completed').length;
   const completedTasksCount = currentTodos.filter((t) => t.status === 'completed').length;
   const totalTasksCount = currentTodos.length;
-  if (sessionLoading || messagesLoading) {
+  const sessionConfirmedMissing =
+    sessionQueryError instanceof ApiError && sessionQueryError.status === 404;
+  const hasInitialSessionError = sessionQueryFailed && !session;
+  const hasInitialMessagesError = messagesQueryFailed && sessionMessages.length === 0;
+
+  if ((sessionLoading && !session) || (messagesLoading && sessionMessages.length === 0)) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="loader" />
@@ -2195,10 +2965,43 @@ export function SessionPage() {
     );
   }
 
-  if (!session) {
+  if (hasInitialSessionError && !sessionConfirmedMissing) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Session not found</p>
+      <div className="flex min-h-[20rem] items-center justify-center px-5">
+        <div
+          role="alert"
+          className="glass max-w-md rounded-2xl border border-border/70 p-6 text-center"
+        >
+          <p className="font-semibold text-foreground">
+            {isOnline ? 'Session could not be loaded' : 'You are offline'}
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {isOnline
+              ? 'The server did not answer. Your cached chat remains untouched.'
+              : 'Reconnect to refresh this session. Existing cached content is preserved.'}
+          </p>
+          <button
+            type="button"
+            className="ui-pill ui-pill-subtle mt-4 min-h-10 px-4"
+            onClick={() => void retrySession()}
+          >
+            <RotateCcw className="h-4 w-4" />
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session || sessionConfirmedMissing) {
+    return (
+      <div className="flex min-h-[20rem] items-center justify-center px-5 text-center">
+        <div>
+          <p className="font-semibold text-foreground">Session not found</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It may have been deleted or you may no longer have access.
+          </p>
+        </div>
       </div>
     );
   }
@@ -2595,6 +3398,34 @@ export function SessionPage() {
       icon: <Smartphone className="h-3.5 w-3.5" />,
       badge: session.androidDeviceSerial ? <span className="panel-badge">1</span> : null,
     },
+    git: {
+      title: 'Git',
+      icon: <GitBranch className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    checkpoints: {
+      title: 'Checkpoints',
+      icon: <History className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    notes: {
+      title: 'Notes',
+      icon: <StickyNote className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    preview: {
+      title: 'Preview',
+      icon: <MonitorPlay className="h-3.5 w-3.5" />,
+      badge: null,
+    },
+    toolLog: {
+      title: 'Tool Log',
+      icon: <ScrollText className="h-3.5 w-3.5" />,
+      badge:
+        currentToolExecutions.length > 0 ? (
+          <span className="panel-badge">{currentToolExecutions.length}</span>
+        ) : null,
+    },
   };
 
   const renderDockedPanel = (panel: WorkspaceSheetPanel) => {
@@ -2629,6 +3460,28 @@ export function SessionPage() {
       body = <AndroidDevicePanel sessionId={session.id} className="h-full" />;
     } else if (panel === 'browser') {
       body = <OracleBrowserPanel sessionId={session.id} className="h-full" />;
+    } else if (panel === 'git') {
+      body = <GitPanel workingDirectory={session.workingDirectory} className="h-full" />;
+    } else if (panel === 'checkpoints') {
+      body = <CheckpointsPanel sessionId={session.id} className="h-full" />;
+    } else if (panel === 'notes') {
+      body = (
+        <Notepad
+          sessionId={session.id}
+          onSendToChat={(content) => handleSendMessage(content)}
+          className="h-full"
+        />
+      );
+    } else if (panel === 'preview') {
+      body = (
+        <WebPreview
+          sessionId={session.id}
+          workingDirectory={session.workingDirectory}
+          className="h-full"
+        />
+      );
+    } else if (panel === 'toolLog') {
+      body = <ToolLogPanel executions={currentToolExecutions} className="h-full" />;
     }
 
     if (!body) return null;
@@ -3186,6 +4039,37 @@ export function SessionPage() {
             <div className="session-runtime-mobile-card">
               {renderSessionRuntimeControls('mobile')}
             </div>
+            {/* The right dock is desktop-only, so the chat switcher gets its
+                own slot here instead of being unreachable on a phone. */}
+            {id && (
+              <div className="space-y-2">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Chat
+                </div>
+                <ChatThreadSwitcher
+                  sessionId={id}
+                  onSwitched={(chatId) => {
+                    messageHistoryEpochRef.current += 1;
+                    messageSnapshotRef.current = undefined;
+                    activeChatIdRef.current = chatId;
+                    socketService.setSessionChat(id, chatId);
+                    clearStreamingContent(id);
+                    setMessages(id, []);
+                    setIsSearchHistoryWindow(false);
+                    setHistoryFirstItemIndex(MESSAGE_HISTORY_FIRST_INDEX);
+                    setHistoryPagination({
+                      total: 0,
+                      limit: MESSAGE_HISTORY_PAGE_SIZE,
+                      hasMore: false,
+                      oldestId: null,
+                    });
+                    setOlderMessagesError(null);
+                    queryClient.invalidateQueries({ queryKey: ['session', id] });
+                    setMobileSheetPanel(null);
+                  }}
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Styles
@@ -3252,6 +4136,28 @@ export function SessionPage() {
               >
                 <FolderKey className="h-4 w-4" />
                 <span>Directories</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSheetPanel(null);
+                  setTemplateNameDraft(session.name);
+                }}
+                className="mobile-sheet-command"
+              >
+                <BookmarkPlus className="h-4 w-4" />
+                <span>Template</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileSheetPanel(null);
+                  void handleExportSession();
+                }}
+                className="mobile-sheet-command"
+              >
+                <Download className="h-4 w-4" />
+                <span>Export</span>
               </button>
               {session.status === 'running' && (
                 <button
@@ -3360,10 +4266,13 @@ export function SessionPage() {
         <div
           ref={headerBarRef}
           className={cn(
-            'chat-topbar shrink-0',
+            'chat-topbar relative shrink-0',
             isTaskSurface ? 'task-workbench-topbar' : 'is-empty'
           )}
         >
+          <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {messageJumpStatus}
+          </span>
           {isTaskSurface && (
             <TaskWorkbenchHeader
               sessionName={session.name}
@@ -3401,9 +4310,54 @@ export function SessionPage() {
             />
           ) : (
             <>
+              {(sessionQueryFailed || (messagesQueryFailed && timeline.length > 0)) && (
+                <div className="pointer-events-none absolute inset-x-0 top-[calc(var(--chat-header-h)+0.5rem)] z-30 flex justify-center px-4">
+                  <div
+                    role="status"
+                    className="pointer-events-auto flex max-w-md items-center gap-2 rounded-full border border-amber-400/30 bg-background/90 px-3 py-2 text-xs text-foreground shadow-lg backdrop-blur"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-amber-400" aria-hidden="true" />
+                    <span>
+                      {isOnline
+                        ? 'Refresh failed — showing cached data.'
+                        : 'Offline — showing cached data.'}
+                    </span>
+                    <button
+                      type="button"
+                      className="min-h-8 rounded-full px-2 font-semibold hover:bg-muted"
+                      onClick={() => {
+                        void retrySession();
+                        void retryMessages();
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {timeline.length === 0 &&
                 !currentStreamingContent &&
-                (isTaskSurface ? (
+                (hasInitialMessagesError ? (
+                  <div className="flex h-full items-center justify-center px-5 text-center">
+                    <div role="alert" className="max-w-sm">
+                      <p className="font-semibold text-foreground">
+                        {isOnline ? 'Chat history could not be loaded' : 'Chat history is offline'}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        No messages were removed. Try loading the history again.
+                      </p>
+                      <button
+                        type="button"
+                        className="ui-pill ui-pill-subtle mt-4 min-h-10 px-4"
+                        onClick={() => void retryMessages()}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        Try again
+                      </button>
+                    </div>
+                  </div>
+                ) : isTaskSurface ? (
                   <div className="task-empty-state">
                     <div className="task-empty-mark">
                       <MessageSquare className="h-7 w-7" />
@@ -3462,10 +4416,14 @@ export function SessionPage() {
                 <Virtuoso
                   ref={virtuosoRef}
                   data={timeline}
+                  firstItemIndex={historyFirstItemIndex}
+                  initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
                   overscan={200}
                   increaseViewportBy={200}
                   followOutput="smooth"
                   atBottomStateChange={setIsAtBottom}
+                  atTopStateChange={setIsAtTop}
+                  startReached={() => void loadOlderMessages()}
                   className="chat-virtuoso flex-1"
                   computeItemKey={(_index, item) =>
                     item.type === 'message'
@@ -3474,7 +4432,8 @@ export function SessionPage() {
                         ? `tool-${item.data.toolId}`
                         : `img-${item.data.timestamp}`
                   }
-                  itemContent={(index, item) => {
+                  itemContent={(absoluteIndex, item) => {
+                    const index = absoluteIndex - historyFirstItemIndex;
                     const turnSegment = assistantTurnSegments[index];
                     const isInTurn = turnSegment?.inTurn ?? false;
                     const isMessage = item.type === 'message';
@@ -3569,6 +4528,15 @@ export function SessionPage() {
                     }
                     return (
                       <div
+                        id={
+                          item.type === 'message' && item.data.id
+                            ? `chat-message-${item.data.id}`
+                            : undefined
+                        }
+                        data-message-id={
+                          item.type === 'message' ? (item.data.id ?? undefined) : undefined
+                        }
+                        tabIndex={item.type === 'message' ? -1 : undefined}
                         className={cn(
                           'mx-auto w-full px-4 sm:px-7 animate-fade-in',
                           isTaskSurface ? 'task-timeline-item max-w-[840px]' : 'max-w-[760px]',
@@ -3577,7 +4545,10 @@ export function SessionPage() {
                           isInTurn && turnSegment?.continuesBefore && 'asst-turn-link-before',
                           isInTurn && turnSegment?.continuesAfter && 'asst-turn-link-after',
                           isInTurn && !turnSegment?.continuesAfter && 'asst-turn-end',
-                          isInTurn && !isMessage && 'asst-turn-cont'
+                          isInTurn && !isMessage && 'asst-turn-cont',
+                          item.type === 'message' &&
+                            item.data.id === highlightedMessageId &&
+                            'is-search-highlighted'
                         )}
                       >
                         {content}
@@ -3594,6 +4565,40 @@ export function SessionPage() {
                 />
               )}
 
+              {timeline.length > 0 &&
+                isAtTop &&
+                (historyPagination.hasMore || isLoadingOlderMessages || olderMessagesError) && (
+                  <div className="pointer-events-none absolute inset-x-0 top-[calc(var(--chat-header-h)+0.5rem)] z-30 flex justify-center px-4">
+                    <div className="pointer-events-auto flex min-h-10 items-center gap-2 rounded-full border border-border/70 bg-background/90 px-3 py-2 text-xs text-foreground shadow-lg backdrop-blur">
+                      {isLoadingOlderMessages ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Loading older messages…
+                        </>
+                      ) : olderMessagesError ? (
+                        <>
+                          <span className="max-w-52 truncate">{olderMessagesError}</span>
+                          <button
+                            type="button"
+                            className="min-h-8 rounded-full px-2 font-semibold hover:bg-muted"
+                            onClick={() => void loadOlderMessages()}
+                          >
+                            Retry
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="min-h-8 rounded-full px-2 font-semibold hover:bg-muted"
+                          onClick={() => void loadOlderMessages()}
+                        >
+                          Load older messages
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
               {timeline.length > 0 && mainView === 'chat' && (
                 <ChatQuickTimeline
                   markers={quickTimelineMarkers}
@@ -3602,15 +4607,20 @@ export function SessionPage() {
                 />
               )}
 
-              {!isAtBottom && mainView === 'chat' && (
+              {(!isAtBottom || historyPagination.hasMoreAfter) && mainView === 'chat' && (
                 <div className="chat-jump-latest flex justify-center pointer-events-none z-30">
                   <button
                     type="button"
-                    onClick={scrollToBottom}
+                    onClick={() => void returnToLatestConversation()}
+                    disabled={isLoadingLatestMessages}
                     className="pointer-events-auto ui-pill ui-pill-subtle hover:bg-muted/70"
                   >
-                    <ArrowDown className="h-3 w-3" />
-                    Jump to latest
+                    {isLoadingLatestMessages ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <ArrowDown className="h-3 w-3" />
+                    )}
+                    {isLoadingLatestMessages ? 'Loading latest…' : 'Jump to latest'}
                   </button>
                 </div>
               )}
@@ -3702,6 +4712,81 @@ export function SessionPage() {
           </div>
 
           <div className="session-side-menu-scroll">
+            {/* Chat threads belong to the session, so they live in the right
+                menu with the other per-session controls rather than floating
+                over the transcript. */}
+            {id &&
+              renderSideMenuGroup({
+                id: 'chat',
+                label: 'Chat',
+                icon: <MessageSquare className="h-3.5 w-3.5" />,
+                children: rightDockCollapsed ? null : (
+                  <div className="session-side-menu-embed">
+                    <ChatThreadSwitcher
+                      sessionId={id}
+                      onSwitched={(chatId) => {
+                        // The server stopped the CLI and swapped the thread
+                        // context; drop live UI state and reload the transcript.
+                        messageHistoryEpochRef.current += 1;
+                        messageSnapshotRef.current = undefined;
+                        activeChatIdRef.current = chatId;
+                        socketService.setSessionChat(id, chatId);
+                        clearStreamingContent(id);
+                        setMessages(id, []);
+                        setIsSearchHistoryWindow(false);
+                        setHistoryFirstItemIndex(MESSAGE_HISTORY_FIRST_INDEX);
+                        setHistoryPagination({
+                          total: 0,
+                          limit: MESSAGE_HISTORY_PAGE_SIZE,
+                          hasMore: false,
+                          oldestId: null,
+                        });
+                        setOlderMessagesError(null);
+                        queryClient.invalidateQueries({ queryKey: ['session', id] });
+                      }}
+                    />
+                  </div>
+                ),
+              })}
+
+            {renderSideMenuGroup({
+              id: 'session',
+              label: 'Session',
+              icon: <Settings className="h-3.5 w-3.5" />,
+              children: (
+                <>
+                  {renderSideMenuItem({
+                    id: 'session-rename',
+                    label: 'Rename',
+                    icon: <Pencil className="h-3.5 w-3.5" />,
+                    onClick: () => setShowRenameDialog(true),
+                    nested: true,
+                  })}
+                  {renderSideMenuItem({
+                    id: 'session-template',
+                    label: 'Save as template',
+                    icon: <BookmarkPlus className="h-3.5 w-3.5" />,
+                    onClick: () => setTemplateNameDraft(session.name),
+                    nested: true,
+                  })}
+                  {renderSideMenuItem({
+                    id: 'session-export',
+                    label: 'Export transcript',
+                    icon: <Download className="h-3.5 w-3.5" />,
+                    onClick: () => void handleExportSession(),
+                    nested: true,
+                  })}
+                  {renderSideMenuItem({
+                    id: 'session-directories',
+                    label: 'Directories',
+                    icon: <FolderKey className="h-3.5 w-3.5" />,
+                    onClick: () => setShowAllowedDirsDialog(true),
+                    nested: true,
+                  })}
+                </>
+              ),
+            })}
+
             {renderSideMenuGroup({
               id: 'view',
               label: 'View',
@@ -3814,6 +4899,47 @@ export function SessionPage() {
         open={showRenameDialog}
         onOpenChange={setShowRenameDialog}
       />
+
+      <Dialog
+        open={templateNameDraft !== null}
+        onOpenChange={(open) => !open && setTemplateNameDraft(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as template</DialogTitle>
+            <DialogDescription>
+              Stores this session&apos;s provider, model, mode and workspace as a reusable starting
+              point. Messages are not copied.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={templateNameDraft ?? ''}
+            onChange={(event) => setTemplateNameDraft(event.target.value)}
+            placeholder="Template name"
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && templateNameDraft?.trim()) {
+                void handleSaveTemplate(templateNameDraft.trim());
+                setTemplateNameDraft(null);
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setTemplateNameDraft(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!templateNameDraft?.trim()}
+              onClick={() => {
+                void handleSaveTemplate((templateNameDraft ?? '').trim());
+                setTemplateNameDraft(null);
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Tool Detail Dialog */}
       <ToolDetailDialog

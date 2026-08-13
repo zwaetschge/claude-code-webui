@@ -31,6 +31,7 @@ import { Input } from '@/components/ui/input';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useCategoryStore } from '@/stores/categoryStore';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
+import { NotificationCenter } from '@/components/session/NotificationCenter';
 import { SessionIcon } from '@/components/session/SessionIcon';
 import { ContextPopover } from '@/components/session/SessionControls';
 import { CLI_PROVIDER_LABEL, UI_PROVIDER_META } from '@/lib/providers';
@@ -85,6 +86,7 @@ const RECENT_GROUP_ID = '__recent__';
 interface SidebarProps {
   onNavigate?: () => void;
   mobile?: boolean;
+  navigationOnly?: boolean;
   contextUsage?: UsageData;
   contextStats?: {
     contextSnapshots: number;
@@ -96,6 +98,7 @@ interface SidebarProps {
 export function Sidebar({
   onNavigate,
   mobile,
+  navigationOnly = false,
   contextUsage,
   contextStats,
   contextSession,
@@ -158,9 +161,7 @@ export function Sidebar({
   const [editName, setEditName] = useState('');
   const [iconUploadSessionId, setIconUploadSessionId] = useState<string | null>(null);
   const [iconBusySessionId, setIconBusySessionId] = useState<string | null>(null);
-
-  // On mobile, never collapse (full width in sheet)
-  const isCollapsed = mobile ? false : collapsed;
+  const isCollapsed = mobile ? false : navigationOnly ? true : collapsed;
 
   useEffect(() => {
     fetchCategories();
@@ -665,6 +666,10 @@ export function Sidebar({
       tools: toolExecutions[session.id],
       queue: queueState[session.id],
     });
+    const unreadCount = Math.max(
+      0,
+      Number((session as Session & { unreadCount?: number }).unreadCount) || 0
+    );
 
     if (isEditing && !isCollapsed) {
       return (
@@ -711,7 +716,11 @@ export function Sidebar({
         <Link
           to={`/session/${session.id}`}
           onClick={handleLinkClick}
-          aria-label={isCollapsed ? session.name : undefined}
+          aria-label={
+            isCollapsed
+              ? `${session.name}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`
+              : undefined
+          }
           className={cn(
             'flex flex-1 items-center gap-2.5 px-3 py-2 text-sm min-w-0',
             isCollapsed && 'justify-center px-2'
@@ -729,10 +738,23 @@ export function Sidebar({
                 <Loader2 className="h-4 w-4 animate-spin" />
               </span>
             )}
+            {isCollapsed && unreadCount > 0 && (
+              <span className="sidebar-session-unread is-collapsed" aria-hidden="true">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </span>
           {!isCollapsed && (
             <span className="flex min-w-0 flex-1 items-center text-xs">
               <span className="min-w-0 truncate font-medium">{session.name}</span>
+              {unreadCount > 0 && (
+                <span
+                  className="sidebar-session-unread"
+                  aria-label={`${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`}
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
               <span
                 className={cn('sidebar-session-run-dot', `is-${sessionRunState.tone}`)}
                 title={sessionRunState.detail}
@@ -884,6 +906,7 @@ export function Sidebar({
       className={cn(
         'app-sidebar-shell flex flex-col h-full transition-all duration-300',
         mobile ? 'app-sidebar-mobile w-full' : '',
+        navigationOnly && !mobile && 'app-sidebar-navigation-only',
         !mobile && (isCollapsed ? 'w-16' : 'w-64')
       )}
     >
@@ -953,12 +976,21 @@ export function Sidebar({
           </button>
         ) : (
           <button
-            onClick={() => setCollapsed(!isCollapsed)}
+            onClick={() => {
+              if (!navigationOnly) setCollapsed(!isCollapsed);
+            }}
             className={cn(
               'sidebar-identity-button flex items-center gap-3 transition-colors cursor-pointer',
-              isCollapsed ? 'is-collapsed' : ''
+              isCollapsed ? 'is-collapsed' : '',
+              navigationOnly && 'cursor-default'
             )}
-            aria-label={isCollapsed ? activeMeta.productName : 'Collapse sidebar'}
+            aria-label={
+              navigationOnly
+                ? activeMeta.productName
+                : isCollapsed
+                  ? activeMeta.productName
+                  : 'Collapse sidebar'
+            }
           >
             <span className="sidebar-session-provider-icon sidebar-identity-provider-icon">
               <ProviderLogo provider="plum" className="h-5 w-5 text-primary" />
@@ -974,6 +1006,14 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 flex flex-col min-h-0 px-2 pt-2 pb-0 overflow-visible">
+        {/* Notification centre lives with the main navigation: it spans every
+            session rather than belonging to the one currently open. */}
+        {!isCollapsed && (
+          <div className="flex items-center justify-end px-3 pb-1 shrink-0">
+            <NotificationCenter />
+          </div>
+        )}
+
         {/* Top nav */}
         <div className="space-y-1 shrink-0">
           {baseNavItems.map((item) => {
@@ -1018,8 +1058,8 @@ export function Sidebar({
           </div>
         )}
 
-        {/* Sessions section */}
-        <div className="pt-3 flex flex-col flex-1 min-h-0">
+        {/* Sessions section. The dashboard itself is the primary wide session surface. */}
+        <div className={cn('pt-3 flex flex-col flex-1 min-h-0', navigationOnly && 'hidden')}>
           <div
             className={cn(
               'flex items-center px-3 py-1.5 shrink-0',
