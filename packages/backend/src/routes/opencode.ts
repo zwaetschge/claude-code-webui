@@ -40,7 +40,9 @@ router.get('/providers', requireAuth, (req, res) => {
     res.json({ success: true, data: safeProviders });
   } catch (error) {
     console.error('Error fetching OpenCode providers:', error);
-    res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to fetch providers' } });
+    res
+      .status(500)
+      .json({ success: false, error: { code: 'ERROR', message: 'Failed to fetch providers' } });
   }
 });
 
@@ -50,6 +52,8 @@ const upsertProviderSchema = z.object({
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   enabled: z.boolean().optional(),
+  /** Omitted keeps the stored list; the harnesses read models from here. */
+  models: z.array(z.string()).optional(),
 });
 
 const questionRespondSchema = z.object({
@@ -69,10 +73,18 @@ router.put('/providers', requireAuth, (req, res) => {
   try {
     const result = upsertProviderSchema.safeParse(req.body);
     if (!result.success) {
-      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) } });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
+        });
     }
 
-    const { id, name, apiKey, baseUrl, enabled = true } = result.data;
+    const { id, name, apiKey, baseUrl, enabled = true, models } = result.data;
+    const normalizedModels = models
+      ? [...new Set(models.map((model) => model.trim()).filter((model) => model.length > 0))]
+      : undefined;
     const catalogProvider = getOpenCodeProviderCatalog()[id];
     const finalBaseUrl = baseUrl && baseUrl.trim() !== '' ? baseUrl.trim() : catalogProvider?.api;
 
@@ -90,6 +102,11 @@ router.put('/providers', requireAuth, (req, res) => {
         apiKey: apiKey ? encryptedKey : existing.apiKey,
         baseUrl: finalBaseUrl,
         enabled,
+        // Editing a key must not silently empty the model list the harnesses
+        // resolve from.
+        ...((normalizedModels ?? existing.models)
+          ? { models: normalizedModels ?? existing.models }
+          : {}),
         createdAt: existing.createdAt,
         updatedAt: now,
       };
@@ -101,6 +118,7 @@ router.put('/providers', requireAuth, (req, res) => {
         apiKey: encryptedKey,
         baseUrl: finalBaseUrl,
         enabled,
+        ...(normalizedModels ? { models: normalizedModels } : {}),
         createdAt: now,
         updatedAt: now,
       };
@@ -116,7 +134,9 @@ router.put('/providers', requireAuth, (req, res) => {
     });
   } catch (error) {
     console.error('Error saving OpenCode provider:', error);
-    res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to save provider' } });
+    res
+      .status(500)
+      .json({ success: false, error: { code: 'ERROR', message: 'Failed to save provider' } });
   }
 });
 
@@ -131,7 +151,9 @@ router.delete('/providers/:id', requireAuth, (req, res) => {
     res.json({ success: true, data: { id } });
   } catch (error) {
     console.error('Error deleting OpenCode provider:', error);
-    res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to delete provider' } });
+    res
+      .status(500)
+      .json({ success: false, error: { code: 'ERROR', message: 'Failed to delete provider' } });
   }
 });
 
@@ -140,14 +162,18 @@ router.post('/providers/:id/test', requireAuth, (req, res) => {
   const userId = (req as AuthenticatedRequest).userId;
   const { id } = req.params;
   if (!id) {
-    return res.status(400).json({ success: false, error: { code: 'ERROR', message: 'Provider id required' } });
+    return res
+      .status(400)
+      .json({ success: false, error: { code: 'ERROR', message: 'Provider id required' } });
   }
   try {
     const providers = readOpenCodeProvidersForUser(userId);
     const provider = providers.find((p) => p.id === id);
 
     if (!provider) {
-      return res.status(404).json({ success: false, error: { code: 'ERROR', message: 'Provider not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { code: 'ERROR', message: 'Provider not found' } });
     }
 
     const tenantPaths = resolveOpenCodeTenantPaths(userId);
@@ -252,14 +278,21 @@ router.get('/available-providers', requireAuth, (req, res) => {
     res.json({ success: true, data: overlayOpenCodeProviderStatus(discoverProviders(), userId) });
   } catch (error) {
     console.error('Error fetching available providers:', error);
-    res.status(500).json({ success: false, error: { code: 'ERROR', message: 'Failed to fetch providers' } });
+    res
+      .status(500)
+      .json({ success: false, error: { code: 'ERROR', message: 'Failed to fetch providers' } });
   }
 });
 
 router.post('/questions/respond', requireAuth, async (req, res) => {
   const result = questionRespondSchema.safeParse(req.body);
   if (!result.success) {
-    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) } });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
+      });
   }
 
   try {
@@ -271,19 +304,31 @@ router.post('/questions/respond', requireAuth, async (req, res) => {
       userId
     );
     if (!handled) {
-      return res.status(404).json({ success: false, error: { code: 'ERROR', message: 'Question request not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { code: 'ERROR', message: 'Question request not found' } });
     }
     res.json({ success: true });
   } catch (error) {
     console.error('[opencode] failed to respond to question:', error);
-    res.status(502).json({ success: false, error: { code: 'ERROR', message: 'Failed to respond to OpenCode question' } });
+    res
+      .status(502)
+      .json({
+        success: false,
+        error: { code: 'ERROR', message: 'Failed to respond to OpenCode question' },
+      });
   }
 });
 
 router.post('/questions/reject', requireAuth, async (req, res) => {
   const result = questionRejectSchema.safeParse(req.body);
   if (!result.success) {
-    return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) } });
+    return res
+      .status(400)
+      .json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
+      });
   }
 
   try {
@@ -294,12 +339,19 @@ router.post('/questions/reject', requireAuth, async (req, res) => {
       userId
     );
     if (!handled) {
-      return res.status(404).json({ success: false, error: { code: 'ERROR', message: 'Question request not found' } });
+      return res
+        .status(404)
+        .json({ success: false, error: { code: 'ERROR', message: 'Question request not found' } });
     }
     res.json({ success: true });
   } catch (error) {
     console.error('[opencode] failed to reject question:', error);
-    res.status(502).json({ success: false, error: { code: 'ERROR', message: 'Failed to reject OpenCode question' } });
+    res
+      .status(502)
+      .json({
+        success: false,
+        error: { code: 'ERROR', message: 'Failed to reject OpenCode question' },
+      });
   }
 });
 

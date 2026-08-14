@@ -348,9 +348,10 @@ export function backfillKimiUsageHistory(database: Database.Database): number {
  * without OpenCode being installed at all.
  */
 export function migrateProviderModelsIntoRegistry(database: Database.Database): number {
-  const rows = database
-    .prepare('SELECT user_id, settings_json FROM user_settings')
-    .all() as Array<{ user_id: string; settings_json: string | null }>;
+  const rows = database.prepare('SELECT user_id, settings_json FROM user_settings').all() as Array<{
+    user_id: string;
+    settings_json: string | null;
+  }>;
 
   let updated = 0;
   for (const row of rows) {
