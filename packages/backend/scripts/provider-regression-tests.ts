@@ -2659,6 +2659,51 @@ function testPiUsesOnlyEnabledUserProviderModels() {
   assert.equal(isPiRunnableModel('qwen-image-2.0-pro'), false);
 }
 
+function testPiMergesModelSourcesAndSurvivesWithoutOpenCodeConfig() {
+  const provider = (
+    id: string,
+    models?: string[]
+  ): Parameters<typeof buildPiModelCatalog>[0][number] => ({
+    id,
+    name: id,
+    apiKey: 'encrypted',
+    baseUrl: `https://${id}.example/v1`,
+    enabled: true,
+    ...(models ? { models } : {}),
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  // A model known only to the catalog and one known only to the OpenCode config
+  // must both survive: taking one source and ignoring the other used to hide
+  // every model the winning source had never heard of.
+  const merged = buildPiModelCatalog(
+    [provider('z-ai')],
+    {
+      'z-ai': {
+        name: 'Z.AI',
+        models: ['glm-5.1', 'glm-5.2'],
+        description: 'test',
+        env: ['Z_AI_API_KEY'],
+        api: 'https://api.z.ai/api/coding/paas/v4',
+        source: 'config',
+      },
+    },
+    { 'z-ai': ['glm-4.7'] }
+  );
+  assert.deepEqual(merged.models, ['z-ai/glm-4.7', 'z-ai/glm-5.1', 'z-ai/glm-5.2']);
+
+  // The registry alone is enough: no catalog entry, no OpenCode config. This is
+  // what keeps a self-hosted endpoint working when OpenCode is not installed.
+  const registryOnly = buildPiModelCatalog(
+    [provider('alibaba-token-plan', ['qwen3.8-max-preview', 'qwen-image-2.0'])],
+    {},
+    {}
+  );
+  assert.deepEqual(registryOnly.models, ['alibaba-token-plan/qwen3.8-max-preview']);
+  assert.deepEqual(Object.keys(registryOnly.piProviders), ['alibaba-token-plan']);
+}
+
 function testOpenCodeAllowedDirectories() {
   const rules = buildOpenCodePermissionRules('manual', {
     workingDirectory: '/workspace/project',
@@ -5440,6 +5485,7 @@ testZaiVisionMcpPolicyManagedConfig();
 testOpenCodeSessionModelSelection();
 testPiSharesOpenCodeProviderConfigWithoutPersistingSecrets();
 testPiUsesOnlyEnabledUserProviderModels();
+testPiMergesModelSourcesAndSurvivesWithoutOpenCodeConfig();
 testOpenCodeAllowedDirectories();
 testAttachmentNormalization();
 testOpenCodePromptContext();

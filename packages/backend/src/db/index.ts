@@ -17,6 +17,7 @@ import {
   readKimiRootPrompts,
   summarizeKimiUsageBetween,
 } from '../utils/kimiTurnUsage.js';
+import { resolveOpenCodeTenantPaths } from '../services/opencode/tenantPaths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIRECTORY = process.env.WEBUI_DATA_DIR
@@ -336,6 +337,71 @@ export function backfillKimiUsageHistory(database: Database.Database): number {
  * routed models prefer the session's current Pi/OpenCode provider; exact
  * historical attribution cannot be reconstructed after a provider switch.
  */
+/**
+ * Copy each provider's model list out of OpenCode's per-user config and into
+ * the WebUI provider registry.
+ *
+ * Pi derived its models from that file, so an endpoint the shared catalog does
+ * not know — a self-hosted server, or an aggregator added last week — only
+ * existed for Pi while OpenCode kept a config listing it. Owning the list here
+ * makes every harness readable from one place and lets a provider be set up
+ * without OpenCode being installed at all.
+ */
+export function migrateProviderModelsIntoRegistry(database: Database.Database): number {
+  const rows = database
+    .prepare('SELECT user_id, settings_json FROM user_settings')
+    .all() as Array<{ user_id: string; settings_json: string | null }>;
+
+  let updated = 0;
+  for (const row of rows) {
+    let settings: Record<string, unknown>;
+    try {
+      settings = JSON.parse(row.settings_json ?? '{}') as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const providers = settings.opencodeProviders;
+    if (!Array.isArray(providers) || providers.length === 0) continue;
+
+    let configModels: Record<string, string[]> = {};
+    try {
+      const configPath = path.join(
+        resolveOpenCodeTenantPaths(row.user_id).configDir,
+        'opencode.json'
+      );
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        provider?: Record<string, { models?: Record<string, unknown> }>;
+      };
+      for (const [providerId, entry] of Object.entries(parsed.provider ?? {})) {
+        const models = Object.keys(entry?.models ?? {}).filter((id) => id.trim().length > 0);
+        if (models.length > 0) configModels[providerId] = models;
+      }
+    } catch {
+      // No OpenCode config for this user — nothing to lift, and nothing broken.
+      configModels = {};
+    }
+    if (Object.keys(configModels).length === 0) continue;
+
+    let changed = false;
+    for (const provider of providers as Array<Record<string, unknown>>) {
+      const id = typeof provider.id === 'string' ? provider.id : '';
+      const models = configModels[id];
+      // Never overwrite a list the user already curated in the WebUI.
+      if (!models || (Array.isArray(provider.models) && provider.models.length > 0)) continue;
+      provider.models = models;
+      changed = true;
+    }
+
+    if (!changed) continue;
+    database
+      .prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?')
+      .run(JSON.stringify(settings), row.user_id);
+    updated += 1;
+  }
+
+  return updated;
+}
+
 export function migrateUsageHistoryAttribution(database: Database.Database): number {
   const columns = new Set(
     (database.prepare('PRAGMA table_info(usage_history)').all() as Array<{ name: string }>).map(
@@ -893,6 +959,10 @@ function runMigrations(db: Database.Database): void {
   }
 
   migrateUsageHistoryAttribution(db);
+  const liftedProviders = migrateProviderModelsIntoRegistry(db);
+  if (liftedProviders > 0) {
+    console.log(`[DB] Lifted provider models into the registry for ${liftedProviders} user(s).`);
+  }
   const zaiMigration = migrateLegacyClaudeEndpointToZai(db);
   if (zaiMigration.settings || zaiMigration.sessions || zaiMigration.usage) {
     console.log(

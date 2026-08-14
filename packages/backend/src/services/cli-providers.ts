@@ -931,7 +931,10 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     icon: 'π',
     // Authentication and API connections are intentionally shared with OpenCode.
     // Pi itself stores only generated, secret-free provider references in ~/.pi.
-    credentialsPath: envOr('pi', 'CREDENTIALS_PATH', '~/.opencode'),
+    // Pi keeps its own config under ~/.pi. Pointing availability at ~/.opencode
+    // made Pi look uninstalled whenever OpenCode was absent, even though Pi
+    // only needs a configured endpoint from the WebUI provider registry.
+    credentialsPath: envOr('pi', 'CREDENTIALS_PATH', '~/.pi'),
     supportsStreamJson: true,
     supportsResume: true,
     supportsModes: true,

@@ -2775,6 +2775,12 @@ interface ClaudeProcess {
   opencodeQueueDraining?: boolean;
   claudeIdle?: boolean;
   claudeQueuedTurns?: ClaudePreparedTurn[];
+  /** Mode change parked until the running turn (and its queue) finishes. */
+  claudeDeferredModeRestart?: {
+    mode: SessionMode;
+    userId: string;
+    previousMode: SessionMode;
+  };
   claudeQueueDraining?: boolean;
   // Accumulates content per opencode part.id so we can emit streaming deltas
   // and flush each opencode assistant message as a separate WebUI message.
@@ -7956,6 +7962,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
         proc.claudeIdle = true;
         this.emitQueueState(sessionId, proc);
         queueMicrotask(() => this.drainClaudeQueuedTurns(sessionId, proc));
+        queueMicrotask(() => this.applyDeferredModeRestart(sessionId, proc));
       }
     }
   }
@@ -8182,6 +8189,22 @@ The planning phase is complete. You are now in Auto-Accept mode.
       `Sent message [${sessionId}] via ${proc.cliProvider}: ${turn.messageForClaude.substring(0, 100)}...`
     );
     this.emitQueueState(sessionId, proc);
+  }
+
+  /**
+   * Perform a mode change that was deferred because a turn was running. Queued
+   * follow-ups win: restarting with turns still waiting would drop them, so the
+   * restart waits until the queue has drained too.
+   */
+  private applyDeferredModeRestart(sessionId: string, proc: ClaudeProcess): void {
+    const deferred = proc.claudeDeferredModeRestart;
+    if (!deferred) return;
+    if (proc.claudeIdle === false) return;
+    if ((proc.claudeQueuedTurns?.length ?? 0) > 0) return;
+
+    proc.claudeDeferredModeRestart = undefined;
+    console.log(`[MODE] Applying deferred ${deferred.mode} for ${sessionId}`);
+    this.restartForMode(sessionId, proc, deferred.mode, deferred.userId, deferred.previousMode);
   }
 
   private drainClaudeQueuedTurns(sessionId: string, proc: ClaudeProcess): void {
@@ -10034,6 +10057,29 @@ ${proc.contextReminder.summary}
       return;
     }
 
+    // Claude takes the permission mode as a spawn flag, so the process really
+    // does have to restart — but not on top of a running turn. Killing the
+    // child mid-turn discards the answer silently, and a client that re-asserts
+    // its mode on every reconnect (two clients disagreeing is enough) can do
+    // that on every attempt, leaving the session looking permanently mute.
+    if (proc.claudeIdle === false) {
+      console.log(
+        `[MODE] Turn in flight for ${sessionId}; applying ${mode} after it completes`
+      );
+      proc.claudeDeferredModeRestart = { mode, userId, previousMode };
+      return;
+    }
+
+    this.restartForMode(sessionId, proc, mode, userId, previousMode);
+  }
+
+  private restartForMode(
+    sessionId: string,
+    proc: ClaudeProcess,
+    mode: SessionMode,
+    userId: string,
+    previousMode: SessionMode
+  ): void {
     // For mode changes on running sessions, we need to restart the process
     // Save any pending streaming content first
     if (proc.streamingText.trim().length > 0) {

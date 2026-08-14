@@ -10,6 +10,13 @@ export interface OpenCodeProvider {
   apiKey: string;
   baseUrl?: string;
   enabled: boolean;
+  /**
+   * Models this endpoint serves, owned by the WebUI registry rather than by any
+   * harness. Endpoints the shared catalog does not know (self-hosted, or a new
+   * aggregator) previously existed for Pi only while OpenCode happened to keep
+   * a config file listing them. Empty means "whatever the catalog knows".
+   */
+  models?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -74,12 +81,24 @@ function normalizeStoredProvider(raw: unknown): OpenCodeProvider | null {
       ? provider.baseUrl.trim()
       : undefined;
 
+  const models = Array.isArray(provider.models)
+    ? [
+        ...new Set(
+          provider.models
+            .filter((model): model is string => typeof model === 'string')
+            .map((model) => model.trim())
+            .filter((model) => model.length > 0)
+        ),
+      ]
+    : undefined;
+
   return {
     id: normalizeProviderId(provider.id),
     name: provider.name.trim(),
     apiKey: typeof provider.apiKey === 'string' ? provider.apiKey : '',
     baseUrl,
     enabled: provider.enabled !== false,
+    ...(models && models.length > 0 ? { models } : {}),
     createdAt:
       typeof provider.createdAt === 'string' && provider.createdAt ? provider.createdAt : now,
     updatedAt:
