@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -233,22 +234,31 @@ fun AdaptiveSessionWorkspace(
                         )
                     }
                 } else {
-                    ChatScreen(
-                        sessionId = selected,
-                        initialMessageId = selectedMessageId,
-                        initialChatId = selectedChatId,
-                        onNavigateBack = {
-                            selectedSessionId = null
-                            selectedMessageId = null
-                            selectedChatId = null
-                        },
-                        onNavigateToFiles = { directory -> onNavigateToFiles(selected, directory) },
-                        onNavigateToGit = { onNavigateToGit(selected) },
-                        onNavigateToCheckpoints = onNavigateToCheckpoints,
-                        onNavigateToNotes = onNavigateToNotes,
-                        onNavigateToMemory = onNavigateToMemory,
-                        onNavigateToDevTools = { directory -> onNavigateToDevTools(selected, directory) },
-                    )
+                    // Without the key the subtree keeps every remembered value
+                    // from the previous session — open sheets, scroll position,
+                    // composer text — while only the id changes underneath.
+                    key(selected) {
+                        ChatScreen(
+                            sessionId = selected,
+                            initialMessageId = selectedMessageId,
+                            initialChatId = selectedChatId,
+                            onNavigateBack = {
+                                selectedSessionId = null
+                                selectedMessageId = null
+                                selectedChatId = null
+                            },
+                            onNavigateToFiles = { directory ->
+                                onNavigateToFiles(selected, directory)
+                            },
+                            onNavigateToGit = { onNavigateToGit(selected) },
+                            onNavigateToCheckpoints = onNavigateToCheckpoints,
+                            onNavigateToNotes = onNavigateToNotes,
+                            onNavigateToMemory = onNavigateToMemory,
+                            onNavigateToDevTools = { directory ->
+                                onNavigateToDevTools(selected, directory)
+                            },
+                        )
+                    }
                 }
             }
         }

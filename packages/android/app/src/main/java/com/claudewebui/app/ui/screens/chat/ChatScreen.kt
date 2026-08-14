@@ -106,7 +106,12 @@ fun ChatScreen(
     onNavigateToDevTools: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val viewModel: ChatViewModel = koinViewModel(parameters = { parametersOf(sessionId) })
+    // Keyed by session: parameters are only read when the ViewModel is first
+    // created, so an unkeyed lookup returns the previous session's instance
+    // whenever this screen stays mounted and only its sessionId changes — which
+    // is exactly what the tablet workspace does when you pick another session.
+    val viewModel: ChatViewModel =
+        koinViewModel(key = sessionId, parameters = { parametersOf(sessionId) })
     val uiState by viewModel.uiState.collectAsState()
     var showSessionSettings by remember { mutableStateOf(false) }
     val messages by viewModel.messages.collectAsState()
