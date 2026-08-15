@@ -63,6 +63,7 @@ import com.claudewebui.app.ui.components.common.PlumIconButton
 import com.claudewebui.app.ui.components.common.PlumText
 import com.claudewebui.app.ui.components.common.fadingEdges
 import com.claudewebui.app.ui.components.common.glassSurface
+import com.claudewebui.app.ui.components.dashboard.CategoryManager
 import com.claudewebui.app.ui.components.dashboard.NewSessionDialog
 import com.claudewebui.app.ui.screens.chat.ChatScreen
 import org.koin.compose.viewmodel.koinViewModel
@@ -91,6 +92,7 @@ fun AdaptiveSessionWorkspace(
     var selectedChatId by rememberSaveable { mutableStateOf<String?>(null) }
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showNotifications by rememberSaveable { mutableStateOf(false) }
+    var showCategoryManager by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -107,6 +109,7 @@ fun AdaptiveSessionWorkspace(
                 }
                 is DashboardEvent.SessionCreated -> showCreate = false
                 DashboardEvent.ShowNewSessionDialog -> showCreate = true
+                DashboardEvent.ShowCategoryManager -> showCategoryManager = true
                 DashboardEvent.NavigateToSettings -> onNavigateToSettings()
                 else -> Unit
             }
@@ -176,6 +179,12 @@ fun AdaptiveSessionWorkspace(
                         onClick = { viewModel.setSearchScope(DashboardSearchScope.MESSAGES) },
                     )
                 }
+                CategoryFilterRow(
+                    categories = state.categories,
+                    selectedCategoryId = state.selectedCategoryId,
+                    onSelect = viewModel::filterByCategory,
+                    onManage = { showCategoryManager = true },
+                )
                 if (state.searchQuery.isBlank() && state.sessions.isNotEmpty()) {
                     QuickSwitchRow(
                         sessions = remember(state.sessions) {
@@ -284,6 +293,17 @@ fun AdaptiveSessionWorkspace(
                 onRespond = { item, allow -> viewModel.respondToApproval(item, allow) },
             )
         }
+    }
+
+    if (showCategoryManager) {
+        CategoryManager(
+            categories = state.categories,
+            onDismiss = { showCategoryManager = false },
+            onCreate = viewModel::createCategory,
+            onUpdate = viewModel::updateCategory,
+            onDelete = viewModel::deleteCategory,
+            onReorder = viewModel::reorderCategories,
+        )
     }
 
     if (showCreate) {

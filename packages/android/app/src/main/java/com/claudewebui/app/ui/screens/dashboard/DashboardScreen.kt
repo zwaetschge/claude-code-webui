@@ -112,6 +112,7 @@ import com.claudewebui.app.ui.components.common.WindowWidth
 import com.claudewebui.app.ui.components.common.providerColor
 import com.claudewebui.app.ui.components.common.providerLabel
 import com.claudewebui.app.ui.components.common.sessionModel
+import com.claudewebui.app.ui.components.dashboard.CategoryManager
 import com.claudewebui.app.ui.components.dashboard.NewSessionDialog
 import org.koin.compose.viewmodel.koinViewModel
 import com.claudewebui.app.ui.components.common.PlumAmber
@@ -132,6 +133,7 @@ fun DashboardScreen(
     val selectionActive = state.selectedSessionIds.isNotEmpty()
     var selectedFilter by remember { mutableStateOf("All") }
     var showNotifications by remember { mutableStateOf(false) }
+    var showCategoryManager by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Session?>(null) }
     var categoryTarget by remember { mutableStateOf<Session?>(null) }
     var deleteTarget by remember { mutableStateOf<Session?>(null) }
@@ -148,6 +150,7 @@ fun DashboardScreen(
                 )
                 is DashboardEvent.SessionCreated -> showNewSessionDialog = false
                 DashboardEvent.ShowNewSessionDialog -> showNewSessionDialog = true
+                DashboardEvent.ShowCategoryManager -> showCategoryManager = true
                 DashboardEvent.NavigateToSettings -> onNavigateToSettings()
                 is DashboardEvent.ShowError -> snackbar.showSnackbar(event.message)
                 else -> Unit
@@ -294,6 +297,14 @@ fun DashboardScreen(
                                 }
                             }
                         }
+                    }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        CategoryFilterRow(
+                            categories = state.categories,
+                            selectedCategoryId = state.selectedCategoryId,
+                            onSelect = viewModel::filterByCategory,
+                            onManage = viewModel::onCategoryManagerTapped,
+                        )
                     }
                 } else {
                     item(span = { GridItemSpan(maxLineSpan) }) {
@@ -495,6 +506,17 @@ fun DashboardScreen(
             onCreate = { name, provider, directory, mode, categoryId ->
                 viewModel.createSession(name, directory, provider, mode, categoryId)
             },
+        )
+    }
+
+    if (showCategoryManager) {
+        CategoryManager(
+            categories = state.categories,
+            onDismiss = { showCategoryManager = false },
+            onCreate = viewModel::createCategory,
+            onUpdate = viewModel::updateCategory,
+            onDelete = viewModel::deleteCategory,
+            onReorder = viewModel::reorderCategories,
         )
     }
 
@@ -1109,6 +1131,60 @@ private fun PlumSessionCard(
                 leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = PlumRed) },
                 onClick = { showMenu = false; onDelete() },
             )
+        }
+    }
+}
+
+/**
+ * Category filter row, shared by the phone dashboard and the tablet workspace.
+ * The trailing chip opens the manager: categories were assignable but could
+ * never be created or renamed anywhere in the app.
+ */
+@Composable
+internal fun CategoryFilterRow(
+    categories: List<Category>,
+    selectedCategoryId: String?,
+    onSelect: (String?) -> Unit,
+    onManage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyRow(
+        modifier = modifier.fadingEdges(start = 16.dp, end = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(end = 12.dp),
+    ) {
+        item {
+            FilterPill(
+                label = "All categories",
+                selected = selectedCategoryId == null,
+                onClick = { onSelect(null) },
+            )
+        }
+        items(categories, key = { it.id }) { category ->
+            FilterPill(
+                label = category.name,
+                selected = selectedCategoryId == category.id,
+                onClick = { onSelect(category.id) },
+            )
+        }
+        item {
+            Row(
+                modifier = Modifier
+                    .glassSurface(RoundedCornerShape(15.dp))
+                    .clickable(onClick = onManage)
+                    .semantics { role = Role.Button }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Icon(
+                    Icons.Outlined.Edit,
+                    contentDescription = null,
+                    tint = PlumMuted,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text("Manage", color = PlumMuted, fontSize = 12.sp)
+            }
         }
     }
 }

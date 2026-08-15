@@ -29,6 +29,7 @@ import com.claudewebui.app.BuildConfig
 import com.claudewebui.app.core.network.SocketManager
 import com.claudewebui.app.core.deeplink.DeepLinkDestination
 import com.claudewebui.app.core.deeplink.DeepLinkHandler
+import com.claudewebui.app.core.security.AuthEvents
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.ui.screens.analytics.AnalyticsScreen
 import com.claudewebui.app.ui.screens.activity.ActivityScreen
@@ -148,6 +149,18 @@ fun AppNavigation(
 
     LaunchedEffect(Unit) {
         if (TokenStore.isLoggedIn) socketManager.connect()
+    }
+
+    // An expired token used to leave the app sitting on cached data forever.
+    LaunchedEffect(Unit) {
+        AuthEvents.sessionExpired.collect {
+            socketManager.disconnect()
+            AuthEvents.consume()
+            navController.navigate(Routes.Login.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
     }
 
     // Warm-start deep links: onNewIntent only updates the state — without this
