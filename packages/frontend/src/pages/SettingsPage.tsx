@@ -117,6 +117,7 @@ import { AdminUsersPage } from '@/pages/admin/AdminUsersPage';
 import { AdminAuditLogPage } from '@/pages/admin/AdminAuditLogPage';
 import { HomeAssistantSettingsCard } from '@/components/integrations/HomeAssistantSettingsCard';
 import { CliDeviceLoginDialog } from '@/components/settings/CliDeviceLoginDialog';
+import { GatewayTokensPanel } from '@/components/settings/GatewayTokensPanel';
 
 interface PluginInfo {
   id: string;
@@ -3654,6 +3655,8 @@ export function SettingsPage() {
                                 Send test alert
                               </button>
                             </div>
+
+                            <GatewayTokensPanel />
                           </div>
                         </SettingsPanel>
                       </div>

@@ -225,6 +225,19 @@ Zero-dependency bridges are registered in `~/.claude/settings.json` and mirrored
 
 Godot projects should use the `game-engines` skill and android-builder for phone verification.
 
+## Control Gateway
+
+An external supervisor — Hermes, an OpenCode or Codex CLI, a script — drives this instance through the same API the user drives.
+
+- Issue a token in Settings → General → Control gateway. The secret (`plum_gw_…`) is shown once.
+- Send it as `Authorization: Bearer plum_gw_…`. `resolveAuthenticatedUserId()` resolves it to the owning user, so **every** `requireAuth` route works — sessions, messages, approvals, git, analytics, settings. There is no second, weaker API to keep in sync.
+- `GET /api/gateway/overview` returns one snapshot: all sessions with `busy`, `queueDepth`, `activitySummary`, per-session `pendingApprovals`, plus `needsAttention` (blocked or errored).
+- `GET /api/gateway/events` is an SSE stream (`assistant_message`, `user_message`, `turn_complete`) so a CLI does not need Socket.IO.
+- A gateway token **cannot** manage gateway tokens (`403 GATEWAY_FORBIDDEN`); minting credentials stays with a real session. Revoking is immediate — the next request gets 401.
+- Admin-only routes still require the owner to be an admin; the token inherits the user's role, nothing more.
+
+`container_watchdogs` remains what it always was: a Docker health probe. Session supervision belongs to the gateway.
+
 ## Multi-Provider Notes
 
 `CLI_PROVIDERS` insertion order controls the UI. Persistent homes are `~/.codex`, `~/.local/share/opencode`, `~/.pi`, `~/.kimi-code`, and `~/.claude`.

@@ -3,9 +3,12 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { getDatabase } from '../db/index.js';
 import { AppError } from './errorHandler.js';
+import { GATEWAY_TOKEN_PREFIX, resolveGatewayToken } from '../services/gateway/tokens.js';
 
 export interface AuthenticatedRequest extends Request {
   userId: string;
+  /** True when the caller authenticated with a gateway token, not a session. */
+  viaGateway?: boolean;
 }
 
 function getUserRoleStatus(userId: string): { role: string; status: string } | null {
@@ -78,6 +81,21 @@ export function resolveAuthenticatedUserId(req: Request): string | null {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
+
+    // Gateway tokens resolve to their owner and then take the same path as a
+    // browser session. That is the whole design: an external supervisor gets
+    // the user's capabilities through the user's endpoints, instead of a
+    // parallel API that drifts out of sync with what the UI can do.
+    if (token.startsWith(GATEWAY_TOKEN_PREFIX)) {
+      const gatewayUserId = resolveGatewayToken(token);
+      if (!gatewayUserId) {
+        throw new AppError('Invalid gateway token', 401, 'INVALID_TOKEN');
+      }
+      enforceUserLifecycle(gatewayUserId);
+      (req as AuthenticatedRequest).viaGateway = true;
+      return gatewayUserId;
+    }
+
     let userId: string;
     try {
       const decoded = jwt.verify(token, config.jwtSecret) as { userId?: unknown };

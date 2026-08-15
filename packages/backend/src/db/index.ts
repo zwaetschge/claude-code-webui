@@ -1509,6 +1509,22 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_delegations_to ON session_delegations(to_session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_delegations_correlation ON session_delegations(correlation_id);
 
+    -- Long-lived credentials for an external supervisor (Hermes, an OpenCode
+    -- or Codex CLI, a script) that drives this instance through the same API
+    -- the user drives. Only the hash is stored; the secret is shown once.
+    CREATE TABLE IF NOT EXISTS gateway_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      last_used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_gateway_tokens_user ON gateway_tokens(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_gateway_tokens_hash ON gateway_tokens(token_hash) WHERE revoked = 0;
+
     CREATE TABLE IF NOT EXISTS container_watchdogs (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

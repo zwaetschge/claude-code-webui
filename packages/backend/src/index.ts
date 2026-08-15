@@ -66,6 +66,7 @@ import cliLoginRoutes from './routes/cli-login.js';
 import codexRoutes from './routes/codex.js';
 import opencodeRoutes from './routes/opencode.js';
 import setupRoutes from './routes/setup.js';
+import gatewayRoutes from './routes/gateway.js';
 import memoriesRoutes from './routes/memories.js';
 import taskRoutes from './routes/tasks.js';
 import devicesRoutes from './routes/devices.js';
@@ -377,6 +378,7 @@ async function main() {
   app.use('/api/cli-providers', cliProvidersRoutes);
   app.use('/api/cli-login', cliLoginRoutes);
   app.use('/api/setup', setupRoutes);
+  app.use('/api/gateway', gatewayRoutes);
   app.use('/api/codex', codexRoutes);
   app.use('/api/opencode', opencodeRoutes);
   app.use('/api/memories', memoriesRoutes);

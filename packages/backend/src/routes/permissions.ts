@@ -9,7 +9,10 @@ import { config } from '../config.js';
 import { opencodeServer } from '../services/opencode/OpencodeServer.js';
 import { auditFromRequest, recordAudit } from '../utils/auditLog.js';
 import { getProcessManager } from '../websocket/index.js';
-import { notify, resolveApprovalNotification } from '../services/notifications/notificationCenter.js';
+import {
+  notify,
+  resolveApprovalNotification,
+} from '../services/notifications/notificationCenter.js';
 
 const router = Router();
 
@@ -38,6 +41,23 @@ export function permissionIdentityMatches(
 // In-memory storage for pending permission requests
 // Key: requestId, Value: PendingPermission
 const pendingRequests = new Map<string, PendingPermission>();
+
+/**
+ * Every approval this user is currently blocked on, across all sessions. The
+ * gateway needs the whole picture in one call — an external supervisor cannot
+ * poll per session without first knowing which sessions are waiting.
+ */
+export function listPendingPermissionsForUser(
+  userId: string
+): Array<Omit<PendingPermission, 'userId'>> {
+  const pending: Array<Omit<PendingPermission, 'userId'>> = [];
+  for (const request of pendingRequests.values()) {
+    if (request.userId !== userId || request.status !== 'pending') continue;
+    const { userId: _ignored, ...rest } = request;
+    pending.push(rest);
+  }
+  return pending.sort((a, b) => a.createdAt - b.createdAt);
+}
 
 // Cleanup old requests (older than 3 minutes)
 function cleanupOldRequests(): void {
