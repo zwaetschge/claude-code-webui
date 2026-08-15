@@ -14,7 +14,12 @@
  * declare the parameter map below, and surface it in routes/comfyui.ts.
  */
 
-export type WorkflowId = 'z-image-turbo' | 'flux2-klein-t2i' | 'flux2-klein-edit';
+export type WorkflowId =
+  | 'z-image-turbo'
+  | 'flux2-klein-t2i'
+  | 'flux2-klein-edit'
+  | 'krea2-t2i'
+  | 'f2k-edit';
 
 export const VALID_ASPECTS = [
   '1:1 (Perfect Square)',
@@ -101,9 +106,43 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowMeta> = {
     },
     requiresInputImage: false,
   },
+  'krea2-t2i': {
+    id: 'krea2-t2i',
+    title: 'Krea2 Turbo (default T2I)',
+    description:
+      'Text-to-image via Krea2 Turbo FP8 + qwen3vl_4b CLIP. 8 steps, euler/simple. ' +
+      'Prompt refinement and LoRA trigger slots ship disabled — the prompt is used verbatim.',
+    kind: 't2i',
+    defaults: {
+      steps: 8,
+      cfg: 1,
+      megapixel: '1.0',
+      aspect_ratio: '1:1 (Perfect Square)',
+      sampler_name: 'euler',
+      scheduler: 'simple',
+    },
+    requiresInputImage: false,
+  },
+  'f2k-edit': {
+    id: 'f2k-edit',
+    title: 'Flux.2 Klein (image edit, current)',
+    description:
+      'Image edit via Flux.2 Klein 9B + Turbo LoRA and dual ReferenceLatent. ' +
+      'Pass an `input_image` already uploaded to ComfyUI.',
+    kind: 'edit',
+    defaults: {
+      steps: 8,
+      cfg: 1,
+      megapixel: '2.0',
+      aspect_ratio: '1:1 (Perfect Square)',
+      sampler_name: 'euler',
+      scheduler: 'simple',
+    },
+    requiresInputImage: true,
+  },
   'flux2-klein-edit': {
     id: 'flux2-klein-edit',
-    title: 'Flux.2 Klein 9B (image edit)',
+    title: 'Flux.2 Klein 9B (image edit, TeaCache variant)',
     description:
       'Image-to-image edit via Flux.2 Klein + ReferenceLatent. Pass an `input_image` already uploaded to ComfyUI.',
     kind: 'edit',
@@ -436,10 +475,504 @@ const FLUX2_KLEIN_EDIT_TEMPLATE: Workflow = {
   },
 };
 
+// ── Krea2 / F2K templates ────────────────────────────────────────────────
+// Transcribed verbatim from the ComfyUI API exports the Krea2/F2K client
+// ships, so a workflow update here is a file copy rather than a rewrite.
+
+const KREA2_T2I_TEMPLATE: Workflow = {
+  '29': {
+    inputs: {
+      filename_prefix: 'Krea2-FP8-LoRA',
+      images: ['30:8', 0]
+    },
+    class_type: 'SaveImage',
+    _meta: {
+      title: 'Save Image'
+    }
+  },
+  '49': {
+    inputs: {
+      aspect_ratio: '16:9 (Widescreen)',
+      megapixels: 1,
+      multiple: 8
+    },
+    class_type: 'ResolutionSelector',
+    _meta: {
+      title: 'Resolution Selector'
+    }
+  },
+  '30:3': {
+    inputs: {
+      seed: 735915477938686,
+      steps: 8,
+      cfg: 1,
+      sampler_name: 'euler',
+      scheduler: 'simple',
+      denoise: 1,
+      model: ['30:10', 0],
+      positive: ['30:6', 0],
+      negative: ['30:13', 0],
+      latent_image: ['30:5', 0]
+    },
+    class_type: 'KSampler',
+    _meta: {
+      title: 'KSampler'
+    }
+  },
+  '30:5': {
+    inputs: {
+      width: ['49', 0],
+      height: ['49', 1],
+      batch_size: 1
+    },
+    class_type: 'EmptyLatentImage',
+    _meta: {
+      title: 'Empty Latent Image'
+    }
+  },
+  '30:6': {
+    inputs: {
+      text: ['30:65', 0],
+      clip: ['30:11', 0]
+    },
+    class_type: 'CLIPTextEncode',
+    _meta: {
+      title: 'CLIP Text Encode (Prompt)'
+    }
+  },
+  '30:8': {
+    inputs: {
+      samples: ['30:3', 0],
+      vae: ['30:12', 0]
+    },
+    class_type: 'VAEDecode',
+    _meta: {
+      title: 'VAE Decode'
+    }
+  },
+  '30:10': {
+    inputs: {
+      unet_name: 'krea2_turbo_fp8_scaled.safetensors',
+      weight_dtype: 'default'
+    },
+    class_type: 'UNETLoader',
+    _meta: {
+      title: 'Load Diffusion Model'
+    }
+  },
+  '30:11': {
+    inputs: {
+      clip_name: 'qwen3vl_4b_fp8_scaled.safetensors',
+      type: 'krea2',
+      device: 'default'
+    },
+    class_type: 'CLIPLoader',
+    _meta: {
+      title: 'Load CLIP'
+    }
+  },
+  '30:12': {
+    inputs: {
+      vae_name: 'qwen_image_vae.safetensors'
+    },
+    class_type: 'VAELoader',
+    _meta: {
+      title: 'Load VAE'
+    }
+  },
+  '30:13': {
+    inputs: {
+      conditioning: ['30:6', 0]
+    },
+    class_type: 'ConditioningZeroOut',
+    _meta: {
+      title: 'ConditioningZeroOut'
+    }
+  },
+  '30:16': {
+    inputs: {
+      prompt: ['30:17', 0],
+      max_length: 512,
+      sampling_mode: 'on',
+      'sampling_mode.temperature': 0.7,
+      'sampling_mode.top_k': 64,
+      'sampling_mode.top_p': 0.95,
+      'sampling_mode.min_p': 0.05,
+      'sampling_mode.repetition_penalty': 1.05,
+      'sampling_mode.seed': 0,
+      'sampling_mode.presence_penalty': 0,
+      thinking: false,
+      use_default_template: true,
+      clip: ['30:11', 0]
+    },
+    class_type: 'TextGenerate',
+    _meta: {
+      title: 'Generate Text'
+    }
+  },
+  '30:17': {
+    inputs: {
+      string_a: ['30:18', 0],
+      string_b: ['30:19', 0],
+      delimiter: ''
+    },
+    class_type: 'StringConcatenate',
+    _meta: {
+      title: 'Concatenate Text'
+    }
+  },
+  '30:18': {
+    inputs: {
+      value: 'You are an expert prompt engineer for text-to-image models. Your task is to expand the user\'s prompt into a highly effective image-generation prompt.\n\nThink step by step about the request before writing the answer:\n- What is the subject and mood?\n- What visual styles, mediums, and lighting options would fit? Consider two or three alternatives and pick the one that best serves the caption.\n- What composition, framing, and grounded details will help the text-to-image model?\n\nThen output a single expanded prompt paragraph.\n\nFollow these rules strictly:\n1. **Faithfulness First:** Preserve all original subjects, actions, colors, and spatial relationships. Do not add new objects, props, characters, or animals unless the user clearly implies them.\n2. **Practical T2I Structure:** Write a prompt that a text-to-image model can parse cleanly. Group subjects with their own attributes and actions. Use grounded phrasing for poses, interactions, and spatial layout.\n3. **Style Planning Stays Internal:** Use your internal reasoning to choose style, medium, framing, and lighting. Do not emit planning tags or wrappers in the visible answer body.\n4. **Text Rendering:** If the user requests visible text, quotes, labels, or typography, specify the exact text clearly and wrap requested words in quotes.\n5. **Avoid Over-Specification:** Do not invent highly specific clothing, colors, materials, or scene details unless the input supports them.\n6. **Structure:** Write one cohesive paragraph after the thinking block. No bullets, JSON, or markdown.\n7. **Respect Existing Detail:** If the user\'s prompt is already detailed, lightly polish and finalize rather than heavily expanding — preserve their phrasing and direction.\n8. **Respect the Human Form:** Treat depictions of people with dignity. Assume clothing covers genitals and intimate anatomy.\n9. **Preserve User Medium:** When the user explicitly requests a medium (e.g. "photo of", "photograph of", "illustration of", "painting of", "sketch of", "3D render of"), honor it. Do not pivot to a different medium to avoid difficulty — match the user\'s stated intent.\n\nUser\'s Input:\n\n'
+    },
+    class_type: 'PrimitiveStringMultiline',
+    _meta: {
+      title: 'Text String (System Prompt)'
+    }
+  },
+  '30:19': {
+    inputs: {
+      value: 'A cinematic 16:9 editorial photograph of a rain-soaked neon street at night, a lone figure in a dark coat standing beneath a glowing sign, wet asphalt reflections, monochrome ink wash style, dramatic contrast, crisp subject detail, atmospheric depth.'
+    },
+    class_type: 'PrimitiveStringMultiline',
+    _meta: {
+      title: 'Text String (User Prompt)'
+    }
+  },
+  '30:20': {
+    inputs: {
+      source: ['30:21', 0]
+    },
+    class_type: 'PreviewAny',
+    _meta: {
+      title: 'Preview as Text'
+    }
+  },
+  '30:21': {
+    inputs: {
+      switch: ['30:24', 0],
+      on_false: ['30:19', 0],
+      on_true: ['30:16', 0]
+    },
+    class_type: 'ComfySwitchNode',
+    _meta: {
+      title: 'Switch'
+    }
+  },
+  '30:23': {
+    inputs: {
+      value: true
+    },
+    class_type: 'PrimitiveBoolean',
+    _meta: {
+      title: 'Boolean (Enable LoRA?)'
+    }
+  },
+  '30:24': {
+    inputs: {
+      value: false
+    },
+    class_type: 'PrimitiveBoolean',
+    _meta: {
+      title: 'Boolean (Refine Prompt?)'
+    }
+  },
+  '30:27': {
+    inputs: {
+      string_a: ['30:20', 0],
+      string_b: 'monochrome ink wash style',
+      delimiter: ', '
+    },
+    class_type: 'StringConcatenate',
+    _meta: {
+      title: 'Concatenate Text (LoRA Trigger Word)'
+    }
+  },
+  '30:28': {
+    inputs: {
+      switch: ['30:23', 0],
+      on_false: ['30:20', 0],
+      on_true: ['30:27', 0]
+    },
+    class_type: 'ComfySwitchNode',
+    _meta: {
+      title: 'Switch'
+    }
+  },
+  '30:53': {
+    inputs: {
+      value: false
+    },
+    class_type: 'PrimitiveBoolean',
+    _meta: {
+      title: 'Boolean (Enable LoRA? Slot 2)'
+    }
+  },
+  '30:54': {
+    inputs: {
+      string_a: ['30:28', 0],
+      string_b: 'monochrome stippling style',
+      delimiter: ', '
+    },
+    class_type: 'StringConcatenate',
+    _meta: {
+      title: 'Concatenate Text (LoRA Trigger Word 2)'
+    }
+  },
+  '30:55': {
+    inputs: {
+      switch: ['30:53', 0],
+      on_false: ['30:28', 0],
+      on_true: ['30:54', 0]
+    },
+    class_type: 'ComfySwitchNode',
+    _meta: {
+      title: 'Switch (LoRA Trigger 2)'
+    }
+  },
+  '30:58': {
+    inputs: {
+      value: false
+    },
+    class_type: 'PrimitiveBoolean',
+    _meta: {
+      title: 'Boolean (Enable LoRA? Slot 3)'
+    }
+  },
+  '30:59': {
+    inputs: {
+      string_a: ['30:55', 0],
+      string_b: 'textured abstract style',
+      delimiter: ', '
+    },
+    class_type: 'StringConcatenate',
+    _meta: {
+      title: 'Concatenate Text (LoRA Trigger Word 3)'
+    }
+  },
+  '30:60': {
+    inputs: {
+      switch: ['30:58', 0],
+      on_false: ['30:55', 0],
+      on_true: ['30:59', 0]
+    },
+    class_type: 'ComfySwitchNode',
+    _meta: {
+      title: 'Switch (LoRA Trigger 3)'
+    }
+  },
+  '30:63': {
+    inputs: {
+      value: false
+    },
+    class_type: 'PrimitiveBoolean',
+    _meta: {
+      title: 'Boolean (Enable LoRA? Slot 4)'
+    }
+  },
+  '30:64': {
+    inputs: {
+      string_a: ['30:60', 0],
+      string_b: 'purple retro anime style',
+      delimiter: ', '
+    },
+    class_type: 'StringConcatenate',
+    _meta: {
+      title: 'Concatenate Text (LoRA Trigger Word 4)'
+    }
+  },
+  '30:65': {
+    inputs: {
+      switch: ['30:63', 0],
+      on_false: ['30:60', 0],
+      on_true: ['30:64', 0]
+    },
+    class_type: 'ComfySwitchNode',
+    _meta: {
+      title: 'Switch (LoRA Trigger 4)'
+    }
+  }
+};
+
+const F2K_EDIT_TEMPLATE: Workflow = {
+  '1': {
+    inputs: {
+      vae_name: 'flux2-vae.safetensors'
+    },
+    class_type: 'VAELoader',
+    _meta: {
+      title: 'Load VAE'
+    }
+  },
+  '2': {
+    inputs: {
+      text: 'a woman assumes the identical pose from the reference image — matching the original figure\'s body position, posture, weight distribution, limb angles, hand placement, and gaze direction with precision. She wears the exact same outfit from the reference image, every garment, accessory, fabric texture, fold, drape, and fit reproduced identically on her frame. The lighting, environment, and atmosphere match the original scene. Shot on 35mm film with shallow depth of field.',
+      clip: ['4', 0]
+    },
+    class_type: 'CLIPTextEncode',
+    _meta: {
+      title: 'CLIP Text Encode (Positive Prompt)'
+    }
+  },
+  '3': {
+    inputs: {
+      text: '',
+      clip: ['4', 0]
+    },
+    class_type: 'CLIPTextEncode',
+    _meta: {
+      title: 'CLIP Text Encode (Negative - unused at CFG 1)'
+    }
+  },
+  '4': {
+    inputs: {
+      clip_name: 'qwen_3_8b_fp8mixed.safetensors',
+      type: 'flux2',
+      device: 'default'
+    },
+    class_type: 'CLIPLoader',
+    _meta: {
+      title: 'Load CLIP'
+    }
+  },
+  '5': {
+    inputs: {
+      upscale_method: 'lanczos',
+      megapixels: 2,
+      resolution_steps: 1,
+      image: ['10', 0]
+    },
+    class_type: 'ImageScaleToTotalPixels',
+    _meta: {
+      title: 'Scale Image to Total Pixels'
+    }
+  },
+  '7': {
+    inputs: {
+      seed: 310778855344884,
+      steps: 8,
+      cfg: 1,
+      sampler_name: 'euler',
+      scheduler: 'simple',
+      denoise: 1,
+      model: ['15', 0],
+      positive: ['9:77', 0],
+      negative: ['9:76', 0],
+      latent_image: ['8', 0]
+    },
+    class_type: 'KSampler',
+    _meta: {
+      title: 'KSampler'
+    }
+  },
+  '8': {
+    inputs: {
+      width: ['16', 0],
+      height: ['16', 1],
+      batch_size: 1
+    },
+    class_type: 'EmptyFlux2LatentImage',
+    _meta: {
+      title: 'Empty Flux 2 Latent'
+    }
+  },
+  '10': {
+    inputs: {
+      image: '(m=qOL97SYbeaSaaTbaAaaaa)(mh=5YVGCSKGMfRnI6z1)0.jpg'
+    },
+    class_type: 'LoadImage',
+    _meta: {
+      title: 'Load Image'
+    }
+  },
+  '11': {
+    inputs: {
+      filename_prefix: 'ComfyUI',
+      images: ['79', 0]
+    },
+    class_type: 'SaveImage',
+    _meta: {
+      title: 'Save Image'
+    }
+  },
+  '12': {
+    inputs: {
+      unet_name: 'flux-2-klein-base-9b.safetensors',
+      weight_dtype: 'default'
+    },
+    class_type: 'UNETLoader',
+    _meta: {
+      title: 'Load Diffusion Model'
+    }
+  },
+  '15': {
+    inputs: {
+      lora_name: 'f2k/9b/concept/klein_9B_Turbo_r128.safetensors',
+      strength_model: 1,
+      model: ['12', 0]
+    },
+    class_type: 'LoraLoaderModelOnly',
+    _meta: {
+      title: 'Turbo LoRA (fest)'
+    }
+  },
+  '16': {
+    inputs: {
+      image: ['5', 0]
+    },
+    class_type: 'GetImageSize',
+    _meta: {
+      title: 'Get Image Size'
+    }
+  },
+  '79': {
+    inputs: {
+      samples: ['7', 0],
+      vae: ['1', 0]
+    },
+    class_type: 'VAEDecode',
+    _meta: {
+      title: 'VAE Decode'
+    }
+  },
+  '9:78': {
+    inputs: {
+      pixels: ['5', 0],
+      vae: ['1', 0]
+    },
+    class_type: 'VAEEncode',
+    _meta: {
+      title: 'VAE Encode'
+    }
+  },
+  '9:77': {
+    inputs: {
+      conditioning: ['2', 0],
+      latent: ['9:78', 0]
+    },
+    class_type: 'ReferenceLatent',
+    _meta: {
+      title: 'ReferenceLatent'
+    }
+  },
+  '9:76': {
+    inputs: {
+      conditioning: ['3', 0],
+      latent: ['9:78', 0]
+    },
+    class_type: 'ReferenceLatent',
+    _meta: {
+      title: 'ReferenceLatent'
+    }
+  }
+};
+
 const TEMPLATES: Record<WorkflowId, Workflow> = {
   'z-image-turbo': Z_IMAGE_TURBO_TEMPLATE,
   'flux2-klein-t2i': FLUX2_KLEIN_T2I_TEMPLATE,
   'flux2-klein-edit': FLUX2_KLEIN_EDIT_TEMPLATE,
+  'krea2-t2i': KREA2_T2I_TEMPLATE,
+  'f2k-edit': F2K_EDIT_TEMPLATE,
 };
 
 // Per-workflow map: which node holds which parameter. Each entry is
@@ -480,6 +1013,39 @@ const PARAM_MAP: Record<
     teacache_threshold: ['105', 'rel_l1_thresh'],
     filename_prefix: ['95', 'filename_prefix'],
   },
+  'krea2-t2i': {
+    // The prompt node feeds a switch chain (refiner, then LoRA trigger words)
+    // before it reaches CLIPTextEncode, so the raw string belongs in 30:19.
+    prompt: ['30:19', 'value'],
+    seed: ['30:3', 'seed'],
+    steps: ['30:3', 'steps'],
+    cfg: ['30:3', 'cfg'],
+    sampler_name: ['30:3', 'sampler_name'],
+    scheduler: ['30:3', 'scheduler'],
+    megapixel: ['49', 'megapixels'],
+    aspect_ratio: ['49', 'aspect_ratio'],
+    unet: ['30:10', 'unet_name'],
+    clip: ['30:11', 'clip_name'],
+    vae: ['30:12', 'vae_name'],
+    filename_prefix: ['29', 'filename_prefix'],
+  },
+  'f2k-edit': {
+    prompt: ['2', 'text'],
+    negative_prompt: ['3', 'text'],
+    seed: ['7', 'seed'],
+    steps: ['7', 'steps'],
+    cfg: ['7', 'cfg'],
+    sampler_name: ['7', 'sampler_name'],
+    scheduler: ['7', 'scheduler'],
+    megapixel: ['5', 'megapixels'],
+    unet: ['12', 'unet_name'],
+    clip: ['4', 'clip_name'],
+    vae: ['1', 'vae_name'],
+    lora_name: ['15', 'lora_name'],
+    lora_strength: ['15', 'strength_model'],
+    input_image: ['10', 'image'],
+    filename_prefix: ['11', 'filename_prefix'],
+  },
   'flux2-klein-edit': {
     prompt: ['2', 'text'],
     negative_prompt: ['3', 'text'],
@@ -499,6 +1065,35 @@ const PARAM_MAP: Record<
     filename_prefix: ['11', 'filename_prefix'],
   },
 };
+
+/**
+ * `ResolutionSelector` (Krea2) and `FluxResolutionNode` label the same ratios
+ * differently — "1:1 (Square)" versus "1:1 (Perfect Square)". A label the combo
+ * does not know is not rejected by ComfyUI: the prompt is accepted, the image
+ * branch silently never runs, and the job reports success with no image. The
+ * public vocabulary stays the Flux one; this translates on the way in.
+ */
+const RESOLUTION_SELECTOR_ASPECTS: Record<AspectRatio, string> = {
+  '1:1 (Perfect Square)': '1:1 (Square)',
+  '2:3 (Classic Portrait)': '2:3 (Portrait Photo)',
+  '3:2 (Golden Landscape)': '3:2 (Photo)',
+  '3:4 (Golden Ratio)': '3:4 (Portrait Standard)',
+  '4:3 (Classic Landscape)': '4:3 (Standard)',
+  // No 4:5 or 5:4 in the selector — the nearest portrait/landscape wins.
+  '4:5 (Artistic Frame)': '3:4 (Portrait Standard)',
+  '5:4 (Balanced Frame)': '4:3 (Standard)',
+  '9:16 (Slim Vertical)': '9:16 (Portrait Widescreen)',
+  '16:9 (Panorama)': '16:9 (Widescreen)',
+  '9:21 (Ultra Tall)': '9:16 (Portrait Widescreen)',
+  '21:9 (Epic Ultrawide)': '21:9 (Ultrawide)',
+};
+
+function translateValue(id: WorkflowId, field: string, value: unknown): unknown {
+  if (id === 'krea2-t2i' && field === 'aspect_ratio' && typeof value === 'string') {
+    return RESOLUTION_SELECTOR_ASPECTS[value as AspectRatio] ?? value;
+  }
+  return value;
+}
 
 function setField(workflow: Workflow, nodeId: string, field: string, value: unknown): void {
   const node = workflow[nodeId];
@@ -588,7 +1183,7 @@ export function buildWorkflow(id: WorkflowId, params: WorkflowParams): Workflow 
     const value = fullParams[paramKey as keyof WorkflowParams];
     if (value === undefined || value === null) continue;
     const [nodeId, field] = mapping;
-    setField(workflow, nodeId, field, value);
+    setField(workflow, nodeId, field, translateValue(id, field, value));
   }
 
   return workflow;

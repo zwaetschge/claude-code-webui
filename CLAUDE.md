@@ -190,9 +190,13 @@ The WebUI connects directly to ComfyUI; there is no LoRA Tester sidecar.
 - Backend: `packages/backend/src/services/comfyui/`; routes: `packages/backend/src/routes/comfyui.ts`.
 - REST: `GET /api/comfyui/workflows`, `GET/PUT /api/comfyui/settings`, `GET /api/comfyui/test`, `POST /api/comfyui/upload-image`, `POST /api/comfyui/generate`, `GET /api/comfyui/generation/:id`, and `POST /api/comfyui/internal/generate`.
 - Workflows:
+  - `krea2-t2i` (**default T2I**): Krea2 Turbo FP8, qwen3vl_4b CLIP, 8 steps, `euler`/`simple`. Prompt refinement and LoRA trigger slots ship disabled, so the prompt is used verbatim.
+  - `f2k-edit` (**default edit**): Flux.2 Klein 9B, Turbo LoRA, dual `ReferenceLatent`; requires uploaded `input_image`
   - `z-image-turbo`: Z-Image Turbo, qwen3_4b CLIP, about 5 seconds, 9 steps, `dpmpp_2m_sde`
   - `flux2-klein-t2i`: Flux.2 Klein 9B, Turbo LoRA, TeaCache, 8 steps, `euler`, `SamplerCustomAdvanced`
-  - `flux2-klein-edit`: Flux.2 Klein with `ReferenceLatent`; requires uploaded `input_image`
+  - `flux2-klein-edit`: older edit variant with TeaCache and tiled VAE decode; kept for existing callers
+
+`krea2-t2i` uses `ResolutionSelector`, which labels aspect ratios differently from the Flux node (`1:1 (Square)` versus `1:1 (Perfect Square)`). `workflows.ts` translates on the way in — an unknown combo value is **not** rejected by ComfyUI: the prompt is accepted, the image branch never runs, and the job reports success with no image.
 - URL resolution: `app_config.comfyui_url` → `$COMFYUI_URL` → `http://192.168.1.23:8188`; settings are re-read for every job.
 - `scripts/mcp-servers/comfyui.mjs` exposes `generate_image`, `generate_image_quality`, and `edit_image`, calling `POST /api/comfyui/internal/generate` with inherited `WEBUI_HOOK_SECRET`.
 - `/generated/*.png` is served behind Passport session authentication.

@@ -140,9 +140,9 @@ const TOOLS = [
 ];
 
 const WORKFLOW_BY_TOOL = {
-  generate_image: 'z-image-turbo',
+  generate_image: 'krea2-t2i',
   generate_image_quality: 'flux2-klein-t2i',
-  edit_image: 'flux2-klein-edit',
+  edit_image: 'f2k-edit',
 };
 
 function getSessionId() {
