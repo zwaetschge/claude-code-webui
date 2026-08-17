@@ -55,7 +55,12 @@ LABEL org.opencontainers.image.vendor="Plum Code WebUI"
 # (codex's Rust binary, opencode's Go binary) run on Alpine's musl libc —
 # without these, the npm postinstall hits SIGILL when verifying the binary.
 # blender-headless powers the built-in Blender MCP for background asset generation.
-RUN apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick gcompat libstdc++ libgcc python3 py3-pip pipx ripgrep py3-httpx jq coreutils tzdata chromium chromium-chromedriver nss freetype harfbuzz font-noto font-noto-cjk ttf-freefont xvfb blender-headless
+# `apk upgrade` first: the base image freezes its package set at its own build
+# date, so imagemagick, libssh, openexr and python3 shipped with published CVE
+# fixes already available in the repository. The image scan gates the pipeline
+# on exactly those.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache git bash docker-cli docker-cli-compose curl openssh-client unzip imagemagick gcompat libstdc++ libgcc python3 py3-pip pipx ripgrep py3-httpx jq coreutils tzdata chromium chromium-chromedriver nss freetype harfbuzz font-noto font-noto-cjk ttf-freefont xvfb blender-headless
 
 # User-writable npm prefix: the `node` user must be able to upgrade the AI CLIs
 # at runtime (see services/cli-updates.ts). Mounted volume overlays this path.
@@ -85,7 +90,11 @@ ARG PI_CODING_AGENT_VERSION=0.83.0
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
 ARG KIMI_CODE_VERSION=0.31.1
 ARG NPM_VERSION=12.0.2
-ARG NPM_BRACE_EXPANSION_VERSION=5.0.8
+ARG NPM_BRACE_EXPANSION_VERSION=5.0.9
+# Vendored inside npm itself and inside the Pi CLI; neither is reachable
+# through our lockfile, so they are replaced in place like brace-expansion.
+ARG NPM_IP_ADDRESS_VERSION=10.5.0
+ARG PI_UNDICI_VERSION=8.10.0
 RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     npm install -g --prefix /opt/plum-cli \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
@@ -124,6 +133,30 @@ RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     node -p \
       "require('/opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion/package.json').version" \
       | grep -Fx "${NPM_BRACE_EXPANSION_VERSION}" && \
+    /usr/local/bin/npm pack ip-address@${NPM_IP_ADDRESS_VERSION} \
+      --pack-destination /tmp --silent >/dev/null && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/ip-address && \
+    mkdir -p /usr/local/lib/node_modules/npm/node_modules/ip-address && \
+    tar -xzf /tmp/ip-address-${NPM_IP_ADDRESS_VERSION}.tgz \
+      -C /usr/local/lib/node_modules/npm/node_modules/ip-address \
+      --strip-components=1 && \
+    rm -f /tmp/ip-address-${NPM_IP_ADDRESS_VERSION}.tgz && \
+    node -p \
+      "require('/usr/local/lib/node_modules/npm/node_modules/ip-address/package.json').version" \
+      | grep -Fx "${NPM_IP_ADDRESS_VERSION}" && \
+    /usr/local/bin/npm pack undici@${PI_UNDICI_VERSION} \
+      --pack-destination /tmp --silent >/dev/null && \
+    rm -rf \
+      /opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici && \
+    mkdir -p \
+      /opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici && \
+    tar -xzf /tmp/undici-${PI_UNDICI_VERSION}.tgz \
+      -C /opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici \
+      --strip-components=1 && \
+    rm -f /tmp/undici-${PI_UNDICI_VERSION}.tgz && \
+    node -p \
+      "require('/opt/plum-cli/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/undici/package.json').version" \
+      | grep -Fx "${PI_UNDICI_VERSION}" && \
     /usr/local/bin/npm cache clean --force && rm -rf /root/.npm
 
 WORKDIR /app
