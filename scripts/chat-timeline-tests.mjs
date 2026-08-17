@@ -60,8 +60,8 @@ assert.match(
 );
 assert.match(
   messageBubble,
-  /assistantMediaFilenames[\s\S]*legacyAttachments[\s\S]*ChatMediaImage/,
-  'assistant media must render without duplicating legacy attachments'
+  /durableMediaFilenames[\s\S]*legacyAttachments[\s\S]*ChatMediaImage/,
+  'durable media must render without duplicating legacy attachments'
 );
 assert.match(
   messageBubble,
