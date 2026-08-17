@@ -2775,6 +2775,11 @@ interface ClaudeProcess {
   opencodeQueueDraining?: boolean;
   claudeIdle?: boolean;
   claudeQueuedTurns?: ClaudePreparedTurn[];
+  /** Settings reload parked until the running turn (and its queue) finishes. */
+  deferredRestart?: {
+    userId: string;
+    options: { preserveNativeContext?: boolean };
+  };
   /** Mode change parked until the running turn (and its queue) finishes. */
   claudeDeferredModeRestart?: {
     mode: SessionMode;
@@ -3438,9 +3443,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
         .prepare(
           'SELECT user_id as userId, name, working_directory as workingDirectory FROM sessions WHERE id = ?'
         )
-        .get(sessionId) as
-        | { userId: string; name: string; workingDirectory: string }
-        | undefined;
+        .get(sessionId) as { userId: string; name: string; workingDirectory: string } | undefined;
       if (!row) return;
 
       const { captureTurnDiff } = await import('../git/turnDiff.js');
@@ -3612,7 +3615,7 @@ Discord Main Gateway:
       message: string;
       summary?: string;
       clear?: boolean;
-      reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+      reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
       error?: string;
       createdAt?: string;
     }
@@ -3651,7 +3654,7 @@ Discord Main Gateway:
       message: string;
       summary?: string;
       clear?: boolean;
-      reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+      reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
       error?: string;
       createdAt: string;
     }
@@ -4057,10 +4060,7 @@ Discord Main Gateway:
   }
 
   /** Emit and replay-buffer a blocking permission request from the hook route. */
-  emitPermissionRequest(
-    sessionId: string,
-    data: PendingPermission | PermissionRequestData
-  ): void {
+  emitPermissionRequest(sessionId: string, data: PendingPermission | PermissionRequestData): void {
     this.emitBufferedEvent(sessionId, 'permission_request', data, (sequenced) => {
       this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
     });
@@ -6388,14 +6388,9 @@ Discord Main Gateway:
           description: `OpenCode requests ${permission}${patterns[0] ? `: ${patterns[0]}` : ''}`,
           suggestedPattern: patterns[0] || `${permission}:*`,
         };
-        this.emitBufferedEvent(
-          sessionId,
-          'permission_request',
-          permissionEvent,
-          (sequenced) => {
-            this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
-          }
-        );
+        this.emitBufferedEvent(sessionId, 'permission_request', permissionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
+        });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.permission_requested',
           severity: 'warning',
@@ -6440,14 +6435,9 @@ Discord Main Gateway:
           description: `OpenCode requests ${action}${resources[0] ? `: ${resources[0]}` : ''}`,
           suggestedPattern: resources[0] || `${action}:*`,
         };
-        this.emitBufferedEvent(
-          sessionId,
-          'permission_request',
-          permissionEvent,
-          (sequenced) => {
-            this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
-          }
-        );
+        this.emitBufferedEvent(sessionId, 'permission_request', permissionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
+        });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.permission_requested',
           severity: 'warning',
@@ -7697,14 +7687,9 @@ The planning phase is complete. You are now in Auto-Accept mode.
           denials: msg.permission_denials,
           originalMessage: proc.lastUserMessage || '',
         };
-        this.emitBufferedEvent(
-          sessionId,
-          'permission_request',
-          permissionEvent,
-          (sequenced) => {
-            this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
-          }
-        );
+        this.emitBufferedEvent(sessionId, 'permission_request', permissionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
+        });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.permission_requested',
           severity: 'warning',
@@ -7958,6 +7943,9 @@ The planning phase is complete. You are now in Auto-Accept mode.
         outputTokens: proc.turnOutputTokens,
         totalCostUsd: proc.totalCostUsd,
       });
+      // Provider-agnostic: a runtime-setting change parked while this turn ran
+      // gets applied now that the answer is in.
+      queueMicrotask(() => this.applyDeferredRestart(sessionId));
       if (msg.type === 'result' && isClaudeTransportProvider(proc.cliProvider)) {
         proc.claudeIdle = true;
         this.emitQueueState(sessionId, proc);
@@ -8196,6 +8184,24 @@ The planning phase is complete. You are now in Auto-Accept mode.
    * follow-ups win: restarting with turns still waiting would drop them, so the
    * restart waits until the queue has drained too.
    */
+  /**
+   * Run a settings reload that was parked because a turn was still running.
+   * Queued follow-ups win: restarting with turns still waiting would drop them,
+   * so this waits for the queue to drain as well.
+   */
+  private applyDeferredRestart(sessionId: string): void {
+    const proc = this.processes.get(sessionId);
+    const deferred = proc?.deferredRestart;
+    if (!proc || !deferred) return;
+    if (this.getSessionRuntimeSnapshot(sessionId).busy) return;
+
+    proc.deferredRestart = undefined;
+    console.log(`[SESSION] Applying deferred settings reload for ${sessionId}`);
+    void this.restartSession(sessionId, deferred.userId, deferred.options).catch((error) => {
+      console.error(`[SESSION] Deferred settings reload failed for ${sessionId}:`, error);
+    });
+  }
+
   private applyDeferredModeRestart(sessionId: string, proc: ClaudeProcess): void {
     const deferred = proc.claudeDeferredModeRestart;
     if (!deferred) return;
@@ -9832,6 +9838,27 @@ ${proc.contextReminder.summary}
     console.log(`[SESSION] Restarting session ${sessionId}`);
 
     const proc = this.processes.get(sessionId);
+
+    // A runtime-setting reload (model, reasoning, provider, service tier) must
+    // never kill a turn that is mid-flight: the answer is discarded with no
+    // trace, and the queued follow-ups below are cleared with it. Switching the
+    // model while a long answer was generating was exactly how a session ended
+    // up looking permanently stuck. An explicit restart still stops now — that
+    // is what the user asked for.
+    if (proc && options.preserveNativeContext && this.getSessionRuntimeSnapshot(sessionId).busy) {
+      proc.deferredRestart = { userId, options };
+      console.log(
+        `[SESSION] Turn in flight for ${sessionId}; reloading settings after it finishes`
+      );
+      this.emitCompact(sessionId, {
+        sessionId,
+        message: 'Setting saved. It takes effect after the current turn finishes.',
+        clear: false,
+        reason: 'settings-deferred',
+      });
+      return;
+    }
+
     const db = getDatabase();
     const sessionRow = db
       .prepare('SELECT cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
@@ -10063,9 +10090,7 @@ ${proc.contextReminder.summary}
     // its mode on every reconnect (two clients disagreeing is enough) can do
     // that on every attempt, leaving the session looking permanently mute.
     if (proc.claudeIdle === false) {
-      console.log(
-        `[MODE] Turn in flight for ${sessionId}; applying ${mode} after it completes`
-      );
+      console.log(`[MODE] Turn in flight for ${sessionId}; applying ${mode} after it completes`);
       proc.claudeDeferredModeRestart = { mode, userId, previousMode };
       return;
     }

@@ -516,7 +516,8 @@ class SocketService {
   private updateLastSequence(sessionId: string, sequence: number): void {
     if (this.fullResyncPendingSessions.has(sessionId)) return;
     if (!Number.isFinite(sequence) || sequence <= 0) return;
-    const current = this.lastSequenceBySession.get(sessionId) ?? this.getLastSequence(sessionId) ?? 0;
+    const current =
+      this.lastSequenceBySession.get(sessionId) ?? this.getLastSequence(sessionId) ?? 0;
     const next = advanceMessageCursor(current, sequence);
     if (next <= current) return;
     this.lastSequenceBySession.set(sessionId, next);
@@ -836,7 +837,7 @@ class SocketService {
             message: string;
             summary?: string;
             clear?: boolean;
-            reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+            reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
             error?: string;
             createdAt?: string;
           };
@@ -1241,9 +1242,9 @@ class SocketService {
         }
       }
 
-      throw (lastError instanceof Error
+      throw lastError instanceof Error
         ? lastError
-        : new Error(`${file.name} did not finish uploading.`));
+        : new Error(`${file.name} did not finish uploading.`);
     } catch (error) {
       const cancelled = isUploadAbort(error, signal);
       report(

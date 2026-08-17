@@ -1,8 +1,5 @@
 import type { Message, StreamingMessage } from './message.js';
-import type {
-  SessionPresenceSnapshot,
-  SessionSendAck,
-} from './chat-delivery.js';
+import type { SessionPresenceSnapshot, SessionSendAck } from './chat-delivery.js';
 import type { SessionStatus, SubagentRunStatus, UsageSnapshot } from './session.js';
 
 // Session permission mode
@@ -253,11 +250,7 @@ export interface ServerToClientEvents {
     eventSequence?: number;
   }) => void;
   'session:thinking': (data: { sessionId: string; isThinking: boolean; message?: string }) => void;
-  'session:todos': (data: {
-    sessionId: string;
-    todos: TodoItem[];
-    eventSequence?: number;
-  }) => void;
+  'session:todos': (data: { sessionId: string; todos: TodoItem[]; eventSequence?: number }) => void;
   'session:usage': (data: UsageData) => void;
   'session:image': (data: GeneratedImageData) => void;
   'session:reconnected': (data: {
@@ -282,16 +275,12 @@ export interface ServerToClientEvents {
     message: string;
     summary?: string;
     clear?: boolean;
-    reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+    reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
     error?: string;
     createdAt?: string;
     eventSequence?: number;
   }) => void;
-  'session:mode': (data: {
-    sessionId: string;
-    mode: SessionMode;
-    eventSequence?: number;
-  }) => void;
+  'session:mode': (data: { sessionId: string; mode: SessionMode; eventSequence?: number }) => void;
   'session:queue': (data: SessionQueueData) => void;
   'session:question_request': (data: PendingQuestion) => void;
   // Legacy permission request (simple denials flow)
