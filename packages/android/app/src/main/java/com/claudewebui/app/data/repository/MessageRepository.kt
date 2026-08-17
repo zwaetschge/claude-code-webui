@@ -1,5 +1,7 @@
 package com.claudewebui.app.data.repository
 
+import android.database.sqlite.SQLiteConstraintException
+
 import androidx.room.withTransaction
 import com.claudewebui.app.core.network.ApiClient
 import com.claudewebui.app.data.local.AppDatabase
@@ -133,11 +135,11 @@ class MessageRepository(
                     if (server.chatId != null && server.chatId != resolvedChatId) {
                         error("Read state belongs to another chat")
                     }
-                    readStateDao.upsert(server.toEntity(readStateDao.get(sessionId)))
+                    writeReadState(server.toEntity(readStateDao.get(sessionId)))
                 }
                 snapshot?.takeUnless { staleSnapshot }?.let {
                     val latest = readStateDao.get(sessionId) ?: current
-                    readStateDao.upsert(
+                    writeReadState(
                         latest.copy(
                             chatId = it.chatId,
                             highWatermark = maxOf(latest.highWatermark, it.highWatermark),
@@ -275,9 +277,28 @@ class MessageRepository(
 
     // ---- Read position -----------------------------------------------------
 
+    /**
+     * Read state hangs off a cached session row by foreign key. A chat can be
+     * opened before that row exists — a notification deep link into a session
+     * the list has not synced yet, or the design preview — and the insert then
+     * fails the constraint and takes the whole app down. Bookkeeping is not
+     * worth a crash: skip the write and let the next sync store it.
+     */
+    private suspend fun writeReadState(state: SessionReadStateEntity) {
+        try {
+            readStateDao.upsert(state)
+        } catch (error: SQLiteConstraintException) {
+            android.util.Log.w(
+                "MessageRepository",
+                "read state for ${state.sessionId} skipped: session not cached yet",
+                error,
+            )
+        }
+    }
+
     suspend fun cachedReadState(sessionId: String): SessionReadStateEntity? = readStateDao.get(sessionId)
 
-    suspend fun saveReadState(state: SessionReadStateEntity) = readStateDao.upsert(state)
+    suspend fun saveReadState(state: SessionReadStateEntity) = writeReadState(state)
 
     suspend fun syncReadState(sessionId: String): Result<SessionReadStateEntity> = runCatching {
         val response = api.getSessionReadState(sessionId)
@@ -285,7 +306,7 @@ class MessageRepository(
             error(response.error?.message ?: "Failed to load read position")
         }
         val value = response.data.toEntity(readStateDao.get(sessionId))
-        readStateDao.upsert(value)
+        writeReadState(value)
         value
     }
 
@@ -299,7 +320,7 @@ class MessageRepository(
             error(response.error?.message ?: "Failed to save read position")
         }
         val value = response.data.toEntity(readStateDao.get(sessionId))
-        readStateDao.upsert(value)
+        writeReadState(value)
         value
     }
 }
