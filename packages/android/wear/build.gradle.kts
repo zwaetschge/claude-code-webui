@@ -18,6 +18,22 @@ android {
         versionName = "1.2.0"
     }
 
+    // Docker bind-mounts the ADB identity into ~/.android, which makes Docker
+    // create that directory as root — Gradle then cannot write the default
+    // debug keystore and signing fails. Use a project-local keystore when one
+    // is present; elsewhere the default path keeps working untouched.
+    signingConfigs {
+        val projectDebugKeystore = rootProject.file(".android/debug.keystore")
+        if (projectDebugKeystore.exists()) {
+            getByName("debug") {
+                storeFile = projectDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

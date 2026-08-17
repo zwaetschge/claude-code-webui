@@ -31,6 +31,18 @@ android {
             keyAlias = System.getenv("KEY_ALIAS")
             keyPassword = System.getenv("KEY_PASS")
         }
+
+        // See wear/build.gradle.kts: a container that mounts the ADB identity
+        // into ~/.android leaves that directory unwritable for Gradle.
+        val projectDebugKeystore = rootProject.file(".android/debug.keystore")
+        if (projectDebugKeystore.exists()) {
+            getByName("debug") {
+                storeFile = projectDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     defaultConfig {

@@ -1,6 +1,6 @@
 # Plum Code WebUI
 
-Self-hosted web interface for Codex, OpenCode, Pi, and Claude Code harnesses. Plum Code WebUI gives each harness the same browser workspace: streaming chat, tool approvals, file and git panes, provider analytics, shared agents/skills/plugins, preview tooling, and built-in MCP servers inside one Docker deployment.
+Self-hosted web interface for Codex, OpenCode, Pi, and Claude Code harnesses. Plum Code WebUI gives each harness the same browser workspace: streaming chat, tool approvals, file and git panes, provider analytics, shared agents/skills/plugins, preview tooling, and built-in MCP servers inside one Docker deployment. A native **Android client** ships alongside it in `packages/android`.
 
 > **Default provider: Codex.** Anthropic is restricting `claude -p` / introducing a credit system, so Codex is now the primary CLI. Claude stays available as a legacy option.
 
@@ -32,6 +32,15 @@ _Analytics - unified token volume, API-equivalent spend, cache efficiency, provi
 <img src="docs/screenshots/plum-mobile-chat.png" alt="Mobile chat view" width="320" />
 
 _Responsive chat with the same provider-aware UI on phone-sized viewports._
+
+## Android client
+
+A native client ships in `packages/android` — Kotlin and Jetpack Compose, talking to the same
+backend as the browser. It is a full client, not a web view.
+
+![Android chat](docs/screenshots/android/04-chat-tablet.png)
+_Streaming chat with tool cards, provider badge, and the Files/Git/Checks/Stats tabs — here on a
+tablet in the two-pane workspace._
 
 ## Features
 
@@ -146,7 +155,7 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 - Bottom tab navigation
 - Swipe gestures for panel navigation
 - Responsive design
-- Native Android client (`packages/android`)
+- Native Android client — see [Android client](#android-client-1)
 
 ### Settings
 
@@ -158,6 +167,30 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 - ComfyUI URL testing and persistence
 - Home Assistant connection testing, encrypted token storage, and per-session light assignment
 - Memory viewer for session context
+
+## Android client
+
+`packages/android` is a native Kotlin/Jetpack Compose app for the same server — sessions, streaming
+chat, approvals and analytics on a phone or tablet.
+
+- **Sessions** — list, search, categories, archive, bulk actions, and a jump-back row for the last
+  five you touched (also available as launcher long-press shortcuts)
+- **Chat** — streaming output, tool cards, permission approvals, turn diffs, voice input, quoting,
+  and an outbox that queues messages while offline
+- **Tablet layout** — two panes at expanded window sizes: session list beside the chat, with a
+  navigation rail for Activity, Analytics and Library
+- **Notifications** — a durable feed with inline approve/deny, plus push and home-screen widgets
+- **Analytics** — token volume, spend against your alert threshold, and per-provider limits
+
+### Build it
+
+```bash
+cd packages/android
+./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install the APK, enter your Plum Code URL on first launch, and sign in with the same account you use
+in the browser.
 
 ## Tech Stack
 
