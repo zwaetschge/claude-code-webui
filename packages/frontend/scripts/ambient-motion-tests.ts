@@ -77,7 +77,14 @@ assert.doesNotMatch(
   'the animated login background must not sit behind another full-screen live blur'
 );
 
-const geckoGuard = css.slice(css.indexOf('html.plum-engine-gecko'));
+// Only the rules that actually target Gecko. Slicing to end-of-file used to be
+// equivalent because the Gecko block sat last, so any stylesheet appended after
+// it — a search field with its own blur, say — failed a guard about Firefox.
+const geckoGuard = css
+  .split('}')
+  .filter((block) => block.includes('plum-engine-gecko'))
+  .join('}\n');
+assert.ok(geckoGuard.length > 0, 'the Gecko performance path must still exist');
 assert.match(geckoGuard, /backdrop-filter:\s*none\s*!important/);
 assert.doesNotMatch(
   geckoGuard,
