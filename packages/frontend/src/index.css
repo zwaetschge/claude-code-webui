@@ -12551,7 +12551,6 @@ html.eink ::selection {
   }
 }
 
-
 /* Small square icon trigger used by the sidebar notification bell. */
 .sidebar-icon-button {
   display: inline-flex;
@@ -12561,16 +12560,15 @@ html.eink ::selection {
   height: 30px;
   border-radius: 8px;
   color: hsl(var(--muted-foreground));
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 .sidebar-icon-button:hover {
   background: hsl(var(--foreground) / 0.08);
   color: hsl(var(--foreground));
 }
-
-
-
 
 /* Notification centre ------------------------------------------------------
    Portalled panel: anchored in the narrow sidebar rail, an in-flow panel was

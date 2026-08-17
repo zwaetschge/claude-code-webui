@@ -1,6 +1,8 @@
 import type { Message, MessageHistorySnapshot } from '@plum-code-webui/shared';
 
-export function normalizeMessageChatId(chatId: string | null | undefined): string | null | undefined {
+export function normalizeMessageChatId(
+  chatId: string | null | undefined
+): string | null | undefined {
   return chatId === 'main' ? null : chatId;
 }
 
@@ -51,9 +53,7 @@ export function mergeMessageHistorySnapshot(
   for (const liveMessage of liveMessages) {
     const matchIndex =
       indexById.get(liveMessage.id) ??
-      (liveMessage.clientMessageId
-        ? indexByClientId.get(liveMessage.clientMessageId)
-        : undefined);
+      (liveMessage.clientMessageId ? indexByClientId.get(liveMessage.clientMessageId) : undefined);
 
     if (matchIndex === undefined) {
       const nextIndex = merged.length;

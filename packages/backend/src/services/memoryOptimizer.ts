@@ -171,7 +171,10 @@ interface ArchiveResult {
 }
 
 /** Move session-*.md files older than the cutoff into memory/archive/. */
-async function archiveOldSessionFiles(memoryDir: string, backupDir: string): Promise<ArchiveResult> {
+async function archiveOldSessionFiles(
+  memoryDir: string,
+  backupDir: string
+): Promise<ArchiveResult> {
   const archiveDir = path.join(memoryDir, 'archive');
   const cutoff = Date.now() - ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
   const archived: string[] = [];
@@ -362,7 +365,10 @@ async function slimInstructionFile(
  * Debounced optimization pass, fired on every `session:compact`. Never throws;
  * a failed pass leaves every file untouched (validation + backups).
  */
-export async function onSessionCompacted(sessionId: string, workingDirectory: string): Promise<void> {
+export async function onSessionCompacted(
+  sessionId: string,
+  workingDirectory: string
+): Promise<void> {
   if (process.env.MEMORY_OPTIMIZER_ENABLED === 'false') return;
   const workdir = path.resolve(workingDirectory);
   if (runningWorkdirs.has(workdir)) return;

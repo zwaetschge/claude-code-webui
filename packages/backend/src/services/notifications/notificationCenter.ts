@@ -10,13 +10,7 @@ import { getDatabase } from '../../db/index.js';
  * whoever is listening: live sockets, and browsers that registered for Web Push.
  */
 
-export type NotificationKind =
-  | 'reply'
-  | 'approval'
-  | 'question'
-  | 'error'
-  | 'usage_alert'
-  | 'goal';
+export type NotificationKind = 'reply' | 'approval' | 'question' | 'error' | 'usage_alert' | 'goal';
 
 interface NotifyInput {
   userId: string;
@@ -134,9 +128,7 @@ async function sendWebPush(
   }
 
   const subscriptions = getDatabase()
-    .prepare(
-      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?'
-    )
+    .prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?')
     .all(userId) as Array<{ endpoint: string; p256dh: string; auth: string }>;
 
   await Promise.all(

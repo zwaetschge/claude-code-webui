@@ -89,11 +89,7 @@ await assert.rejects(
   ),
   /snapshot unavailable/
 );
-assert.equal(
-  reconnectCursor,
-  7,
-  'a failed full resync must leave the reconnect cursor unchanged'
-);
+assert.equal(reconnectCursor, 7, 'a failed full resync must leave the reconnect cursor unchanged');
 
 let visibleSearchWindow = ['previous-1', 'previous-2'];
 await assert.rejects(
@@ -113,10 +109,17 @@ assert.deepEqual(
   'a failed around jump must preserve the previously visible conversation'
 );
 
-await loadThenCommit(async () => ['latest-1'], (rows) => {
-  visibleSearchWindow = rows;
-});
-assert.deepEqual(visibleSearchWindow, ['latest-1'], 'a successful latest restore commits atomically');
+await loadThenCommit(
+  async () => ['latest-1'],
+  (rows) => {
+    visibleSearchWindow = rows;
+  }
+);
+assert.deepEqual(
+  visibleSearchWindow,
+  ['latest-1'],
+  'a successful latest restore commits atomically'
+);
 
 assert.equal(
   messageBelongsToChat(message({ id: 'main-row', chatId: null }), null),

@@ -649,7 +649,10 @@ function testCodexFreshExecUsageDoesNotDelta() {
       emit: () => undefined,
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -702,7 +705,10 @@ function testCodexUsageClampsEachLargeTurnField() {
       emit: () => undefined,
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -754,7 +760,10 @@ function testCodexUsageIncludesDescendantThreadDelta() {
       emit: () => undefined,
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1238,7 +1247,10 @@ async function testCodexTurnCompletedRollsUpDescendantsWithoutKnownThreadId() {
   });
   const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1288,7 +1300,10 @@ async function testCodexTurnFailedBooksUsageFromThreadState() {
   });
   const originalCredentialsPath = CLI_PROVIDERS.codex.credentialsPath;
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const saved: Array<Record<string, unknown>> = [];
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
@@ -1338,7 +1353,10 @@ function makePiManagerFixture(sessionId: string, overrides: Record<string, unkno
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     emitCompact: (...args: unknown[]) => void;
@@ -1658,7 +1676,10 @@ async function testCodexContextFallbackUsesThreadState() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1743,7 +1764,10 @@ async function testCodexContextFallbackCapsThreadStateAtWindow() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1824,7 +1848,10 @@ function testCodexCompactEventRetainsCompactedContext() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -1909,7 +1936,10 @@ function testCodexImplicitCompactDetectedFromContextDrop() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -2011,7 +2041,10 @@ function testCodexImplicitCompactDetectedFromMidWindowReset() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     completeActiveSubagents: (...args: unknown[]) => void;
@@ -2825,7 +2858,10 @@ function testOpenCodeRuntimePrompt() {
 
 function testDangerModeProvidesAutonomousExecutionContract() {
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const prompt = (
     manager as unknown as { getModePrompt: (mode: 'danger') => string | null }
   ).getModePrompt('danger');
@@ -2887,7 +2923,10 @@ async function testExplicitWorkspaceImagesBecomePathFreePendingMedia() {
 
 async function testCodexImageGenerationEventQueuesOnlyManagedOutput() {
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const managerPrivate = manager as unknown as {
     processes: Map<string, Record<string, unknown>>;
     translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
@@ -4236,7 +4275,10 @@ function testDisconnectedSessionStaysRunning() {
   const ioStub = {
     to: () => ({ emit: () => undefined }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const harness = asProcessStore<DisconnectProcessStub>(manager);
   const sessionId = 'headless-session';
 
@@ -4252,7 +4294,10 @@ async function testOpenCodeRestartCleanupAbortsAndUnsubscribesRemoteTurn() {
   const ioStub = {
     to: () => ({ emit: () => undefined }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const restartHarness = manager as unknown as {
     detachProcessForRestart: (proc: Record<string, unknown>) => void;
   };
@@ -4300,7 +4345,10 @@ function testOpenCodeQueueStateAndRuntime() {
       },
     }),
   };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const harness = asProcessStore<OpenCodeQueueProcessStub>(manager);
   const queueHarness = manager as unknown as {
     emitQueueState: (sessionId: string, proc: OpenCodeQueueProcessStub) => void;
@@ -4371,7 +4419,10 @@ function queuedTurn(id: string): CodexQueueTurnStub {
 
 function testCodexQueueModeIsFifoAndSteeringPreservesAcceptedTurns() {
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const queueHarness = manager as unknown as {
     queueCodexTurn: (
       sessionId: string,
@@ -4407,7 +4458,10 @@ function testCodexQueueModeIsFifoAndSteeringPreservesAcceptedTurns() {
 
 async function testKimiQueueDrainsEveryWaitingFollowup() {
   const ioStub = { to: () => ({ emit: () => undefined }) };
-  const manager = new ClaudeProcessManager(ioStub as unknown as ClaudeProcessManagerIo, createTestEventSequenceAllocator());
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
   const queueHarness = manager as unknown as {
     drainKimiQueuedTurns: (sessionId: string, proc: KimiQueueProcessStub) => Promise<void>;
     dispatchKimiAcpTurn: (

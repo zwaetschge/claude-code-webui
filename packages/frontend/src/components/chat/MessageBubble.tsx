@@ -119,15 +119,18 @@ export const MessageBubble = memo(
       );
     }, [message.content]);
 
-    const handleMediaDownload = useCallback(async (mediaId: string, filename: string) => {
-      const response = await api.download(buildChatMediaUrl(sessionId, mediaId));
-      const objectUrl = URL.createObjectURL(await response.blob());
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = filename || 'attachment';
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }, [sessionId]);
+    const handleMediaDownload = useCallback(
+      async (mediaId: string, filename: string) => {
+        const response = await api.download(buildChatMediaUrl(sessionId, mediaId));
+        const objectUrl = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = filename || 'attachment';
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      },
+      [sessionId]
+    );
 
     const token = useAuthStore.getState().token || '';
     const timestamp = formatMessageTime(message.createdAt);

@@ -220,7 +220,6 @@ export function GitPanel({ workingDirectory, className }: GitPanelProps) {
     },
   });
 
-
   const handleFileSelect = (file: string, staged: boolean) => {
     setSelectedDiff({ file, staged });
   };
