@@ -516,7 +516,11 @@ router.post(
   '/checkout',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { path: repoPath, branch, create } = req.body as {
+    const {
+      path: repoPath,
+      branch,
+      create,
+    } = req.body as {
       path?: string;
       branch?: string;
       create?: boolean;

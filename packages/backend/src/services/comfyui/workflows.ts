@@ -483,23 +483,23 @@ const KREA2_T2I_TEMPLATE: Workflow = {
   '29': {
     inputs: {
       filename_prefix: 'Krea2-FP8-LoRA',
-      images: ['30:8', 0]
+      images: ['30:8', 0],
     },
     class_type: 'SaveImage',
     _meta: {
-      title: 'Save Image'
-    }
+      title: 'Save Image',
+    },
   },
   '49': {
     inputs: {
       aspect_ratio: '16:9 (Widescreen)',
       megapixels: 1,
-      multiple: 8
+      multiple: 8,
     },
     class_type: 'ResolutionSelector',
     _meta: {
-      title: 'Resolution Selector'
-    }
+      title: 'Resolution Selector',
+    },
   },
   '30:3': {
     inputs: {
@@ -512,82 +512,82 @@ const KREA2_T2I_TEMPLATE: Workflow = {
       model: ['30:10', 0],
       positive: ['30:6', 0],
       negative: ['30:13', 0],
-      latent_image: ['30:5', 0]
+      latent_image: ['30:5', 0],
     },
     class_type: 'KSampler',
     _meta: {
-      title: 'KSampler'
-    }
+      title: 'KSampler',
+    },
   },
   '30:5': {
     inputs: {
       width: ['49', 0],
       height: ['49', 1],
-      batch_size: 1
+      batch_size: 1,
     },
     class_type: 'EmptyLatentImage',
     _meta: {
-      title: 'Empty Latent Image'
-    }
+      title: 'Empty Latent Image',
+    },
   },
   '30:6': {
     inputs: {
       text: ['30:65', 0],
-      clip: ['30:11', 0]
+      clip: ['30:11', 0],
     },
     class_type: 'CLIPTextEncode',
     _meta: {
-      title: 'CLIP Text Encode (Prompt)'
-    }
+      title: 'CLIP Text Encode (Prompt)',
+    },
   },
   '30:8': {
     inputs: {
       samples: ['30:3', 0],
-      vae: ['30:12', 0]
+      vae: ['30:12', 0],
     },
     class_type: 'VAEDecode',
     _meta: {
-      title: 'VAE Decode'
-    }
+      title: 'VAE Decode',
+    },
   },
   '30:10': {
     inputs: {
       unet_name: 'krea2_turbo_fp8_scaled.safetensors',
-      weight_dtype: 'default'
+      weight_dtype: 'default',
     },
     class_type: 'UNETLoader',
     _meta: {
-      title: 'Load Diffusion Model'
-    }
+      title: 'Load Diffusion Model',
+    },
   },
   '30:11': {
     inputs: {
       clip_name: 'qwen3vl_4b_fp8_scaled.safetensors',
       type: 'krea2',
-      device: 'default'
+      device: 'default',
     },
     class_type: 'CLIPLoader',
     _meta: {
-      title: 'Load CLIP'
-    }
+      title: 'Load CLIP',
+    },
   },
   '30:12': {
     inputs: {
-      vae_name: 'qwen_image_vae.safetensors'
+      vae_name: 'qwen_image_vae.safetensors',
     },
     class_type: 'VAELoader',
     _meta: {
-      title: 'Load VAE'
-    }
+      title: 'Load VAE',
+    },
   },
   '30:13': {
     inputs: {
-      conditioning: ['30:6', 0]
+      conditioning: ['30:6', 0],
     },
     class_type: 'ConditioningZeroOut',
     _meta: {
-      title: 'ConditioningZeroOut'
-    }
+      title: 'ConditioningZeroOut',
+    },
   },
   '30:16': {
     inputs: {
@@ -603,249 +603,251 @@ const KREA2_T2I_TEMPLATE: Workflow = {
       'sampling_mode.presence_penalty': 0,
       thinking: false,
       use_default_template: true,
-      clip: ['30:11', 0]
+      clip: ['30:11', 0],
     },
     class_type: 'TextGenerate',
     _meta: {
-      title: 'Generate Text'
-    }
+      title: 'Generate Text',
+    },
   },
   '30:17': {
     inputs: {
       string_a: ['30:18', 0],
       string_b: ['30:19', 0],
-      delimiter: ''
+      delimiter: '',
     },
     class_type: 'StringConcatenate',
     _meta: {
-      title: 'Concatenate Text'
-    }
+      title: 'Concatenate Text',
+    },
   },
   '30:18': {
     inputs: {
-      value: 'You are an expert prompt engineer for text-to-image models. Your task is to expand the user\'s prompt into a highly effective image-generation prompt.\n\nThink step by step about the request before writing the answer:\n- What is the subject and mood?\n- What visual styles, mediums, and lighting options would fit? Consider two or three alternatives and pick the one that best serves the caption.\n- What composition, framing, and grounded details will help the text-to-image model?\n\nThen output a single expanded prompt paragraph.\n\nFollow these rules strictly:\n1. **Faithfulness First:** Preserve all original subjects, actions, colors, and spatial relationships. Do not add new objects, props, characters, or animals unless the user clearly implies them.\n2. **Practical T2I Structure:** Write a prompt that a text-to-image model can parse cleanly. Group subjects with their own attributes and actions. Use grounded phrasing for poses, interactions, and spatial layout.\n3. **Style Planning Stays Internal:** Use your internal reasoning to choose style, medium, framing, and lighting. Do not emit planning tags or wrappers in the visible answer body.\n4. **Text Rendering:** If the user requests visible text, quotes, labels, or typography, specify the exact text clearly and wrap requested words in quotes.\n5. **Avoid Over-Specification:** Do not invent highly specific clothing, colors, materials, or scene details unless the input supports them.\n6. **Structure:** Write one cohesive paragraph after the thinking block. No bullets, JSON, or markdown.\n7. **Respect Existing Detail:** If the user\'s prompt is already detailed, lightly polish and finalize rather than heavily expanding — preserve their phrasing and direction.\n8. **Respect the Human Form:** Treat depictions of people with dignity. Assume clothing covers genitals and intimate anatomy.\n9. **Preserve User Medium:** When the user explicitly requests a medium (e.g. "photo of", "photograph of", "illustration of", "painting of", "sketch of", "3D render of"), honor it. Do not pivot to a different medium to avoid difficulty — match the user\'s stated intent.\n\nUser\'s Input:\n\n'
+      value:
+        'You are an expert prompt engineer for text-to-image models. Your task is to expand the user\'s prompt into a highly effective image-generation prompt.\n\nThink step by step about the request before writing the answer:\n- What is the subject and mood?\n- What visual styles, mediums, and lighting options would fit? Consider two or three alternatives and pick the one that best serves the caption.\n- What composition, framing, and grounded details will help the text-to-image model?\n\nThen output a single expanded prompt paragraph.\n\nFollow these rules strictly:\n1. **Faithfulness First:** Preserve all original subjects, actions, colors, and spatial relationships. Do not add new objects, props, characters, or animals unless the user clearly implies them.\n2. **Practical T2I Structure:** Write a prompt that a text-to-image model can parse cleanly. Group subjects with their own attributes and actions. Use grounded phrasing for poses, interactions, and spatial layout.\n3. **Style Planning Stays Internal:** Use your internal reasoning to choose style, medium, framing, and lighting. Do not emit planning tags or wrappers in the visible answer body.\n4. **Text Rendering:** If the user requests visible text, quotes, labels, or typography, specify the exact text clearly and wrap requested words in quotes.\n5. **Avoid Over-Specification:** Do not invent highly specific clothing, colors, materials, or scene details unless the input supports them.\n6. **Structure:** Write one cohesive paragraph after the thinking block. No bullets, JSON, or markdown.\n7. **Respect Existing Detail:** If the user\'s prompt is already detailed, lightly polish and finalize rather than heavily expanding — preserve their phrasing and direction.\n8. **Respect the Human Form:** Treat depictions of people with dignity. Assume clothing covers genitals and intimate anatomy.\n9. **Preserve User Medium:** When the user explicitly requests a medium (e.g. "photo of", "photograph of", "illustration of", "painting of", "sketch of", "3D render of"), honor it. Do not pivot to a different medium to avoid difficulty — match the user\'s stated intent.\n\nUser\'s Input:\n\n',
     },
     class_type: 'PrimitiveStringMultiline',
     _meta: {
-      title: 'Text String (System Prompt)'
-    }
+      title: 'Text String (System Prompt)',
+    },
   },
   '30:19': {
     inputs: {
-      value: 'A cinematic 16:9 editorial photograph of a rain-soaked neon street at night, a lone figure in a dark coat standing beneath a glowing sign, wet asphalt reflections, monochrome ink wash style, dramatic contrast, crisp subject detail, atmospheric depth.'
+      value:
+        'A cinematic 16:9 editorial photograph of a rain-soaked neon street at night, a lone figure in a dark coat standing beneath a glowing sign, wet asphalt reflections, monochrome ink wash style, dramatic contrast, crisp subject detail, atmospheric depth.',
     },
     class_type: 'PrimitiveStringMultiline',
     _meta: {
-      title: 'Text String (User Prompt)'
-    }
+      title: 'Text String (User Prompt)',
+    },
   },
   '30:20': {
     inputs: {
-      source: ['30:21', 0]
+      source: ['30:21', 0],
     },
     class_type: 'PreviewAny',
     _meta: {
-      title: 'Preview as Text'
-    }
+      title: 'Preview as Text',
+    },
   },
   '30:21': {
     inputs: {
       switch: ['30:24', 0],
       on_false: ['30:19', 0],
-      on_true: ['30:16', 0]
+      on_true: ['30:16', 0],
     },
     class_type: 'ComfySwitchNode',
     _meta: {
-      title: 'Switch'
-    }
+      title: 'Switch',
+    },
   },
   '30:23': {
     inputs: {
-      value: true
+      value: true,
     },
     class_type: 'PrimitiveBoolean',
     _meta: {
-      title: 'Boolean (Enable LoRA?)'
-    }
+      title: 'Boolean (Enable LoRA?)',
+    },
   },
   '30:24': {
     inputs: {
-      value: false
+      value: false,
     },
     class_type: 'PrimitiveBoolean',
     _meta: {
-      title: 'Boolean (Refine Prompt?)'
-    }
+      title: 'Boolean (Refine Prompt?)',
+    },
   },
   '30:27': {
     inputs: {
       string_a: ['30:20', 0],
       string_b: 'monochrome ink wash style',
-      delimiter: ', '
+      delimiter: ', ',
     },
     class_type: 'StringConcatenate',
     _meta: {
-      title: 'Concatenate Text (LoRA Trigger Word)'
-    }
+      title: 'Concatenate Text (LoRA Trigger Word)',
+    },
   },
   '30:28': {
     inputs: {
       switch: ['30:23', 0],
       on_false: ['30:20', 0],
-      on_true: ['30:27', 0]
+      on_true: ['30:27', 0],
     },
     class_type: 'ComfySwitchNode',
     _meta: {
-      title: 'Switch'
-    }
+      title: 'Switch',
+    },
   },
   '30:53': {
     inputs: {
-      value: false
+      value: false,
     },
     class_type: 'PrimitiveBoolean',
     _meta: {
-      title: 'Boolean (Enable LoRA? Slot 2)'
-    }
+      title: 'Boolean (Enable LoRA? Slot 2)',
+    },
   },
   '30:54': {
     inputs: {
       string_a: ['30:28', 0],
       string_b: 'monochrome stippling style',
-      delimiter: ', '
+      delimiter: ', ',
     },
     class_type: 'StringConcatenate',
     _meta: {
-      title: 'Concatenate Text (LoRA Trigger Word 2)'
-    }
+      title: 'Concatenate Text (LoRA Trigger Word 2)',
+    },
   },
   '30:55': {
     inputs: {
       switch: ['30:53', 0],
       on_false: ['30:28', 0],
-      on_true: ['30:54', 0]
+      on_true: ['30:54', 0],
     },
     class_type: 'ComfySwitchNode',
     _meta: {
-      title: 'Switch (LoRA Trigger 2)'
-    }
+      title: 'Switch (LoRA Trigger 2)',
+    },
   },
   '30:58': {
     inputs: {
-      value: false
+      value: false,
     },
     class_type: 'PrimitiveBoolean',
     _meta: {
-      title: 'Boolean (Enable LoRA? Slot 3)'
-    }
+      title: 'Boolean (Enable LoRA? Slot 3)',
+    },
   },
   '30:59': {
     inputs: {
       string_a: ['30:55', 0],
       string_b: 'textured abstract style',
-      delimiter: ', '
+      delimiter: ', ',
     },
     class_type: 'StringConcatenate',
     _meta: {
-      title: 'Concatenate Text (LoRA Trigger Word 3)'
-    }
+      title: 'Concatenate Text (LoRA Trigger Word 3)',
+    },
   },
   '30:60': {
     inputs: {
       switch: ['30:58', 0],
       on_false: ['30:55', 0],
-      on_true: ['30:59', 0]
+      on_true: ['30:59', 0],
     },
     class_type: 'ComfySwitchNode',
     _meta: {
-      title: 'Switch (LoRA Trigger 3)'
-    }
+      title: 'Switch (LoRA Trigger 3)',
+    },
   },
   '30:63': {
     inputs: {
-      value: false
+      value: false,
     },
     class_type: 'PrimitiveBoolean',
     _meta: {
-      title: 'Boolean (Enable LoRA? Slot 4)'
-    }
+      title: 'Boolean (Enable LoRA? Slot 4)',
+    },
   },
   '30:64': {
     inputs: {
       string_a: ['30:60', 0],
       string_b: 'purple retro anime style',
-      delimiter: ', '
+      delimiter: ', ',
     },
     class_type: 'StringConcatenate',
     _meta: {
-      title: 'Concatenate Text (LoRA Trigger Word 4)'
-    }
+      title: 'Concatenate Text (LoRA Trigger Word 4)',
+    },
   },
   '30:65': {
     inputs: {
       switch: ['30:63', 0],
       on_false: ['30:60', 0],
-      on_true: ['30:64', 0]
+      on_true: ['30:64', 0],
     },
     class_type: 'ComfySwitchNode',
     _meta: {
-      title: 'Switch (LoRA Trigger 4)'
-    }
-  }
+      title: 'Switch (LoRA Trigger 4)',
+    },
+  },
 };
 
 const F2K_EDIT_TEMPLATE: Workflow = {
   '1': {
     inputs: {
-      vae_name: 'flux2-vae.safetensors'
+      vae_name: 'flux2-vae.safetensors',
     },
     class_type: 'VAELoader',
     _meta: {
-      title: 'Load VAE'
-    }
+      title: 'Load VAE',
+    },
   },
   '2': {
     inputs: {
-      text: 'a woman assumes the identical pose from the reference image — matching the original figure\'s body position, posture, weight distribution, limb angles, hand placement, and gaze direction with precision. She wears the exact same outfit from the reference image, every garment, accessory, fabric texture, fold, drape, and fit reproduced identically on her frame. The lighting, environment, and atmosphere match the original scene. Shot on 35mm film with shallow depth of field.',
-      clip: ['4', 0]
+      text: "a woman assumes the identical pose from the reference image — matching the original figure's body position, posture, weight distribution, limb angles, hand placement, and gaze direction with precision. She wears the exact same outfit from the reference image, every garment, accessory, fabric texture, fold, drape, and fit reproduced identically on her frame. The lighting, environment, and atmosphere match the original scene. Shot on 35mm film with shallow depth of field.",
+      clip: ['4', 0],
     },
     class_type: 'CLIPTextEncode',
     _meta: {
-      title: 'CLIP Text Encode (Positive Prompt)'
-    }
+      title: 'CLIP Text Encode (Positive Prompt)',
+    },
   },
   '3': {
     inputs: {
       text: '',
-      clip: ['4', 0]
+      clip: ['4', 0],
     },
     class_type: 'CLIPTextEncode',
     _meta: {
-      title: 'CLIP Text Encode (Negative - unused at CFG 1)'
-    }
+      title: 'CLIP Text Encode (Negative - unused at CFG 1)',
+    },
   },
   '4': {
     inputs: {
       clip_name: 'qwen_3_8b_fp8mixed.safetensors',
       type: 'flux2',
-      device: 'default'
+      device: 'default',
     },
     class_type: 'CLIPLoader',
     _meta: {
-      title: 'Load CLIP'
-    }
+      title: 'Load CLIP',
+    },
   },
   '5': {
     inputs: {
       upscale_method: 'lanczos',
       megapixels: 2,
       resolution_steps: 1,
-      image: ['10', 0]
+      image: ['10', 0],
     },
     class_type: 'ImageScaleToTotalPixels',
     _meta: {
-      title: 'Scale Image to Total Pixels'
-    }
+      title: 'Scale Image to Total Pixels',
+    },
   },
   '7': {
     inputs: {
@@ -858,113 +860,113 @@ const F2K_EDIT_TEMPLATE: Workflow = {
       model: ['15', 0],
       positive: ['9:77', 0],
       negative: ['9:76', 0],
-      latent_image: ['8', 0]
+      latent_image: ['8', 0],
     },
     class_type: 'KSampler',
     _meta: {
-      title: 'KSampler'
-    }
+      title: 'KSampler',
+    },
   },
   '8': {
     inputs: {
       width: ['16', 0],
       height: ['16', 1],
-      batch_size: 1
+      batch_size: 1,
     },
     class_type: 'EmptyFlux2LatentImage',
     _meta: {
-      title: 'Empty Flux 2 Latent'
-    }
+      title: 'Empty Flux 2 Latent',
+    },
   },
   '10': {
     inputs: {
-      image: '(m=qOL97SYbeaSaaTbaAaaaa)(mh=5YVGCSKGMfRnI6z1)0.jpg'
+      image: '(m=qOL97SYbeaSaaTbaAaaaa)(mh=5YVGCSKGMfRnI6z1)0.jpg',
     },
     class_type: 'LoadImage',
     _meta: {
-      title: 'Load Image'
-    }
+      title: 'Load Image',
+    },
   },
   '11': {
     inputs: {
       filename_prefix: 'ComfyUI',
-      images: ['79', 0]
+      images: ['79', 0],
     },
     class_type: 'SaveImage',
     _meta: {
-      title: 'Save Image'
-    }
+      title: 'Save Image',
+    },
   },
   '12': {
     inputs: {
       unet_name: 'flux-2-klein-base-9b.safetensors',
-      weight_dtype: 'default'
+      weight_dtype: 'default',
     },
     class_type: 'UNETLoader',
     _meta: {
-      title: 'Load Diffusion Model'
-    }
+      title: 'Load Diffusion Model',
+    },
   },
   '15': {
     inputs: {
       lora_name: 'f2k/9b/concept/klein_9B_Turbo_r128.safetensors',
       strength_model: 1,
-      model: ['12', 0]
+      model: ['12', 0],
     },
     class_type: 'LoraLoaderModelOnly',
     _meta: {
-      title: 'Turbo LoRA (fest)'
-    }
+      title: 'Turbo LoRA (fest)',
+    },
   },
   '16': {
     inputs: {
-      image: ['5', 0]
+      image: ['5', 0],
     },
     class_type: 'GetImageSize',
     _meta: {
-      title: 'Get Image Size'
-    }
+      title: 'Get Image Size',
+    },
   },
   '79': {
     inputs: {
       samples: ['7', 0],
-      vae: ['1', 0]
+      vae: ['1', 0],
     },
     class_type: 'VAEDecode',
     _meta: {
-      title: 'VAE Decode'
-    }
+      title: 'VAE Decode',
+    },
   },
   '9:78': {
     inputs: {
       pixels: ['5', 0],
-      vae: ['1', 0]
+      vae: ['1', 0],
     },
     class_type: 'VAEEncode',
     _meta: {
-      title: 'VAE Encode'
-    }
+      title: 'VAE Encode',
+    },
   },
   '9:77': {
     inputs: {
       conditioning: ['2', 0],
-      latent: ['9:78', 0]
+      latent: ['9:78', 0],
     },
     class_type: 'ReferenceLatent',
     _meta: {
-      title: 'ReferenceLatent'
-    }
+      title: 'ReferenceLatent',
+    },
   },
   '9:76': {
     inputs: {
       conditioning: ['3', 0],
-      latent: ['9:78', 0]
+      latent: ['9:78', 0],
     },
     class_type: 'ReferenceLatent',
     _meta: {
-      title: 'ReferenceLatent'
-    }
-  }
+      title: 'ReferenceLatent',
+    },
+  },
 };
 
 const TEMPLATES: Record<WorkflowId, Workflow> = {

@@ -420,11 +420,7 @@ export async function resolveChatUploads(
     );
   }
   if (additionalBytes > MAX_CHAT_UPLOAD_TOTAL_BYTES) {
-    throw new ChatUploadError(
-      'Combined uploads exceed 32 MiB',
-      413,
-      'UPLOAD_TOTAL_TOO_LARGE'
-    );
+    throw new ChatUploadError('Combined uploads exceed 32 MiB', 413, 'UPLOAD_TOTAL_TOO_LARGE');
   }
   if (!reservationId || reservationId.length > 160) {
     throw new ChatUploadError('A valid delivery id is required', 400, 'INVALID_DELIVERY_ID');
@@ -446,11 +442,7 @@ export async function resolveChatUploads(
       }
       totalBytes += row.byteSize;
       if (totalBytes > MAX_CHAT_UPLOAD_TOTAL_BYTES) {
-        throw new ChatUploadError(
-          'Combined uploads exceed 32 MiB',
-          413,
-          'UPLOAD_TOTAL_TOO_LARGE'
-        );
+        throw new ChatUploadError('Combined uploads exceed 32 MiB', 413, 'UPLOAD_TOTAL_TOO_LARGE');
       }
       const claimed = db
         .prepare(

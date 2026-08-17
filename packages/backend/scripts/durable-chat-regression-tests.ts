@@ -73,10 +73,7 @@ database
 
 // Explicit sends stay bound to their intended owned chat. A stale outbox send
 // after another device switches threads is rejected instead of leaking into B.
-assert.equal(
-  resolveSessionSendChatId('delivery-session', 'owner', 'chat-a', database),
-  'chat-a'
-);
+assert.equal(resolveSessionSendChatId('delivery-session', 'owner', 'chat-a', database), 'chat-a');
 assert.throws(
   () => resolveSessionSendChatId('delivery-session', 'owner', 'foreign-chat', database),
   /Chat not found in this session/

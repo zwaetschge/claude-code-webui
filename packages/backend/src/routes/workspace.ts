@@ -265,9 +265,7 @@ router.get(
         `SELECT content, updated_at as updatedAt FROM session_drafts
          WHERE session_id = ? AND user_id = ? AND chat_id = ?`
       )
-      .get(req.params.id, uid(req), chatId) as
-      | { content: string; updatedAt: string }
-      | undefined;
+      .get(req.params.id, uid(req), chatId) as { content: string; updatedAt: string } | undefined;
     res.json({ success: true, data: row ?? { content: '', updatedAt: null } });
   })
 );

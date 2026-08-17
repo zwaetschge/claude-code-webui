@@ -215,9 +215,7 @@ assert.equal(
 
 // A known reconnect gap must require REST and must not expose a cursor the
 // client could persist before applying that snapshot.
-database
-  .prepare(`UPDATE sessions SET event_sequence = 10 WHERE id = 'send-session'`)
-  .run();
+database.prepare(`UPDATE sessions SET event_sequence = 10 WHERE id = 'send-session'`).run();
 const resync = new Promise<{
   needsFullResync?: boolean;
   highWatermark?: number;

@@ -138,7 +138,9 @@ export function MessageSearch({
       } catch (searchError) {
         if (requestVersion !== requestVersionRef.current) return;
         setResults([]);
-        setError(searchError instanceof Error ? searchError.message : 'Search could not be loaded.');
+        setError(
+          searchError instanceof Error ? searchError.message : 'Search could not be loaded.'
+        );
       } finally {
         if (requestVersion === requestVersionRef.current) setLoading(false);
       }

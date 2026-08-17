@@ -2181,9 +2181,18 @@ const createChatUploadSchema = z.object({
     .max(200)
     .regex(/^[\x20-\x7e]+$/)
     .optional(),
-  byteSize: z.number().int().min(1).max(25 * 1024 * 1024),
+  byteSize: z
+    .number()
+    .int()
+    .min(1)
+    .max(25 * 1024 * 1024),
   sha256: z.string().regex(/^[a-f0-9]{64}$/i),
-  chunkSize: z.number().int().min(256 * 1024).max(4 * 1024 * 1024).optional(),
+  chunkSize: z
+    .number()
+    .int()
+    .min(256 * 1024)
+    .max(4 * 1024 * 1024)
+    .optional(),
 });
 
 function throwChatUploadError(error: unknown): never {
@@ -2193,9 +2202,9 @@ function throwChatUploadError(error: unknown): never {
   throw error;
 }
 
-function parseContentRange(value: string | undefined):
-  | { start: number; end: number; total: number }
-  | undefined {
+function parseContentRange(
+  value: string | undefined
+): { start: number; end: number; total: number } | undefined {
   if (!value) return undefined;
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(value.trim());
   if (!match) throw new AppError('Invalid Content-Range', 400, 'INVALID_CONTENT_RANGE');
@@ -2355,11 +2364,7 @@ router.get('/:id/messages', requireAuth, (req, res) => {
   if (!parsed.success) throw new AppError('Invalid query', 400, 'VALIDATION_ERROR');
   const { limit, before, after, around, chatId: requestedChatId } = parsed.data;
   if ([before, after, around].filter(Boolean).length > 1) {
-    throw new AppError(
-      'before, after and around are mutually exclusive',
-      400,
-      'VALIDATION_ERROR'
-    );
+    throw new AppError('before, after and around are mutually exclusive', 400, 'VALIDATION_ERROR');
   }
 
   const payload = db.transaction(() => {

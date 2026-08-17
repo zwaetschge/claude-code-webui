@@ -73,12 +73,10 @@ router.put('/providers', requireAuth, (req, res) => {
   try {
     const result = upsertProviderSchema.safeParse(req.body);
     if (!result.success) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
-        });
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
+      });
     }
 
     const { id, name, apiKey, baseUrl, enabled = true, models } = result.data;
@@ -287,12 +285,10 @@ router.get('/available-providers', requireAuth, (req, res) => {
 router.post('/questions/respond', requireAuth, async (req, res) => {
   const result = questionRespondSchema.safeParse(req.body);
   if (!result.success) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
-      });
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
+    });
   }
 
   try {
@@ -311,24 +307,20 @@ router.post('/questions/respond', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('[opencode] failed to respond to question:', error);
-    res
-      .status(502)
-      .json({
-        success: false,
-        error: { code: 'ERROR', message: 'Failed to respond to OpenCode question' },
-      });
+    res.status(502).json({
+      success: false,
+      error: { code: 'ERROR', message: 'Failed to respond to OpenCode question' },
+    });
   }
 });
 
 router.post('/questions/reject', requireAuth, async (req, res) => {
   const result = questionRejectSchema.safeParse(req.body);
   if (!result.success) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
-      });
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: JSON.stringify(result.error.flatten()) },
+    });
   }
 
   try {
@@ -346,12 +338,10 @@ router.post('/questions/reject', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('[opencode] failed to reject question:', error);
-    res
-      .status(502)
-      .json({
-        success: false,
-        error: { code: 'ERROR', message: 'Failed to reject OpenCode question' },
-      });
+    res.status(502).json({
+      success: false,
+      error: { code: 'ERROR', message: 'Failed to reject OpenCode question' },
+    });
   }
 });
 

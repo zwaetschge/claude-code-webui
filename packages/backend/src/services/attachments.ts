@@ -93,7 +93,10 @@ export function sanitizeAttachmentFilename(filename: string): string {
 
 export function sanitizeAttachmentDisplayName(filename: string): string {
   const basename = path.basename(filename.replaceAll('\\', '/'));
-  const cleaned = basename.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 240);
+  const cleaned = basename
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 240);
   return cleaned && !/^\.+$/.test(cleaned) ? cleaned : 'attachment';
 }
 

@@ -354,69 +354,66 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       }
     });
 
-    socket.on(
-      'session:presence',
-      ({ sessionId, deviceId, label, state, lastReadMessageId }) => {
-        if (!ownsSession(sessionId, socket.data.userId)) {
-          socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
-          return;
-        }
-        const cleanDeviceId = deviceId?.trim();
-        const cleanLabel = label
-          ?.replace(/[\u0000-\u001f\u007f]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (
-          !cleanDeviceId ||
-          cleanDeviceId.length > 128 ||
-          !/^[a-zA-Z0-9._:-]+$/.test(cleanDeviceId) ||
-          (cleanLabel?.length ?? 0) > 80 ||
-          !['active', 'idle', 'leave'].includes(state) ||
-          (lastReadMessageId !== undefined &&
-            lastReadMessageId !== null &&
-            (typeof lastReadMessageId !== 'string' || lastReadMessageId.length > 160))
-        ) {
-          socket.emit('session:error', { sessionId, error: 'Invalid presence payload' });
-          return;
-        }
-        if (lastReadMessageId !== undefined) {
-          const validMarker =
-            lastReadMessageId === null ||
-            !!getDatabase()
-              .prepare(
-                `SELECT 1
+    socket.on('session:presence', ({ sessionId, deviceId, label, state, lastReadMessageId }) => {
+      if (!ownsSession(sessionId, socket.data.userId)) {
+        socket.emit('session:error', { sessionId, error: 'Forbidden: session not owned' });
+        return;
+      }
+      const cleanDeviceId = deviceId?.trim();
+      const cleanLabel = label
+        ?.replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (
+        !cleanDeviceId ||
+        cleanDeviceId.length > 128 ||
+        !/^[a-zA-Z0-9._:-]+$/.test(cleanDeviceId) ||
+        (cleanLabel?.length ?? 0) > 80 ||
+        !['active', 'idle', 'leave'].includes(state) ||
+        (lastReadMessageId !== undefined &&
+          lastReadMessageId !== null &&
+          (typeof lastReadMessageId !== 'string' || lastReadMessageId.length > 160))
+      ) {
+        socket.emit('session:error', { sessionId, error: 'Invalid presence payload' });
+        return;
+      }
+      if (lastReadMessageId !== undefined) {
+        const validMarker =
+          lastReadMessageId === null ||
+          !!getDatabase()
+            .prepare(
+              `SELECT 1
                    FROM messages m
                    JOIN sessions s ON s.id = m.session_id
                   WHERE m.id = ? AND m.session_id = ? AND s.user_id = ?
                     AND m.chat_id IS s.active_chat_id`
-              )
-              .get(lastReadMessageId, sessionId, socket.data.userId);
-          if (!validMarker) {
-            socket.emit('session:error', { sessionId, error: 'Invalid read marker' });
-            return;
-          }
+            )
+            .get(lastReadMessageId, sessionId, socket.data.userId);
+        if (!validMarker) {
+          socket.emit('session:error', { sessionId, error: 'Invalid read marker' });
+          return;
         }
-        const key = `${socket.id}:${cleanDeviceId}`;
-        const viewers = presenceBySession.get(sessionId) ?? new Map();
-        if (state === 'leave') {
-          viewers.delete(key);
-        } else {
-          viewers.set(key, {
-            socketId: socket.id,
-            deviceId: cleanDeviceId,
-            ...(cleanLabel ? { label: cleanLabel } : {}),
-            state,
-            activeAt: new Date().toISOString(),
-            ...(lastReadMessageId === undefined ? {} : { lastReadMessageId }),
-          });
-        }
-        if (viewers.size > 0) presenceBySession.set(sessionId, viewers);
-        else presenceBySession.delete(sessionId);
-        socket.data.subscribedSessions.add(sessionId);
-        socket.join(`session:${sessionId}`);
-        broadcastPresence(sessionId);
       }
-    );
+      const key = `${socket.id}:${cleanDeviceId}`;
+      const viewers = presenceBySession.get(sessionId) ?? new Map();
+      if (state === 'leave') {
+        viewers.delete(key);
+      } else {
+        viewers.set(key, {
+          socketId: socket.id,
+          deviceId: cleanDeviceId,
+          ...(cleanLabel ? { label: cleanLabel } : {}),
+          state,
+          activeAt: new Date().toISOString(),
+          ...(lastReadMessageId === undefined ? {} : { lastReadMessageId }),
+        });
+      }
+      if (viewers.size > 0) presenceBySession.set(sessionId, viewers);
+      else presenceBySession.delete(sessionId);
+      socket.data.subscribedSessions.add(sessionId);
+      socket.join(`session:${sessionId}`);
+      broadcastPresence(sessionId);
+    });
 
     const logError = (event: string, sessionId: string, err: unknown): string => {
       const message = err instanceof Error ? err.message : String(err);
@@ -525,9 +522,7 @@ export function setupWebSocket(httpServer: HttpServer): Server {
               uploadIds.some(
                 (id) =>
                   typeof id !== 'string' ||
-                  !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-                    id
-                  )
+                  !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
               ))) ||
           (uploadIds && uploadIds.length > 0 && !sendId)
         ) {
@@ -547,11 +542,7 @@ export function setupWebSocket(httpServer: HttpServer): Server {
 
         let pinnedChatId: string | null;
         try {
-          pinnedChatId = resolveSessionSendChatId(
-            sessionId,
-            socket.data.userId,
-            chatId
-          );
+          pinnedChatId = resolveSessionSendChatId(sessionId, socket.data.userId, chatId);
         } catch (error) {
           acknowledgeRejected(error instanceof Error ? error.message : 'Invalid chat', false);
           return;

@@ -136,9 +136,7 @@ export function NotificationCenter() {
           aria-label={`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`}
         >
           <Bell className="h-4 w-4" />
-          {unread > 0 && (
-            <span className="notification-badge">{unread > 99 ? '99+' : unread}</span>
-          )}
+          {unread > 0 && <span className="notification-badge">{unread > 99 ? '99+' : unread}</span>}
         </button>
       </DropdownMenuTrigger>
 

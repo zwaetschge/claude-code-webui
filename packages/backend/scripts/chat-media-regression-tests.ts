@@ -426,7 +426,10 @@ try {
   assert.doesNotMatch(JSON.stringify(reloaded), /storageKey|filePath|chat-media/);
   const reloadedUserMessage = responseRows.find((message) => message.id === 'message-a3');
   assert.deepEqual(reloadedUserMessage?.media, userUploads);
-  assert.doesNotMatch(JSON.stringify(reloadedUserMessage), /storageKey|filePath|workspace|chat-media/);
+  assert.doesNotMatch(
+    JSON.stringify(reloadedUserMessage),
+    /storageKey|filePath|workspace|chat-media/
+  );
 
   database.prepare('DELETE FROM messages WHERE id = ?').run('message-a1');
   assert.equal(
