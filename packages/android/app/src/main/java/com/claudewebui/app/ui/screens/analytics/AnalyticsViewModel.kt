@@ -3,370 +3,514 @@ package com.claudewebui.app.ui.screens.analytics
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.claudewebui.app.core.network.ApiClient
-import kotlinx.coroutines.delay
+import com.claudewebui.app.data.model.UsageLimitProvider
+import com.claudewebui.app.data.model.UsageLimitsResponse
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlin.random.Random
-
-// ── Data Classes ──────────────────────────────────────────────────────────────
+import java.util.TimeZone
 
 data class AnalyticsSummary(
-    val totalSessions: Int = 0,
-    val totalMessages: Int = 0,
+    val inputTokens: Long = 0,
+    val outputTokens: Long = 0,
+    val cacheReadTokens: Long = 0,
+    val cacheCreationTokens: Long = 0,
     val totalTokens: Long = 0,
     val totalCostUsd: Double = 0.0,
-    val avgSessionDurationMin: Double = 0.0,
-    val activeSessions: Int = 0
+    val recordedCostUsd: Double = 0.0,
+    val costDeltaUsd: Double = 0.0,
+    val totalRequests: Long = 0,
+    val pricingCoveragePercent: Int = 100,
+    val unpricedTokens: Long = 0,
+    val contextSnapshots: Long = 0,
+    val compactEvents: Long = 0,
+    val latestContextPercent: Double = 0.0,
+    val windowLabel: String = "",
 )
 
 data class ProviderUsageItem(
     val name: String,
-    val sessionCount: Int,
-    val messageCount: Int,
     val tokenCount: Long,
+    val requestCount: Long,
+    val modelCount: Int,
     val costUsd: Double,
-    val color: Long // ARGB color value
-)
-
-data class ActivityDay(
-    val dayLabel: String,   // "Mon", "Tue", …
-    val date: String,       // "2025-04-01"
-    val messageCount: Int,
-    val sessionCount: Int,
-    val maxMessages: Int = 0 // filled in after building the list
-)
-
-data class ToolUsageItem(
-    val toolName: String,
-    val usageCount: Int,
-    val percentage: Float
+    val unpricedTokens: Long,
+    val color: Long,
 )
 
 data class ModelUsageItem(
     val modelName: String,
-    val usageCount: Int,
+    val providerName: String,
+    val tokenCount: Long,
+    val requestCount: Long,
+    val costUsd: Double,
+    val pricingKnown: Boolean,
     val percentage: Float,
-    val color: Long
+    val color: Long,
 )
 
 data class CostPoint(
-    val label: String,   // date or period label
+    val label: String,
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val cacheReadTokens: Long,
+    val cacheCreationTokens: Long,
+    val tokenCount: Long,
     val costUsd: Double,
-    val tokenCount: Long
+    val requestCount: Long,
+)
+
+// Kept for the reusable legacy chart primitives. The production analytics
+// screen no longer fabricates either dataset.
+data class ActivityDay(
+    val dayLabel: String,
+    val date: String,
+    val messageCount: Int,
+    val sessionCount: Int,
+    val maxMessages: Int = 0,
 )
 
 data class DurationPoint(
     val label: String,
-    val avgDurationMin: Double
+    val avgDurationMin: Double,
+)
+
+data class TopSessionItem(
+    val id: String,
+    val name: String,
+    val tokenCount: Long,
+    val requestCount: Long,
+    val costUsd: Double,
+)
+
+data class MissingPricingItem(
+    val modelName: String,
+    val providerName: String,
+    val tokenCount: Long,
 )
 
 enum class AnalyticsTimeRange(val label: String, val apiPeriod: String) {
-    TODAY("Today", "today"),
-    WEEK("7d", "7d"),
-    MONTH("30d", "30d"),
-    ALL("All Time", "all")
+    TODAY("24h", "24h"),
+    WEEK("Weekly", "7d"),
+    MONTH("Monthly", "30d"),
+    ALL("All", "all"),
 }
+
+/**
+ * What the timeline plots.
+ *
+ * Cache reads are deliberately their own metric rather than a slice of
+ * [TOKENS]: with cache hit rates around 98%, putting them in the same absolute
+ * stack makes every other series a hairline and the chart unreadable. Split
+ * out, both scales are legible — and cache reads are billed at a fraction of
+ * the rate anyway, so they are a different kind of number.
+ */
+enum class AnalyticsChartMetric(val label: String) {
+    TOKENS("Tokens"),
+    CACHE("Cache"),
+    COST("Cost"),
+    REQUESTS("Requests"),
+}
+
+/**
+ * A provider's live account quota, flattened for display.
+ *
+ * Providers expose different windows — Codex reports a weekly limit, Claude
+ * both a 5-hour session and a weekly one, Z.AI and Kimi add named side quotas
+ * like web search — so windows are collected into one list rather than fixed
+ * fields. Unsupported providers are kept with [supported] = false so the panel
+ * can explain *why* there's no bar instead of silently omitting them.
+ */
+data class ProviderLimitWindow(
+    val label: String,
+    val utilizationPercent: Int,
+    val resetsAt: String?,
+)
+
+data class ProviderLimitItem(
+    val providerId: String,
+    val providerLabel: String,
+    val supported: Boolean,
+    val plan: String?,
+    val windows: List<ProviderLimitWindow>,
+    val color: Long,
+    val note: String? = null,
+)
 
 data class AnalyticsUiState(
     val isLoading: Boolean = false,
+    val isLoaded: Boolean = false,
     val timeRange: AnalyticsTimeRange = AnalyticsTimeRange.WEEK,
+    val chartMetric: AnalyticsChartMetric = AnalyticsChartMetric.TOKENS,
     val summary: AnalyticsSummary = AnalyticsSummary(),
     val providerUsage: List<ProviderUsageItem> = emptyList(),
-    val activityDays: List<ActivityDay> = emptyList(),
-    val toolUsage: List<ToolUsageItem> = emptyList(),
     val modelUsage: List<ModelUsageItem> = emptyList(),
-    val costTrend: List<CostPoint> = emptyList(),
-    val durationTrend: List<DurationPoint> = emptyList(),
+    val timeline: List<CostPoint> = emptyList(),
+    val topSessions: List<TopSessionItem> = emptyList(),
+    val missingPricing: List<MissingPricingItem> = emptyList(),
+    val providerLimits: List<ProviderLimitItem> = emptyList(),
+    val limitsLoading: Boolean = false,
+    /** Account-wide daily spend limit; numbers alone say nothing without it. */
+    val dailyCostLimitUsd: Double? = null,
+    /** Spend inside the most recent timeline bucket, compared to that limit. */
+    val latestBucketCostUsd: Double = 0.0,
     val error: String? = null,
-    // legacy – kept for compatibility with any existing code
-    val selectedPeriod: String = "7d"
 )
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
+internal data class ParsedAnalytics(
+    val summary: AnalyticsSummary,
+    val providerUsage: List<ProviderUsageItem>,
+    val modelUsage: List<ModelUsageItem>,
+    val timeline: List<CostPoint>,
+    val topSessions: List<TopSessionItem>,
+    val missingPricing: List<MissingPricingItem>,
+)
 
 class AnalyticsViewModel(
-    private val api: ApiClient
+    private val api: ApiClient,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AnalyticsUiState())
     val uiState: StateFlow<AnalyticsUiState> = _uiState.asStateFlow()
+    private var loadJob: Job? = null
+    private var limitsJob: Job? = null
 
     init {
         loadAnalytics(AnalyticsTimeRange.WEEK)
+        loadProviderLimits()
+    }
+
+    /**
+     * Fetch live account quota for every provider that has one.
+     *
+     * Runs independently of the ledger query: quota comes from upstream APIs
+     * that can be slow or unreachable, and a failing one must not take the rest
+     * of the analytics screen down with it.
+     */
+    fun loadProviderLimits() {
+        limitsJob?.cancel()
+        limitsJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(limitsLoading = true)
+            val items = coroutineScope {
+                UsageLimitProvider.entries
+                    .map { provider ->
+                        async {
+                            val response = runCatching { api.getUsageLimits(provider.id) }.getOrNull()
+                            toLimitItem(provider, response)
+                        }
+                    }
+                    .awaitAll()
+            }
+            _uiState.value = _uiState.value.copy(
+                providerLimits = items.filterNotNull(),
+                limitsLoading = false,
+            )
+        }
+    }
+
+    private fun toLimitItem(
+        provider: UsageLimitProvider,
+        response: UsageLimitsResponse?,
+    ): ProviderLimitItem? {
+        val color = limitColor(provider)
+        // A provider we couldn't reach at all is dropped — an unreachable
+        // endpoint says nothing about the account, unlike an explicit
+        // `supported: false`, which is a real answer worth showing.
+        if (response == null) return null
+
+        val data = response.data
+        if (!response.supported || data == null) {
+            return ProviderLimitItem(
+                providerId = provider.id,
+                providerLabel = provider.label,
+                supported = false,
+                plan = null,
+                windows = emptyList(),
+                color = color,
+                note = response.error?.message,
+            )
+        }
+
+        val windows = buildList {
+            data.fiveHour?.let { add(ProviderLimitWindow("5-hour", it.utilization, it.resetsAt)) }
+            data.sevenDay?.let { add(ProviderLimitWindow("Weekly", it.utilization, it.resetsAt)) }
+            data.sevenDaySonnet?.let {
+                add(ProviderLimitWindow("Weekly (Sonnet)", it.utilization, it.resetsAt))
+            }
+            data.additional.forEach { extra ->
+                add(ProviderLimitWindow(extra.name, extra.utilization, extra.resetsAt))
+            }
+        }
+        if (windows.isEmpty()) return null
+
+        return ProviderLimitItem(
+            providerId = provider.id,
+            providerLabel = provider.label,
+            supported = true,
+            plan = data.subscriptionType?.takeIf { it.isNotBlank() },
+            windows = windows,
+            color = color,
+        )
+    }
+
+    private fun limitColor(provider: UsageLimitProvider): Long = when (provider) {
+        UsageLimitProvider.CODEX -> 0xFF22C55EL
+        UsageLimitProvider.CLAUDE -> 0xFFF97316L
+        UsageLimitProvider.ZAI -> 0xFF14B8A6L
+        UsageLimitProvider.KIMI -> 0xFF2582EDL
+        UsageLimitProvider.ALIBABA -> 0xFFFF8A3DL
     }
 
     fun selectTimeRange(range: AnalyticsTimeRange) {
-        if (_uiState.value.timeRange == range && !_uiState.value.isLoading) return
+        if (_uiState.value.timeRange == range && _uiState.value.isLoaded) return
         loadAnalytics(range)
+    }
+
+    fun selectChartMetric(metric: AnalyticsChartMetric) {
+        _uiState.value = _uiState.value.copy(chartMetric = metric)
     }
 
     fun refreshData() {
         loadAnalytics(_uiState.value.timeRange)
+        loadProviderLimits()
     }
 
-    fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+    /**
+     * The account's daily spend threshold. Kept out of the main try/catch: a
+     * missing limit only removes a comparison, it must not fail the screen.
+     */
+    private fun loadSpendLimit() {
+        viewModelScope.launch {
+            val alerts = runCatching { api.getSettings().data?.usageAlerts }.getOrNull() ?: return@launch
+            if (!alerts.enabled) return@launch
+            _uiState.value = _uiState.value.copy(dailyCostLimitUsd = alerts.dailyCostUsd)
+        }
     }
 
-    /** Keep legacy call-sites working */
-    fun load(period: String = _uiState.value.selectedPeriod) {
-        val range = AnalyticsTimeRange.entries.firstOrNull { it.apiPeriod == period }
-            ?: AnalyticsTimeRange.WEEK
-        loadAnalytics(range)
+    /** Fire one sample alert to prove the whole delivery chain works. */
+    fun sendTestAlert(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = runCatching { api.sendTestNotification() }.isSuccess
+            onResult(ok)
+        }
     }
 
     fun loadAnalytics(timeRange: AnalyticsTimeRange) {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 error = null,
                 timeRange = timeRange,
-                selectedPeriod = timeRange.apiPeriod
             )
-            runCatching {
-                val response = api.getAnalytics(timeRange.apiPeriod)
-                if (response.success && response.data != null) {
-                    val parsed = parseAnalyticsJson(response.data as? JsonObject, timeRange)
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        summary = parsed.summary,
-                        providerUsage = parsed.providerUsage,
-                        activityDays = parsed.activityDays,
-                        toolUsage = parsed.toolUsage,
-                        modelUsage = parsed.modelUsage,
-                        costTrend = parsed.costTrend,
-                        durationTrend = parsed.durationTrend
-                    )
-                } else {
-                    // Backend may not have rich analytics yet – fall back to mock data
-                    val mock = generateMockData(timeRange)
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        summary = mock.summary,
-                        providerUsage = mock.providerUsage,
-                        activityDays = mock.activityDays,
-                        toolUsage = mock.toolUsage,
-                        modelUsage = mock.modelUsage,
-                        costTrend = mock.costTrend,
-                        durationTrend = mock.durationTrend,
-                        error = null
-                    )
+
+            try {
+                val timezoneOffsetMinutes = TimeZone.getDefault()
+                    .getOffset(System.currentTimeMillis()) / 60_000
+                val parsed = coroutineScope {
+                    val summaryRequest = async {
+                        api.getAnalyticsSummary(timeRange.apiPeriod, timezoneOffsetMinutes)
+                    }
+                    val timelineRequest = async {
+                        api.getAnalyticsTimeline(timeRange.apiPeriod, timezoneOffsetMinutes)
+                    }
+                    val summaryResponse = summaryRequest.await()
+                    val timelineResponse = timelineRequest.await()
+
+                    if (!summaryResponse.success) {
+                        error(summaryResponse.error?.message ?: "Analytics summary failed to load")
+                    }
+                    if (!timelineResponse.success) {
+                        error(timelineResponse.error?.message ?: "Analytics timeline failed to load")
+                    }
+
+                    val summaryRoot = summaryResponse.data as? JsonObject
+                        ?: error("Analytics summary returned an invalid response")
+                    val timelineRoot = timelineResponse.data as? JsonArray
+                        ?: error("Analytics timeline returned an invalid response")
+                    AnalyticsParser.parse(summaryRoot, timelineRoot)
                 }
-            }.onFailure { e ->
-                // On network error also show mock data so the UI is never empty
-                val mock = generateMockData(timeRange)
+
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    summary = mock.summary,
-                    providerUsage = mock.providerUsage,
-                    activityDays = mock.activityDays,
-                    toolUsage = mock.toolUsage,
-                    modelUsage = mock.modelUsage,
-                    costTrend = mock.costTrend,
-                    durationTrend = mock.durationTrend,
-                    error = e.message
+                    isLoaded = true,
+                    summary = parsed.summary,
+                    providerUsage = parsed.providerUsage,
+                    modelUsage = parsed.modelUsage,
+                    timeline = parsed.timeline,
+                    topSessions = parsed.topSessions,
+                    missingPricing = parsed.missingPricing,
+                    latestBucketCostUsd = parsed.timeline.lastOrNull()?.costUsd ?: 0.0,
+                )
+                loadSpendLimit()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = error.message ?: "Analytics failed to load",
                 )
             }
         }
     }
+}
 
-    // ── JSON Parsing ──────────────────────────────────────────────────────────
+internal object AnalyticsParser {
+    fun parse(summaryRoot: JsonObject, timelineRoot: JsonArray): ParsedAnalytics {
+        val totals = summaryRoot.objectValue("totals")
+        val events = summaryRoot.objectValue("events")
+        val latestContext = events.objectValue("latestContext")
+        val pricingAudit = summaryRoot.objectValue("pricingAudit")
+        val window = summaryRoot.objectValue("window")
 
-    private data class ParsedAnalytics(
-        val summary: AnalyticsSummary,
-        val providerUsage: List<ProviderUsageItem>,
-        val activityDays: List<ActivityDay>,
-        val toolUsage: List<ToolUsageItem>,
-        val modelUsage: List<ModelUsageItem>,
-        val costTrend: List<CostPoint>,
-        val durationTrend: List<DurationPoint>
-    )
+        val summary = AnalyticsSummary(
+            inputTokens = totals.longValue("inputTokens"),
+            outputTokens = totals.longValue("outputTokens"),
+            cacheReadTokens = totals.longValue("cacheReadTokens"),
+            cacheCreationTokens = totals.longValue("cacheCreationTokens"),
+            totalTokens = totals.longValue("totalTokens"),
+            totalCostUsd = totals.doubleValue("apiEquivalentCost", totals.doubleValue("totalCost")),
+            recordedCostUsd = totals.doubleValue("recordedCost"),
+            costDeltaUsd = totals.doubleValue("costDelta"),
+            totalRequests = totals.longValue("totalRequests"),
+            pricingCoveragePercent = totals.longValue("pricingCoveragePercent", 100).toInt(),
+            unpricedTokens = totals.longValue("unpricedTokens"),
+            contextSnapshots = events.longValue("contextSnapshots"),
+            compactEvents = events.longValue("compactEvents"),
+            latestContextPercent = latestContext.doubleValue("contextUsedPercent"),
+            windowLabel = window.stringValue("label") ?: summaryRoot.stringValue("period").orEmpty(),
+        )
 
-    private fun parseAnalyticsJson(root: JsonObject?, timeRange: AnalyticsTimeRange): ParsedAnalytics {
-        if (root == null) return generateMockData(timeRange)
-
-        val summary = root["summary"]?.jsonObject?.let { s ->
-            AnalyticsSummary(
-                totalSessions = s["totalSessions"]?.jsonPrimitive?.intOrNull ?: 0,
-                totalMessages = s["totalMessages"]?.jsonPrimitive?.intOrNull ?: 0,
-                totalTokens = s["totalTokens"]?.jsonPrimitive?.longOrNull ?: 0L,
-                totalCostUsd = s["totalCostUsd"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                avgSessionDurationMin = s["avgSessionDurationMin"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                activeSessions = s["activeSessions"]?.jsonPrimitive?.intOrNull ?: 0
-            )
-        } ?: AnalyticsSummary()
-
-        val providerUsage = (root["providerUsage"] as? JsonArray)?.mapIndexedNotNull { idx, el ->
-            val obj = el.jsonObject
+        val providerUsage = summaryRoot.arrayValue("byProvider").mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            val name = item.stringValue("provider") ?: return@mapNotNull null
             ProviderUsageItem(
-                name = obj["name"]?.jsonPrimitive?.content ?: return@mapIndexedNotNull null,
-                sessionCount = obj["sessionCount"]?.jsonPrimitive?.intOrNull ?: 0,
-                messageCount = obj["messageCount"]?.jsonPrimitive?.intOrNull ?: 0,
-                tokenCount = obj["tokenCount"]?.jsonPrimitive?.longOrNull ?: 0L,
-                costUsd = obj["costUsd"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                color = providerColors.getOrElse(idx) { 0xFFCC785C }
+                name = name,
+                tokenCount = item.longValue("total_tokens"),
+                requestCount = item.longValue("requests"),
+                modelCount = item.longValue("models").toInt(),
+                costUsd = item.doubleValue("api_equivalent_cost", item.doubleValue("cost")),
+                unpricedTokens = item.longValue("unpriced_tokens"),
+                color = providerColor(name),
             )
-        } ?: emptyList()
+        }
 
-        val toolUsage = (root["toolUsage"] as? JsonArray)?.mapNotNull { el ->
-            val obj = el.jsonObject
-            ToolUsageItem(
-                toolName = obj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null,
-                usageCount = obj["count"]?.jsonPrimitive?.intOrNull ?: 0,
-                percentage = obj["percentage"]?.jsonPrimitive?.doubleOrNull?.toFloat() ?: 0f
+        val rawModels = summaryRoot.arrayValue("byModel").mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            val model = item.stringValue("model") ?: "Unknown"
+            val provider = item.stringValue("provider") ?: "Other"
+            RawModelUsage(
+                modelName = model,
+                providerName = provider,
+                tokenCount = item.longValue("total_tokens"),
+                requestCount = item.longValue("requests"),
+                costUsd = item.doubleValue("api_equivalent_cost", item.doubleValue("cost")),
+                pricingKnown = item.booleanValue("pricing_known", false),
             )
-        } ?: emptyList()
-
-        val modelUsage = (root["modelUsage"] as? JsonArray)?.mapIndexedNotNull { idx, el ->
-            val obj = el.jsonObject
+        }
+        val totalModelCost = rawModels.sumOf { it.costUsd }
+        val totalModelTokens = rawModels.sumOf { it.tokenCount }.coerceAtLeast(1)
+        val modelUsage = rawModels.map { model ->
+            val share = if (totalModelCost > 0.0) {
+                model.costUsd / totalModelCost
+            } else {
+                model.tokenCount.toDouble() / totalModelTokens
+            }
             ModelUsageItem(
-                modelName = obj["model"]?.jsonPrimitive?.content ?: return@mapIndexedNotNull null,
-                usageCount = obj["count"]?.jsonPrimitive?.intOrNull ?: 0,
-                percentage = obj["percentage"]?.jsonPrimitive?.doubleOrNull?.toFloat() ?: 0f,
-                color = modelColors.getOrElse(idx) { 0xFF2B75E2 }
+                modelName = model.modelName,
+                providerName = model.providerName,
+                tokenCount = model.tokenCount,
+                requestCount = model.requestCount,
+                costUsd = model.costUsd,
+                pricingKnown = model.pricingKnown,
+                percentage = (share * 100.0).toFloat(),
+                color = providerColor(model.providerName),
             )
-        } ?: emptyList()
+        }
 
-        val costTrend = (root["costTrend"] as? JsonArray)?.mapNotNull { el ->
-            val obj = el.jsonObject
+        val timeline = timelineRoot.mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
             CostPoint(
-                label = obj["label"]?.jsonPrimitive?.content ?: return@mapNotNull null,
-                costUsd = obj["costUsd"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-                tokenCount = obj["tokenCount"]?.jsonPrimitive?.longOrNull ?: 0L
+                label = item.stringValue("date") ?: return@mapNotNull null,
+                inputTokens = item.longValue("input_tokens"),
+                outputTokens = item.longValue("output_tokens"),
+                cacheReadTokens = item.longValue("cache_read_tokens"),
+                cacheCreationTokens = item.longValue("cache_creation_tokens"),
+                tokenCount = item.longValue("total_tokens"),
+                costUsd = item.doubleValue("cost"),
+                requestCount = item.longValue("requests"),
             )
-        } ?: emptyList()
+        }
+
+        val topSessions = summaryRoot.arrayValue("bySession").mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            TopSessionItem(
+                id = item.stringValue("session_id") ?: return@mapNotNull null,
+                name = item.stringValue("session_name")?.takeIf { it.isNotBlank() } ?: "Unnamed Session",
+                tokenCount = item.longValue("total_tokens"),
+                requestCount = item.longValue("requests"),
+                costUsd = item.doubleValue("api_equivalent_cost", item.doubleValue("cost")),
+            )
+        }
+
+        val missingPricing = pricingAudit.arrayValue("missingPricingModels").mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            MissingPricingItem(
+                modelName = item.stringValue("model") ?: return@mapNotNull null,
+                providerName = item.stringValue("provider") ?: "Other",
+                tokenCount = item.longValue("tokens"),
+            )
+        }
 
         return ParsedAnalytics(
             summary = summary,
             providerUsage = providerUsage,
-            activityDays = emptyList(),
-            toolUsage = toolUsage,
             modelUsage = modelUsage,
-            costTrend = costTrend,
-            durationTrend = emptyList()
+            timeline = timeline,
+            topSessions = topSessions,
+            missingPricing = missingPricing,
         )
     }
 
-    // ── Mock Data ─────────────────────────────────────────────────────────────
+    private data class RawModelUsage(
+        val modelName: String,
+        val providerName: String,
+        val tokenCount: Long,
+        val requestCount: Long,
+        val costUsd: Double,
+        val pricingKnown: Boolean,
+    )
 
-    private fun generateMockData(range: AnalyticsTimeRange): ParsedAnalytics {
-        val rng = Random(range.ordinal.toLong())
-        val days = when (range) {
-            AnalyticsTimeRange.TODAY -> 1
-            AnalyticsTimeRange.WEEK -> 7
-            AnalyticsTimeRange.MONTH -> 30
-            AnalyticsTimeRange.ALL -> 90
-        }
-
-        val dayLabels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-        val activityDays = (0 until minOf(days, 7)).map { i ->
-            ActivityDay(
-                dayLabel = dayLabels[i % 7],
-                date = "2025-04-${(7 - i).toString().padStart(2, '0')}",
-                messageCount = rng.nextInt(0, 45),
-                sessionCount = rng.nextInt(0, 8)
-            )
-        }.let { list ->
-            val max = list.maxOfOrNull { it.messageCount } ?: 1
-            list.map { it.copy(maxMessages = max) }
-        }
-
-        val providerData = listOf(
-            Triple("Codex", rng.nextInt(30, 90), 0xFF10A37FL),
-            Triple("OpenCode", rng.nextInt(8, 35), 0xFF7C3AEDL),
-            Triple("Pi", rng.nextInt(4, 20), 0xFF0F766EL),
-            Triple("Claude", rng.nextInt(2, 16), 0xFFCC785CL)
-        )
-        val totalProviderSessions = providerData.sumOf { it.second }
-        val providerUsage = providerData.map { (name, count, color) ->
-            ProviderUsageItem(
-                name = name,
-                sessionCount = count,
-                messageCount = count * rng.nextInt(8, 25),
-                tokenCount = count.toLong() * rng.nextInt(5000, 25000),
-                costUsd = count * rng.nextDouble(0.05, 0.35),
-                color = color
-            )
-        }
-
-        val totalSessions = totalProviderSessions
-        val totalMessages = providerUsage.sumOf { it.messageCount }
-        val totalTokens = providerUsage.sumOf { it.tokenCount }
-        val totalCost = providerUsage.sumOf { it.costUsd }
-
-        val toolNames = listOf("Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch")
-        val toolCounts = toolNames.map { rng.nextInt(5, 200) }.sortedDescending()
-        val totalToolUsage = toolCounts.sum().toFloat()
-        val toolUsage = toolNames.zip(toolCounts).map { (name, count) ->
-            ToolUsageItem(name, count, count / totalToolUsage * 100)
-        }
-
-        val modelNames = listOf("gpt-5.5", "z-ai/glm-5.1", "kimi-k2.7-code", "sonnet")
-        val modelCounts = modelNames.map { rng.nextInt(3, 50) }.sortedDescending()
-        val totalModelUsage = modelCounts.sum().toFloat()
-        val modelUsage = modelNames.zip(modelCounts).mapIndexed { idx, (name, count) ->
-            ModelUsageItem(name, count, count / totalModelUsage * 100, modelColors.getOrElse(idx) { 0xFF2B75E2 })
-        }
-
-        val costTrend = (0 until minOf(days, 14)).map { i ->
-            CostPoint(
-                label = if (days <= 7) dayLabels[(6 - i) % 7] else "Day ${days - i}",
-                costUsd = rng.nextDouble(0.0, 1.5),
-                tokenCount = rng.nextLong(1000, 50000)
-            )
-        }.reversed()
-
-        val durationTrend = (0 until minOf(days, 14)).map { i ->
-            DurationPoint(
-                label = if (days <= 7) dayLabels[(6 - i) % 7] else "Day ${days - i}",
-                avgDurationMin = rng.nextDouble(2.0, 45.0)
-            )
-        }.reversed()
-
-        return ParsedAnalytics(
-            summary = AnalyticsSummary(
-                totalSessions = totalSessions,
-                totalMessages = totalMessages,
-                totalTokens = totalTokens,
-                totalCostUsd = totalCost,
-                avgSessionDurationMin = rng.nextDouble(5.0, 30.0),
-                activeSessions = rng.nextInt(0, 4)
-            ),
-            providerUsage = providerUsage,
-            activityDays = activityDays,
-            toolUsage = toolUsage,
-            modelUsage = modelUsage,
-            costTrend = costTrend,
-            durationTrend = durationTrend
-        )
+    private fun providerColor(provider: String): Long = when (provider.lowercase()) {
+        "codex" -> 0xFF22C55EL
+        "kimi" -> 0xFF2582EDL
+        "opencode" -> 0xFF3B82F6L
+        "pi" -> 0xFFA855F7L
+        "z.ai", "zai", "z.ai code" -> 0xFF14B8A6L
+        "claude", "claude code" -> 0xFFF97316L
+        else -> 0xFF94A3B8L
     }
 
-    companion object {
-        val providerColors = listOf(
-            0xFF10A37FL, // Codex
-            0xFF7C3AEDL, // OpenCode
-            0xFF0F766EL, // Pi
-            0xFFCC785CL, // Claude
-            0xFFFF6B35L, // OpenCode secondary
-            0xFFC377FFL  // Extra – Brand Purple
-        )
-        val modelColors = listOf(
-            0xFF2B75E2L, // Brand Blue
-            0xFFCC785CL, // Antique Brass
-            0xFF22C55EL, // Success Green
-            0xFFC377FFL, // Brand Purple
-            0xFFF59E0BL, // Warning Amber
-            0xFFEF4444L  // Error Red
-        )
-    }
+    private fun JsonObject.objectValue(key: String): JsonObject = this[key] as? JsonObject ?: JsonObject(emptyMap())
+    private fun JsonObject.arrayValue(key: String): JsonArray = this[key] as? JsonArray ?: JsonArray(emptyList())
+    private fun JsonObject.stringValue(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
+    private fun JsonObject.longValue(key: String, fallback: Long = 0): Long =
+        (this[key] as? JsonPrimitive)?.longOrNull ?: fallback
+    private fun JsonObject.doubleValue(key: String, fallback: Double = 0.0): Double =
+        (this[key] as? JsonPrimitive)?.doubleOrNull ?: fallback
+    private fun JsonObject.booleanValue(key: String, fallback: Boolean): Boolean =
+        (this[key] as? JsonPrimitive)?.booleanOrNull ?: fallback
 }

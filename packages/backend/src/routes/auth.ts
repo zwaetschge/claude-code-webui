@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { nanoid } from 'nanoid';
+import { z } from 'zod';
 import { config } from '../config.js';
 import {
   requireAuth,
@@ -18,6 +19,7 @@ import { generateUserToken } from '../utils/authTokens.js';
 import { upsertProxyUser } from '../utils/proxyUser.js';
 import { stampLogin } from '../utils/auditLog.js';
 import { requestClaudeOAuthTokenRefresh } from '../utils/claudeOauth.js';
+import { mobileAuthCodes } from '../services/mobileAuthCodes.js';
 import {
   EmailNotAllowedError,
   OAuthEmailCollisionError,
@@ -25,6 +27,16 @@ import {
 } from '../auth/passport.js';
 
 const router = Router();
+
+const mobileProxyQuerySchema = z.object({
+  state: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
+  code_challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+});
+
+const mobileExchangeSchema = z.object({
+  code: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  codeVerifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
+});
 
 function getAuthenticatedCliLinkUser(req: Request): User | null {
   const userId = resolveAuthenticatedUserId(req);
@@ -108,6 +120,37 @@ function redirectProxyError(res: Response, error: string): void {
   res.redirect(`${config.frontendUrl}/login?${params.toString()}`);
 }
 
+function redirectMobileAuth(res: Response, values: Record<string, string>): void {
+  res.redirect(`claudewebui://auth/callback?${new URLSearchParams(values).toString()}`);
+}
+
+function getProxyIdentity(req: Request): {
+  proxyUser: string | null;
+  proxyName: string | null;
+  proxyEmail: string | null;
+} {
+  const proxyUser = getHeaderValue(req, config.proxyAuth.userHeaders);
+  const proxyName = getHeaderValue(req, config.proxyAuth.nameHeaders);
+  const proxyEmail =
+    getHeaderValue(req, config.proxyAuth.emailHeaders) ||
+    (proxyUser?.includes('@') ? proxyUser : null);
+  return { proxyUser, proxyName, proxyEmail };
+}
+
+async function establishProxyLogin(
+  req: Request,
+  proxyEmail: string,
+  proxyName: string | null,
+  proxyUser: string | null
+): Promise<User> {
+  const user = upsertProxyUser(proxyEmail, proxyName, proxyUser);
+  await new Promise<void>((resolve, reject) => {
+    req.logIn(user, (err) => (err ? reject(err) : resolve()));
+  });
+  stampLogin(user.id, 'proxy', req);
+  return user;
+}
+
 router.get('/proxy/status', (_req, res) => {
   res.json({
     success: true,
@@ -125,11 +168,7 @@ router.get('/proxy', async (req, res, next) => {
     return redirectProxyError(res, 'disabled');
   }
 
-  const proxyUser = getHeaderValue(req, config.proxyAuth.userHeaders);
-  const proxyName = getHeaderValue(req, config.proxyAuth.nameHeaders);
-  const proxyEmail =
-    getHeaderValue(req, config.proxyAuth.emailHeaders) ||
-    (proxyUser?.includes('@') ? proxyUser : null);
+  const { proxyUser, proxyName, proxyEmail } = getProxyIdentity(req);
 
   if (!proxyEmail) {
     return redirectProxyError(res, 'missing_email_header');
@@ -140,11 +179,7 @@ router.get('/proxy', async (req, res, next) => {
   }
 
   try {
-    const user = upsertProxyUser(proxyEmail, proxyName, proxyUser);
-    await new Promise<void>((resolve, reject) => {
-      req.logIn(user, (err) => (err ? reject(err) : resolve()));
-    });
-    stampLogin(user.id, 'proxy', req);
+    const user = await establishProxyLogin(req, proxyEmail, proxyName, proxyUser);
 
     const params = new URLSearchParams({
       token: generateUserToken(user.id),
@@ -154,6 +189,71 @@ router.get('/proxy', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Native Android login handoff. Traefik keeps this single route behind
+// Authelia, while the rest of /mobile is protected by Plum JWTs.
+router.get('/proxy/mobile', rateLimiters.strict, async (req, res, next) => {
+  const query = mobileProxyQuerySchema.safeParse(req.query);
+  if (!query.success) return redirectMobileAuth(res, { error: 'invalid_request' });
+  if (!config.proxyAuth.enabled) return redirectMobileAuth(res, { error: 'proxy_disabled' });
+
+  const { proxyUser, proxyName, proxyEmail } = getProxyIdentity(req);
+  if (!proxyEmail) return redirectMobileAuth(res, { error: 'missing_identity' });
+  if (!isEmailAllowed(proxyEmail)) {
+    return redirectMobileAuth(res, { error: 'email_not_allowed' });
+  }
+
+  try {
+    const user = await establishProxyLogin(req, proxyEmail, proxyName, proxyUser);
+    const code = mobileAuthCodes.issue(user.id, query.data.code_challenge);
+    return redirectMobileAuth(res, { code, state: query.data.state });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/mobile/exchange', rateLimiters.strict, (req, res) => {
+  const parsed = mobileExchangeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_MOBILE_AUTH', message: 'Invalid mobile authentication response' },
+    });
+  }
+
+  const userId = mobileAuthCodes.exchange(parsed.data.code, parsed.data.codeVerifier);
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'INVALID_MOBILE_AUTH', message: 'Mobile authentication expired or invalid' },
+    });
+  }
+
+  const user = getDatabase()
+    .prepare(
+      `SELECT id, email, name, avatar_url as avatarUrl, provider,
+              provider_id as providerId, role, status,
+              strftime('%Y-%m-%dT%H:%M:%fZ', created_at) as createdAt,
+              strftime('%Y-%m-%dT%H:%M:%fZ', updated_at) as updatedAt
+       FROM users WHERE id = ?`
+    )
+    .get(userId) as User | undefined;
+
+  if (!user || user.status === 'suspended' || !isEmailAllowed(user.email)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'INVALID_MOBILE_AUTH', message: 'Mobile authentication expired or invalid' },
+    });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      token: generateUserToken(user.id),
+      user,
+    },
+  });
 });
 
 // GitHub OAuth (only if configured)

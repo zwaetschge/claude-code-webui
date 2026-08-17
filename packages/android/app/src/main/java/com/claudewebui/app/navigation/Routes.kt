@@ -19,17 +19,50 @@ sealed class Routes(val route: String) {
     /** Session list / dashboard */
     object Dashboard : Routes("dashboard")
 
+    /** Realtime sessions, tools and permission activity */
+    object Activity : Routes("activity")
+
+    /** Shared agents, skills, plugins, MCP servers and commands */
+    object Library : Routes("library")
+
     /** Chat view for a specific session */
-    data class Chat(val sessionId: String) : Routes("chat/{sessionId}") {
+    data class Chat(val sessionId: String) : Routes(ROUTE) {
         companion object {
-            const val ROUTE = "chat/{sessionId}"
+            const val ROUTE = "chat/{sessionId}?messageId={messageId}&chatId={chatId}"
             const val ARG_SESSION_ID = "sessionId"
-            fun createRoute(sessionId: String) = "chat/$sessionId"
+            const val ARG_MESSAGE_ID = "messageId"
+            const val ARG_CHAT_ID = "chatId"
+            fun createRoute(
+                sessionId: String,
+                messageId: String? = null,
+                chatId: String? = null,
+            ): String = buildString {
+                append("chat/")
+                append(java.net.URLEncoder.encode(sessionId, "UTF-8"))
+                val parameters = buildList {
+                    messageId?.let {
+                        add("messageId=" + java.net.URLEncoder.encode(it, "UTF-8"))
+                    }
+                    chatId?.let {
+                        add("chatId=" + java.net.URLEncoder.encode(it, "UTF-8"))
+                    }
+                }
+                if (parameters.isNotEmpty()) append("?").append(parameters.joinToString("&"))
+            }
         }
     }
 
     /** Create a new session */
     object NewSession : Routes("new_session")
+
+    /** Scratch notes for a session */
+    data class Notes(val sessionId: String) : Routes(ROUTE) {
+        companion object {
+            const val ROUTE = "notes/{sessionId}"
+            const val ARG_SESSION_ID = "sessionId"
+            fun createRoute(sessionId: String) = "notes/$sessionId"
+        }
+    }
 
     // ---- Settings (nested graph) ----
 
@@ -38,6 +71,15 @@ sealed class Routes(val route: String) {
 
     /** Provider configuration (API keys, models) */
     object SettingsProviders : Routes("settings/providers")
+
+    /** Detail view for one CLI harness (status + model selection) */
+    data class SettingsCliProvider(val providerId: String) : Routes(ROUTE) {
+        companion object {
+            const val ROUTE = "settings/cli-provider/{providerId}"
+            const val ARG_PROVIDER_ID = "providerId"
+            fun createRoute(providerId: String) = "settings/cli-provider/$providerId"
+        }
+    }
 
     /** MCP server management */
     object SettingsMcp : Routes("settings/mcp")
@@ -51,26 +93,71 @@ sealed class Routes(val route: String) {
     /** Tool permissions */
     object SettingsPermissions : Routes("settings/permissions")
 
-    // ---- Session-scoped tools ----
-
-    /** File browser for a session's working directory */
-    data class FileManager(val sessionId: String) : Routes("file_manager/{sessionId}") {
+    /** Preview, GitHub and Oracle browser for one session. */
+    data class DevTools(val sessionId: String, val workingDirectory: String) : Routes(ROUTE) {
         companion object {
-            const val ROUTE = "file_manager/{sessionId}"
+            const val ROUTE = "devtools/{sessionId}/{workingDirectory}"
             const val ARG_SESSION_ID = "sessionId"
-            fun createRoute(sessionId: String) = "file_manager/$sessionId"
+            const val ARG_WORKING_DIRECTORY = "workingDirectory"
+            fun createRoute(sessionId: String, workingDirectory: String) =
+                "devtools/$sessionId/" + java.net.URLEncoder.encode(workingDirectory, "UTF-8")
         }
     }
 
-    /** File viewer — navigated to from FileManagerScreen internally (back-stack entry only) */
+    /** ComfyUI / Discord / Home Assistant status and connection probes */
+    object SettingsIntegrations : Routes("settings/integrations")
+
+    /** Containers, watchdogs, users and the audit log */
+    object Operations : Routes("operations")
+
+    /**
+     * Memory files for a session's working directory.
+     *
+     * The directory travels in the route because the backend derives the memory
+     * folder from the working directory, not from the session id.
+     */
+    data class Memory(val workingDirectory: String) : Routes(ROUTE) {
+        companion object {
+            const val ROUTE = "memory/{workingDirectory}"
+            const val ARG_WORKING_DIRECTORY = "workingDirectory"
+            fun createRoute(workingDirectory: String) =
+                "memory/" + java.net.URLEncoder.encode(workingDirectory, "UTF-8")
+        }
+    }
+
+    // ---- Session-scoped tools ----
+
+    /** File browser for a session's working directory */
+    data class FileManager(val sessionId: String) : Routes("file_manager/{sessionId}/{path}") {
+        companion object {
+            const val ROUTE = "file_manager/{sessionId}/{path}"
+            const val ARG_SESSION_ID = "sessionId"
+            const val ARG_PATH = "path"
+
+            /**
+             * The starting directory travels with the route. It used to be
+             * hardcoded to "" at the destination, so the browser opened on an
+             * empty path and the directory listing answered 404.
+             */
+            fun createRoute(sessionId: String, path: String) =
+                "file_manager/$sessionId/" + java.net.URLEncoder.encode(path, "UTF-8")
+        }
+    }
+
+    /** View and edit a workspace file. */
     data class FileViewer(val sessionId: String, val filePath: String) :
         Routes("file_viewer/{sessionId}/{filePath}") {
         companion object {
             const val ROUTE = "file_viewer/{sessionId}/{filePath}"
             const val ARG_SESSION_ID = "sessionId"
             const val ARG_FILE_PATH = "filePath"
+
+            /**
+             * Absolute paths contain slashes, which would otherwise be read as
+             * route separators, so the path travels URL-encoded.
+             */
             fun createRoute(sessionId: String, filePath: String) =
-                "file_viewer/$sessionId/$filePath"
+                "file_viewer/$sessionId/" + java.net.URLEncoder.encode(filePath, "UTF-8")
         }
     }
 

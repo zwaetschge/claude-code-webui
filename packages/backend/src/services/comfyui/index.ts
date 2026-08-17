@@ -21,6 +21,7 @@ import { ComfyUIClient, type ComfyUIOutputImage } from './client.js';
 import {
   buildWorkflow,
   validateParams,
+  WORKFLOWS,
   type WorkflowId,
   type WorkflowParams,
 } from './workflows.js';
@@ -269,7 +270,10 @@ class ComfyUIOrchestrator {
     workflowId: WorkflowId,
     params: WorkflowParams
   ): Promise<WorkflowParams> {
-    if (workflowId !== 'flux2-klein-edit') return params;
+    // Keyed off the workflow's own declaration rather than a hard-coded id:
+    // naming one edit workflow here meant the next one silently skipped the
+    // ownership check on the uploaded image.
+    if (!WORKFLOWS[workflowId].requiresInputImage) return params;
     const value = params.input_image;
     if (!value) return params;
 
@@ -478,6 +482,10 @@ function extractSeed(
     case 'flux2-klein-t2i':
       return workflow['113']?.inputs?.noise_seed;
     case 'flux2-klein-edit':
+      return workflow['7']?.inputs?.seed;
+    case 'krea2-t2i':
+      return workflow['30:3']?.inputs?.seed;
+    case 'f2k-edit':
       return workflow['7']?.inputs?.seed;
   }
 }

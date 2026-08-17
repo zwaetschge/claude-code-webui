@@ -14,6 +14,7 @@ import {
   Zap,
   Star,
   FolderKey,
+  Search,
 } from 'lucide-react';
 import {
   CommandDialog,
@@ -31,6 +32,7 @@ import { socketService } from '@/services/socket';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { toUiProvider } from '@/lib/providers';
 import type { SessionMode } from '@plum-code-webui/shared';
+import { openGlobalMessageSearch } from '@/components/search/GlobalMessageSearchDialog';
 
 export function CommandPalette() {
   const { open, setOpen } = useCommandPaletteStore();
@@ -91,6 +93,11 @@ export function CommandPalette() {
             <Plus />
             <span>New Session</span>
             <CommandShortcut>N</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => run(openGlobalMessageSearch)}>
+            <Search />
+            <span>Search all messages</span>
+            <CommandShortcut>⇧⌘F</CommandShortcut>
           </CommandItem>
         </CommandGroup>
 

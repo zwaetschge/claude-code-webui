@@ -127,9 +127,18 @@ export function buildPiProviderConfig(
 ): Record<string, unknown> | null {
   const catalogProvider = catalog[provider.id];
   const baseUrl = provider.baseUrl || catalogProvider?.api;
-  const modelIds = (
-    configuredModelIds.length > 0 ? configuredModelIds : catalogProvider?.models || []
-  ).filter(isPiRunnableModel);
+  // Union, not either/or. Pi used to take the OpenCode tenant file when it had
+  // an entry and the catalog otherwise, so a provider listed in one source hid
+  // every model known only to the other — and a provider missing from the
+  // catalog (a self-hosted or newly added endpoint) existed for Pi only as long
+  // as OpenCode had written a config for it.
+  const modelIds = [
+    ...new Set([
+      ...(provider.models ?? []),
+      ...configuredModelIds,
+      ...(catalogProvider?.models ?? []),
+    ]),
+  ].filter(isPiRunnableModel);
   if (!provider.enabled || !baseUrl || modelIds.length === 0) return null;
 
   const envVar = getOpenCodeCredentialEnvVars(provider.id, catalog)[0];

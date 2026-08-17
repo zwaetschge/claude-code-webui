@@ -11,8 +11,11 @@ import type {
   SubagentRunStatus,
   TodoItem,
   ToolActionSummary,
+  SessionSendDisposition,
   DiscordAlertEventType,
   DiscordAlertSeverity,
+  PendingPermission,
+  PermissionRequestData,
 } from '@plum-code-webui/shared';
 import { estimateModelCost } from '@plum-code-webui/shared';
 import {
@@ -84,6 +87,7 @@ import { assertRunnerAccess } from '../../utils/runnerAccess.js';
 import { buildSuperpowersBootstrapContext, syncSuperpowers } from '../../utils/superpowersSync.js';
 import { buildSessionExecutionPrompt } from '../sessionExecutionContext.js';
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
+import { onSessionCompacted } from '../memoryOptimizer.js';
 import { persistMessageMedia, type PendingChatMedia } from '../chatMedia.js';
 import { recordAudit } from '../../utils/auditLog.js';
 import { getFallbackToolActionSummary } from '../tool-action-summarizer.js';
@@ -97,6 +101,20 @@ import {
   spawnManagedProcess,
   terminateManagedProcess,
 } from './processLifecycle.js';
+import { captureKimiUsageCursor, readKimiUsageSince } from '../../utils/kimiTurnUsage.js';
+import {
+  getSessionSyncState,
+  nextSessionEventSequence,
+  resolveSessionSendChatId,
+} from '../sessionSync.js';
+import { markChatUploadsConsumed } from '../chatUploads.js';
+
+export interface SendMessageResult {
+  messageId?: string;
+  chatId: string | null;
+  disposition: SessionSendDisposition;
+  highWatermark: number;
+}
 
 function isClaudeTransportProvider(provider: string): provider is 'claude' | 'zai' {
   return provider === 'claude' || provider === 'zai';
@@ -138,6 +156,7 @@ const __dirname = path.dirname(__filename);
 const BUFFER_SIZE = 5000;
 const HANDOFF_CONTEXT_MAX_CHARS = 60000;
 const HANDOFF_CONTEXT_MAX_MESSAGES = 80;
+const CODEX_TURN_TOKEN_FIELD_CAP = 1_000_000;
 
 // Pi events that prove the turn is still moving. Used to cancel the scheduled
 // post-compaction nudge so we never inject a duplicate prompt.
@@ -2605,6 +2624,10 @@ function createVirtualChildProcess(): ChildProcess {
 interface ClaudeProcess {
   process: ChildProcess;
   sessionId: string;
+  /** Thread whose provider-native context this process was started for. */
+  providerChatId: string | null;
+  /** Thread owning the currently dispatched provider turn/output. */
+  currentChatId: string | null;
   // CLI provider for this session
   cliProvider: CLIProvider;
   // Per-turn token usage (for context display)
@@ -2693,11 +2716,11 @@ interface ClaudeProcess {
   // Dedicated Codex exec workflow to use for the next respawn instead of the
   // normal chat prompt, e.g. `codex exec review`.
   codexPendingExecCommand?: { type: 'review'; args: string[]; prompt?: string };
-  // Codex `exec` cannot accept another stdin prompt after the first EOF. A
-  // follow-up submitted while a turn is still running is held as the next turn
-  // and dispatched once the active child exits. This intentionally keeps only
-  // the latest follow-up instead of a FIFO queue.
-  codexPendingSteerTurn?: CodexPreparedTurn;
+  // Codex `exec` cannot accept another stdin prompt after the first EOF. Keep
+  // accepted follow-ups in memory until the active child exits. Queue-mode
+  // turns remain FIFO; an explicit steering turn moves to the front without
+  // discarding turns that were already accepted.
+  codexQueuedTurns?: CodexPreparedTurn[];
   codexSteerDraining?: boolean;
   codexPreemptingForSteer?: boolean;
   codexPreemptKillTimer?: ReturnType<typeof setTimeout>;
@@ -2752,6 +2775,17 @@ interface ClaudeProcess {
   opencodeQueueDraining?: boolean;
   claudeIdle?: boolean;
   claudeQueuedTurns?: ClaudePreparedTurn[];
+  /** Settings reload parked until the running turn (and its queue) finishes. */
+  deferredRestart?: {
+    userId: string;
+    options: { preserveNativeContext?: boolean };
+  };
+  /** Mode change parked until the running turn (and its queue) finishes. */
+  claudeDeferredModeRestart?: {
+    mode: SessionMode;
+    userId: string;
+    previousMode: SessionMode;
+  };
   claudeQueueDraining?: boolean;
   // Accumulates content per opencode part.id so we can emit streaming deltas
   // and flush each opencode assistant message as a separate WebUI message.
@@ -2858,6 +2892,7 @@ export function applyClaudeResultUsage(
 
 interface CodexPreparedTurn {
   queueId: string;
+  chatId: string | null;
   queuedAt: string;
   originalMessage: string;
   messageForClaude: string;
@@ -2870,6 +2905,7 @@ interface CodexPreparedTurn {
 
 interface OpenCodePreparedTurn {
   queueId: string;
+  chatId: string | null;
   queuedAt: string;
   originalMessage: string;
   messageForClaude: string;
@@ -2880,6 +2916,7 @@ interface OpenCodePreparedTurn {
 
 interface ClaudePreparedTurn {
   queueId: string;
+  chatId: string | null;
   queuedAt: string;
   originalMessage: string;
   messageForClaude: string;
@@ -2935,14 +2972,17 @@ export class ClaudeProcessManager {
     { summary: string; reason: 'mode-change' | 'provider-switch' | 'context-limit' }
   > = new Map();
   private io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+  private readonly allocateEventSequence: (sessionId: string) => number;
 
   /** Public event emitter for external consumers */
   public events = new EventEmitter();
 
   constructor(
-    io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>
+    io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>,
+    allocateEventSequence: (sessionId: string) => number = nextSessionEventSequence
   ) {
     this.io = io;
+    this.allocateEventSequence = allocateEventSequence;
   }
 
   // Map UI modes to Claude CLI permission flags (legacy flow)
@@ -3042,17 +3082,62 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   }
 
   // Helper method to buffer a message
-  private bufferMessage(sessionId: string, type: BufferedMessage['type'], data: unknown): void {
+  private bufferMessage<T extends object>(
+    sessionId: string,
+    type: BufferedMessage['type'],
+    data: T,
+    existingSequence?: number
+  ):
+    | {
+        data: T & { eventSequence: number };
+        sequence: number;
+        timestamp: number;
+      }
+    | undefined {
     const proc = this.processes.get(sessionId);
-    if (!proc) return;
+    if (!proc) return undefined;
+
+    const sequence = existingSequence ?? this.allocateEventSequence(sessionId);
+    const sequencedData = { ...data, eventSequence: sequence } as T & {
+      eventSequence: number;
+    };
 
     const bufferedMsg: BufferedMessage = {
       type,
-      data,
+      data: sequencedData,
       timestamp: Date.now(),
+      sequence,
     };
     proc.outputBuffer.push(bufferedMsg);
     proc.lastActivityAt = Date.now();
+    return {
+      data: sequencedData,
+      sequence,
+      timestamp: bufferedMsg.timestamp,
+    };
+  }
+
+  /**
+   * Socket.IO preserves packet order. Emit the sequenced live event first and
+   * only then publish its cursor, so a client can never persist a cursor for
+   * state it has not received/applied yet.
+   */
+  private emitBufferedEvent<T extends object>(
+    sessionId: string,
+    type: BufferedMessage['type'],
+    data: T,
+    emitLive: (sequencedData: T & { eventSequence?: number }) => void,
+    existingSequence?: number
+  ): number | undefined {
+    const buffered = this.bufferMessage(sessionId, type, data, existingSequence);
+    emitLive(buffered?.data ?? data);
+    if (!buffered) return undefined;
+    this.io.to(`session:${sessionId}`).emit('session:cursor', {
+      sessionId,
+      sequence: buffered.sequence,
+      timestamp: buffered.timestamp,
+    });
+    return buffered.sequence;
   }
 
   private compactActivityText(value: string | null | undefined, maxLength = 120): string | null {
@@ -3120,8 +3205,9 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       externalAgentId: run.externalAgentId,
       timestamp: run.completedAt ?? run.startedAt,
     };
-    this.bufferMessage(sessionId, 'agent', event);
-    this.io.to(`session:${sessionId}`).emit('session:agent', event);
+    this.emitBufferedEvent(sessionId, 'agent', event, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:agent', sequenced);
+    });
   }
 
   private trimSubagentRuns(proc: ClaudeProcess, keep = 30): void {
@@ -3342,13 +3428,52 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     return null;
   }
 
+  /**
+   * Side effects that belong to a finished turn: capture the working-tree diff
+   * and file the reply in the notification centre. Deliberately fire-and-forget
+   * so nothing here can delay or break message delivery.
+   */
+  private async recordTurnOutcome(
+    sessionId: string,
+    content: string,
+    turnId: string
+  ): Promise<void> {
+    try {
+      const row = getDatabase()
+        .prepare(
+          'SELECT user_id as userId, name, working_directory as workingDirectory FROM sessions WHERE id = ?'
+        )
+        .get(sessionId) as { userId: string; name: string; workingDirectory: string } | undefined;
+      if (!row) return;
+
+      const { captureTurnDiff } = await import('../git/turnDiff.js');
+      await captureTurnDiff(sessionId, row.userId, row.workingDirectory, turnId);
+
+      const trimmed = content.trim();
+      if (trimmed) {
+        const { notify } = await import('../notifications/notificationCenter.js');
+        const isGoal = /^goal complete/i.test(trimmed);
+        notify({
+          userId: row.userId,
+          sessionId,
+          kind: isGoal ? 'goal' : 'reply',
+          title: isGoal ? `Goal complete — ${row.name}` : `Reply ready — ${row.name}`,
+          body: trimmed.slice(0, 300),
+        });
+      }
+    } catch (error) {
+      console.warn('[TurnOutcome] skipped:', error);
+    }
+  }
+
   // Wrapper to emit and buffer status
   private emitStatus(
     sessionId: string,
     data: { sessionId: string; status: 'running' | 'stopped' | 'error' }
   ): void {
-    this.bufferMessage(sessionId, 'status', data);
-    this.io.to(`session:${sessionId}`).emit('session:status', data);
+    this.emitBufferedEvent(sessionId, 'status', data, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:status', sequenced);
+    });
   }
 
   private notifyDiscordSessionEvent(
@@ -3470,14 +3595,16 @@ Discord Main Gateway:
         proc.currentActivitySummary = this.describeToolActivity(data.toolName, data.input);
       }
     }
-    this.bufferMessage(sessionId, 'tool_use', stamped);
-    this.io.to(`session:${sessionId}`).emit('session:tool_use', stamped);
+    this.emitBufferedEvent(sessionId, 'tool_use', stamped, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:tool_use', sequenced);
+    });
   }
 
   private emitModeChange(sessionId: string, mode: SessionMode): void {
     const data = { sessionId, mode };
-    this.bufferMessage(sessionId, 'mode', data);
-    this.io.to(`session:${sessionId}`).emit('session:mode', data);
+    this.emitBufferedEvent(sessionId, 'mode', data, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:mode', sequenced);
+    });
   }
 
   private emitCompact(
@@ -3488,7 +3615,7 @@ Discord Main Gateway:
       message: string;
       summary?: string;
       clear?: boolean;
-      reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+      reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
       error?: string;
       createdAt?: string;
     }
@@ -3499,8 +3626,19 @@ Discord Main Gateway:
       createdAt: data.createdAt || new Date().toISOString(),
     };
     this.persistCompactEvent(sessionId, event);
-    this.bufferMessage(sessionId, 'compact', event);
-    this.io.to(`session:${sessionId}`).emit('session:compact', event);
+    this.emitBufferedEvent(sessionId, 'compact', event, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:compact', sequenced);
+    });
+
+    // Self-maintaining memory: every compaction triggers a debounced cleanup
+    // of the workspace memory dir plus CLAUDE.md / AGENTS.md (see
+    // services/memoryOptimizer.ts). Fire-and-forget — never blocks the turn.
+    const workdir = this.processes.get(sessionId)?.workingDirectory;
+    if (workdir) {
+      void onSessionCompacted(sessionId, workdir).catch((error) =>
+        console.error(`[MEMORY-OPT] Unhandled failure [${sessionId}]:`, error)
+      );
+    }
   }
 
   private toSqliteTimestamp(iso: string): string {
@@ -3516,7 +3654,7 @@ Discord Main Gateway:
       message: string;
       summary?: string;
       clear?: boolean;
-      reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+      reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
       error?: string;
       createdAt: string;
     }
@@ -3872,14 +4010,19 @@ Discord Main Gateway:
     // Schema difference vs Claude:
     //   Codex:  input_tokens INCLUDES cached_input_tokens (overlapping)
     //   Claude: input_tokens and cache_read_input_tokens are disjoint
-    const nonCachedInput = Math.max(deltaInput - deltaCached, 0);
+    const nonCachedInput = Math.min(
+      Math.max(deltaInput - deltaCached, 0),
+      CODEX_TURN_TOKEN_FIELD_CAP
+    );
+    const cached = Math.min(Math.max(deltaCached, 0), CODEX_TURN_TOKEN_FIELD_CAP);
+    const output = Math.min(Math.max(deltaOutput, 0), CODEX_TURN_TOKEN_FIELD_CAP);
 
     proc.turnInputTokens = nonCachedInput;
-    proc.turnOutputTokens = deltaOutput;
-    proc.turnCacheReadTokens = deltaCached;
+    proc.turnOutputTokens = output;
+    proc.turnCacheReadTokens = cached;
     proc.turnCacheCreationTokens = 0; // Codex doesn't surface cache writes.
 
-    return { nonCachedInput, cached: deltaCached, output: deltaOutput };
+    return { nonCachedInput, cached, output };
   }
 
   /**
@@ -3916,16 +4059,43 @@ Discord Main Gateway:
     return this.getSessionBufferStatus(sessionId, sinceTimestamp).items;
   }
 
+  /** Emit and replay-buffer a blocking permission request from the hook route. */
+  emitPermissionRequest(sessionId: string, data: PendingPermission | PermissionRequestData): void {
+    this.emitBufferedEvent(sessionId, 'permission_request', data, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
+    });
+  }
+
   /**
    * Returns buffered items plus a rollover flag. needsFullResync=true means the buffer
    * evicted data older than sinceTimestamp — client cannot reconstruct state from the buffer alone.
    */
   getSessionBufferStatus(
     sessionId: string,
-    sinceTimestamp?: number
+    sinceTimestamp?: number,
+    sinceSequence?: number
   ): { items: BufferedMessage[]; needsFullResync: boolean } {
     const proc = this.processes.get(sessionId);
-    if (!proc) return { items: [], needsFullResync: false };
+    if (!proc) {
+      if (sinceSequence !== undefined) {
+        const highWatermark = getSessionSyncState(sessionId).highWatermark;
+        return { items: [], needsFullResync: sinceSequence < highWatermark };
+      }
+      return { items: [], needsFullResync: false };
+    }
+
+    if (sinceSequence !== undefined) {
+      const all = proc.outputBuffer.getAll();
+      const items = all.filter((message) => (message.sequence ?? 0) > sinceSequence);
+      const highWatermark = getSessionSyncState(sessionId).highWatermark;
+      const earliest = items[0]?.sequence;
+      return {
+        items,
+        needsFullResync:
+          (earliest !== undefined && earliest > sinceSequence + 1) ||
+          (items.length === 0 && sinceSequence < highWatermark),
+      };
+    }
 
     if (sinceTimestamp) {
       return proc.outputBuffer.getSinceWithStatus((msg) => msg.timestamp >= sinceTimestamp);
@@ -3989,10 +4159,11 @@ Discord Main Gateway:
         `SELECT role
            FROM messages
           WHERE session_id = ?
+            AND chat_id IS (SELECT active_chat_id FROM sessions WHERE id = ?)
           ORDER BY created_at DESC, rowid DESC
           LIMIT 1`
       )
-      .get(sessionId) as { role: string } | undefined;
+      .get(sessionId, sessionId) as { role: string } | undefined;
     if (!shouldRecoverInterruptedKimiTurn(session.cli_provider, session.status, latest?.role)) {
       return false;
     }
@@ -4025,6 +4196,7 @@ Discord Main Gateway:
           working_directory: string;
           claude_session_id: string | null;
           allowed_directories: string | null;
+          active_chat_id: string | null;
           cli_provider: CLIProvider | null;
           mode: SessionMode | null;
         }
@@ -4159,6 +4331,8 @@ Discord Main Gateway:
       const claudeProcess: ClaudeProcess = {
         process: virtualProc,
         sessionId,
+        providerChatId: session.active_chat_id,
+        currentChatId: session.active_chat_id,
         cliProvider,
         userId,
         workingDirectory: session.working_directory,
@@ -4256,6 +4430,8 @@ Discord Main Gateway:
       const claudeProcess: ClaudeProcess = {
         process: child,
         sessionId,
+        providerChatId: session.active_chat_id,
+        currentChatId: session.active_chat_id,
         cliProvider,
         userId,
         workingDirectory: session.working_directory,
@@ -4445,6 +4621,8 @@ Discord Main Gateway:
       const claudeProcess: ClaudeProcess = {
         process: virtualProc,
         sessionId,
+        providerChatId: session.active_chat_id,
+        currentChatId: session.active_chat_id,
         cliProvider,
         userId,
         workingDirectory: session.working_directory,
@@ -4488,6 +4666,7 @@ Discord Main Gateway:
         lastContextLimitAt: undefined,
         codexIdle: true,
         codexSessionId: persistedCodexSessionId,
+        codexQueuedTurns: [],
         codexPendingImages: [],
         codexPendingExecCommand: undefined,
         codexEmittedTools: new Set(),
@@ -4625,6 +4804,8 @@ Discord Main Gateway:
     const claudeProcess: ClaudeProcess = {
       process: proc,
       sessionId,
+      providerChatId: session.active_chat_id,
+      currentChatId: session.active_chat_id,
       cliProvider,
       userId,
       workingDirectory: session.working_directory,
@@ -4802,6 +4983,7 @@ Discord Main Gateway:
         ) {
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
+            chatId: this.processes.get(sessionId)?.currentChatId,
             content: line + '\n',
             isComplete: false,
           });
@@ -5587,6 +5769,7 @@ Discord Main Gateway:
         }
         this.io.to(`session:${sessionId}`).emit('session:output', {
           sessionId,
+          chatId: proc?.currentChatId,
           content: chunk,
           isComplete: false,
         });
@@ -5631,6 +5814,7 @@ Discord Main Gateway:
         // enhancement could pipe to per-tool execution cards using the item.id.
         this.io.to(`session:${sessionId}`).emit('session:output', {
           sessionId,
+          chatId: this.processes.get(sessionId)?.currentChatId,
           content: chunk,
           isComplete: false,
         });
@@ -5695,6 +5879,7 @@ Discord Main Gateway:
         const note = `\n[Codex rerouted ${data.fromModel || ''} → ${data.toModel || ''}${data.reason ? `: ${data.reason}` : ''}]\n`;
         this.io.to(`session:${sessionId}`).emit('session:output', {
           sessionId,
+          chatId: this.processes.get(sessionId)?.currentChatId,
           content: note,
           isComplete: false,
         });
@@ -5707,6 +5892,7 @@ Discord Main Gateway:
         if (data.message) {
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
+            chatId: this.processes.get(sessionId)?.currentChatId,
             content: `${data.message}\n`,
             isComplete: false,
           });
@@ -6049,6 +6235,7 @@ Discord Main Gateway:
 
     this.io.to(`session:${sessionId}`).emit('session:output', {
       sessionId,
+      chatId: proc.currentChatId,
       content: '',
       isComplete: true,
     });
@@ -6122,6 +6309,7 @@ Discord Main Gateway:
       }
       this.io.to(`session:${sessionId}`).emit('session:output', {
         sessionId,
+        chatId: proc.currentChatId,
         content: emit,
         isComplete: false,
       });
@@ -6191,7 +6379,7 @@ Discord Main Gateway:
             pattern: patterns[0] || null,
           },
         });
-        this.io.to(`session:${sessionId}`).emit('session:permission_request', {
+        const permissionEvent = {
           sessionId,
           requestId,
           providerSessionId,
@@ -6199,6 +6387,9 @@ Discord Main Gateway:
           toolInput: metadata,
           description: `OpenCode requests ${permission}${patterns[0] ? `: ${patterns[0]}` : ''}`,
           suggestedPattern: patterns[0] || `${permission}:*`,
+        };
+        this.emitBufferedEvent(sessionId, 'permission_request', permissionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
         });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.permission_requested',
@@ -6235,7 +6426,7 @@ Discord Main Gateway:
             pattern: resources[0] || null,
           },
         });
-        this.io.to(`session:${sessionId}`).emit('session:permission_request', {
+        const permissionEvent = {
           sessionId,
           requestId,
           providerSessionId,
@@ -6243,6 +6434,9 @@ Discord Main Gateway:
           toolInput: { action, resources, metadata, source: props.source ?? null },
           description: `OpenCode requests ${action}${resources[0] ? `: ${resources[0]}` : ''}`,
           suggestedPattern: resources[0] || `${action}:*`,
+        };
+        this.emitBufferedEvent(sessionId, 'permission_request', permissionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
         });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.permission_requested',
@@ -6296,8 +6490,9 @@ Discord Main Gateway:
           providerSessionId,
           questions,
         };
-        this.bufferMessage(sessionId, 'question', questionEvent);
-        this.io.to(`session:${sessionId}`).emit('session:question_request', questionEvent);
+        this.emitBufferedEvent(sessionId, 'question', questionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:question_request', sequenced);
+        });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.needs_input',
           severity: 'warning',
@@ -6326,8 +6521,10 @@ Discord Main Gateway:
               return acc;
             }, [])
           : [];
-        this.io.to(`session:${sessionId}`).emit('session:todos', { sessionId, todos });
-        this.bufferMessage(sessionId, 'todos', { sessionId, todos });
+        const todosEvent = { sessionId, todos };
+        this.emitBufferedEvent(sessionId, 'todos', todosEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:todos', sequenced);
+        });
         return;
       }
 
@@ -6395,6 +6592,7 @@ Discord Main Gateway:
         const message = err?.data?.message || err?.message || 'OpenCode session error';
         this.io.to(`session:${sessionId}`).emit('session:output', {
           sessionId,
+          chatId: proc.currentChatId,
           content: `${message}\n`,
           isComplete: true,
         });
@@ -6779,12 +6977,12 @@ Discord Main Gateway:
         // before the steered follow-up starts and rotates currentUsageTurnId.
         this.flushCodexUsageOnExit(sessionId, managedProc);
 
-        const hasPendingSteerTurn = !!managedProc.codexPendingSteerTurn;
+        const hasPendingFollowup = (managedProc.codexQueuedTurns?.length ?? 0) > 0;
 
         // Clean exit, or an intentional follow-up steering interruption, means
         // the manager should keep the session alive and immediately run the
-        // latest pending follow-up.
-        if (exitCode === 0 || hasPendingSteerTurn) {
+        // next pending follow-up.
+        if (exitCode === 0 || hasPendingFollowup) {
           if (exitCode === 0) {
             console.log(`[CODEX] Respawned process exited cleanly, marking idle [${sessionId}]`);
           } else {
@@ -6801,9 +6999,9 @@ Discord Main Gateway:
           managedProc.streamingText = '';
           managedProc.isStreaming = false;
           managedProc.buffer = '';
-          if (hasPendingSteerTurn) {
-            console.log(`[CODEX] Dispatching steered follow-up after process exit [${sessionId}]`);
-            void this.drainCodexSteeredTurn(sessionId, managedProc);
+          if (hasPendingFollowup) {
+            console.log(`[CODEX] Dispatching queued follow-up after process exit [${sessionId}]`);
+            void this.drainCodexQueuedTurn(sessionId, managedProc);
           } else {
             this.io
               .to(`session:${sessionId}`)
@@ -7002,8 +7200,9 @@ Discord Main Gateway:
 
   private emitUsage(sessionId: string, proc: ClaudeProcess): void {
     const usageData = this.buildUsageSnapshot(sessionId, proc);
-    this.bufferMessage(sessionId, 'usage', usageData);
-    this.io.to(`session:${sessionId}`).emit('session:usage', usageData);
+    this.emitBufferedEvent(sessionId, 'usage', usageData, (sequenced) => {
+      this.io.to(`session:${sessionId}`).emit('session:usage', sequenced);
+    });
     this.recordContextSnapshot(sessionId, proc, usageData);
     // Note: DB saving moved to saveUsageToDatabase() called only on turn completion
   }
@@ -7144,7 +7343,8 @@ Discord Main Gateway:
     const summary = this.buildContextSummary(
       sessionId,
       HANDOFF_CONTEXT_MAX_MESSAGES,
-      HANDOFF_CONTEXT_MAX_CHARS
+      HANDOFF_CONTEXT_MAX_CHARS,
+      proc.currentChatId
     );
     if (summary) {
       this.pendingContextReminders.set(sessionId, { summary, reason: 'context-limit' });
@@ -7320,6 +7520,7 @@ Discord Main Gateway:
           );
           this.io.to(`session:${sessionId}`).emit('session:output', {
             sessionId,
+            chatId: proc.currentChatId,
             content: delta.text,
             isComplete: false,
           });
@@ -7479,11 +7680,15 @@ The planning phase is complete. You are now in Auto-Accept mode.
           },
         });
 
-        // Emit permission request event to frontend
-        this.io.to(`session:${sessionId}`).emit('session:permission_request', {
+        // Permission requests are blocking UI state: replay them after reconnect
+        // just like provider questions, with the same sequence/cursor ordering.
+        const permissionEvent = {
           sessionId,
           denials: msg.permission_denials,
           originalMessage: proc.lastUserMessage || '',
+        };
+        this.emitBufferedEvent(sessionId, 'permission_request', permissionEvent, (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:permission_request', sequenced);
         });
         this.notifyDiscordSessionEvent(sessionId, {
           eventType: 'session.permission_requested',
@@ -7559,6 +7764,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       // Emit streaming content to frontend
       this.io.to(`session:${sessionId}`).emit('session:output', {
         sessionId,
+        chatId: proc.currentChatId,
         content: msg.delta.text,
         isComplete: false,
       });
@@ -7737,10 +7943,14 @@ The planning phase is complete. You are now in Auto-Accept mode.
         outputTokens: proc.turnOutputTokens,
         totalCostUsd: proc.totalCostUsd,
       });
+      // Provider-agnostic: a runtime-setting change parked while this turn ran
+      // gets applied now that the answer is in.
+      queueMicrotask(() => this.applyDeferredRestart(sessionId));
       if (msg.type === 'result' && isClaudeTransportProvider(proc.cliProvider)) {
         proc.claudeIdle = true;
         this.emitQueueState(sessionId, proc);
         queueMicrotask(() => this.drainClaudeQueuedTurns(sessionId, proc));
+        queueMicrotask(() => this.applyDeferredModeRestart(sessionId, proc));
       }
     }
   }
@@ -7772,13 +7982,16 @@ The planning phase is complete. You are now in Auto-Accept mode.
     const db = getDatabase();
     const messageId = nanoid();
     const createdAt = new Date().toISOString();
+    // The provider turn owns its thread even if another device changes the
+    // session-wide active chat before this response finishes.
+    const chatId = proc?.currentChatId ?? getSessionSyncState(sessionId).activeChatId;
+    const eventSequence = this.allocateEventSequence(sessionId);
 
-    db.prepare('INSERT INTO messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').run(
-      messageId,
-      sessionId,
-      'assistant',
-      deliveredContent
-    );
+    db.prepare(
+      `INSERT INTO messages (
+         id, session_id, chat_id, role, content, event_sequence
+       ) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(messageId, sessionId, chatId, 'assistant', deliveredContent, eventSequence);
     db.prepare(
       'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
     ).run(deliveredContent.substring(0, 200), sessionId);
@@ -7797,14 +8010,30 @@ The planning phase is complete. You are now in Auto-Accept mode.
       // Keep the existing session/content arguments stable for external consumers;
       // persisted, path-free media is appended as the optional third argument.
       this.events.emit('assistantMessage', sessionId, deliveredContent, media);
-      this.io.to(`session:${sessionId}`).emit('session:message', {
+      const assistantMessage = {
         id: messageId,
         sessionId,
+        chatId,
         role: 'assistant',
         content: deliveredContent,
         createdAt,
+        eventSequence,
         ...(media.length > 0 ? { media } : {}),
-      });
+      } as const;
+      this.emitBufferedEvent(
+        sessionId,
+        'message',
+        assistantMessage,
+        (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:message', sequenced);
+        },
+        eventSequence
+      );
+
+      // End of a turn: record what changed on disk and file the reply in the
+      // notification centre. Both are best-effort side channels — a failure
+      // here must never affect message delivery.
+      void this.recordTurnOutcome(sessionId, deliveredContent, messageId);
     };
 
     if (proc && pendingMedia.length > 0) {
@@ -7835,13 +8064,21 @@ The planning phase is complete. You are now in Auto-Accept mode.
     console.log(`Saved assistant message [${sessionId}]: ${deliveredContent.substring(0, 100)}...`);
   }
 
-  private steerCodexTurn(sessionId: string, proc: ClaudeProcess, turn: CodexPreparedTurn): void {
-    const replacedPendingTurn = !!proc.codexPendingSteerTurn;
-    proc.codexPendingSteerTurn = turn;
+  private queueCodexTurn(
+    sessionId: string,
+    proc: ClaudeProcess,
+    turn: CodexPreparedTurn,
+    mode: ActiveFollowupMode
+  ): void {
+    proc.codexQueuedTurns ??= [];
+    if (mode === 'steer') {
+      proc.codexQueuedTurns.unshift(turn);
+    } else {
+      proc.codexQueuedTurns.push(turn);
+    }
     console.log(
-      replacedPendingTurn
-        ? `[CODEX] Replaced pending queued follow-up [${sessionId}]`
-        : `[CODEX] Queued follow-up while active turn is running [${sessionId}]`
+      `[CODEX] ${mode === 'steer' ? 'Steering' : 'Queued'} follow-up while active turn is running ` +
+        `[${sessionId}], depth=${proc.codexQueuedTurns.length}`
     );
     this.emitQueueState(sessionId, proc);
   }
@@ -7872,7 +8109,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
     proc: ClaudeProcess
   ): Array<CodexPreparedTurn | OpenCodePreparedTurn | ClaudePreparedTurn> {
     if (proc.cliProvider === 'codex') {
-      return proc.codexPendingSteerTurn ? [proc.codexPendingSteerTurn] : [];
+      return proc.codexQueuedTurns ?? [];
     }
     if (proc.cliProvider === 'opencode') {
       return proc.opencodeQueuedTurns ?? [];
@@ -7893,7 +8130,8 @@ The planning phase is complete. You are now in Auto-Accept mode.
       createdAt: turn.queuedAt,
       attachments: turn.attachments?.length,
     }));
-    const hasPendingCodexSteer = proc.cliProvider === 'codex' && !!proc.codexPendingSteerTurn;
+    const hasPendingCodexFollowup =
+      proc.cliProvider === 'codex' && (proc.codexQueuedTurns?.length ?? 0) > 0;
     this.io.to(`session:${sessionId}`).emit('session:queue', {
       sessionId,
       provider: proc.cliProvider,
@@ -7901,7 +8139,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       items,
       busy:
         proc.cliProvider === 'codex'
-          ? !proc.codexIdle || hasPendingCodexSteer
+          ? !proc.codexIdle || hasPendingCodexFollowup
           : proc.cliProvider === 'opencode'
             ? !proc.opencodeIdle || items.length > 0
             : isClaudeTransportProvider(proc.cliProvider)
@@ -7918,6 +8156,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
     proc: ClaudeProcess,
     turn: ClaudePreparedTurn
   ): void {
+    proc.currentChatId = turn.chatId;
     proc.claudeIdle = false;
     if (turn.updateLastMessage) {
       proc.lastUserMessage = turn.originalMessage;
@@ -7938,6 +8177,40 @@ The planning phase is complete. You are now in Auto-Accept mode.
       `Sent message [${sessionId}] via ${proc.cliProvider}: ${turn.messageForClaude.substring(0, 100)}...`
     );
     this.emitQueueState(sessionId, proc);
+  }
+
+  /**
+   * Perform a mode change that was deferred because a turn was running. Queued
+   * follow-ups win: restarting with turns still waiting would drop them, so the
+   * restart waits until the queue has drained too.
+   */
+  /**
+   * Run a settings reload that was parked because a turn was still running.
+   * Queued follow-ups win: restarting with turns still waiting would drop them,
+   * so this waits for the queue to drain as well.
+   */
+  private applyDeferredRestart(sessionId: string): void {
+    const proc = this.processes.get(sessionId);
+    const deferred = proc?.deferredRestart;
+    if (!proc || !deferred) return;
+    if (this.getSessionRuntimeSnapshot(sessionId).busy) return;
+
+    proc.deferredRestart = undefined;
+    console.log(`[SESSION] Applying deferred settings reload for ${sessionId}`);
+    void this.restartSession(sessionId, deferred.userId, deferred.options).catch((error) => {
+      console.error(`[SESSION] Deferred settings reload failed for ${sessionId}:`, error);
+    });
+  }
+
+  private applyDeferredModeRestart(sessionId: string, proc: ClaudeProcess): void {
+    const deferred = proc.claudeDeferredModeRestart;
+    if (!deferred) return;
+    if (proc.claudeIdle === false) return;
+    if ((proc.claudeQueuedTurns?.length ?? 0) > 0) return;
+
+    proc.claudeDeferredModeRestart = undefined;
+    console.log(`[MODE] Applying deferred ${deferred.mode} for ${sessionId}`);
+    this.restartForMode(sessionId, proc, deferred.mode, deferred.userId, deferred.previousMode);
   }
 
   private drainClaudeQueuedTurns(sessionId: string, proc: ClaudeProcess): void {
@@ -8075,6 +8348,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.isStreaming = true;
       this.io.to(`session:${sessionId}`).emit('session:output', {
         sessionId,
+        chatId: proc.currentChatId,
         content: update.content.text,
         isComplete: false,
       });
@@ -8187,6 +8461,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       throw new Error('Kimi ACP session is not ready');
     }
 
+    proc.currentChatId = turn.chatId;
     proc.kimiIdle = false;
     proc.currentUsageTurnId = turn.queueId;
     proc.currentUsageTurnStartedAt = turn.queuedAt;
@@ -8212,18 +8487,44 @@ The planning phase is complete. You are now in Auto-Accept mode.
     this.emitQueueState(sessionId, proc);
 
     let response: AcpPromptResponse | null = null;
+    const kimiHome = CLI_PROVIDERS.kimi.credentialsPath.replace('~', os.homedir());
+    // Kimi 0.31 writes exact per-model-call counters to its native ledger but
+    // does not currently attach the optional ACP PromptResponse.usage payload.
+    // Snapshot the append-only ledgers while the persistent session is idle so
+    // this WebUI turn can book only the records written by the prompt below.
+    const usageCursor = captureKimiUsageCursor(kimiHome, nativeSessionId);
     try {
       response = await connection.prompt({
         sessionId: nativeSessionId,
         prompt: [{ type: 'text', text: turn.messageForClaude }],
       });
-      if (response.usage) {
+      const nativeUsage = readKimiUsageSince(usageCursor);
+      if (nativeUsage.totalTokens > 0) {
+        proc.turnInputTokens = nativeUsage.inputTokens;
+        proc.turnOutputTokens = nativeUsage.outputTokens;
+        proc.turnCacheReadTokens = nativeUsage.cacheReadTokens;
+        proc.turnCacheCreationTokens = nativeUsage.cacheCreationTokens;
+        const dominantModel = Object.entries(nativeUsage.models).sort(
+          (a, b) => b[1] - a[1]
+        )[0]?.[0];
+        if (dominantModel) proc.model = dominantModel;
+      } else if (response.usage) {
+        // Protocol fallback for a future Kimi build that starts returning ACP
+        // usage before/without a local native ledger.
         const cacheRead = Math.max(0, response.usage.cachedReadTokens || 0);
         proc.turnInputTokens = Math.max(0, response.usage.inputTokens - cacheRead);
         proc.turnCacheReadTokens = cacheRead;
         proc.turnCacheCreationTokens = Math.max(0, response.usage.cachedWriteTokens || 0);
-        proc.turnOutputTokens = Math.max(0, response.usage.outputTokens);
+        proc.turnOutputTokens = Math.max(
+          0,
+          response.usage.outputTokens + (response.usage.thoughtTokens || 0)
+        );
       }
+      proc.totalInputTokens += proc.turnInputTokens;
+      proc.totalOutputTokens += proc.turnOutputTokens;
+      proc.cacheReadTokens += proc.turnCacheReadTokens;
+      proc.cacheCreationTokens += proc.turnCacheCreationTokens;
+      this.emitUsage(sessionId, proc);
       const text = proc.streamingText.trim();
       if (text) this.saveAssistantMessage(sessionId, text);
       this.saveUsageToDatabase(sessionId, proc);
@@ -8251,22 +8552,27 @@ The planning phase is complete. You are now in Auto-Accept mode.
       });
       this.emitStatus(sessionId, { sessionId, status: 'running' });
       this.emitQueueState(sessionId, proc);
-      queueMicrotask(() => void this.drainKimiQueuedTurns(sessionId, proc));
+      // A directly dispatched turn owns no drain loop, so kick one off for any
+      // follow-ups that arrived while it was running. When a drain loop already
+      // owns the turn it will continue synchronously after this promise resolves.
+      if (!proc.kimiQueueDraining) {
+        queueMicrotask(() => void this.drainKimiQueuedTurns(sessionId, proc));
+      }
     }
   }
 
   private async drainKimiQueuedTurns(sessionId: string, proc: ClaudeProcess): Promise<void> {
     if (proc.cliProvider !== 'kimi' || !proc.kimiIdle || proc.kimiQueueDraining) return;
-    const nextTurn = proc.kimiQueuedTurns?.shift();
-    if (!nextTurn) {
-      this.emitQueueState(sessionId, proc);
-      return;
-    }
     proc.kimiQueueDraining = true;
     try {
-      await this.dispatchKimiAcpTurn(sessionId, proc, nextTurn);
+      while (proc.kimiIdle) {
+        const nextTurn = proc.kimiQueuedTurns?.shift();
+        if (!nextTurn) break;
+        await this.dispatchKimiAcpTurn(sessionId, proc, nextTurn);
+      }
     } finally {
       proc.kimiQueueDraining = false;
+      this.emitQueueState(sessionId, proc);
     }
   }
 
@@ -8280,6 +8586,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
     if (proc.codexIdle === false) {
       throw new Error('Kimi process is still running');
     }
+    proc.currentChatId = turn.chatId;
     proc.codexIdle = false;
     proc.currentUsageTurnId = turn.queueId;
     proc.currentUsageTurnStartedAt = turn.queuedAt;
@@ -8354,6 +8661,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       if (managedProc?.process !== child || receivedStructuredOutput) return;
       this.io.to(`session:${sessionId}`).emit('session:output', {
         sessionId,
+        chatId: managedProc.currentChatId,
         content:
           '🌙 Kimi is working on the request. Complex first steps can stay quiet for a few minutes.\n\n',
         isComplete: false,
@@ -8419,6 +8727,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       } else if (exitCode !== 0) {
         this.io.to(`session:${sessionId}`).emit('session:output', {
           sessionId,
+          chatId: managedProc.currentChatId,
           content: formatKimiExitMessage(exitCode, stderr),
           isComplete: false,
         });
@@ -8521,6 +8830,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       proc.isStreaming = true;
       this.io.to(`session:${sessionId}`).emit('session:output', {
         sessionId,
+        chatId: proc.currentChatId,
         content: text,
         isComplete: false,
       });
@@ -8536,6 +8846,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
           if (name) {
             this.io.to(`session:${sessionId}`).emit('session:output', {
               sessionId,
+              chatId: proc.currentChatId,
               content: `\n🔧 ${name}\n`,
               isComplete: false,
             });
@@ -8556,6 +8867,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
     if (!proc.codexIdle) {
       throw new Error('Codex process is still running');
     }
+    proc.currentChatId = turn.chatId;
     proc.currentUsageTurnId = turn.queueId;
     proc.currentUsageTurnStartedAt = turn.queuedAt;
     proc.codexIdle = false;
@@ -8589,7 +8901,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
       // `thread.started`) lands
       // and proc.codexSessionId is set, subsequent respawns use native
       // `codex exec resume <id>` and we skip the manual prefix entirely.
-      const contextPrefix = this.buildCodexContextPrefix(sessionId, turn.originalMessage);
+      const contextPrefix = this.buildCodexContextPrefix(
+        sessionId,
+        turn.originalMessage,
+        turn.chatId
+      );
       if (contextPrefix) {
         payloadForProvider = `${contextPrefix}\nUser's new message:\n${turn.messageForClaude}`;
       }
@@ -8608,36 +8924,36 @@ The planning phase is complete. You are now in Auto-Accept mode.
     );
   }
 
-  private async drainCodexSteeredTurn(sessionId: string, proc: ClaudeProcess): Promise<void> {
+  private async drainCodexQueuedTurn(sessionId: string, proc: ClaudeProcess): Promise<void> {
     if (proc.cliProvider !== 'codex' || proc.codexSteerDraining || !proc.codexIdle) {
       return;
     }
 
-    const nextTurn = proc.codexPendingSteerTurn;
+    const nextTurn = proc.codexQueuedTurns?.shift();
     if (!nextTurn) {
       this.emitQueueState(sessionId, proc);
       return;
     }
 
-    proc.codexPendingSteerTurn = undefined;
     proc.codexSteerDraining = true;
     this.emitQueueState(sessionId, proc);
     try {
       await this.dispatchCodexTurn(sessionId, proc, nextTurn);
     } catch (err) {
-      proc.codexPendingSteerTurn = nextTurn;
+      proc.codexQueuedTurns ??= [];
+      proc.codexQueuedTurns.unshift(nextTurn);
       this.emitQueueState(sessionId, proc);
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[CODEX] Failed to dispatch steered follow-up [${sessionId}]:`, err);
+      console.error(`[CODEX] Failed to dispatch queued follow-up [${sessionId}]:`, err);
       this.io.to(`session:${sessionId}`).emit('session:error', {
         sessionId,
-        error: `Failed to start steered Codex message: ${message}`,
+        error: `Failed to start queued Codex message: ${message}`,
       });
       this.notifyDiscordSessionEvent(sessionId, {
         eventType: 'session.error',
         severity: 'error',
         title: 'Codex queued turn failed',
-        summary: `Failed to start steered Codex message: ${message}`,
+        summary: `Failed to start queued Codex message: ${message}`,
       });
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
@@ -8657,6 +8973,7 @@ The planning phase is complete. You are now in Auto-Accept mode.
       throw new Error('OpenCode session is not ready');
     }
 
+    proc.currentChatId = turn.chatId;
     proc.currentUsageTurnId = turn.queueId;
     proc.currentUsageTurnStartedAt = turn.queuedAt;
 
@@ -8829,12 +9146,18 @@ The planning phase is complete. You are now in Auto-Accept mode.
     message: string,
     attachments?: FileAttachmentData[],
     options?: {
+      chatId?: string | null;
       recordMessage?: boolean;
       updateLastMessage?: boolean;
       activeFollowupMode?: ActiveFollowupMode;
+      clientMessageId?: string;
+      uploadIds?: string[];
     }
-  ): Promise<void> {
+  ): Promise<SendMessageResult> {
     assertRunnerAccess(userId);
+    // Resolve once before reading attachments. Later cross-device switches may
+    // change sessions.active_chat_id, but this turn remains pinned here.
+    const targetChatId = resolveSessionSendChatId(sessionId, userId, options?.chatId);
     let proc = this.processes.get(sessionId);
 
     if (!proc) {
@@ -8850,6 +9173,10 @@ The planning phase is complete. You are now in Auto-Accept mode.
     if (proc.userId !== userId) {
       throw new Error('Unauthorized');
     }
+    if (proc.providerChatId !== targetChatId) {
+      throw new Error('Provider context belongs to a different chat; retry after switching');
+    }
+    proc.currentChatId = targetChatId;
 
     const materializedAttachments = await materializeAttachments(
       attachments,
@@ -9098,7 +9425,7 @@ ${proc.contextReminder.summary}
       ...inlineTextContents.map((tc) => ({
         path: '',
         filename: tc.filename,
-        mimeType: 'text/plain',
+        mimeType: tc.mimeType,
         type: 'text' as const,
       })),
     ];
@@ -9108,15 +9435,25 @@ ${proc.contextReminder.summary}
     const updateLastMessage = options?.updateLastMessage ?? defaultRecordMessage;
     const recordedMessageId = nanoid();
     const recordedCreatedAt = new Date().toISOString();
+    const recordedChatId = targetChatId;
+    let recordedEventSequence: number | undefined;
 
     if (recordMessage) {
       // Save user message and emit to frontend (show original message, images as metadata)
       const db = getDatabase();
-      db.prepare('INSERT INTO messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').run(
+      recordedEventSequence = this.allocateEventSequence(sessionId);
+      db.prepare(
+        `INSERT INTO messages (
+           id, session_id, chat_id, role, content, client_message_id, event_sequence
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
         recordedMessageId,
         sessionId,
+        recordedChatId,
         'user',
-        message // Store only the user's original message
+        message, // Store only the user's original message
+        options?.clientMessageId ?? null,
+        recordedEventSequence
       );
       // Keep the session list preview in sync with the newest activity — previously
       // only assistant replies touched last_message, so user-only sessions showed
@@ -9126,16 +9463,86 @@ ${proc.contextReminder.summary}
         'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
       ).run(preview, sessionId);
 
+      // Persist every accepted upload as durable chat media. Clients render
+      // from `media` (served via /api/sessions/:id/media/:mediaId); the raw
+      // attachment paths are server-local and the one-shot legacy metadata is
+      // not part of REST history.
+      let userMedia: Awaited<ReturnType<typeof persistMessageMedia>> = [];
+      const uploadedMedia: PendingChatMedia[] = [
+        ...filePaths.map((file, index) => ({
+          kind: 'file' as const,
+          filePath: file.path,
+          allowedRoots: [path.join(proc.workingDirectory, '.claude-webui-attachments')],
+          filename: file.originalFilename,
+          mimeType: file.mimeType,
+          source: 'user' as const,
+          sourceId: `upload:${recordedMessageId}:file:${index}`,
+        })),
+        ...inlineTextContents.map((file, index) => ({
+          kind: 'buffer' as const,
+          buffer: Buffer.from(file.content, 'utf8'),
+          filename: file.originalFilename,
+          mimeType: file.mimeType,
+          source: 'user' as const,
+          sourceId: `upload:${recordedMessageId}:inline:${index}`,
+        })),
+      ];
+      if (uploadedMedia.length > 0) {
+        try {
+          userMedia = await persistMessageMedia({
+            messageId: recordedMessageId,
+            sessionId,
+            userId,
+            media: uploadedMedia,
+          });
+        } catch (error) {
+          console.error(`[MEDIA] Failed to persist user media [${sessionId}]:`, error);
+          db.prepare('DELETE FROM messages WHERE id = ?').run(recordedMessageId);
+          throw new Error(
+            `Failed to persist message attachments: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      if (options?.uploadIds?.length) {
+        try {
+          markChatUploadsConsumed(
+            userId,
+            sessionId,
+            options.uploadIds,
+            recordedMessageId,
+            options.clientMessageId ?? '',
+            db
+          );
+        } catch (error) {
+          db.prepare('DELETE FROM messages WHERE id = ?').run(recordedMessageId);
+          throw error;
+        }
+      }
+
       // Emit user message to frontend so it appears in chat
-      this.io.to(`session:${sessionId}`).emit('session:message', {
+      const userMessage = {
         id: recordedMessageId,
         sessionId,
+        chatId: recordedChatId,
         role: 'user',
         content: message,
         createdAt: recordedCreatedAt,
+        clientMessageId: options?.clientMessageId,
+        eventSequence: recordedEventSequence,
         images: imageMetadata.length > 0 ? imageMetadata : undefined,
         attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
-      });
+        ...(userMedia.length > 0 ? { media: userMedia } : {}),
+      } as const;
+      this.emitBufferedEvent(
+        sessionId,
+        'message',
+        userMessage,
+        (sequenced) => {
+          this.io.to(`session:${sessionId}`).emit('session:message', sequenced);
+        },
+        recordedEventSequence
+      );
 
       this.events.emit('userMessage', sessionId, message);
     }
@@ -9143,6 +9550,7 @@ ${proc.contextReminder.summary}
     if (proc.cliProvider === 'codex') {
       const codexTurn: CodexPreparedTurn = {
         queueId: recordedMessageId,
+        chatId: recordedChatId,
         queuedAt: recordedCreatedAt,
         originalMessage: message,
         messageForClaude,
@@ -9154,23 +9562,34 @@ ${proc.contextReminder.summary}
       };
 
       if (!proc.codexIdle || proc.codexSteerDraining) {
-        this.steerCodexTurn(sessionId, proc, codexTurn);
         const activeFollowupMode =
           options?.activeFollowupMode ??
           (process.env.CODEX_PREEMPT_FOLLOWUPS === '1' ? 'steer' : 'queue');
+        this.queueCodexTurn(sessionId, proc, codexTurn, activeFollowupMode);
         if (activeFollowupMode === 'steer') {
           this.requestCodexSteeringPreemption(sessionId, proc);
         }
-        return;
+        return {
+          ...(recordMessage ? { messageId: recordedMessageId } : {}),
+          chatId: recordedChatId,
+          disposition: 'queued',
+          highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+        };
       }
 
       await this.dispatchCodexTurn(sessionId, proc, codexTurn);
-      return;
+      return {
+        ...(recordMessage ? { messageId: recordedMessageId } : {}),
+        chatId: recordedChatId,
+        disposition: 'dispatched',
+        highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+      };
     }
 
     if (proc.cliProvider === 'opencode' && proc.serverBacked && proc.claudeSessionId) {
       const opencodeTurn: OpenCodePreparedTurn = {
         queueId: recordedMessageId,
+        chatId: recordedChatId,
         queuedAt: recordedCreatedAt,
         originalMessage: message,
         messageForClaude,
@@ -9181,16 +9600,27 @@ ${proc.contextReminder.summary}
 
       if (proc.opencodeIdle === false || proc.opencodeQueueDraining) {
         this.queueOpenCodeTurn(sessionId, proc, opencodeTurn);
-        return;
+        return {
+          ...(recordMessage ? { messageId: recordedMessageId } : {}),
+          chatId: recordedChatId,
+          disposition: 'queued',
+          highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+        };
       }
 
       await this.dispatchOpenCodeTurn(sessionId, proc, opencodeTurn);
-      return;
+      return {
+        ...(recordMessage ? { messageId: recordedMessageId } : {}),
+        chatId: recordedChatId,
+        disposition: 'dispatched',
+        highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+      };
     }
 
     if (isClaudeTransportProvider(proc.cliProvider)) {
       const claudeTurn: ClaudePreparedTurn = {
         queueId: recordedMessageId,
+        chatId: recordedChatId,
         queuedAt: recordedCreatedAt,
         originalMessage: message,
         messageForClaude,
@@ -9200,16 +9630,27 @@ ${proc.contextReminder.summary}
 
       if (proc.claudeIdle === false || proc.claudeQueueDraining) {
         this.queueClaudeTurn(sessionId, proc, claudeTurn);
-        return;
+        return {
+          ...(recordMessage ? { messageId: recordedMessageId } : {}),
+          chatId: recordedChatId,
+          disposition: 'queued',
+          highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+        };
       }
 
       this.dispatchClaudeTurn(sessionId, proc, claudeTurn);
-      return;
+      return {
+        ...(recordMessage ? { messageId: recordedMessageId } : {}),
+        chatId: recordedChatId,
+        disposition: 'dispatched',
+        highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+      };
     }
 
     if (proc.cliProvider === 'kimi') {
       const kimiTurn: CodexPreparedTurn = {
         queueId: recordedMessageId,
+        chatId: recordedChatId,
         queuedAt: recordedCreatedAt,
         originalMessage: message,
         messageForClaude,
@@ -9221,10 +9662,20 @@ ${proc.contextReminder.summary}
       };
       if (proc.kimiIdle === false || proc.kimiQueueDraining) {
         this.queueKimiTurn(sessionId, proc, kimiTurn);
-        return;
+        return {
+          ...(recordMessage ? { messageId: recordedMessageId } : {}),
+          chatId: recordedChatId,
+          disposition: 'queued',
+          highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+        };
       }
       await this.dispatchKimiAcpTurn(sessionId, proc, kimiTurn);
-      return;
+      return {
+        ...(recordMessage ? { messageId: recordedMessageId } : {}),
+        chatId: recordedChatId,
+        disposition: 'dispatched',
+        highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+      };
     }
 
     if (updateLastMessage) {
@@ -9242,7 +9693,12 @@ ${proc.contextReminder.summary}
         sessionId,
         isThinking: true,
       });
-      return;
+      return {
+        ...(recordMessage ? { messageId: recordedMessageId } : {}),
+        chatId: recordedChatId,
+        disposition: 'dispatched',
+        highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+      };
     }
 
     if (proc.cliProvider === 'pi') {
@@ -9265,6 +9721,12 @@ ${proc.contextReminder.summary}
     console.log(
       `Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`
     );
+    return {
+      ...(recordMessage ? { messageId: recordedMessageId } : {}),
+      chatId: recordedChatId,
+      disposition: 'dispatched',
+      highWatermark: recordedEventSequence ?? getSessionSyncState(sessionId).highWatermark,
+    };
   }
 
   interrupt(sessionId: string, userId: string): void {
@@ -9365,11 +9827,38 @@ ${proc.contextReminder.summary}
     terminateManagedProcess(proc.process);
   }
 
-  // Restart a session (stop and start fresh)
-  async restartSession(sessionId: string, userId: string): Promise<void> {
+  // Restart a session. Runtime-setting changes preserve the provider-native
+  // conversation so a model/reasoning switch applies without discarding chat
+  // context; an explicit user restart still starts fresh.
+  async restartSession(
+    sessionId: string,
+    userId: string,
+    options: { preserveNativeContext?: boolean } = {}
+  ): Promise<void> {
     console.log(`[SESSION] Restarting session ${sessionId}`);
 
     const proc = this.processes.get(sessionId);
+
+    // A runtime-setting reload (model, reasoning, provider, service tier) must
+    // never kill a turn that is mid-flight: the answer is discarded with no
+    // trace, and the queued follow-ups below are cleared with it. Switching the
+    // model while a long answer was generating was exactly how a session ended
+    // up looking permanently stuck. An explicit restart still stops now — that
+    // is what the user asked for.
+    if (proc && options.preserveNativeContext && this.getSessionRuntimeSnapshot(sessionId).busy) {
+      proc.deferredRestart = { userId, options };
+      console.log(
+        `[SESSION] Turn in flight for ${sessionId}; reloading settings after it finishes`
+      );
+      this.emitCompact(sessionId, {
+        sessionId,
+        message: 'Setting saved. It takes effect after the current turn finishes.',
+        clear: false,
+        reason: 'settings-deferred',
+      });
+      return;
+    }
+
     const db = getDatabase();
     const sessionRow = db
       .prepare('SELECT cli_provider as cliProvider FROM sessions WHERE id = ? AND user_id = ?')
@@ -9394,7 +9883,7 @@ ${proc.contextReminder.summary}
         throw new Error('Unauthorized');
       }
 
-      proc.codexPendingSteerTurn = undefined;
+      proc.codexQueuedTurns = [];
       proc.codexSteerDraining = false;
       proc.codexPreemptingForSteer = false;
       proc.opencodeQueuedTurns = [];
@@ -9413,11 +9902,19 @@ ${proc.contextReminder.summary}
       this.processes.delete(sessionId);
     }
 
-    // Clear claude_session_id to start fresh (not resume)
-    db.prepare(
-      'UPDATE sessions SET status = ?, claude_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run('stopped', sessionId);
-    console.log(`[SESSION] Cleared claude_session_id for fresh start`);
+    if (options.preserveNativeContext) {
+      db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        'stopped',
+        sessionId
+      );
+      console.log(`[SESSION] Preserving provider session context for runtime-setting reload`);
+    } else {
+      // Explicit restarts intentionally begin a fresh provider conversation.
+      db.prepare(
+        'UPDATE sessions SET status = ?, claude_session_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).run('stopped', sessionId);
+      console.log(`[SESSION] Cleared claude_session_id for fresh start`);
+    }
 
     // Wait a moment for cleanup
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -9431,14 +9928,15 @@ ${proc.contextReminder.summary}
   private buildContextSummary(
     sessionId: string,
     maxMessages: number,
-    maxChars: number
+    maxChars: number,
+    chatId: string | null
   ): string | null {
     const db = getDatabase();
     const rows = db
       .prepare(
-        'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
+        'SELECT role, content FROM messages WHERE session_id = ? AND chat_id IS ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
       )
-      .all(sessionId, maxMessages) as { role: string; content: string }[];
+      .all(sessionId, chatId, maxMessages) as { role: string; content: string }[];
 
     if (!rows.length) {
       return null;
@@ -9469,16 +9967,20 @@ ${proc.contextReminder.summary}
    *
    * Returns null if there are no prior turns to replay.
    */
-  private buildCodexContextPrefix(sessionId: string, latestUserMessage: string): string | null {
+  private buildCodexContextPrefix(
+    sessionId: string,
+    latestUserMessage: string,
+    chatId: string | null
+  ): string | null {
     const db = getDatabase();
     const MAX_MESSAGES = 40;
     const MAX_CHARS = 24_000;
 
     const rows = db
       .prepare(
-        'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
+        'SELECT role, content FROM messages WHERE session_id = ? AND chat_id IS ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
       )
-      .all(sessionId, MAX_MESSAGES + 1) as { role: string; content: string }[];
+      .all(sessionId, chatId, MAX_MESSAGES + 1) as { role: string; content: string }[];
 
     const newest = rows[0];
     if (!newest) return null;
@@ -9582,6 +10084,27 @@ ${proc.contextReminder.summary}
       return;
     }
 
+    // Claude takes the permission mode as a spawn flag, so the process really
+    // does have to restart — but not on top of a running turn. Killing the
+    // child mid-turn discards the answer silently, and a client that re-asserts
+    // its mode on every reconnect (two clients disagreeing is enough) can do
+    // that on every attempt, leaving the session looking permanently mute.
+    if (proc.claudeIdle === false) {
+      console.log(`[MODE] Turn in flight for ${sessionId}; applying ${mode} after it completes`);
+      proc.claudeDeferredModeRestart = { mode, userId, previousMode };
+      return;
+    }
+
+    this.restartForMode(sessionId, proc, mode, userId, previousMode);
+  }
+
+  private restartForMode(
+    sessionId: string,
+    proc: ClaudeProcess,
+    mode: SessionMode,
+    userId: string,
+    previousMode: SessionMode
+  ): void {
     // For mode changes on running sessions, we need to restart the process
     // Save any pending streaming content first
     if (proc.streamingText.trim().length > 0) {
@@ -9680,10 +10203,11 @@ ${proc.contextReminder.summary}
     const hasActiveSubagents = Array.from(proc.subagentRuns.values()).some(
       (run) => run.status === 'started'
     );
-    const hasPendingCodexSteer = proc.cliProvider === 'codex' && !!proc.codexPendingSteerTurn;
+    const hasPendingCodexFollowup =
+      proc.cliProvider === 'codex' && (proc.codexQueuedTurns?.length ?? 0) > 0;
     const busy =
       proc.cliProvider === 'codex'
-        ? !proc.codexIdle || hasPendingCodexSteer || hasActiveSubagents
+        ? !proc.codexIdle || hasPendingCodexFollowup || hasActiveSubagents
         : proc.cliProvider === 'opencode'
           ? !proc.opencodeIdle || queueItems.length > 0 || hasActiveSubagents
           : isClaudeTransportProvider(proc.cliProvider)
@@ -9925,6 +10449,8 @@ ${proc.contextReminder.summary}
     const claudeProcess: ClaudeProcess = {
       process: newProc,
       sessionId,
+      providerChatId: proc.providerChatId,
+      currentChatId: proc.currentChatId,
       cliProvider,
       userId,
       workingDirectory,

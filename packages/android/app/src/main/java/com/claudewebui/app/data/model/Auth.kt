@@ -11,7 +11,8 @@ enum class OAuthProvider {
     @SerialName("codex") CODEX,
     @SerialName("zai") ZAI,
     @SerialName("dev") DEV,
-    @SerialName("cli") CLI
+    @SerialName("cli") CLI,
+    @SerialName("proxy") PROXY
 }
 
 @Serializable
@@ -46,11 +47,19 @@ data class AuthProviders(
     val codex: Boolean = false,
     val opencode: Boolean = false,
     val pi: Boolean = false,
-    val zai: Boolean = false
+    val kimi: Boolean = false,
+    val zai: Boolean = false,
+    val proxy: Boolean = false,
 )
 
 @Serializable
 data class BasicAuthLoginRequest(
     val username: String,
     val password: String
+)
+
+@Serializable
+data class MobileAuthExchangeRequest(
+    val code: String,
+    val codeVerifier: String,
 )

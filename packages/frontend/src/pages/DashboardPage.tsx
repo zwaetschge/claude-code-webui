@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useDeferredValue,
   useMemo,
   useRef,
   useState,
@@ -34,14 +35,19 @@ import {
   Hand,
   CheckCircle,
   SlidersHorizontal,
+  ChevronLeft,
   ChevronRight,
   Search,
   X,
+  WifiOff,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { FolderBrowserDialog } from '@/components/ui/folder-browser';
+import { SessionCategories } from '@/components/session-categories';
+import { DiscoveredProjects } from '@/components/projects';
 import { ProviderLogo } from '@/components/branding/ProviderLogo';
 import { RenameSessionDialog } from '@/components/session/RenameSessionDialog';
 import { SessionIcon } from '@/components/session/SessionIcon';
@@ -255,6 +261,10 @@ export function DashboardPage() {
   const { categories, fetchCategories, createCategory } = useCategoryStore();
 
   const [showNewSession, setShowNewSession] = useState(searchParams.get('new') === 'true');
+  const [isComposerExpanded, setIsComposerExpanded] = useState(searchParams.get('new') === 'true');
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  );
   const [newSessionPrompt, setNewSessionPrompt] = useState('');
   const [newSessionName, setNewSessionName] = useState('');
   const [sessionMode, setSessionMode] = useState<'new' | 'existing'>('new');
@@ -281,6 +291,19 @@ export function DashboardPage() {
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState(
     () => searchParams.get('q') || ''
   );
+  const [dashboardDockCollapsed, setDashboardDockCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('plum-dashboard-dock-collapsed') === '1';
+  });
+  useEffect(() => {
+    window.localStorage.setItem(
+      'plum-dashboard-dock-collapsed',
+      dashboardDockCollapsed ? '1' : '0'
+    );
+  }, [dashboardDockCollapsed]);
+
+  // Category filter driven by the SessionCategories rail; null = all sessions.
+  const [dashboardCategoryFilter, setDashboardCategoryFilter] = useState<string | null>(null);
   const [selectedCliProvider, setSelectedCliProvider] = useState<CLIProvider>(() =>
     getDashboardDefaultProvider(undefined)
   );
@@ -309,6 +332,17 @@ export function DashboardPage() {
   }, [fetchCategories]);
 
   useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!showNewSession || !providerSelectedExplicitlyRef.current) {
       setSelectedCliProvider(dashboardDefaultProvider);
     }
@@ -332,17 +366,23 @@ export function DashboardPage() {
   }, [newSessionPrompt]);
 
   // Fetch sessions
-  const { isLoading } = useQuery({
+  const sessionsQuery = useQuery({
     queryKey: ['sessions'],
     queryFn: async () => {
       const response = await api.get<ApiResponse<Session[]>>('/api/sessions');
       if (response.data.success && response.data.data) {
-        setSessions(response.data.data);
         return response.data.data;
       }
       return [];
     },
+    retry: 1,
   });
+
+  useEffect(() => {
+    if (sessionsQuery.data !== undefined) {
+      setSessions(sessionsQuery.data);
+    }
+  }, [sessionsQuery.data, setSessions]);
 
   // Fetch available CLI providers
   interface CLIProviderInfo {
@@ -362,6 +402,22 @@ export function DashboardPage() {
       return response.data.data || [];
     },
   });
+
+  // A fresh instance has no usable harness yet. Sending the operator to the
+  // wizard beats a dashboard whose "New session" button cannot work.
+  const { data: setupStatus } = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: async () => {
+      const response = await api.get<ApiResponse<{ ready: boolean }>>('/api/setup/status');
+      return response.data.data;
+    },
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (setupStatus && !setupStatus.ready) {
+      navigate('/setup', { replace: true });
+    }
+  }, [setupStatus, navigate]);
 
   // Create session mutation
   const createMutation = useMutation({
@@ -422,15 +478,19 @@ export function DashboardPage() {
   });
 
   const hasDefaultDir = !!settings?.defaultWorkingDir;
-  const normalizedDashboardSearch = dashboardSearchQuery.trim().toLocaleLowerCase();
+  const deferredDashboardSearch = useDeferredValue(dashboardSearchQuery);
+  const normalizedDashboardSearch = deferredDashboardSearch.trim().toLocaleLowerCase();
   const dashboardCategoryNames = useMemo(
     () => new Map(categories.map((category) => [category.id, category.name])),
     [categories]
   );
   const filteredSessions = useMemo(() => {
-    if (!normalizedDashboardSearch) return sessions;
+    const byCategory = dashboardCategoryFilter
+      ? sessions.filter((session) => session.category === dashboardCategoryFilter)
+      : sessions;
+    if (!normalizedDashboardSearch) return byCategory;
 
-    return sessions.filter((session) => {
+    return byCategory.filter((session) => {
       const searchableValues = [
         session.name,
         session.workingDirectory,
@@ -450,7 +510,7 @@ export function DashboardPage() {
         return words.includes(normalizedDashboardSearch);
       });
     });
-  }, [dashboardCategoryNames, normalizedDashboardSearch, sessions]);
+  }, [dashboardCategoryFilter, dashboardCategoryNames, normalizedDashboardSearch, sessions]);
   const sessionRunStates = useMemo(
     () =>
       new Map(
@@ -525,6 +585,8 @@ export function DashboardPage() {
     }
 
     for (const session of filteredSessions) {
+      if (usedSessionIds.has(session.id)) continue;
+
       const groupId =
         session.category && knownCategoryIds.has(session.category)
           ? session.category
@@ -925,7 +987,7 @@ export function DashboardPage() {
     if (!sessionNameEditedRef.current || !newSessionName.trim()) {
       setNewSessionName(workflow.shortTitle);
     }
-    window.setTimeout(() => promptInputRef.current?.focus(), 0);
+    window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
   };
 
   const handleSurfaceChange = (surface: SessionSurface) => {
@@ -1021,7 +1083,8 @@ export function DashboardPage() {
     if (searchParams.get('new') === 'true') {
       providerSelectedExplicitlyRef.current = false;
       setShowNewSession(true);
-      window.setTimeout(() => promptInputRef.current?.focus(), 0);
+      setIsComposerExpanded(true);
+      window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
     }
   }, [searchParams]);
 
@@ -1029,12 +1092,14 @@ export function DashboardPage() {
     providerSelectedExplicitlyRef.current = !!provider;
     setSelectedCliProvider(provider ?? dashboardDefaultProvider);
     setShowNewSession(true);
-    window.setTimeout(() => promptInputRef.current?.focus(), 0);
+    setIsComposerExpanded(true);
+    window.setTimeout(() => promptInputRef.current?.focus({ preventScroll: true }), 0);
   };
 
   const closeNewSession = () => {
     providerSelectedExplicitlyRef.current = false;
     setShowNewSession(false);
+    setIsComposerExpanded(false);
     setSessionMode('new');
     setSelectedFolder(null);
     setNewSessionPrompt('');
@@ -1050,789 +1115,967 @@ export function DashboardPage() {
     }));
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    );
-  }
+  const isInitialSessionLoad = isOnline && sessionsQuery.isLoading && sessions.length === 0;
+  const isSessionListUnavailable = (!isOnline || sessionsQuery.isError) && sessions.length === 0;
+  const isShowingCachedSessions = sessions.length > 0 && (!isOnline || sessionsQuery.isError);
+  const sessionLoadMessage = !isOnline
+    ? 'You are offline. Reconnect to refresh your sessions.'
+    : sessionsQuery.error instanceof Error
+      ? sessionsQuery.error.message
+      : 'Plum could not load your sessions.';
 
   return (
-    <div className="dashboard-shell space-y-5">
-      <section className="dashboard-command">
-        <div className="dashboard-command-header">
-          <div className="dashboard-hero-main">
-            <div className="dashboard-eyebrow">
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Plum Code</span>
+    <div className="dashboard-layout">
+      <div className="dashboard-shell space-y-5">
+        <section className="dashboard-command">
+          <div className="dashboard-command-header">
+            <div className="dashboard-hero-main">
+              <div className="dashboard-eyebrow">
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Plum Code</span>
+              </div>
+              <div className="dashboard-title-row">
+                <h1>What should Plum do?</h1>
+                <span className="dashboard-count">{sessions.length}</span>
+              </div>
+              <p className="dashboard-subtitle ui-text">
+                Start a code workspace or a quieter task chat directly from here.
+              </p>
             </div>
-            <div className="dashboard-title-row">
-              <h1>What should Plum do?</h1>
-              <span className="dashboard-count">{sessions.length}</span>
-            </div>
-            <p className="dashboard-subtitle ui-text">
-              Start a code workspace or a quieter task chat directly from here.
-            </p>
-          </div>
-          <label className="dashboard-search" aria-label="Search sessions">
-            <Search className="dashboard-search-icon" aria-hidden="true" />
-            <input
-              type="search"
-              value={dashboardSearchQuery}
-              onChange={(event) => setDashboardSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  setDashboardSearchQuery('');
-                  event.currentTarget.blur();
-                }
-              }}
-              placeholder="Search sessions"
-            />
-            {dashboardSearchQuery && (
-              <button
-                type="button"
-                className="dashboard-search-clear"
-                onClick={() => setDashboardSearchQuery('')}
-                aria-label="Clear session search"
-              >
-                <X aria-hidden="true" />
-              </button>
-            )}
-            <span className="dashboard-search-count" aria-live="polite">
-              {normalizedDashboardSearch ? `${filteredSessions.length}/${sessions.length}` : ''}
-            </span>
-          </label>
-        </div>
-
-        <form
-          onSubmit={handleCreateSession}
-          className="dashboard-start-composer dashboard-chatbar glass-chrome relative"
-        >
-          <div className="dashboard-chatbar-topline">
-            <div
-              className="dashboard-surface-switch dashboard-chatbar-segment"
-              aria-label="New session surface"
-            >
-              <button
-                type="button"
-                className={cn(newSessionSurface === 'code' && 'is-active')}
-                onClick={() => handleSurfaceChange('code')}
-              >
-                <Code2 className="h-4 w-4" />
-                <span>Code</span>
-              </button>
-              <button
-                type="button"
-                className={cn(newSessionSurface === 'task' && 'is-active')}
-                onClick={() => handleSurfaceChange('task')}
-              >
-                <ClipboardList className="h-4 w-4" />
-                <span>Task</span>
-              </button>
-            </div>
-
-            <label className="dashboard-chatbar-name" title="Session name">
-              <Pencil className="h-3.5 w-3.5" />
+            <label className="dashboard-search" aria-label="Search sessions">
+              <Search className="dashboard-search-icon" aria-hidden="true" />
               <input
-                value={newSessionName}
-                onChange={(event) => {
-                  sessionNameEditedRef.current = true;
-                  setNewSessionName(event.target.value);
-                }}
-                placeholder={newSessionSurface === 'task' ? 'Vanessa editing task' : 'Feature work'}
-                aria-label="Session name"
-              />
-            </label>
-          </div>
-
-          <div className="dashboard-prompt-shell dashboard-chatbar-input-shell">
-            <div className="dashboard-chatbar-field">
-              <textarea
-                ref={promptInputRef}
-                value={newSessionPrompt}
-                onChange={(event) => handlePromptChange(event.target.value)}
+                type="search"
+                value={dashboardSearchQuery}
+                onChange={(event) => setDashboardSearchQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
+                  if (event.key === 'Escape') {
+                    setDashboardSearchQuery('');
+                    event.currentTarget.blur();
                   }
                 }}
-                onInput={(event) => {
-                  const target = event.currentTarget;
-                  target.style.height = 'auto';
-                  target.style.height = `${Math.min(target.scrollHeight, 176)}px`;
-                }}
-                placeholder={
-                  newSessionSurface === 'task'
-                    ? 'Ask for editing, writing, summarizing, research, file changes...'
-                    : 'Describe what should be built, fixed, debugged, or changed...'
-                }
-                className="dashboard-prompt-input dashboard-chatbar-textarea"
-                rows={1}
-                style={{ height: 'auto', overflow: 'hidden' }}
+                placeholder="Search sessions"
               />
-            </div>
-            <Button
-              type="submit"
-              size="icon"
-              variant="ghost"
-              className="dashboard-send-button dashboard-chatbar-send composer-control-button composer-control-send"
-              disabled={
-                createMutation.isPending ||
-                !newSessionPrompt.trim() ||
-                (sessionMode === 'new' && !hasDefaultDir) ||
-                (sessionMode === 'existing' && !selectedFolder) ||
-                !!(selectedProviderInfo && !selectedProviderInfo.available)
-              }
-              title="Start session"
-              aria-label="Start session"
-            >
-              {createMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
+              {dashboardSearchQuery && (
+                <button
+                  type="button"
+                  className="dashboard-search-clear"
+                  onClick={() => setDashboardSearchQuery('')}
+                  aria-label="Clear session search"
+                >
+                  <X aria-hidden="true" />
+                </button>
               )}
-            </Button>
+              <span className="dashboard-search-count" aria-live="polite">
+                {normalizedDashboardSearch ? `${filteredSessions.length}/${sessions.length}` : ''}
+              </span>
+            </label>
           </div>
 
-          {newSessionSurface === 'task' && (
-            <div className="dashboard-task-workflows" aria-label="Task workflows">
-              {TASK_WORKFLOWS.map((workflow) => (
-                <button
-                  key={workflow.id}
-                  type="button"
-                  onClick={() => handleTaskWorkflowSelect(workflow)}
-                  className="dashboard-task-workflow"
-                >
-                  <span className="dashboard-task-workflow-icon">
-                    {workflow.id === 'quick-brief' ? (
-                      <ClipboardList className="h-4 w-4" />
-                    ) : workflow.id === 'research-brief' ? (
-                      <Brain className="h-4 w-4" />
-                    ) : workflow.id === 'draft-message' ? (
-                      <MessageSquare className="h-4 w-4" />
-                    ) : workflow.id === 'plan-project' ? (
-                      <CheckCircle className="h-4 w-4" />
-                    ) : workflow.id === 'creative-direction' ? (
-                      <Sparkles className="h-4 w-4" />
-                    ) : workflow.id === 'decision-support' ? (
-                      <SlidersHorizontal className="h-4 w-4" />
-                    ) : (
-                      <ClipboardList className="h-4 w-4" />
-                    )}
-                  </span>
-                  <span className="dashboard-task-workflow-copy">
-                    <strong>{workflow.shortTitle}</strong>
-                    <small>{workflow.description}</small>
-                    <em>{workflow.meta}</em>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+          <form
+            onSubmit={handleCreateSession}
+            className={cn(
+              'dashboard-start-composer dashboard-chatbar glass-chrome relative',
+              isComposerExpanded && 'is-composer-expanded'
+            )}
+          >
+            <button
+              type="button"
+              className="dashboard-composer-mobile-toggle"
+              onClick={() => {
+                const nextExpanded = !isComposerExpanded;
+                setIsComposerExpanded(nextExpanded);
+                if (nextExpanded) {
+                  window.setTimeout(
+                    () => promptInputRef.current?.focus({ preventScroll: true }),
+                    0
+                  );
+                }
+              }}
+              aria-expanded={isComposerExpanded}
+            >
+              <span className="dashboard-composer-mobile-icon">
+                {isComposerExpanded ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              </span>
+              <span className="dashboard-composer-mobile-copy">
+                <strong>
+                  {isComposerExpanded
+                    ? 'Minimize session composer'
+                    : newSessionPrompt.trim()
+                      ? 'Continue session draft'
+                      : 'Start a new session'}
+                </strong>
+                <small>
+                  {newSessionPrompt.trim()
+                    ? `${newSessionPrompt.trim().slice(0, 72)}${newSessionPrompt.trim().length > 72 ? '…' : ''}`
+                    : 'Code or task · choose provider after opening'}
+                </small>
+              </span>
+              {(newSessionFiles.length > 0 || newSessionPrompt.trim()) && !isComposerExpanded && (
+                <span className="dashboard-composer-mobile-draft">Draft</span>
+              )}
+              <ChevronRight
+                className={cn('dashboard-composer-mobile-chevron', isComposerExpanded && 'is-open')}
+                aria-hidden="true"
+              />
+            </button>
 
-          <div className="dashboard-composer-controls dashboard-chatbar-tools">
-            <label className="dashboard-control dashboard-chatbar-chip dashboard-chatbar-provider">
-              <ProviderLogo provider={selectedUiProvider} className="h-4 w-4" alt="" />
-              <span>Provider</span>
-              <select
-                value={selectedCliProvider}
-                onChange={(event) => {
-                  providerSelectedExplicitlyRef.current = true;
-                  setSelectedCliProvider(event.target.value as CLIProvider);
-                }}
-                aria-label="Provider"
+            <div className="dashboard-chatbar-topline">
+              <div
+                className="dashboard-surface-switch dashboard-chatbar-segment"
+                aria-label="New session surface"
               >
-                {cliProviders
-                  ?.filter((provider) => provider.enabled !== false)
-                  .map((provider) => (
-                    <option key={provider.id} value={provider.id} disabled={!provider.available}>
-                      {provider.name}
-                      {!provider.available ? ' (N/A)' : ''}
+                <button
+                  type="button"
+                  className={cn(newSessionSurface === 'code' && 'is-active')}
+                  onClick={() => handleSurfaceChange('code')}
+                >
+                  <Code2 className="h-4 w-4" />
+                  <span>Code</span>
+                </button>
+                <button
+                  type="button"
+                  className={cn(newSessionSurface === 'task' && 'is-active')}
+                  onClick={() => handleSurfaceChange('task')}
+                >
+                  <ClipboardList className="h-4 w-4" />
+                  <span>Task</span>
+                </button>
+              </div>
+
+              <label className="dashboard-chatbar-name" title="Session name">
+                <Pencil className="h-3.5 w-3.5" />
+                <input
+                  value={newSessionName}
+                  onChange={(event) => {
+                    sessionNameEditedRef.current = true;
+                    setNewSessionName(event.target.value);
+                  }}
+                  placeholder={
+                    newSessionSurface === 'task' ? 'Vanessa editing task' : 'Feature work'
+                  }
+                  aria-label="Session name"
+                />
+              </label>
+            </div>
+
+            <div className="dashboard-prompt-shell dashboard-chatbar-input-shell">
+              <div className="dashboard-chatbar-field">
+                <textarea
+                  ref={promptInputRef}
+                  value={newSessionPrompt}
+                  onChange={(event) => handlePromptChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  onInput={(event) => {
+                    const target = event.currentTarget;
+                    target.style.height = 'auto';
+                    target.style.height = `${Math.min(target.scrollHeight, 176)}px`;
+                  }}
+                  placeholder={
+                    newSessionSurface === 'task'
+                      ? 'Ask for editing, writing, summarizing, research, file changes...'
+                      : 'Describe what should be built, fixed, debugged, or changed...'
+                  }
+                  className="dashboard-prompt-input dashboard-chatbar-textarea"
+                  rows={1}
+                  style={{ height: 'auto', overflow: 'hidden' }}
+                />
+              </div>
+              <Button
+                type="submit"
+                size="icon"
+                variant="ghost"
+                className="dashboard-send-button dashboard-chatbar-send composer-control-button composer-control-send"
+                disabled={
+                  createMutation.isPending ||
+                  !newSessionPrompt.trim() ||
+                  (sessionMode === 'new' && !hasDefaultDir) ||
+                  (sessionMode === 'existing' && !selectedFolder) ||
+                  !!(selectedProviderInfo && !selectedProviderInfo.available)
+                }
+                title="Start session"
+                aria-label="Start session"
+              >
+                {createMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+
+            {newSessionSurface === 'task' && (
+              <div className="dashboard-task-workflows" aria-label="Task workflows">
+                {TASK_WORKFLOWS.map((workflow) => (
+                  <button
+                    key={workflow.id}
+                    type="button"
+                    onClick={() => handleTaskWorkflowSelect(workflow)}
+                    className="dashboard-task-workflow"
+                  >
+                    <span className="dashboard-task-workflow-icon">
+                      {workflow.id === 'quick-brief' ? (
+                        <ClipboardList className="h-4 w-4" />
+                      ) : workflow.id === 'research-brief' ? (
+                        <Brain className="h-4 w-4" />
+                      ) : workflow.id === 'draft-message' ? (
+                        <MessageSquare className="h-4 w-4" />
+                      ) : workflow.id === 'plan-project' ? (
+                        <CheckCircle className="h-4 w-4" />
+                      ) : workflow.id === 'creative-direction' ? (
+                        <Sparkles className="h-4 w-4" />
+                      ) : workflow.id === 'decision-support' ? (
+                        <SlidersHorizontal className="h-4 w-4" />
+                      ) : (
+                        <ClipboardList className="h-4 w-4" />
+                      )}
+                    </span>
+                    <span className="dashboard-task-workflow-copy">
+                      <strong>{workflow.shortTitle}</strong>
+                      <small>{workflow.description}</small>
+                      <em>{workflow.meta}</em>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="dashboard-composer-controls dashboard-chatbar-tools">
+              <label className="dashboard-control dashboard-chatbar-chip dashboard-chatbar-provider">
+                <ProviderLogo provider={selectedUiProvider} className="h-4 w-4" alt="" />
+                <span>Provider</span>
+                <select
+                  value={selectedCliProvider}
+                  onChange={(event) => {
+                    providerSelectedExplicitlyRef.current = true;
+                    setSelectedCliProvider(event.target.value as CLIProvider);
+                  }}
+                  aria-label="Provider"
+                >
+                  {cliProviders
+                    ?.filter((provider) => provider.enabled !== false)
+                    .map((provider) => (
+                      <option key={provider.id} value={provider.id} disabled={!provider.available}>
+                        {provider.name}
+                        {!provider.available ? ' (N/A)' : ''}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label className="dashboard-control dashboard-chatbar-chip">
+                <SelectedModeIcon className="h-4 w-4" />
+                <span>Mode</span>
+                <select
+                  value={newSessionPermissionMode}
+                  onChange={(event) =>
+                    setNewSessionPermissionMode(event.target.value as SessionMode)
+                  }
+                  aria-label="Mode"
+                >
+                  {DASHBOARD_SESSION_MODE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label} · {option.description}
                     </option>
                   ))}
-              </select>
-            </label>
+                </select>
+              </label>
 
-            <label className="dashboard-control dashboard-chatbar-chip">
-              <SelectedModeIcon className="h-4 w-4" />
-              <span>Mode</span>
-              <select
-                value={newSessionPermissionMode}
-                onChange={(event) => setNewSessionPermissionMode(event.target.value as SessionMode)}
-                aria-label="Mode"
-              >
-                {DASHBOARD_SESSION_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label} · {option.description}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="dashboard-control dashboard-chatbar-chip dashboard-chatbar-model">
-              <Brain className="h-4 w-4" />
-              <span>Model</span>
-              <select
-                value={selectedModel || '__default__'}
-                onChange={(event) =>
-                  setSelectedModel(event.target.value === '__default__' ? '' : event.target.value)
-                }
-                aria-label="Model"
-              >
-                {showDefaultModelOption && (
-                  <option value="__default__">
-                    Default
-                    {resolvedDefaultModel
-                      ? ` · ${selectedProviderModelLabels[resolvedDefaultModel] || resolvedDefaultModel}`
-                      : ''}
-                  </option>
-                )}
-                {modelOptions.map((model) => (
-                  <option key={model} value={model}>
-                    {selectedProviderModelLabels[model] || model}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="dashboard-control dashboard-chatbar-chip">
-              <Zap className="h-4 w-4" />
-              <span>
-                {selectedCliProvider === 'claude' || selectedCliProvider === 'zai'
-                  ? 'Effort'
-                  : 'Reasoning'}
-              </span>
-              <select
-                value={selectedReasoning || '__default__'}
-                onChange={(event) =>
-                  setSelectedReasoning(
-                    event.target.value === '__default__' ? '' : event.target.value
-                  )
-                }
-                aria-label={
-                  selectedCliProvider === 'claude' || selectedCliProvider === 'zai'
-                    ? 'Effort'
-                    : 'Reasoning'
-                }
-              >
-                <option value="__default__">Default</option>
-                {reasoningOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <button
-              type="button"
-              className={cn(
-                'dashboard-workspace-toggle dashboard-chatbar-chip dashboard-chatbar-workspace',
-                showNewSession && 'is-open'
-              )}
-              onClick={() => setShowNewSession((open) => !open)}
-              title={workspaceSummary}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              <span>Workspace</span>
-              <strong>{workspaceSummary}</strong>
-            </button>
-
-            <input
-              ref={newSessionFileInputRef}
-              type="file"
-              multiple
-              className="sr-only"
-              onChange={handleNewSessionFilesChange}
-            />
-            <button
-              type="button"
-              className={cn(
-                'dashboard-workspace-toggle dashboard-chatbar-chip dashboard-chatbar-upload',
-                newSessionFiles.length > 0 && 'has-files'
-              )}
-              onClick={() => newSessionFileInputRef.current?.click()}
-              disabled={createMutation.isPending}
-              title={
-                newSessionFiles.length > 0
-                  ? `${newSessionFiles.length} file(s) will be copied into the workfolder`
-                  : 'Upload files into the workfolder before the session starts'
-              }
-            >
-              <Upload className="h-4 w-4" />
-              <span>Files</span>
-              <strong>
-                {newSessionFiles.length > 0 ? `${newSessionFiles.length} selected` : 'Upload'}
-              </strong>
-            </button>
-          </div>
-
-          {newSessionFiles.length > 0 && (
-            <div className="dashboard-upload-list">
-              {newSessionFiles.map((file, index) => (
-                <span
-                  key={`${file.name}-${file.size}-${file.lastModified}`}
-                  className="dashboard-upload-pill"
-                  title={`${file.name} · ${formatDashboardFileSize(file.size)}`}
+              <label className="dashboard-control dashboard-chatbar-chip dashboard-chatbar-model">
+                <Brain className="h-4 w-4" />
+                <span>Model</span>
+                <select
+                  value={selectedModel || '__default__'}
+                  onChange={(event) =>
+                    setSelectedModel(event.target.value === '__default__' ? '' : event.target.value)
+                  }
+                  aria-label="Model"
                 >
-                  <Upload className="h-3.5 w-3.5" />
-                  <span>{file.name}</span>
-                  <em>{formatDashboardFileSize(file.size)}</em>
-                  <button
-                    type="button"
-                    onClick={() => removeNewSessionFile(index)}
-                    aria-label={`Remove ${file.name}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {showDefaultModelOption && (
+                    <option value="__default__">
+                      Default
+                      {resolvedDefaultModel
+                        ? ` · ${selectedProviderModelLabels[resolvedDefaultModel] || resolvedDefaultModel}`
+                        : ''}
+                    </option>
+                  )}
+                  {modelOptions.map((model) => (
+                    <option key={model} value={model}>
+                      {selectedProviderModelLabels[model] || model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="dashboard-control dashboard-chatbar-chip">
+                <Zap className="h-4 w-4" />
+                <span>
+                  {selectedCliProvider === 'claude' || selectedCliProvider === 'zai'
+                    ? 'Effort'
+                    : 'Reasoning'}
                 </span>
-              ))}
+                <select
+                  value={selectedReasoning || '__default__'}
+                  onChange={(event) =>
+                    setSelectedReasoning(
+                      event.target.value === '__default__' ? '' : event.target.value
+                    )
+                  }
+                  aria-label={
+                    selectedCliProvider === 'claude' || selectedCliProvider === 'zai'
+                      ? 'Effort'
+                      : 'Reasoning'
+                  }
+                >
+                  <option value="__default__">Default</option>
+                  {reasoningOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <button
                 type="button"
-                className="dashboard-upload-clear"
-                onClick={clearNewSessionFiles}
-              >
-                Clear files
-              </button>
-            </div>
-          )}
-
-          {showNewSession && (
-            <div className="dashboard-workspace-panel">
-              <div className="dashboard-workspace-modes">
-                <Button
-                  type="button"
-                  variant={sessionMode === 'new' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setSessionMode('new');
-                    setSelectedFolder(null);
-                  }}
-                  className="gap-1.5"
-                >
-                  <FolderPlus className="h-3.5 w-3.5" />
-                  New folder
-                </Button>
-                <Button
-                  type="button"
-                  variant={sessionMode === 'existing' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setSessionMode('existing')}
-                  className="gap-1.5"
-                >
-                  <Folder className="h-3.5 w-3.5" />
-                  Existing folder
-                </Button>
-                <Button type="button" variant="ghost" size="sm" onClick={closeNewSession}>
-                  Clear
-                </Button>
-              </div>
-
-              {sessionMode === 'new' && !hasDefaultDir ? (
-                <div className="dashboard-workspace-warning">
-                  <FolderOpen className="h-4 w-4" />
-                  <span>Set a default working directory before creating new folders.</span>
-                  <Button size="sm" asChild>
-                    <Link to="/settings">
-                      <Settings className="mr-1.5 h-3.5 w-3.5" />
-                      Settings
-                    </Link>
-                  </Button>
-                </div>
-              ) : sessionMode === 'existing' ? (
-                <div className="dashboard-folder-picker">
-                  <Input
-                    value={selectedFolder || ''}
-                    readOnly
-                    placeholder="Select folder..."
-                    className="bg-muted/50"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowFolderBrowser(true)}
-                  >
-                    Browse
-                  </Button>
-                </div>
-              ) : (
-                <div className="dashboard-workspace-note">
-                  <FolderOpen className="h-4 w-4" />
-                  <span>{workspaceSummary}</span>
-                </div>
-              )}
-            </div>
-          )}
-        </form>
-      </section>
-
-      <FolderBrowserDialog
-        open={showFolderBrowser}
-        onOpenChange={setShowFolderBrowser}
-        value={selectedFolder || undefined}
-        onChange={(path: string) => {
-          setSelectedFolder(path);
-          setShowFolderBrowser(false);
-          if (!newSessionName) setNewSessionName(path.split('/').pop() || '');
-        }}
-      />
-
-      {/* Sessions */}
-      <div className="dashboard-content-row">
-        <div className="dashboard-session-sections">
-          {normalizedDashboardSearch && filteredSessions.length === 0 && (
-            <div className="dashboard-search-empty" role="status">
-              <Search aria-hidden="true" />
-              <div>
-                <strong>No sessions found</strong>
-                <span>Try a session name, project path, provider, model, or category.</span>
-              </div>
-              <button type="button" onClick={() => setDashboardSearchQuery('')}>
-                Clear search
-              </button>
-            </div>
-          )}
-          {dashboardSessionGroups.map((group) => {
-            const groupCollapsed = normalizedDashboardSearch
-              ? false
-              : (collapsedDashboardGroupIds[group.id] ?? false);
-            const groupColor = group.color
-              ? getDashboardCategoryColorValue(group.color)
-              : undefined;
-            const groupDragOver = dragOverDashboardGroupId === group.id;
-            return (
-              <section
-                key={group.id}
                 className={cn(
-                  'dashboard-session-section',
-                  group.isDropTarget && 'is-drop-target',
-                  group.hasWorking && 'is-working',
-                  groupDragOver && 'is-drag-over',
-                  groupCollapsed && 'is-collapsed'
+                  'dashboard-workspace-toggle dashboard-chatbar-chip dashboard-chatbar-workspace',
+                  showNewSession && 'is-open'
                 )}
-                onDragOver={(event) => handleDashboardGroupDragOver(event, group)}
-                onDragLeave={(event) => handleDashboardGroupDragLeave(event, group)}
-                onDrop={(event) => handleDashboardGroupDrop(event, group)}
+                onClick={() => setShowNewSession((open) => !open)}
+                title={workspaceSummary}
               >
+                <SlidersHorizontal className="h-4 w-4" />
+                <span>Workspace</span>
+                <strong>{workspaceSummary}</strong>
+              </button>
+
+              <input
+                ref={newSessionFileInputRef}
+                type="file"
+                multiple
+                className="sr-only"
+                onChange={handleNewSessionFilesChange}
+              />
+              <button
+                type="button"
+                className={cn(
+                  'dashboard-workspace-toggle dashboard-chatbar-chip dashboard-chatbar-upload',
+                  newSessionFiles.length > 0 && 'has-files'
+                )}
+                onClick={() => newSessionFileInputRef.current?.click()}
+                disabled={createMutation.isPending}
+                title={
+                  newSessionFiles.length > 0
+                    ? `${newSessionFiles.length} file(s) will be copied into the workfolder`
+                    : 'Upload files into the workfolder before the session starts'
+                }
+              >
+                <Upload className="h-4 w-4" />
+                <span>Files</span>
+                <strong>
+                  {newSessionFiles.length > 0 ? `${newSessionFiles.length} selected` : 'Upload'}
+                </strong>
+              </button>
+            </div>
+
+            {newSessionFiles.length > 0 && (
+              <div className="dashboard-upload-list">
+                {newSessionFiles.map((file, index) => (
+                  <span
+                    key={`${file.name}-${file.size}-${file.lastModified}`}
+                    className="dashboard-upload-pill"
+                    title={`${file.name} · ${formatDashboardFileSize(file.size)}`}
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>{file.name}</span>
+                    <em>{formatDashboardFileSize(file.size)}</em>
+                    <button
+                      type="button"
+                      onClick={() => removeNewSessionFile(index)}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
                 <button
                   type="button"
-                  className="dashboard-session-section-header"
-                  aria-expanded={!groupCollapsed}
-                  onClick={() => toggleDashboardGroup(group.id)}
+                  className="dashboard-upload-clear"
+                  onClick={clearNewSessionFiles}
                 >
-                  <div className="dashboard-session-section-heading">
-                    <ChevronRight
-                      className="dashboard-session-section-chevron"
-                      aria-hidden="true"
-                    />
-                    <span
-                      className="dashboard-session-section-dot"
-                      style={
-                        groupColor && !group.hasWorking
-                          ? { backgroundColor: groupColor }
-                          : undefined
-                      }
-                    />
-                    <h2>{group.label}</h2>
-                  </div>
-                  <span className="dashboard-session-section-count">{group.sessions.length}</span>
+                  Clear files
                 </button>
+              </div>
+            )}
 
-                {!groupCollapsed && (
-                  <div className="dashboard-session-grid">
-                    {group.sessions.length === 0 && group.isDropTarget && (
-                      <div className="dashboard-session-empty-drop" aria-hidden="true" />
-                    )}
-                    {group.sessions.map((session) => {
-                      const runState =
-                        sessionRunStates.get(session.id) ?? getSessionRunState(session);
-                      return (
-                        <Card
-                          key={session.id}
-                          className={cn(
-                            'dashboard-session-card cursor-pointer',
-                            'is-draggable',
-                            draggingDashboardSessionId === session.id && 'is-dragging',
-                            `is-${runState.tone}`
-                          )}
-                          draggable
-                          onDragStart={(event) => handleDashboardSessionDragStart(event, session)}
-                          onDragEnd={clearDashboardDragState}
-                          onClick={() => {
-                            if (suppressDashboardCardClickRef.current) return;
-                            navigate(`/session/${session.id}`);
-                          }}
-                        >
-                          <CardHeader className="dashboard-session-header">
-                            <div className="dashboard-session-heading">
-                              <div className="dashboard-session-title-row">
-                                <span className="dashboard-session-icon-wrap">
-                                  <SessionIcon
-                                    session={session}
-                                    className="shrink-0"
-                                    logoClassName="h-5 w-5"
-                                    imageClassName="h-7 w-7 rounded-full"
-                                  />
-                                  {iconBusySessionId === session.id && (
-                                    <span className="session-icon-busy-overlay">
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    </span>
-                                  )}
-                                </span>
-                                <div className="dashboard-session-title-main">
-                                  <CardTitle className="dashboard-session-title">
-                                    {session.name}
-                                  </CardTitle>
-                                  <div
-                                    className="dashboard-session-action-stack"
-                                    data-dashboard-no-drag="true"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <div className="dashboard-session-card-actions">
-                                      <div className="dashboard-run-state" title={runState.detail}>
-                                        <span
-                                          className={cn(
-                                            'dashboard-status-dot',
-                                            `is-${runState.tone}`
-                                          )}
-                                        />
-                                        <span>{runState.label}</span>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className={cn(
-                                          'dashboard-session-star-button',
-                                          session.starred && 'is-starred'
+            {showNewSession && (
+              <div className="dashboard-workspace-panel">
+                <div className="dashboard-workspace-modes">
+                  <Button
+                    type="button"
+                    variant={sessionMode === 'new' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setSessionMode('new');
+                      setSelectedFolder(null);
+                    }}
+                    className="gap-1.5"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                    New folder
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={sessionMode === 'existing' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSessionMode('existing')}
+                    className="gap-1.5"
+                  >
+                    <Folder className="h-3.5 w-3.5" />
+                    Existing folder
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={closeNewSession}>
+                    Clear
+                  </Button>
+                </div>
+
+                {sessionMode === 'new' && !hasDefaultDir ? (
+                  <div className="dashboard-workspace-warning">
+                    <FolderOpen className="h-4 w-4" />
+                    <span>Set a default working directory before creating new folders.</span>
+                    <Button size="sm" asChild>
+                      <Link to="/settings">
+                        <Settings className="mr-1.5 h-3.5 w-3.5" />
+                        Settings
+                      </Link>
+                    </Button>
+                  </div>
+                ) : sessionMode === 'existing' ? (
+                  <div className="dashboard-folder-picker">
+                    <Input
+                      value={selectedFolder || ''}
+                      readOnly
+                      placeholder="Select folder..."
+                      className="bg-muted/50"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowFolderBrowser(true)}
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="dashboard-workspace-note">
+                    <FolderOpen className="h-4 w-4" />
+                    <span>{workspaceSummary}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </form>
+        </section>
+
+        <FolderBrowserDialog
+          open={showFolderBrowser}
+          onOpenChange={setShowFolderBrowser}
+          value={selectedFolder || undefined}
+          onChange={(path: string) => {
+            setSelectedFolder(path);
+            setShowFolderBrowser(false);
+            if (!newSessionName) setNewSessionName(path.split('/').pop() || '');
+          }}
+        />
+
+        {/* Sessions */}
+        <div className="dashboard-content-row">
+          <div className="dashboard-session-sections">
+            {isShowingCachedSessions && (
+              <div className="dashboard-data-state is-cached" role="status">
+                <WifiOff aria-hidden="true" />
+                <div>
+                  <strong>{isOnline ? 'Refresh failed' : 'Offline'}</strong>
+                  <span>Showing your last loaded sessions. New server changes may be missing.</span>
+                </div>
+                <button type="button" onClick={() => void sessionsQuery.refetch()}>
+                  <RotateCcw aria-hidden="true" />
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {isInitialSessionLoad && (
+              <div className="dashboard-data-state is-loading" role="status" aria-live="polite">
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                <div>
+                  <strong>Loading sessions</strong>
+                  <span>Restoring your latest workspaces…</span>
+                </div>
+              </div>
+            )}
+
+            {isSessionListUnavailable && !isInitialSessionLoad && (
+              <div className="dashboard-data-state is-error" role="alert">
+                {isOnline ? <AlertCircle aria-hidden="true" /> : <WifiOff aria-hidden="true" />}
+                <div>
+                  <strong>{isOnline ? 'Sessions unavailable' : 'You are offline'}</strong>
+                  <span>{sessionLoadMessage}</span>
+                </div>
+                <button type="button" onClick={() => void sessionsQuery.refetch()}>
+                  <RotateCcw aria-hidden="true" />
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {!isInitialSessionLoad &&
+              !isSessionListUnavailable &&
+              normalizedDashboardSearch &&
+              filteredSessions.length === 0 && (
+                <div className="dashboard-search-empty" role="status">
+                  <Search aria-hidden="true" />
+                  <div>
+                    <strong>No sessions found</strong>
+                    <span>Try a session name, project path, provider, model, or category.</span>
+                  </div>
+                  <button type="button" onClick={() => setDashboardSearchQuery('')}>
+                    Clear search
+                  </button>
+                </div>
+              )}
+            {dashboardSessionGroups.map((group) => {
+              const groupCollapsed = normalizedDashboardSearch
+                ? false
+                : (collapsedDashboardGroupIds[group.id] ?? false);
+              const groupColor = group.color
+                ? getDashboardCategoryColorValue(group.color)
+                : undefined;
+              const groupDragOver = dragOverDashboardGroupId === group.id;
+              return (
+                <section
+                  key={group.id}
+                  className={cn(
+                    'dashboard-session-section',
+                    group.isDropTarget && 'is-drop-target',
+                    group.hasWorking && 'is-working',
+                    groupDragOver && 'is-drag-over',
+                    groupCollapsed && 'is-collapsed'
+                  )}
+                  onDragOver={(event) => handleDashboardGroupDragOver(event, group)}
+                  onDragLeave={(event) => handleDashboardGroupDragLeave(event, group)}
+                  onDrop={(event) => handleDashboardGroupDrop(event, group)}
+                >
+                  <button
+                    type="button"
+                    className="dashboard-session-section-header"
+                    aria-expanded={!groupCollapsed}
+                    onClick={() => toggleDashboardGroup(group.id)}
+                  >
+                    <div className="dashboard-session-section-heading">
+                      <ChevronRight
+                        className="dashboard-session-section-chevron"
+                        aria-hidden="true"
+                      />
+                      <span
+                        className="dashboard-session-section-dot"
+                        style={
+                          groupColor && !group.hasWorking
+                            ? { backgroundColor: groupColor }
+                            : undefined
+                        }
+                      />
+                      <h2>{group.label}</h2>
+                    </div>
+                    <span className="dashboard-session-section-count">{group.sessions.length}</span>
+                  </button>
+
+                  {!groupCollapsed && (
+                    <div className="dashboard-session-grid">
+                      {group.sessions.length === 0 && group.isDropTarget && (
+                        <div className="dashboard-session-empty-drop" aria-hidden="true" />
+                      )}
+                      {group.sessions.map((session) => {
+                        const runState =
+                          sessionRunStates.get(session.id) ?? getSessionRunState(session);
+                        const unreadCount = Math.max(
+                          0,
+                          Number((session as Session & { unreadCount?: number }).unreadCount) || 0
+                        );
+                        return (
+                          <Card
+                            key={session.id}
+                            className={cn(
+                              'dashboard-session-card cursor-pointer',
+                              'is-draggable',
+                              draggingDashboardSessionId === session.id && 'is-dragging',
+                              `is-${runState.tone}`
+                            )}
+                            draggable
+                            onDragStart={(event) => handleDashboardSessionDragStart(event, session)}
+                            onDragEnd={clearDashboardDragState}
+                            onClick={() => {
+                              if (suppressDashboardCardClickRef.current) return;
+                              navigate(`/session/${session.id}`);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget) return;
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                navigate(`/session/${session.id}`);
+                              }
+                            }}
+                            role="link"
+                            tabIndex={0}
+                            aria-label={`Open session ${session.name}`}
+                          >
+                            <CardHeader className="dashboard-session-header">
+                              <div className="dashboard-session-heading">
+                                <div className="dashboard-session-title-row">
+                                  <span className="dashboard-session-icon-wrap">
+                                    <SessionIcon
+                                      session={session}
+                                      className="shrink-0"
+                                      logoClassName="h-5 w-5"
+                                      imageClassName="h-7 w-7 rounded-full"
+                                    />
+                                    {iconBusySessionId === session.id && (
+                                      <span className="session-icon-busy-overlay">
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      </span>
+                                    )}
+                                  </span>
+                                  <div className="dashboard-session-title-main">
+                                    <CardTitle className="dashboard-session-title">
+                                      {session.name}
+                                    </CardTitle>
+                                    <div
+                                      className="dashboard-session-action-stack"
+                                      data-dashboard-no-drag="true"
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <div className="dashboard-session-card-actions">
+                                        <div
+                                          className="dashboard-run-state"
+                                          title={runState.detail}
+                                        >
+                                          <span
+                                            className={cn(
+                                              'dashboard-status-dot',
+                                              `is-${runState.tone}`
+                                            )}
+                                          />
+                                          <span>{runState.label}</span>
+                                        </div>
+                                        {unreadCount > 0 && (
+                                          <span
+                                            className="dashboard-session-unread"
+                                            aria-label={`${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`}
+                                          >
+                                            {unreadCount > 99 ? '99+' : unreadCount}
+                                          </span>
                                         )}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          void handleToggleStar(session.id, session.starred);
-                                        }}
-                                        aria-label={
-                                          session.starred
-                                            ? `Unstar ${session.name}`
-                                            : `Star ${session.name}`
-                                        }
-                                        title={session.starred ? 'Unstar session' : 'Star session'}
-                                      >
-                                        <Star className="h-3.5 w-3.5" />
-                                      </button>
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="dashboard-session-menu-button"
-                                            aria-label={`More options for ${session.name}`}
-                                          >
-                                            <MoreHorizontal className="h-3.5 w-3.5" />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end" className="w-44">
-                                          <DropdownMenuItem
-                                            onClick={() => setRenamingSession(session)}
-                                            className="cursor-pointer"
-                                          >
-                                            <Pencil className="mr-2 h-3.5 w-3.5" />
-                                            Rename
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSub>
-                                            <DropdownMenuSubTrigger className="cursor-pointer">
-                                              <ImageIcon className="mr-2 h-3.5 w-3.5" />
-                                              Icon
-                                            </DropdownMenuSubTrigger>
-                                            <DropdownMenuSubContent className="w-52">
-                                              <DropdownMenuItem
-                                                onSelect={(event) => {
-                                                  event.preventDefault();
-                                                  void handleGenerateIcon(session);
-                                                }}
-                                                disabled={!!iconBusySessionId}
-                                                className="cursor-pointer"
-                                              >
-                                                {iconBusySessionId === session.id ? (
-                                                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                                ) : (
-                                                  <Sparkles className="mr-2 h-3.5 w-3.5" />
+                                        <button
+                                          type="button"
+                                          className={cn(
+                                            'dashboard-session-star-button',
+                                            session.starred && 'is-starred'
+                                          )}
+                                          onClick={() =>
+                                            void handleToggleStar(session.id, session.starred)
+                                          }
+                                          aria-label={
+                                            session.starred
+                                              ? `Unstar ${session.name}`
+                                              : `Star ${session.name}`
+                                          }
+                                          title={
+                                            session.starred ? 'Unstar session' : 'Star session'
+                                          }
+                                        >
+                                          <Star className="h-3.5 w-3.5" />
+                                        </button>
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button
+                                              variant="ghost"
+                                              size="icon"
+                                              className="dashboard-session-menu-button"
+                                              aria-label={`More options for ${session.name}`}
+                                            >
+                                              <MoreHorizontal className="h-3.5 w-3.5" />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end" className="w-44">
+                                            <DropdownMenuItem
+                                              onClick={() => setRenamingSession(session)}
+                                              className="cursor-pointer"
+                                            >
+                                              <Pencil className="mr-2 h-3.5 w-3.5" />
+                                              Rename
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSub>
+                                              <DropdownMenuSubTrigger className="cursor-pointer">
+                                                <ImageIcon className="mr-2 h-3.5 w-3.5" />
+                                                Icon
+                                              </DropdownMenuSubTrigger>
+                                              <DropdownMenuSubContent className="w-52">
+                                                <DropdownMenuItem
+                                                  onSelect={(event) => {
+                                                    event.preventDefault();
+                                                    void handleGenerateIcon(session);
+                                                  }}
+                                                  disabled={!!iconBusySessionId}
+                                                  className="cursor-pointer"
+                                                >
+                                                  {iconBusySessionId === session.id ? (
+                                                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                                  ) : (
+                                                    <Sparkles className="mr-2 h-3.5 w-3.5" />
+                                                  )}
+                                                  {iconBusySessionId === session.id
+                                                    ? 'Generating...'
+                                                    : 'Generate'}
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem
+                                                  onSelect={(event) => {
+                                                    event.preventDefault();
+                                                    startIconUpload(session.id);
+                                                  }}
+                                                  disabled={!!iconBusySessionId}
+                                                  className="cursor-pointer"
+                                                >
+                                                  <Upload className="mr-2 h-3.5 w-3.5" />
+                                                  Upload image
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem
+                                                  onSelect={(event) => {
+                                                    event.preventDefault();
+                                                    void handleUseProjectIcon(session);
+                                                  }}
+                                                  disabled={!!iconBusySessionId}
+                                                  className="cursor-pointer"
+                                                >
+                                                  <FolderInput className="mr-2 h-3.5 w-3.5" />
+                                                  Use project icon
+                                                </DropdownMenuItem>
+                                                {session.iconUrl && (
+                                                  <>
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                      onSelect={(event) => {
+                                                        event.preventDefault();
+                                                        void handleResetIcon(session);
+                                                      }}
+                                                      disabled={!!iconBusySessionId}
+                                                      className="cursor-pointer"
+                                                    >
+                                                      <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                                                      Reset icon
+                                                    </DropdownMenuItem>
+                                                  </>
                                                 )}
-                                                {iconBusySessionId === session.id
-                                                  ? 'Generating...'
-                                                  : 'Generate'}
-                                              </DropdownMenuItem>
-                                              <DropdownMenuItem
-                                                onSelect={(event) => {
-                                                  event.preventDefault();
-                                                  startIconUpload(session.id);
-                                                }}
-                                                disabled={!!iconBusySessionId}
-                                                className="cursor-pointer"
-                                              >
-                                                <Upload className="mr-2 h-3.5 w-3.5" />
-                                                Upload image
-                                              </DropdownMenuItem>
-                                              <DropdownMenuItem
-                                                onSelect={(event) => {
-                                                  event.preventDefault();
-                                                  void handleUseProjectIcon(session);
-                                                }}
-                                                disabled={!!iconBusySessionId}
-                                                className="cursor-pointer"
-                                              >
-                                                <FolderInput className="mr-2 h-3.5 w-3.5" />
-                                                Use project icon
-                                              </DropdownMenuItem>
-                                              {session.iconUrl && (
-                                                <>
-                                                  <DropdownMenuSeparator />
-                                                  <DropdownMenuItem
-                                                    onSelect={(event) => {
-                                                      event.preventDefault();
-                                                      void handleResetIcon(session);
-                                                    }}
-                                                    disabled={!!iconBusySessionId}
-                                                    className="cursor-pointer"
-                                                  >
-                                                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                                                    Reset icon
-                                                  </DropdownMenuItem>
-                                                </>
-                                              )}
-                                            </DropdownMenuSubContent>
-                                          </DropdownMenuSub>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            onClick={() => deleteMutation.mutate(session.id)}
-                                            className="cursor-pointer text-destructive focus:text-destructive"
-                                          >
-                                            <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                            Delete
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
+                                              </DropdownMenuSubContent>
+                                            </DropdownMenuSub>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem
+                                              onClick={() => deleteMutation.mutate(session.id)}
+                                              className="cursor-pointer text-destructive focus:text-destructive"
+                                            >
+                                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                              Delete
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
+                                      <span className="dashboard-session-date ui-text">
+                                        {formatDashboardLastActivity(session)}
+                                      </span>
                                     </div>
-                                    <span className="dashboard-session-date ui-text">
-                                      {formatDashboardLastActivity(session)}
-                                    </span>
                                   </div>
                                 </div>
                               </div>
-                            </div>
-                          </CardHeader>
-                          <CardContent className="dashboard-session-body">
-                            <p className="dashboard-session-description ui-text">
-                              {getDashboardProjectDescription(session)}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-
-          <div className="dashboard-category-create-slot">
-            {creatingDashboardCategory ? (
-              <form
-                className="dashboard-category-create-form"
-                onSubmit={handleCreateDashboardCategory}
-              >
-                <Input
-                  value={dashboardCategoryName}
-                  onChange={(event) => setDashboardCategoryName(event.target.value)}
-                  placeholder="Category name"
-                  className="dashboard-category-create-input"
-                  autoFocus
-                />
-                <div className="dashboard-category-color-row" aria-label="Category color">
-                  {DASHBOARD_CATEGORY_COLOR_OPTIONS.map((color) => (
-                    <button
-                      key={color.name}
-                      type="button"
-                      className={cn(
-                        'dashboard-category-color-swatch',
-                        dashboardCategoryColor === color.name && 'is-selected'
-                      )}
-                      style={{ backgroundColor: color.value }}
-                      onClick={() => setDashboardCategoryColor(color.name)}
-                      aria-label={`${color.name} category color`}
-                    />
-                  ))}
-                </div>
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={!dashboardCategoryName.trim() || dashboardCategorySubmitting}
-                >
-                  {dashboardCategorySubmitting ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="h-3.5 w-3.5" />
+                            </CardHeader>
+                            <CardContent className="dashboard-session-body">
+                              <p className="dashboard-session-description ui-text">
+                                {getDashboardProjectDescription(session)}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
                   )}
-                  Create
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setCreatingDashboardCategory(false);
-                    setDashboardCategoryName('');
-                    setDashboardCategoryColor(getNextDashboardCategoryColor(categories));
-                  }}
-                >
-                  Cancel
-                </Button>
-              </form>
-            ) : (
-              <button
-                type="button"
-                className="dashboard-category-add-bubble"
-                onClick={() => {
-                  setDashboardCategoryColor(getNextDashboardCategoryColor(categories));
-                  setCreatingDashboardCategory(true);
-                }}
-                aria-label="Create category"
-              >
-                <Plus className="h-4 w-4" />
-                <span>New category</span>
-              </button>
-            )}
-          </div>
+                </section>
+              );
+            })}
 
-          {filteredSessions.length === 0 && !showNewSession && (
-            <Card className="dashboard-empty-card">
-              <CardContent className="flex flex-col items-center justify-center py-8">
-                <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
-                <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
-                <Button size="sm" onClick={() => openNewSession()}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Create your first session
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+            <div
+              className={cn(
+                'dashboard-category-create-slot',
+                (isInitialSessionLoad || isSessionListUnavailable) && 'hidden'
+              )}
+            >
+              {creatingDashboardCategory ? (
+                <form
+                  className="dashboard-category-create-form"
+                  onSubmit={handleCreateDashboardCategory}
+                >
+                  <Input
+                    value={dashboardCategoryName}
+                    onChange={(event) => setDashboardCategoryName(event.target.value)}
+                    placeholder="Category name"
+                    className="dashboard-category-create-input"
+                    autoFocus
+                  />
+                  <div className="dashboard-category-color-row" aria-label="Category color">
+                    {DASHBOARD_CATEGORY_COLOR_OPTIONS.map((color) => (
+                      <button
+                        key={color.name}
+                        type="button"
+                        className={cn(
+                          'dashboard-category-color-swatch',
+                          dashboardCategoryColor === color.name && 'is-selected'
+                        )}
+                        style={{ backgroundColor: color.value }}
+                        onClick={() => setDashboardCategoryColor(color.name)}
+                        aria-label={`${color.name} category color`}
+                      />
+                    ))}
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={!dashboardCategoryName.trim() || dashboardCategorySubmitting}
+                  >
+                    {dashboardCategorySubmitting ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5" />
+                    )}
+                    Create
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setCreatingDashboardCategory(false);
+                      setDashboardCategoryName('');
+                      setDashboardCategoryColor(getNextDashboardCategoryColor(categories));
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="dashboard-category-add-bubble"
+                  onClick={() => {
+                    setDashboardCategoryColor(getNextDashboardCategoryColor(categories));
+                    setCreatingDashboardCategory(true);
+                  }}
+                  aria-label="Create category"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>New category</span>
+                </button>
+              )}
+            </div>
+
+            {!isInitialSessionLoad &&
+              !isSessionListUnavailable &&
+              !normalizedDashboardSearch &&
+              filteredSessions.length === 0 && (
+                <Card className="dashboard-empty-card">
+                  <CardContent className="flex flex-col items-center justify-center py-8">
+                    <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
+                    <p className="text-sm text-muted-foreground mb-3">No sessions yet</p>
+                    <Button size="sm" onClick={() => openNewSession()}>
+                      <Plus className="mr-1.5 h-3.5 w-3.5" />
+                      Create your first session
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+          </div>
         </div>
+
+        <RenameSessionDialog
+          session={renamingSession}
+          open={!!renamingSession}
+          onOpenChange={(open) => {
+            if (!open) setRenamingSession(null);
+          }}
+        />
+        {/* The right dock is desktop-only, so phones get the same options inline
+          below the list rather than losing access to them. */}
+        <div className="dashboard-mobile-options md:hidden">
+          <SessionCategories
+            selectedCategory={dashboardCategoryFilter}
+            onCategorySelect={setDashboardCategoryFilter}
+          />
+          <DiscoveredProjects cliProvider={selectedCliProvider} />
+        </div>
+
+        <input
+          ref={iconUploadInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.ico"
+          className="hidden"
+          onChange={(event) => handleIconUploadFile(event.target.files?.[0])}
+        />
       </div>
 
-      <RenameSessionDialog
-        session={renamingSession}
-        open={!!renamingSession}
-        onOpenChange={(open) => {
-          if (!open) setRenamingSession(null);
-        }}
-      />
-      <input
-        ref={iconUploadInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.ico"
-        className="hidden"
-        onChange={(event) => handleIconUploadFile(event.target.files?.[0])}
-      />
+      {/* Right-hand options menu, mirroring the session screen: the left rail
+          is app navigation, the right dock is always "options for what you are
+          looking at" — here that is category management and project discovery. */}
+      <div
+        className={cn(
+          'session-right-dock dashboard-right-dock hidden md:flex',
+          dashboardDockCollapsed && 'is-collapsed'
+        )}
+      >
+        <nav className="session-right-menu" aria-label="Dashboard options">
+          <div className="session-right-menu-header">
+            <button
+              type="button"
+              className="session-right-collapse-button"
+              onClick={() => setDashboardDockCollapsed((prev) => !prev)}
+              title={dashboardDockCollapsed ? 'Expand options' : 'Collapse options'}
+              aria-label={dashboardDockCollapsed ? 'Expand options' : 'Collapse options'}
+            >
+              {dashboardDockCollapsed ? (
+                <ChevronLeft className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+
+          {!dashboardDockCollapsed && (
+            <div className="session-side-menu-scroll">
+              <div className="session-side-menu-embed">
+                <SessionCategories
+                  selectedCategory={dashboardCategoryFilter}
+                  onCategorySelect={setDashboardCategoryFilter}
+                />
+              </div>
+              <div className="session-side-menu-embed">
+                <DiscoveredProjects cliProvider={selectedCliProvider} />
+              </div>
+            </div>
+          )}
+        </nav>
+      </div>
     </div>
   );
 }

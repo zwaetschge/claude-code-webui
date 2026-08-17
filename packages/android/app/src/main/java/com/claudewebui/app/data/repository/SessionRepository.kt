@@ -2,14 +2,20 @@ package com.claudewebui.app.data.repository
 
 import com.claudewebui.app.core.network.ApiClient
 import com.claudewebui.app.data.local.dao.SessionDao
+import com.claudewebui.app.data.local.dao.SessionReadStateDao
 import com.claudewebui.app.data.local.entity.toEntity
 import com.claudewebui.app.data.local.entity.toModel
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.CreateSessionInput
+import com.claudewebui.app.data.model.PermissionAction
+import com.claudewebui.app.data.model.PermissionResponse
 import com.claudewebui.app.data.model.Session
+import com.claudewebui.app.data.model.StyleKind
+import com.claudewebui.app.data.model.SessionChatList
 import com.claudewebui.app.data.model.SwitchProviderInput
 import com.claudewebui.app.data.model.UpdateSessionInput
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 /**
@@ -21,13 +27,20 @@ import kotlinx.coroutines.flow.map
  */
 class SessionRepository(
     private val api: ApiClient,
-    private val dao: SessionDao
+    private val dao: SessionDao,
+    private val readStateDao: SessionReadStateDao,
 ) {
 
     // ---- Observable streams ------------------------------------------------
 
     /** All sessions, ordered by most recently updated. Backed by Room. */
-    val sessions: Flow<List<Session>> = dao.getAll().map { list -> list.map { it.toModel() } }
+    val sessions: Flow<List<Session>> = combine(dao.getAll(), readStateDao.observeAll()) { list, reads ->
+        val counts = reads.associate { it.sessionId to it.unreadCount }
+        list.map { entity ->
+            val model = entity.toModel()
+            model.copy(unreadCount = counts[entity.id] ?: model.unreadCount)
+        }
+    }
 
     /** Sessions filtered by category. */
     fun getByCategory(categoryId: String): Flow<List<Session>> =
@@ -54,10 +67,12 @@ class SessionRepository(
                 error(response.error?.message ?: "Failed to fetch sessions")
             }
             val sessions = response.data
-            if (forceRefresh) {
-                dao.deleteAll()
-            }
-            dao.insertAll(sessions.map { it.toEntity() })
+            // Upsert first, then prune rows absent from the authoritative
+            // snapshot. Clearing first would cascade-delete cached messages.
+            dao.syncRemote(sessions.map { it.toEntity() })
+            // One REST snapshot, then local Room updates only — never an N+1
+            // read-state request across a large dashboard.
+            readStateDao.syncServerUnreadCounts(sessions.associate { it.id to it.unreadCount })
             sessions
         }
     }
@@ -134,8 +149,13 @@ class SessionRepository(
         }
     }
 
+    suspend fun cacheSession(session: Session) {
+        dao.insert(session.toEntity())
+    }
+
     /**
-     * Star/unstar a session.
+     * Star/unstar a session. The route returns only the new flag, so the
+     * cached entity is patched in place instead of replaced.
      */
     suspend fun starSession(id: String): Result<Session> {
         return runCatching {
@@ -143,9 +163,13 @@ class SessionRepository(
             if (!response.success || response.data == null) {
                 error(response.error?.message ?: "Failed to star session")
             }
-            val session = response.data
-            dao.insert(session.toEntity())
-            session
+            val cached = dao.getByIdOnce(id)?.copy(starred = response.data.starred)
+            if (cached != null) {
+                dao.insert(cached)
+                cached.toModel()
+            } else {
+                getSession(id).getOrThrow()
+            }
         }
     }
 
@@ -165,8 +189,70 @@ class SessionRepository(
         }
     }
 
+    /** Set the model this session runs; null restores the provider default. */
+    suspend fun setModel(id: String, model: String?): Result<Session> = runCatching {
+        val response = api.setSessionModel(id, model)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to set model")
+        }
+        dao.insert(response.data.toEntity())
+        response.data
+    }
+
+    /** Set the reasoning level, where the provider supports one. */
+    suspend fun setReasoning(id: String, reasoning: String?): Result<Session> = runCatching {
+        val response = api.setSessionReasoning(id, reasoning)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to set reasoning")
+        }
+        dao.insert(response.data.toEntity())
+        response.data
+    }
+
+    /** Apply or clear one presentation preset for this session. */
+    suspend fun setStyleSkill(
+        id: String,
+        kind: StyleKind,
+        skill: String?,
+    ): Result<Session> = runCatching {
+        val response = when (kind) {
+            StyleKind.DESIGN -> api.setSessionStyles(id, designStyleSkill = skill, clearDesign = true)
+            StyleKind.WRITING -> api.setSessionStyles(id, writingStyleSkill = skill, clearWriting = true)
+        }
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to set style preset")
+        }
+        dao.insert(response.data.toEntity())
+        response.data
+    }
+
+    suspend fun getAllowedDirectories(id: String): Result<List<String>> = runCatching {
+        val response = api.getAllowedDirectories(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to load allowed directories")
+        }
+        response.data
+    }
+
+    suspend fun addAllowedDirectory(id: String, directory: String): Result<List<String>> = runCatching {
+        val response = api.addAllowedDirectory(id, directory)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to allow directory")
+        }
+        response.data
+    }
+
+    suspend fun removeAllowedDirectory(id: String, directory: String): Result<List<String>> = runCatching {
+        val response = api.removeAllowedDirectory(id, directory)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to remove directory")
+        }
+        response.data
+    }
+
     /**
-     * Update the category for a session.
+     * Update the category for a session. The route returns only the
+     * assignment, so the cached entity is patched in place.
      */
     suspend fun updateCategory(id: String, categoryId: String?): Result<Session> {
         return runCatching {
@@ -174,22 +260,86 @@ class SessionRepository(
             if (!response.success || response.data == null) {
                 error(response.error?.message ?: "Failed to update category")
             }
-            val session = response.data
-            dao.insert(session.toEntity())
-            session
+            val cached = dao.getByIdOnce(id)?.copy(categoryId = response.data.category)
+            if (cached != null) {
+                dao.insert(cached)
+                cached.toModel()
+            } else {
+                getSession(id).getOrThrow()
+            }
         }
     }
 
+    /** List chat threads of a session. */
+    suspend fun getChats(id: String): Result<SessionChatList> = runCatching {
+        val response = api.getSessionChats(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to load chats")
+        }
+        response.data
+    }
+
+    /** Start a fresh chat thread; the server activates it and stops the CLI. */
+    suspend fun createChat(id: String): Result<SessionChatList> = runCatching {
+        val response = api.createSessionChat(id)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to create chat")
+        }
+        response.data
+    }
+
+    /** Switch to another chat thread. */
+    suspend fun activateChat(id: String, chatId: String): Result<SessionChatList> = runCatching {
+        val response = api.activateSessionChat(id, chatId)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to switch chat")
+        }
+        response.data
+    }
+
+    /** Delete a chat thread with its messages. */
+    suspend fun deleteChat(id: String, chatId: String): Result<SessionChatList> = runCatching {
+        val response = api.deleteSessionChat(id, chatId)
+        if (!response.success || response.data == null) {
+            error(response.error?.message ?: "Failed to delete chat")
+        }
+        response.data
+    }
+
     /**
-     * Search sessions by query — returns a network result (not cached).
+     * Answer a hooks-based permission request. The socket has no handler for
+     * this event; the REST route is the only path that resumes the CLI turn.
      */
-    suspend fun searchSessions(query: String): Result<List<Session>> {
-        return runCatching {
-            val response = api.searchSessions(query)
-            if (!response.success || response.data == null) {
-                error(response.error?.message ?: "Search failed")
-            }
-            response.data
+    suspend fun respondToPermission(
+        sessionId: String,
+        requestId: String,
+        action: PermissionAction,
+        pattern: String? = null
+    ): Result<Unit> = runCatching {
+        val result = api.respondToPermission(
+            PermissionResponse(sessionId, requestId, action, pattern)
+        )
+        if (!result.success) error("Permission response rejected")
+    }
+
+    /** Answer an OpenCode question prompt so the turn can continue. */
+    suspend fun respondToQuestion(
+        requestId: String,
+        answers: List<List<String>>,
+        providerSessionId: String?
+    ): Result<Unit> = runCatching {
+        val response = api.respondToQuestion(requestId, answers, providerSessionId)
+        if (!response.success) {
+            error(response.error?.message ?: "Failed to answer question")
         }
     }
+
+    /** Dismiss an OpenCode question prompt. */
+    suspend fun rejectQuestion(requestId: String, providerSessionId: String?): Result<Unit> =
+        runCatching {
+            val response = api.rejectQuestion(requestId, providerSessionId)
+            if (!response.success) {
+                error(response.error?.message ?: "Failed to dismiss question")
+            }
+        }
 }

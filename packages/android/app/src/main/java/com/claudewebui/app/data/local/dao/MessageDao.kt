@@ -10,9 +10,12 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MessageDao {
 
-    /** Observe all messages for a session ordered chronologically. */
-    @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
-    fun getBySessionId(sessionId: String): Flow<List<MessageEntity>>
+    /** Observe one chat only; mixing sibling threads produces a false transcript. */
+    @Query(
+        "SELECT * FROM messages WHERE sessionId = :sessionId AND chatId IS :chatId " +
+            "ORDER BY timestamp ASC, eventSequence ASC, id ASC"
+    )
+    fun getByChat(sessionId: String, chatId: String?): Flow<List<MessageEntity>>
 
     /** Insert a single message, replacing on conflict (e.g. streaming update). */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -22,9 +25,34 @@ interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(messages: List<MessageEntity>)
 
+    /** Rows representing the same durable event under a legacy/optimistic id. */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE sessionId = :sessionId AND chatId IS :chatId AND (
+            id = :id OR
+            (:clientMessageId IS NOT NULL AND clientMessageId = :clientMessageId) OR
+            (:eventSequence IS NOT NULL AND eventSequence = :eventSequence)
+        )
+        """
+    )
+    suspend fun findIdentityMatches(
+        sessionId: String,
+        chatId: String?,
+        id: String,
+        clientMessageId: String?,
+        eventSequence: Long?,
+    ): List<MessageEntity>
+
+    @Query("DELETE FROM messages WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
     /** Remove all cached messages for a session (e.g. after session deletion). */
     @Query("DELETE FROM messages WHERE sessionId = :sessionId")
     suspend fun deleteBySessionId(sessionId: String)
+
+    @Query("DELETE FROM messages WHERE sessionId = :sessionId AND chatId IS :chatId")
+    suspend fun deleteByChat(sessionId: String, chatId: String?)
 
     /**
      * Fetch the N most recent messages for a session — useful for
@@ -33,16 +61,19 @@ interface MessageDao {
     @Query(
         """
         SELECT * FROM messages
-        WHERE sessionId = :sessionId
+        WHERE sessionId = :sessionId AND chatId IS :chatId
         ORDER BY timestamp DESC
         LIMIT :limit
         """
     )
-    suspend fun getLatest(sessionId: String, limit: Int = 20): List<MessageEntity>
+    suspend fun getLatest(sessionId: String, chatId: String?, limit: Int = 20): List<MessageEntity>
 
     /** One-shot fetch of all messages (no Flow). */
-    @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
-    suspend fun getBySessionIdOnce(sessionId: String): List<MessageEntity>
+    @Query(
+        "SELECT * FROM messages WHERE sessionId = :sessionId AND chatId IS :chatId " +
+            "ORDER BY timestamp ASC, eventSequence ASC, id ASC"
+    )
+    suspend fun getByChatOnce(sessionId: String, chatId: String?): List<MessageEntity>
 
     /** Count cached messages for a session. */
     @Query("SELECT COUNT(*) FROM messages WHERE sessionId = :sessionId")

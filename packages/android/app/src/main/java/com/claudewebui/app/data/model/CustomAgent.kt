@@ -19,14 +19,16 @@ data class CustomAgent(
     @SerialName("updated_at") val updatedAt: String
 )
 
+// The write routes destructure camelCase (`systemPrompt`, `permissionMode`)
+// from the body — only the *responses* are raw snake_case SQLite rows.
 @Serializable
 data class CreateCustomAgentInput(
     val name: String,
     val description: String? = null,
-    @SerialName("system_prompt") val systemPrompt: String,
+    val systemPrompt: String,
     val model: String,
     val allowedTools: List<String>? = null,
-    @SerialName("permission_mode") val permissionMode: String? = null,
+    val permissionMode: String? = null,
     val icon: String? = null,
     val color: String? = null,
     val enabled: Boolean? = null
@@ -36,10 +38,10 @@ data class CreateCustomAgentInput(
 data class UpdateCustomAgentInput(
     val name: String? = null,
     val description: String? = null,
-    @SerialName("system_prompt") val systemPrompt: String? = null,
+    val systemPrompt: String? = null,
     val model: String? = null,
     val allowedTools: List<String>? = null,
-    @SerialName("permission_mode") val permissionMode: String? = null,
+    val permissionMode: String? = null,
     val icon: String? = null,
     val color: String? = null,
     val enabled: Boolean? = null

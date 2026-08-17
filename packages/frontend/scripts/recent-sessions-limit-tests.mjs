@@ -36,4 +36,10 @@ for (const [name, source] of [
   );
 }
 
+assert.match(
+  dashboardSource,
+  /for \(const session of filteredSessions\) \{\s*if \(usedSessionIds\.has\(session\.id\)\) continue;/,
+  'dashboard priority groups must not duplicate sessions in category groups'
+);
+
 console.log('Recent Sessions limit regression tests passed.');

@@ -29,22 +29,32 @@ object NotificationService {
     const val SESSION_UPDATES_CHANNEL = "session_updates"
     const val PERMISSION_REQUESTS_CHANNEL = "permission_requests"
     const val ERRORS_CHANNEL = "errors"
+    const val USAGE_ALERTS_CHANNEL = "usage_alerts"
 
     // ── Notification ID ranges ────────────────────────────────────────────
     // Ranges avoid collisions between categories while keeping grouping intact.
     private const val ID_SESSION_BASE = 1000
     private const val ID_PERMISSION_BASE = 2000
     private const val ID_ERROR_BASE = 3000
+    private const val ID_QUESTION_BASE = 5000
+    private const val ID_USAGE_ALERT = 6000
 
     // ── Action identifiers ────────────────────────────────────────────────
     const val ACTION_OPEN = "com.claudewebui.app.action.OPEN"
     const val ACTION_APPROVE_PERMISSION = "com.claudewebui.app.action.APPROVE_PERMISSION"
+    const val ACTION_DENY_PERMISSION = "com.claudewebui.app.action.DENY_PERMISSION"
+    const val ACTION_ANSWER_QUESTION = "com.claudewebui.app.action.ANSWER_QUESTION"
     const val ACTION_DISMISS = "com.claudewebui.app.action.DISMISS"
 
     // ── Intent extras ─────────────────────────────────────────────────────
     const val EXTRA_SESSION_ID = "session_id"
     const val EXTRA_REQUEST_ID = "request_id"
     const val EXTRA_NOTIFICATION_ID = "notification_id"
+    const val EXTRA_PROVIDER_SESSION_ID = "provider_session_id"
+    const val EXTRA_ANSWER = "answer"
+
+    /** RemoteInput result key for free-text question replies. */
+    const val KEY_TEXT_REPLY = "question_reply"
 
     // ── Channels setup ────────────────────────────────────────────────────
 
@@ -92,6 +102,14 @@ object NotificationService {
                     setShowBadge(false)
                     enableLights(true)
                     lightColor = 0xFFEF4444.toInt() // ErrorRed
+                },
+                NotificationChannel(
+                    USAGE_ALERTS_CHANNEL,
+                    "Usage & Budget Alerts",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Provider quota and daily cost thresholds"
+                    setShowBadge(false)
                 }
             )
         )
@@ -111,11 +129,13 @@ object NotificationService {
         context: Context,
         sessionId: String,
         sessionName: String,
-        summary: String? = null
+        summary: String? = null,
+        title: String = "Session completed"
     ) {
+        if (!NotificationPreferences.canPostNotifications(context)) return
         val notificationId = sessionIdToNotificationId(sessionId, ID_SESSION_BASE)
         val notification = buildSessionCompletedNotification(
-            context, sessionId, sessionName, summary, notificationId
+            context, sessionId, sessionName, summary, notificationId, title
         )
         NotificationManagerCompat.from(context).notify(
             sessionId, notificationId, notification
@@ -132,6 +152,7 @@ object NotificationService {
         toolName: String,
         requestId: String
     ) {
+        if (!NotificationPreferences.canPostNotifications(context)) return
         val notificationId = sessionIdToNotificationId(sessionId, ID_PERMISSION_BASE)
         val notification = buildPermissionNotification(
             context, sessionId, sessionName, toolName, requestId, notificationId
@@ -151,6 +172,7 @@ object NotificationService {
         message: String,
         isWarning: Boolean = false
     ) {
+        if (!NotificationPreferences.canPostNotifications(context)) return
         val notificationId = sessionIdToNotificationId(sessionId, ID_ERROR_BASE)
         val notification = buildErrorNotification(
             context, sessionId, sessionName, message, isWarning, notificationId
@@ -161,11 +183,107 @@ object NotificationService {
     }
 
     /**
+     * Post an agent question with the answer options as inline actions (max 3)
+     * plus a free-text reply. Bridged to Wear so questions can be answered from
+     * the watch like permission requests.
+     */
+    fun notifyQuestion(
+        context: Context,
+        sessionId: String,
+        sessionName: String,
+        questionText: String,
+        options: List<String>,
+        allowCustom: Boolean,
+        requestId: String,
+        providerSessionId: String?,
+    ) {
+        if (!NotificationPreferences.canPostNotifications(context)) return
+        val notificationId = sessionIdToNotificationId(sessionId, ID_QUESTION_BASE)
+        val tapIntent = deepLinkPendingIntent(context, sessionId, notificationId)
+
+        fun answerIntent(answer: String?, requestCode: Int): PendingIntent =
+            PendingIntent.getBroadcast(
+                context,
+                notificationId + requestCode,
+                Intent(context, NotificationActionReceiver::class.java).apply {
+                    action = ACTION_ANSWER_QUESTION
+                    putExtra(EXTRA_SESSION_ID, sessionId)
+                    putExtra(EXTRA_REQUEST_ID, requestId)
+                    putExtra(EXTRA_PROVIDER_SESSION_ID, providerSessionId)
+                    putExtra(EXTRA_NOTIFICATION_ID, notificationId)
+                    answer?.let { putExtra(EXTRA_ANSWER, it) }
+                },
+                // Mutable so RemoteInput can attach the typed reply.
+                PendingIntent.FLAG_UPDATE_CURRENT or
+                    (if (answer == null) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE),
+            )
+
+        val optionActions = options.take(3).mapIndexed { i, option ->
+            NotificationCompat.Action(0, option.take(24), answerIntent(option, 400 + i))
+        }
+        val replyAction = if (allowCustom || options.isEmpty()) {
+            NotificationCompat.Action.Builder(0, "Reply", answerIntent(null, 450))
+                .addRemoteInput(
+                    androidx.core.app.RemoteInput.Builder(KEY_TEXT_REPLY)
+                        .setLabel("Answer")
+                        .build()
+                )
+                .build()
+        } else null
+
+        val builder = NotificationCompat.Builder(context, PERMISSION_REQUESTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Agent question — $sessionName")
+            .setContentText(questionText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(questionText))
+            .setContentIntent(tapIntent)
+            .setAutoCancel(false)
+            .setOngoing(true)
+            .setGroup(sessionId)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        optionActions.forEach { builder.addAction(it) }
+        replyAction?.let { builder.addAction(it) }
+        val wearable = NotificationCompat.WearableExtender()
+        optionActions.forEach { wearable.addAction(it) }
+        replyAction?.let { wearable.addAction(it) }
+        builder.extend(wearable)
+
+        NotificationManagerCompat.from(context).notify(sessionId, notificationId, builder.build())
+    }
+
+    /** Quota / budget threshold notification (deduped by the caller). */
+    fun notifyUsageAlert(context: Context, tag: String, title: String, message: String) {
+        if (!NotificationPreferences.canPostNotifications(context)) return
+        val tapIntent = PendingIntent.getActivity(
+            context,
+            ID_USAGE_ALERT,
+            Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = android.net.Uri.parse("claudewebui://analytics?range=24h")
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, USAGE_ALERTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setContentIntent(tapIntent)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .extend(NotificationCompat.WearableExtender())
+            .build()
+        NotificationManagerCompat.from(context).notify(tag, ID_USAGE_ALERT, notification)
+    }
+
+    /**
      * Cancel all notifications for a given session group.
      */
     fun cancelSessionNotifications(context: Context, sessionId: String) {
         val nm = NotificationManagerCompat.from(context)
-        listOf(ID_SESSION_BASE, ID_PERMISSION_BASE, ID_ERROR_BASE).forEach { base ->
+        listOf(ID_SESSION_BASE, ID_PERMISSION_BASE, ID_ERROR_BASE, ID_QUESTION_BASE).forEach { base ->
             nm.cancel(sessionId, sessionIdToNotificationId(sessionId, base))
         }
     }
@@ -177,7 +295,8 @@ object NotificationService {
         sessionId: String,
         sessionName: String,
         summary: String?,
-        notificationId: Int
+        notificationId: Int,
+        title: String
     ): Notification {
         val tapIntent = deepLinkPendingIntent(context, sessionId, notificationId)
         val openAction = NotificationCompat.Action(
@@ -185,11 +304,13 @@ object NotificationService {
         )
         return NotificationCompat.Builder(context, SESSION_UPDATES_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Session completed")
+            .setContentTitle(title)
             .setContentText(sessionName)
             .apply { summary?.let { setStyle(NotificationCompat.BigTextStyle().bigText(it)) } }
             .setContentIntent(tapIntent)
             .addAction(openAction)
+            // Ensure "agent is done" also reads well on a paired watch.
+            .extend(NotificationCompat.WearableExtender())
             .setAutoCancel(true)
             .setGroup(sessionId)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
@@ -219,6 +340,18 @@ object NotificationService {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val denyIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId + 300,
+            Intent(context, NotificationActionReceiver::class.java).apply {
+                action = ACTION_DENY_PERMISSION
+                putExtra(EXTRA_SESSION_ID, sessionId)
+                putExtra(EXTRA_REQUEST_ID, requestId)
+                putExtra(EXTRA_NOTIFICATION_ID, notificationId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val dismissIntent = PendingIntent.getBroadcast(
             context,
             notificationId + 200,
@@ -230,6 +363,9 @@ object NotificationService {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val approveAction = NotificationCompat.Action(0, "Approve", approveIntent)
+        val denyAction = NotificationCompat.Action(0, "Deny", denyIntent)
+
         return NotificationCompat.Builder(context, PERMISSION_REQUESTS_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Permission required — $sessionName")
@@ -239,8 +375,17 @@ object NotificationService {
                     .bigText("Agent wants to run: $toolName\nTap \"Approve\" to allow this action.")
             )
             .setContentIntent(tapIntent)
-            .addAction(NotificationCompat.Action(0, "Approve", approveIntent))
+            .addAction(approveAction)
+            .addAction(denyAction)
             .addAction(NotificationCompat.Action(0, "Dismiss", dismissIntent))
+            // Bridged to a paired Wear OS watch: the extender puts Approve/Deny
+            // front and center so the request can be answered from the wrist.
+            // The PendingIntents execute on the phone, which holds the session.
+            .extend(
+                NotificationCompat.WearableExtender()
+                    .addAction(approveAction)
+                    .addAction(denyAction)
+            )
             .setAutoCancel(false)
             .setOngoing(true) // stays until user acts
             .setGroup(sessionId)

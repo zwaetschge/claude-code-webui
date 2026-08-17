@@ -17,6 +17,12 @@ val databaseModule = module {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
+            .addMigrations(
+                AppDatabase.MIGRATION_2_3,
+                AppDatabase.MIGRATION_3_4,
+                AppDatabase.MIGRATION_4_5,
+                AppDatabase.MIGRATION_5_6,
+            )
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -28,4 +34,8 @@ val databaseModule = module {
     single { get<AppDatabase>().messageDao() }
 
     single { get<AppDatabase>().draftDao() }
+
+    single { get<AppDatabase>().outboxDao() }
+
+    single { get<AppDatabase>().sessionReadStateDao() }
 }

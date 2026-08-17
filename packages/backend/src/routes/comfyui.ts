@@ -61,7 +61,13 @@ router.use((req, res, next) => {
   return requireAuth(req, res, next);
 });
 
-const WORKFLOW_IDS = ['z-image-turbo', 'flux2-klein-t2i', 'flux2-klein-edit'] as const;
+const WORKFLOW_IDS = [
+  'z-image-turbo',
+  'flux2-klein-t2i',
+  'flux2-klein-edit',
+  'krea2-t2i',
+  'f2k-edit',
+] as const;
 
 const paramsSchema = z.object({
   prompt: z.string().min(3).max(4000),

@@ -339,7 +339,8 @@ private fun getFileNameFromUri(context: android.content.Context, uri: Uri): Stri
 }
 
 private fun createTempImageUri(context: android.content.Context): Uri {
-    val file = java.io.File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+    val directory = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+    val file = java.io.File(directory, "camera_${System.currentTimeMillis()}.jpg")
     return androidx.core.content.FileProvider.getUriForFile(
         context,
         "${context.packageName}.provider",

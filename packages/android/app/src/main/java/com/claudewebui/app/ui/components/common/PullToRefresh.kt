@@ -16,7 +16,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.claudewebui.app.ui.theme.AntiqueBrass
 import com.claudewebui.app.ui.theme.ClaudeWebUITheme
 
 // ── PullToRefresh Wrapper ────────────────────────────────────────────────────
@@ -42,7 +41,7 @@ fun PullToRefreshContainer(
                 isRefreshing = isRefreshing,
                 state = state,
                 containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
             )
         },
         content = content,

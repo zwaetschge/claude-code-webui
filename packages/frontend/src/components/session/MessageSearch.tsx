@@ -1,236 +1,340 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { Search, X, ArrowUp, ArrowDown, Loader2 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
+import { ArrowDown, ArrowUp, Loader2, Search, X } from 'lucide-react';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/useDebounce';
 
-interface SearchResult {
+export interface MessageSearchResult {
   id: string;
   sessionId: string;
+  chatId?: string | null;
   role: string;
   content: string;
+  snippet?: string;
   createdAt: string;
   sessionName?: string;
+  jump?: {
+    sessionId: string;
+    chatId: string | null;
+    messageId: string;
+  };
 }
 
 interface ApiSearchResponse {
   success: boolean;
-  data?: SearchResult[];
+  data?: MessageSearchResult[];
 }
 
 interface MessageSearchProps {
   sessionId?: string;
-  onResultClick?: (messageId: string) => void;
+  onResultClick?: (result: MessageSearchResult) => void;
   className?: string;
+  presentation?: 'popover' | 'panel';
+  autoFocus?: boolean;
+  placeholder?: string;
 }
 
-export function MessageSearch({ sessionId, onResultClick, className }: MessageSearchProps) {
+const SEARCH_LIMIT = 40;
+const FTS_MARKER_PATTERN = /(?:\u0001|\u0002|<\/?b>|<\/?mark>)/gi;
+
+function cleanSnippet(value: string): string {
+  return value.replace(FTS_MARKER_PATTERN, '').replace(/\s+/g, ' ').trim();
+}
+
+function getContextSnippet(result: MessageSearchResult, query: string, maxLength = 190): string {
+  const source = cleanSnippet(result.snippet || result.content || '');
+  if (source.length <= maxLength) return source;
+
+  const matchAt = source.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+  if (matchAt < 0) return `${source.slice(0, maxLength).trimEnd()}…`;
+
+  const before = Math.floor((maxLength - query.length) * 0.42);
+  const start = Math.max(0, matchAt - before);
+  const end = Math.min(source.length, start + maxLength);
+  return `${start > 0 ? '…' : ''}${source.slice(start, end).trim()}${end < source.length ? '…' : ''}`;
+}
+
+function HighlightedSnippet({ text, query }: { text: string; query: string }) {
+  const normalizedQuery = query.trim();
+  const parts = useMemo(() => {
+    if (!normalizedQuery) return [text];
+    const escaped = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return text.split(new RegExp(`(${escaped})`, 'gi'));
+  }, [normalizedQuery, text]);
+
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.localeCompare(normalizedQuery, undefined, { sensitivity: 'accent' }) === 0 ? (
+          <mark key={`${part}-${index}`} className="message-search-highlight">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
+
+export function getMessageSearchTarget(result: MessageSearchResult) {
+  return {
+    sessionId: result.jump?.sessionId || result.sessionId,
+    chatId: result.jump?.chatId ?? result.chatId ?? null,
+    messageId: result.jump?.messageId || result.id,
+  };
+}
+
+export function MessageSearch({
+  sessionId,
+  onResultClick,
+  className,
+  presentation = 'popover',
+  autoFocus = false,
+  placeholder,
+}: MessageSearchProps) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<MessageSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
+  const [error, setError] = useState('');
+  const [isOpen, setIsOpen] = useState(presentation === 'panel');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsRef = useRef<HTMLDivElement>(null);
-
-  const debouncedQuery = useDebounce(query, 300);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const requestVersionRef = useRef(0);
+  const listboxId = useId();
+  const statusId = useId();
+  const debouncedQuery = useDebounce(query.trim(), 220);
 
   const search = useCallback(
     async (searchQuery: string) => {
       if (searchQuery.length < 2) {
         setResults([]);
+        setError('');
+        setLoading(false);
         return;
       }
 
+      const requestVersion = ++requestVersionRef.current;
       setLoading(true);
+      setError('');
       try {
-        const params = new URLSearchParams({ q: searchQuery, limit: '20' });
+        const params = new URLSearchParams({ q: searchQuery, limit: String(SEARCH_LIMIT) });
         const endpoint = sessionId
           ? `/api/sessions/${sessionId}/messages/search?${params}`
           : `/api/sessions/messages/search?${params}`;
-
         const response = await api.get<ApiSearchResponse>(endpoint);
-
-        if (response.data.success && response.data.data) {
-          setResults(response.data.data);
-          setSelectedIndex(0);
-        }
-      } catch (error) {
-        console.error('Search failed:', error);
+        if (requestVersion !== requestVersionRef.current) return;
+        setResults(response.data.success && response.data.data ? response.data.data : []);
+        setSelectedIndex(0);
+      } catch (searchError) {
+        if (requestVersion !== requestVersionRef.current) return;
         setResults([]);
+        setError(searchError instanceof Error ? searchError.message : 'Search could not be loaded.');
       } finally {
-        setLoading(false);
+        if (requestVersion === requestVersionRef.current) setLoading(false);
       }
     },
     [sessionId]
   );
 
   useEffect(() => {
-    search(debouncedQuery);
+    void search(debouncedQuery);
   }, [debouncedQuery, search]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!isOpen) return;
+  useEffect(() => {
+    if (!autoFocus) return;
+    window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
+  }, [autoFocus]);
 
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        setSelectedIndex((prev) => Math.min(prev + 1, results.length - 1));
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setSelectedIndex((prev) => Math.max(prev - 1, 0));
-        break;
-      case 'Enter':
-        e.preventDefault();
-        if (results[selectedIndex]) {
-          handleResultClick(results[selectedIndex]);
-        }
-        break;
-      case 'Escape':
-        setIsOpen(false);
+  useEffect(() => {
+    if (presentation === 'panel') return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [presentation]);
+
+  const chooseResult = useCallback(
+    (result: MessageSearchResult) => {
+      onResultClick?.(result);
+      setIsOpen(presentation === 'panel');
+      setQuery('');
+      setResults([]);
+    },
+    [onResultClick, presentation]
+  );
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (query) {
         setQuery('');
-        break;
+        setResults([]);
+      } else if (presentation === 'popover') {
+        setIsOpen(false);
+        inputRef.current?.blur();
+      }
+      return;
+    }
+
+    if (!isOpen || results.length === 0) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSelectedIndex((current) => Math.min(current + 1, results.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSelectedIndex((current) => Math.max(current - 1, 0));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const result = results[selectedIndex];
+      if (result) chooseResult(result);
     }
   };
 
-  const handleResultClick = (result: SearchResult) => {
-    onResultClick?.(result.id);
-    setIsOpen(false);
-    setQuery('');
-  };
-
-  const highlightMatch = (text: string, searchQuery: string) => {
-    if (!searchQuery) return text;
-
-    const parts = text.split(new RegExp(`(${searchQuery})`, 'gi'));
-    return parts.map((part, i) =>
-      part.toLowerCase() === searchQuery.toLowerCase() ? (
-        <mark key={i} className="bg-yellow-200 dark:bg-yellow-800 rounded px-0.5">
-          {part}
-        </mark>
-      ) : (
-        part
-      )
-    );
-  };
-
-  const truncateContent = (content: string, maxLength = 150) => {
-    if (content.length <= maxLength) return content;
-
-    // Try to find the query in the content and show context around it
-    const queryIndex = content.toLowerCase().indexOf(query.toLowerCase());
-    if (queryIndex >= 0) {
-      const start = Math.max(0, queryIndex - 50);
-      const end = Math.min(content.length, queryIndex + query.length + 100);
-      return (
-        (start > 0 ? '...' : '') + content.slice(start, end) + (end < content.length ? '...' : '')
-      );
-    }
-
-    return content.slice(0, maxLength) + '...';
-  };
+  const hasSearch = query.trim().length >= 2;
+  const showResults = presentation === 'panel' || (isOpen && hasSearch);
+  const statusText = loading
+    ? 'Searching messages'
+    : error
+      ? error
+      : hasSearch
+        ? `${results.length} ${results.length === 1 ? 'result' : 'results'}`
+        : 'Type at least two characters';
 
   return (
-    <div className={cn('relative', className)}>
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
+    <div
+      ref={rootRef}
+      className={cn('message-search', `is-${presentation}`, className)}
+      data-session-search={sessionId ? 'session' : 'global'}
+    >
+      <div className="message-search-field">
+        <Search aria-hidden="true" />
+        <input
           ref={inputRef}
+          type="search"
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
+          onChange={(event) => {
+            setQuery(event.target.value);
             setIsOpen(true);
           }}
           onFocus={() => setIsOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Search messages..."
-          className="pl-9 pr-8"
+          placeholder={placeholder || (sessionId ? 'Search this chat' : 'Search all messages')}
+          aria-label={sessionId ? 'Search this chat' : 'Search all messages'}
+          aria-controls={listboxId}
+          aria-expanded={showResults && hasSearch}
+          aria-activedescendant={
+            results[selectedIndex] ? `${listboxId}-option-${selectedIndex}` : undefined
+          }
+          aria-describedby={statusId}
+          autoComplete="off"
         />
-        {(query || loading) && (
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-            {query && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={() => {
-                  setQuery('');
-                  setResults([]);
-                  inputRef.current?.focus();
-                }}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            )}
-          </div>
+        {loading ? (
+          <Loader2 className="message-search-spinner animate-spin" aria-hidden="true" />
+        ) : query ? (
+          <button
+            type="button"
+            className="message-search-clear"
+            onClick={() => {
+              setQuery('');
+              setResults([]);
+              inputRef.current?.focus({ preventScroll: true });
+            }}
+            aria-label="Clear message search"
+          >
+            <X aria-hidden="true" />
+          </button>
+        ) : (
+          <kbd>/</kbd>
         )}
       </div>
 
-      {/* Results dropdown */}
-      {isOpen && query.length >= 2 && (
-        <div
-          ref={resultsRef}
-          className="absolute z-50 w-full mt-1 bg-popover border rounded-lg shadow-lg overflow-hidden"
-        >
-          {results.length === 0 && !loading ? (
-            <div className="p-4 text-center text-muted-foreground text-sm">
-              No results found for "{query}"
+      <span id={statusId} className="sr-only" role="status" aria-live="polite">
+        {statusText}
+      </span>
+
+      {showResults && (
+        <div className="message-search-results-shell">
+          {!hasSearch ? (
+            <div className="message-search-guidance">
+              <Search aria-hidden="true" />
+              <strong>Find decisions, code, and earlier instructions</strong>
+              <span>Searches complete message history, not only the currently loaded window.</span>
+            </div>
+          ) : error ? (
+            <div className="message-search-empty" role="alert">
+              <strong>Search unavailable</strong>
+              <span>{error}</span>
+              <button type="button" onClick={() => void search(query.trim())}>
+                Try again
+              </button>
+            </div>
+          ) : results.length === 0 && !loading ? (
+            <div className="message-search-empty" role="status">
+              <strong>No matching messages</strong>
+              <span>Try another phrase or fewer words.</span>
             </div>
           ) : (
-            <ScrollArea className="max-h-80">
-              <div className="p-1">
-                {results.map((result, index) => (
+            <div id={listboxId} className="message-search-results" role="listbox">
+              {results.map((result, index) => {
+                const snippet = getContextSnippet(result, query);
+                return (
                   <button
-                    key={result.id}
+                    key={`${result.sessionId}-${result.id}`}
+                    id={`${listboxId}-option-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selectedIndex === index}
                     className={cn(
-                      'w-full text-left p-3 rounded-md transition-colors',
-                      selectedIndex === index ? 'bg-accent' : 'hover:bg-muted'
+                      'message-search-result',
+                      selectedIndex === index && 'is-selected'
                     )}
-                    onClick={() => handleResultClick(result)}
-                    onMouseEnter={() => setSelectedIndex(index)}
+                    onClick={() => chooseResult(result)}
+                    onPointerMove={() => setSelectedIndex(index)}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <span
-                        className={cn(
-                          'text-xs font-medium px-1.5 py-0.5 rounded',
-                          result.role === 'user'
-                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                            : 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300'
-                        )}
-                      >
-                        {result.role}
+                    <span className="message-search-result-topline">
+                      <span className={cn('message-search-role', `is-${result.role}`)}>
+                        {result.role === 'user' ? 'You' : result.role}
                       </span>
                       {result.sessionName && (
-                        <span className="text-xs text-muted-foreground">{result.sessionName}</span>
+                        <strong title={result.sessionName}>{result.sessionName}</strong>
                       )}
-                    </div>
-                    <p className="text-sm line-clamp-2">
-                      {highlightMatch(truncateContent(result.content), query)}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(result.createdAt).toLocaleString()}
-                    </p>
+                      <time dateTime={result.createdAt}>
+                        {new Date(result.createdAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </time>
+                    </span>
+                    <span className="message-search-snippet">
+                      <HighlightedSnippet text={snippet} query={query} />
+                    </span>
                   </button>
-                ))}
-              </div>
-            </ScrollArea>
+                );
+              })}
+            </div>
           )}
 
-          {/* Keyboard hints */}
           {results.length > 0 && (
-            <div className="px-3 py-2 border-t bg-muted/50 flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <ArrowUp className="h-3 w-3" />
-                <ArrowDown className="h-3 w-3" />
-                Navigate
+            <div className="message-search-hints" aria-hidden="true">
+              <span>
+                <ArrowUp />
+                <ArrowDown /> navigate
               </span>
-              <span>Enter to select</span>
-              <span>Esc to close</span>
+              <span>Enter jump</span>
+              <span>Esc clear</span>
             </div>
           )}
         </div>

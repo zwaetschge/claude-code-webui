@@ -1,4 +1,5 @@
 import type { Message, StreamingMessage } from './message.js';
+import type { SessionPresenceSnapshot, SessionSendAck } from './chat-delivery.js';
 import type { SessionStatus, SubagentRunStatus, UsageSnapshot } from './session.js';
 
 // Session permission mode
@@ -27,10 +28,13 @@ export interface BufferedMessage {
     | 'image'
     | 'compact'
     | 'question'
+    | 'permission_request'
     | 'status'
     | 'mode';
   data: unknown;
   timestamp: number;
+  /** Persistent, monotone sequence scoped to the WebUI session. */
+  sequence?: number;
 }
 
 export interface SessionQueueItem {
@@ -51,6 +55,17 @@ export interface SessionQueueData {
 
 export type ActiveFollowupMode = 'queue' | 'steer';
 
+export interface SessionSendPayload {
+  sessionId: string;
+  /** Explicit target thread. Legacy clients may omit it to use the active thread. */
+  chatId?: string | null;
+  message: string;
+  images?: ImageAttachmentData[];
+  activeFollowupMode?: ActiveFollowupMode;
+  clientMessageId?: string;
+  uploadIds?: string[];
+}
+
 export interface ToolActionSummary {
   title: string;
   explanation: string;
@@ -63,23 +78,27 @@ export type PermissionAction = 'allow_once' | 'allow_project' | 'allow_global' |
 
 // Client to Server Events
 export interface ClientToServerEvents {
-  'session:send': (data: {
-    sessionId: string;
-    message: string;
-    images?: ImageAttachmentData[];
-    activeFollowupMode?: ActiveFollowupMode;
-    /**
-     * Optional client-generated unique ID (e.g. nanoid/uuid) used to dedupe retries.
-     * If the server has recently seen the same ID on this socket, the resend is dropped.
-     */
-    clientMessageId?: string;
-  }) => void;
+  'session:send': (
+    data: SessionSendPayload,
+    acknowledge?: (result: SessionSendAck) => void
+  ) => void;
   'session:input': (data: { sessionId: string; input: string }) => void;
   'session:subscribe': (sessionId: string) => void;
   'session:unsubscribe': (sessionId: string) => void;
   'session:interrupt': (sessionId: string) => void;
   'session:restart': (sessionId: string) => void;
-  'session:reconnect': (data: { sessionId: string; lastTimestamp?: number }) => void;
+  'session:reconnect': (data: {
+    sessionId: string;
+    lastTimestamp?: number;
+    lastSequence?: number;
+  }) => void;
+  'session:presence': (data: {
+    sessionId: string;
+    deviceId: string;
+    label?: string;
+    state: 'active' | 'idle' | 'leave';
+    lastReadMessageId?: string | null;
+  }) => void;
   'session:set-mode': (data: { sessionId: string; mode: SessionMode }) => void;
   // Legacy permission events (for simple approve/deny flow)
   'session:approve_permission': (data: {
@@ -129,6 +148,7 @@ export interface PendingPermission {
   toolInput: unknown;
   description: string;
   suggestedPattern: string;
+  eventSequence?: number;
 }
 
 export interface QuestionOption {
@@ -149,6 +169,7 @@ export interface PendingQuestion {
   requestId: string;
   providerSessionId?: string;
   questions: PendingQuestionItem[];
+  eventSequence?: number;
 }
 
 // Generated image data
@@ -173,10 +194,24 @@ export interface PermissionRequestData {
   sessionId: string;
   denials: PermissionDenial[];
   originalMessage: string; // The message that triggered the permission request
+  eventSequence?: number;
 }
 
 // Server to Client Events
 export interface ServerToClientEvents {
+  /**
+   * Account-wide notification-centre entry. Unlike `session:*` events this is
+   * emitted to the `user:<id>` room, so it arrives regardless of which session
+   * the client currently has open.
+   */
+  'notification:new': (data: {
+    id: string;
+    sessionId: string | null;
+    kind: string;
+    title: string;
+    body: string | null;
+    createdAt: string;
+  }) => void;
   'session:output': (data: StreamingMessage) => void;
   'session:message': (data: Message) => void;
   'session:status': (data: { sessionId: string; status: SessionStatus }) => void;
@@ -197,6 +232,7 @@ export interface ServerToClientEvents {
      * clock) regardless of browser/server clock skew.
      */
     timestamp?: number;
+    eventSequence?: number;
   }) => void;
   'session:agent': (data: {
     sessionId: string;
@@ -211,9 +247,10 @@ export interface ServerToClientEvents {
     toolId?: string;
     externalAgentId?: string;
     timestamp?: number;
+    eventSequence?: number;
   }) => void;
   'session:thinking': (data: { sessionId: string; isThinking: boolean; message?: string }) => void;
-  'session:todos': (data: { sessionId: string; todos: TodoItem[] }) => void;
+  'session:todos': (data: { sessionId: string; todos: TodoItem[]; eventSequence?: number }) => void;
   'session:usage': (data: UsageData) => void;
   'session:image': (data: GeneratedImageData) => void;
   'session:reconnected': (data: {
@@ -222,18 +259,28 @@ export interface ServerToClientEvents {
     isRunning: boolean;
     /** True when buffer rolled over since lastTimestamp — client should full-resync from REST. */
     needsFullResync?: boolean;
+    /**
+     * Latest completely replayed cursor. Omitted when needsFullResync is true;
+     * the client must apply a REST snapshot before advancing its cursor.
+     */
+    highWatermark?: number;
+    /** Message snapshot revision used to reject stale REST results. */
+    snapshotRevision?: number;
   }) => void;
+  'session:cursor': (data: { sessionId: string; sequence: number; timestamp: number }) => void;
+  'session:presence': (data: SessionPresenceSnapshot) => void;
   'session:compact': (data: {
     id?: string;
     sessionId: string;
     message: string;
     summary?: string;
     clear?: boolean;
-    reason?: 'auto-compact' | 'provider-switch' | 'context-limit';
+    reason?: 'auto-compact' | 'provider-switch' | 'context-limit' | 'settings-deferred';
     error?: string;
     createdAt?: string;
+    eventSequence?: number;
   }) => void;
-  'session:mode': (data: { sessionId: string; mode: SessionMode }) => void;
+  'session:mode': (data: { sessionId: string; mode: SessionMode; eventSequence?: number }) => void;
   'session:queue': (data: SessionQueueData) => void;
   'session:question_request': (data: PendingQuestion) => void;
   // Legacy permission request (simple denials flow)

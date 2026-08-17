@@ -18,6 +18,7 @@ data class AuthConfig(
     val googleOAuthEnabled: Boolean = false,
     val githubOAuthEnabled: Boolean = false,
     val claudeOAuthEnabled: Boolean = false,
+    val proxyAuthEnabled: Boolean = false,
     val devLoginEnabled: Boolean = false,
 )
 

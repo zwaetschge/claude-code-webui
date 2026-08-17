@@ -102,10 +102,24 @@ export function buildClaudeApiEnv(config: ClaudeApiConfig | null): Record<string
 
 export const updateSettingsSchema = z.object({
   theme: z.enum(['dark', 'light', 'system', 'eink']).optional(),
+  // Account-wide alert thresholds. Both clients read these instead of keeping
+  // their own local copies, so a change applies everywhere at once.
+  usageAlerts: z
+    .object({
+      enabled: z.boolean().optional(),
+      quotaPercent: z.number().int().min(1).max(100).optional(),
+      dailyCostUsd: z.number().min(0).max(10000).optional(),
+    })
+    .partial()
+    .optional(),
+  // Appearance is device-local by default (a phone in the dark and a desktop in
+  // daylight rarely want the same theme). Turning this on makes theme and
+  // background follow the account onto every client instead.
+  appearanceSync: z.boolean().optional(),
   defaultWorkingDir: z.string().nullable().optional(),
   allowedTools: z.array(z.string()).optional(),
   customSystemPrompt: z.string().nullable().optional(),
-  uiProvider: z.enum(['plum', 'claude', 'zai', 'codex', 'opencode', 'pi']).optional(),
+  uiProvider: z.enum(['plum', 'claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']).optional(),
   backgroundAnimation: z.enum(['glass', 'aurora', 'ribbons', 'still']).optional(),
   defaultCliProvider: z.enum(['claude', 'zai', 'codex', 'opencode', 'pi', 'kimi']).optional(),
   enabledCliProviders: z
@@ -119,6 +133,7 @@ export const updateSettingsSchema = z.object({
       codex: z.string().optional(),
       opencode: z.string().optional(),
       pi: z.string().optional(),
+      kimi: z.string().optional(),
     })
     .partial()
     .optional(),
@@ -129,6 +144,7 @@ export const updateSettingsSchema = z.object({
       codex: z.array(z.string()).optional(),
       opencode: z.array(z.string()).optional(),
       pi: z.array(z.string()).optional(),
+      kimi: z.array(z.string()).optional(),
     })
     .partial()
     .optional(),
@@ -139,6 +155,7 @@ export const updateSettingsSchema = z.object({
       codex: z.string().optional(),
       opencode: z.string().optional(),
       pi: z.string().optional(),
+      kimi: z.string().optional(),
     })
     .partial()
     .optional(),
@@ -168,6 +185,10 @@ export const updateSettingsSchema = z.object({
         .partial()
         .optional(),
       pi: z
+        .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
+        .partial()
+        .optional(),
+      kimi: z
         .object({ dailyUsd: z.number().min(0).optional(), weeklyUsd: z.number().min(0).optional() })
         .partial()
         .optional(),
@@ -210,13 +231,30 @@ export function stripDeviceAppearanceSettings<
   return accountSettings;
 }
 
+/** Alert thresholds always resolve to a complete object so clients can render. */
+function parseUsageAlerts(value: unknown): {
+  enabled: boolean;
+  quotaPercent: number;
+  dailyCostUsd: number;
+} {
+  const raw = (value ?? {}) as Record<string, unknown>;
+  const quota = Number(raw.quotaPercent);
+  const cost = Number(raw.dailyCostUsd);
+  return {
+    enabled: raw.enabled !== false,
+    quotaPercent: Number.isFinite(quota) && quota > 0 && quota <= 100 ? Math.round(quota) : 80,
+    dailyCostUsd: Number.isFinite(cost) && cost >= 0 ? cost : 5,
+  };
+}
+
 function parseUiProvider(value: unknown): UiProvider {
   return value === 'plum' ||
     value === 'claude' ||
     value === 'zai' ||
     value === 'codex' ||
     value === 'opencode' ||
-    value === 'pi'
+    value === 'pi' ||
+    value === 'kimi'
     ? value
     : 'plum';
 }
@@ -226,7 +264,8 @@ function parseCliProvider(value: unknown): CLIProvider {
     value === 'zai' ||
     value === 'codex' ||
     value === 'opencode' ||
-    value === 'pi'
+    value === 'pi' ||
+    value === 'kimi'
     ? value
     : 'codex';
 }
@@ -515,6 +554,8 @@ router.get('/', requireAuth, (req, res) => {
     localUsageBudgets,
     oracleBrowser,
     analytics,
+    appearanceSync: settingsJson.appearanceSync === true,
+    usageAlerts: parseUsageAlerts(settingsJson.usageAlerts),
   };
 
   res.json({ success: true, data: userSettings });
@@ -545,10 +586,29 @@ router.put('/', requireAuth, (req, res) => {
     localUsageBudgets,
     oracleBrowser,
     analytics,
+    usageAlerts,
+    appearanceSync,
   } = stripDeviceAppearanceSettings(parsed.data);
 
   const updates: string[] = [];
   const values: unknown[] = [];
+
+  // Appearance only becomes account state once the user asked for it. Resolve
+  // against the stored flag so a plain theme change on a sync-enabled account
+  // still propagates without having to resend the flag.
+  const storedSettingsJson = safeJsonParse<Record<string, unknown>>(
+    (
+      db.prepare('SELECT settings_json FROM user_settings WHERE user_id = ?').get(userId) as
+        | { settings_json: string | null }
+        | undefined
+    )?.settings_json,
+    {}
+  );
+  const syncAppearance = appearanceSync ?? storedSettingsJson.appearanceSync === true;
+  if (syncAppearance && parsed.data.theme !== undefined) {
+    updates.push('theme = ?');
+    values.push(parsed.data.theme);
+  }
 
   if (defaultWorkingDir !== undefined) {
     updates.push('default_working_dir = ?');
@@ -573,13 +633,22 @@ router.put('/', requireAuth, (req, res) => {
     codexWebSearch !== undefined ||
     localUsageBudgets !== undefined ||
     oracleBrowser !== undefined ||
-    analytics !== undefined
+    analytics !== undefined ||
+    usageAlerts !== undefined ||
+    appearanceSync !== undefined ||
+    (syncAppearance && parsed.data.backgroundAnimation !== undefined)
   ) {
     const existing = db
       .prepare('SELECT settings_json FROM user_settings WHERE user_id = ?')
       .get(userId) as { settings_json: string | null } | undefined;
 
     const settingsJson = safeJsonParse<Record<string, unknown>>(existing?.settings_json, {});
+    if (appearanceSync !== undefined) {
+      settingsJson.appearanceSync = appearanceSync;
+    }
+    if (syncAppearance && parsed.data.backgroundAnimation !== undefined) {
+      settingsJson.backgroundAnimation = parsed.data.backgroundAnimation;
+    }
     if (uiProvider !== undefined) {
       settingsJson.uiProvider = uiProvider;
     }
@@ -647,6 +716,11 @@ router.put('/', requireAuth, (req, res) => {
     if (analytics !== undefined) {
       settingsJson.analytics = parseAnalyticsSettings(analytics);
     }
+    if (usageAlerts !== undefined) {
+      // Merge rather than replace: the clients send only the field they changed.
+      const existingAlerts = (settingsJson.usageAlerts as Record<string, unknown>) || {};
+      settingsJson.usageAlerts = { ...existingAlerts, ...usageAlerts };
+    }
     updates.push('settings_json = ?');
     values.push(JSON.stringify(settingsJson));
   }
@@ -709,6 +783,8 @@ router.put('/', requireAuth, (req, res) => {
     localUsageBudgets: updatedLocalUsageBudgets,
     oracleBrowser: updatedOracleBrowser,
     analytics: updatedAnalytics,
+    appearanceSync: updatedJson.appearanceSync === true,
+    usageAlerts: parseUsageAlerts(updatedJson.usageAlerts),
   };
 
   res.json({ success: true, data: userSettings });

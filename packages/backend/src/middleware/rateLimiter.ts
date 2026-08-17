@@ -115,6 +115,15 @@ export const rateLimiters = {
     message: 'Too many file uploads, please wait before uploading more',
   }),
 
+  // Chunk uploads use many small requests by design. This separate bucket
+  // prevents abuse without making a valid 25 MB resumable upload impossible.
+  uploadChunk: createRateLimiter({
+    name: 'uploadChunk',
+    windowMs: 60 * 1000,
+    maxRequests: 240,
+    message: 'Uploading chunks too quickly, please wait',
+  }),
+
   // Session creation: 5 per minute
   sessionCreation: createRateLimiter({
     name: 'sessionCreation',

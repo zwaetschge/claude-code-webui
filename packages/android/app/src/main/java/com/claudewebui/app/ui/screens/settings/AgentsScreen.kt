@@ -69,11 +69,10 @@ import androidx.compose.ui.unit.dp
 import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.UpdateCustomAgentInput
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.InfoBlue
-import com.claudewebui.app.ui.theme.SuccessGreen
-import com.claudewebui.app.ui.theme.WarningAmber
 import kotlinx.coroutines.launch
+import com.claudewebui.app.ui.components.common.PlumAmber
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -112,7 +111,7 @@ fun AgentsScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddSheet = true },
-                containerColor = AntiqueBrass,
+                containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Add Agent")
@@ -301,8 +300,8 @@ private fun AgentCard(
                     checked = agent.enabled,
                     onCheckedChange = onToggle,
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = AntiqueBrass,
-                        checkedTrackColor = AntiqueBrass.copy(alpha = 0.4f),
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                     ),
                 )
             }
@@ -320,19 +319,19 @@ private fun AgentCard(
                     if (agent.model != null) {
                         AgentChip(
                             label = agent.model,
-                            color = InfoBlue,
+                            color = PlumBlue,
                         )
                     }
                     if (agent.allowedTools.isNotEmpty()) {
                         AgentChip(
                             label = "${agent.allowedTools.size} tool${if (agent.allowedTools.size != 1) "s" else ""}",
-                            color = SuccessGreen,
+                            color = PlumGreen,
                         )
                     }
                     agent.permissionMode?.let { mode ->
                         AgentChip(
                             label = mode.replaceFirstChar { it.uppercase() },
-                            color = WarningAmber,
+                            color = PlumAmber,
                         )
                     }
                 }
@@ -357,7 +356,7 @@ private fun AgentCard(
                     Icon(
                         Icons.Default.Edit,
                         contentDescription = "Edit",
-                        tint = AntiqueBrass,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -454,8 +453,8 @@ private fun AgentEditSheet(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AntiqueBrass,
-                    focusedLabelColor = AntiqueBrass,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
                 ),
             )
 
@@ -468,8 +467,8 @@ private fun AgentEditSheet(
                 minLines = 2,
                 maxLines = 4,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AntiqueBrass,
-                    focusedLabelColor = AntiqueBrass,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
                 ),
             )
 
@@ -483,8 +482,8 @@ private fun AgentEditSheet(
                 minLines = 4,
                 maxLines = 10,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AntiqueBrass,
-                    focusedLabelColor = AntiqueBrass,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
                 ),
             )
 
@@ -497,8 +496,8 @@ private fun AgentEditSheet(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AntiqueBrass,
-                    focusedLabelColor = AntiqueBrass,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
                 ),
             )
 
@@ -513,8 +512,8 @@ private fun AgentEditSheet(
                 minLines = 2,
                 maxLines = 4,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AntiqueBrass,
-                    focusedLabelColor = AntiqueBrass,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    focusedLabelColor = MaterialTheme.colorScheme.primary,
                 ),
             )
 
@@ -553,8 +552,8 @@ private fun AgentEditSheet(
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AntiqueBrass,
-                        focusedLabelColor = AntiqueBrass,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
                 OutlinedTextField(
@@ -565,8 +564,8 @@ private fun AgentEditSheet(
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AntiqueBrass,
-                        focusedLabelColor = AntiqueBrass,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
             }
@@ -591,8 +590,8 @@ private fun AgentEditSheet(
                     checked = enabled,
                     onCheckedChange = { enabled = it },
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = AntiqueBrass,
-                        checkedTrackColor = AntiqueBrass.copy(alpha = 0.4f),
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                     ),
                 )
             }
@@ -627,7 +626,7 @@ private fun AgentEditSheet(
                     modifier = Modifier.weight(1f),
                     enabled = isValid,
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = AntiqueBrass,
+                        containerColor = MaterialTheme.colorScheme.primary,
                     ),
                 ) {
                     Text(if (agent == null) "Create" else "Save")
@@ -665,8 +664,10 @@ private fun AgentFormInput.toUpdateInput() = UpdateCustomAgentInput(
     enabled = enabled,
 )
 
+// Composable because the fallback now comes from the active theme.
+@Composable
 private fun agentColor(hex: String?): Color {
-    if (hex.isNullOrBlank()) return AntiqueBrass
+    if (hex.isNullOrBlank()) return MaterialTheme.colorScheme.primary
     return try {
         val cleaned = hex.trimStart('#')
         val colorLong = cleaned.toLong(16)
@@ -676,6 +677,6 @@ private fun agentColor(hex: String?): Color {
             Color(colorLong)
         }
     } catch (_: Exception) {
-        AntiqueBrass
+        MaterialTheme.colorScheme.primary
     }
 }

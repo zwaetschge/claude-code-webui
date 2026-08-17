@@ -19,6 +19,7 @@ const AuthCallbackPage = lazy(() =>
 const ClaudeCallbackPage = lazy(() =>
   import('@/pages/ClaudeCallbackPage').then((m) => ({ default: m.ClaudeCallbackPage }))
 );
+const SetupPage = lazy(() => import('@/pages/SetupPage').then((m) => ({ default: m.SetupPage })));
 const DashboardPage = lazy(() =>
   import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
 );
@@ -131,6 +132,14 @@ export default function App() {
                 <BasicAuthRoute>
                   <LoginPage />
                 </BasicAuthRoute>
+              }
+            />
+            <Route
+              path="/setup"
+              element={
+                <ProtectedRoute>
+                  <SetupPage />
+                </ProtectedRoute>
               }
             />
             <Route path="/auth/callback" element={<AuthCallbackPage />} />

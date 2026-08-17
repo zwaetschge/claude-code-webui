@@ -1,22 +1,20 @@
 package com.claudewebui.app.ui.theme
 
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.Shapes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
+import androidx.compose.ui.unit.dp
 
 // ── Light Color Scheme ───────────────────────────────────────────────────────
 
@@ -162,39 +160,47 @@ fun ClaudeWebUITheme(
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    // Derived from the active Plum palette so the Material-based screens share
+    // one theme with the Plum-based ones instead of keeping a separate brand.
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        else -> LocalPlumPalette.current.toMaterialScheme()
     }
 
     val extendedColors = if (darkTheme) DarkExtendedColors else LightExtendedColors
+    val reduceMotion = rememberReduceMotion()
 
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            window.navigationBarColor = colorScheme.background.toArgb()
-            val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = !darkTheme
-            insetsController.isAppearanceLightNavigationBars = !darkTheme
-        }
-    }
+    // System bars are handled exclusively by enableEdgeToEdge in MainActivity.
+    // Painting window.statusBarColor/navigationBarColor here made the bars
+    // opaque again and fought the transparent edge-to-edge setup.
 
     CompositionLocalProvider(
         LocalExtendedColors provides extendedColors,
+        LocalReduceMotion provides reduceMotion,
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,
+            shapes = ExpressiveShapes,
             content = content,
         )
     }
 }
+
+/**
+ * Material 3 Expressive leans on larger, softer corner radii than the M3
+ * defaults (Android 16 QPR1 system apps use 16–32dp prominently).
+ */
+private val ExpressiveShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(32.dp),
+)
 
 // ── Convenience accessor ─────────────────────────────────────────────────────
 

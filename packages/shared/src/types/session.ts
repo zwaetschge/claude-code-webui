@@ -83,6 +83,7 @@ export interface Session {
   lastMessage: string | null;
   projectDescription?: string | null;
   lastActivity?: string | null;
+  unreadCount?: number;
   iconUrl: string | null;
   iconSource: SessionIconSource | null;
   starred: boolean;

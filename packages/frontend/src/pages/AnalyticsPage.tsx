@@ -310,7 +310,8 @@ const USAGE_PROVIDERS: UsageLimitTracker[] = ACCOUNT_USAGE_LIMIT_PROVIDERS.filte
   (provider): provider is UsageLimitTracker => provider !== 'alibaba'
 );
 const DEFAULT_USAGE_TRACKERS: UsageLimitTracker[] = [...USAGE_PROVIDERS];
-const USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v2';
+const USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v3';
+const LEGACY_USAGE_TRACKERS_STORAGE_KEY = 'plum:analytics:usage-limit-trackers:v2';
 const USAGE_HISTORY_RANGES: Array<{ value: UsageLimitHistoryRange; label: string }> = [
   { value: '24h', label: '24h' },
   { value: '7d', label: '7d' },
@@ -361,9 +362,22 @@ const USAGE_TRACKER_ANALYTICS_LABEL: Record<UsageLimitTracker, string> = {
 function loadUsageLimitTrackers(): UsageLimitTracker[] {
   if (typeof window === 'undefined') return DEFAULT_USAGE_TRACKERS;
   try {
-    const stored = JSON.parse(window.localStorage.getItem(USAGE_TRACKERS_STORAGE_KEY) || 'null');
-    if (!Array.isArray(stored)) return DEFAULT_USAGE_TRACKERS;
-    return USAGE_PROVIDERS.filter((provider) => stored.includes(provider));
+    const current = JSON.parse(window.localStorage.getItem(USAGE_TRACKERS_STORAGE_KEY) || 'null');
+    if (Array.isArray(current)) {
+      return USAGE_PROVIDERS.filter((provider) => current.includes(provider));
+    }
+    const legacy = JSON.parse(
+      window.localStorage.getItem(LEGACY_USAGE_TRACKERS_STORAGE_KEY) || 'null'
+    );
+    if (!Array.isArray(legacy)) return DEFAULT_USAGE_TRACKERS;
+    // Kimi was added after the v2 preference was stored on existing devices.
+    // Preserve their choices for older providers while making the new
+    // standalone provider visible once by default.
+    const migrated = USAGE_PROVIDERS.filter(
+      (provider) => provider === 'kimi' || legacy.includes(provider)
+    );
+    window.localStorage.setItem(USAGE_TRACKERS_STORAGE_KEY, JSON.stringify(migrated));
+    return migrated;
   } catch {
     return DEFAULT_USAGE_TRACKERS;
   }
@@ -418,6 +432,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   Kimi: '#2582ed',
   OpenCode: '#3b82f6',
   Pi: '#a855f7',
+  'Z.AI': '#14b8a6',
   Vibe: '#fa520f',
   Claude: '#f97316',
   Other: PROVIDER_FALLBACK_COLOR,
@@ -1246,6 +1261,26 @@ export function AnalyticsPage() {
   const errorMessage =
     summaryErrorObj instanceof Error ? summaryErrorObj.message : 'Analytics failed to load';
   const totalTokens = summary?.totals.totalTokens || 0;
+  // A cost figure alone says nothing about whether an alert is about to fire,
+  // so show the newest bucket against the account threshold — same panel the
+  // Android client shows, fed from the same account setting.
+  const spendLimit = userSettings?.usageAlerts?.enabled
+    ? (userSettings.usageAlerts.dailyCostUsd ?? 0)
+    : 0;
+  const latestBucketCost = timeline?.length ? (timeline[timeline.length - 1]?.cost ?? 0) : 0;
+  const [testAlertState, setTestAlertState] = useState<'idle' | 'sending' | 'sent' | 'failed'>(
+    'idle'
+  );
+  const sendTestAlert = useCallback(async () => {
+    setTestAlertState('sending');
+    try {
+      await api.post('/api/workspace/notifications/test', {});
+      setTestAlertState('sent');
+    } catch {
+      setTestAlertState('failed');
+    }
+  }, []);
+
   const totalCost = summary?.totals.totalCost || 0;
   const apiEquivalentCost = summary?.totals.apiEquivalentCost ?? totalCost;
   const costDelta = summary?.totals.costDelta ?? 0;
@@ -1341,7 +1376,7 @@ export function AnalyticsPage() {
         // Codex variants such as sol, terra, and luna remain distinguishable.
         models: entry.models.sort((a, b) => b.tokens - a.tokens),
       }))
-      .sort((a, b) => b.cost - a.cost);
+      .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
   }, [summary]);
 
   const modelSeries = useMemo(() => {
@@ -2063,6 +2098,52 @@ export function AnalyticsPage() {
             </p>
           </CardContent>
         </Card>
+
+        {spendLimit > 0 && (
+          <Card className="analytics-metric-card">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Spend vs alert limit
+              </CardTitle>
+              <Coins className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {formatCurrency(latestBucketCost)}
+                <span className="text-sm font-normal text-muted-foreground">
+                  {' '}
+                  / {formatCurrency(spendLimit)}
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`h-full rounded-full ${
+                    latestBucketCost >= spendLimit
+                      ? 'bg-destructive'
+                      : latestBucketCost >= spendLimit * 0.8
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500'
+                  }`}
+                  style={{
+                    width: `${Math.min(100, (latestBucketCost / spendLimit) * 100)}%`,
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void sendTestAlert()}
+                disabled={testAlertState === 'sending'}
+                className="mt-2 text-xs font-medium text-primary hover:underline disabled:opacity-60"
+              >
+                {testAlertState === 'sent'
+                  ? 'Test alert sent'
+                  : testAlertState === 'failed'
+                    ? 'Test alert failed — retry'
+                    : 'Send test alert'}
+              </button>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="analytics-metric-card">
           <CardHeader className="flex flex-row items-center justify-between pb-2">

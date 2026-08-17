@@ -3,6 +3,7 @@ package com.claudewebui.app.core.network
 import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.data.model.*
 import io.socket.client.IO
+import io.socket.client.Ack
 import io.socket.client.Socket
 import io.socket.emitter.Emitter
 import kotlinx.coroutines.*
@@ -13,7 +14,20 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+
+internal data class SocketEndpoint(val origin: String, val path: String)
+
+internal fun socketEndpoint(serverUrl: String): SocketEndpoint {
+    val uri = URI(serverUrl)
+    val prefix = uri.path.orEmpty().trimEnd('/')
+    val origin = URI(uri.scheme, uri.userInfo, uri.host, uri.port, null, null, null).toString()
+    return SocketEndpoint(
+        origin = origin,
+        path = if (prefix.isBlank()) "/socket.io" else "$prefix/socket.io",
+    )
+}
 
 /**
  * Connection state for the Socket.IO connection.
@@ -41,6 +55,14 @@ enum class ConnectionState {
  * 4. Call [disconnect] when done
  */
 class SocketManager {
+
+    private companion object {
+        val TERMINAL_CONNECT_ERRORS = listOf(
+            "Authentication required",
+            "Invalid token",
+            "Account unavailable",
+        )
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -78,8 +100,8 @@ class SocketManager {
     private val _agent = MutableSharedFlow<AgentEvent>(extraBufferCapacity = 32)
     val agent: SharedFlow<AgentEvent> = _agent.asSharedFlow()
 
-    private val _thinking = MutableSharedFlow<Pair<String, Boolean>>(extraBufferCapacity = 16)
-    val thinking: SharedFlow<Pair<String, Boolean>> = _thinking.asSharedFlow()
+    private val _thinking = MutableSharedFlow<ThinkingEvent>(extraBufferCapacity = 16)
+    val thinking: SharedFlow<ThinkingEvent> = _thinking.asSharedFlow()
 
     private val _todos = MutableSharedFlow<Pair<String, List<TodoItem>>>(extraBufferCapacity = 16)
     val todos: SharedFlow<Pair<String, List<TodoItem>>> = _todos.asSharedFlow()
@@ -87,8 +109,20 @@ class SocketManager {
     private val _usage = MutableSharedFlow<UsageData>(extraBufferCapacity = 16)
     val usage: SharedFlow<UsageData> = _usage.asSharedFlow()
 
-    private val _image = MutableSharedFlow<GeneratedImageData>(extraBufferCapacity = 8)
-    val image: SharedFlow<GeneratedImageData> = _image.asSharedFlow()
+    private val _queue = MutableSharedFlow<QueueEvent>(extraBufferCapacity = 16)
+    val queue: SharedFlow<QueueEvent> = _queue.asSharedFlow()
+
+    private val _question = MutableSharedFlow<QuestionRequestEvent>(extraBufferCapacity = 8)
+    val question: SharedFlow<QuestionRequestEvent> = _question.asSharedFlow()
+
+    private val _reconnected = MutableSharedFlow<ReconnectedEvent>(extraBufferCapacity = 8)
+    val reconnected: SharedFlow<ReconnectedEvent> = _reconnected.asSharedFlow()
+
+    private val _cursor = MutableSharedFlow<Pair<String, Long>>(extraBufferCapacity = 32)
+    val cursor: SharedFlow<Pair<String, Long>> = _cursor.asSharedFlow()
+
+    private val _presence = MutableSharedFlow<PresenceSnapshot>(extraBufferCapacity = 16)
+    val presence: SharedFlow<PresenceSnapshot> = _presence.asSharedFlow()
 
     private val _permission = MutableSharedFlow<JsonElement>(extraBufferCapacity = 8)
     val permission: SharedFlow<JsonElement> = _permission.asSharedFlow()
@@ -102,6 +136,10 @@ class SocketManager {
     private val _errors = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 16)
     val errors: SharedFlow<Pair<String, String>> = _errors.asSharedFlow()
 
+    /** Fires with the sessionId whenever this client submits a turn. */
+    private val _turnStarted = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val turnStarted: SharedFlow<String> = _turnStarted.asSharedFlow()
+
     // ========================================================================
     // Connection Lifecycle
     // ========================================================================
@@ -112,15 +150,16 @@ class SocketManager {
      */
     fun connect(serverUrl: String? = null) {
         val url = serverUrl ?: TokenStore.getServerUrl() ?: return
-        disconnect()
+        val endpoint = runCatching { socketEndpoint(url) }.getOrNull() ?: return
+        disconnect(clearSubscriptions = false)
 
         _connectionState.value = ConnectionState.CONNECTING
-        reconnectAttempt = 0
 
         val options = IO.Options().apply {
             forceNew = true
             reconnection = false // We handle reconnection ourselves
             transports = arrayOf("websocket", "polling")
+            path = endpoint.path
             val token = TokenStore.getToken()
             if (token != null) {
                 auth = mapOf("token" to token)
@@ -129,7 +168,7 @@ class SocketManager {
         }
 
         try {
-            socket = IO.socket(url, options).apply {
+            socket = IO.socket(endpoint.origin, options).apply {
                 on(Socket.EVENT_CONNECT, onConnect)
                 on(Socket.EVENT_DISCONNECT, onDisconnect)
                 on(Socket.EVENT_CONNECT_ERROR, onConnectError)
@@ -144,8 +183,12 @@ class SocketManager {
                 on("session:thinking", onThinking)
                 on("session:todos", onTodos)
                 on("session:usage", onUsage)
-                on("session:image", onImage)
                 on("session:permission_request", onPermission)
+                on("session:question_request", onQuestion)
+                on("session:queue", onQueue)
+                on("session:reconnected", onReconnected)
+                on("session:cursor", onCursor)
+                on("session:presence", onPresence)
                 on("session:compact", onCompact)
                 on("session:mode", onMode)
 
@@ -160,7 +203,7 @@ class SocketManager {
     /**
      * Disconnect from the server and clean up resources.
      */
-    fun disconnect() {
+    fun disconnect(clearSubscriptions: Boolean = true) {
         reconnectJob?.cancel()
         reconnectJob = null
         socket?.let { s ->
@@ -168,7 +211,7 @@ class SocketManager {
             s.disconnect()
         }
         socket = null
-        subscribedSessions.clear()
+        if (clearSubscriptions) subscribedSessions.clear()
         _connectionState.value = ConnectionState.DISCONNECTED
     }
 
@@ -178,6 +221,26 @@ class SocketManager {
     fun destroy() {
         disconnect()
         scope.cancel()
+    }
+
+    /** Reconnect if the transport is gone; no-op while genuinely connected. */
+    fun ensureConnected() {
+        val s = socket
+        if (s == null || !s.connected()) {
+            reconnectAttempt = 0
+            connect()
+        }
+    }
+
+    /**
+     * Hard reconnect after a long background stay. A socket revived from Doze
+     * often still reports connected() == true while the server has long since
+     * dropped it; only a fresh transport gets events flowing again. Session
+     * subscriptions survive — [connect] keeps them and re-emits on connect.
+     */
+    fun forceReconnect() {
+        reconnectAttempt = 0
+        connect()
     }
 
     // ========================================================================
@@ -201,14 +264,28 @@ class SocketManager {
     /**
      * Send a message to a session, optionally with file attachments.
      */
-    fun sendMessage(
+    suspend fun sendMessage(
         sessionId: String,
+        chatId: String?,
         message: String,
-        images: List<FileAttachmentData>? = null
-    ) {
+        images: List<FileAttachmentData>? = null,
+        clientMessageId: String,
+        uploadIds: List<String> = emptyList(),
+        activeFollowupMode: ActiveFollowupMode = ActiveFollowupMode.QUEUE,
+    ): SessionSendAck {
+        val activeSocket = socket?.takeIf { it.connected() } ?: return SessionSendAck(
+            clientMessageId = clientMessageId,
+            status = SessionSendAck.SendStatus.REJECTED,
+            error = "Not connected to the server",
+            retryable = true,
+        )
         val data = JSONObject().apply {
             put("sessionId", sessionId)
+            if (chatId == null) put("chatId", JSONObject.NULL) else put("chatId", chatId)
             put("message", message)
+            put("clientMessageId", clientMessageId)
+            put("activeFollowupMode", activeFollowupMode.name.lowercase())
+            if (uploadIds.isNotEmpty()) put("uploadIds", JSONArray(uploadIds))
             if (!images.isNullOrEmpty()) {
                 val imagesArray = JSONArray()
                 images.forEach { img ->
@@ -221,7 +298,33 @@ class SocketManager {
                 put("images", imagesArray)
             }
         }
-        socket?.emit("session:send", data)
+        val acknowledgement = CompletableDeferred<SessionSendAck>()
+        activeSocket.emit("session:send", data, Ack { args ->
+            val obj = when (val raw = args.firstOrNull()) {
+                is JSONObject -> raw
+                is Map<*, *> -> JSONObject(raw)
+                else -> null
+            }
+            val parsed = obj?.let { parseSessionSendAck(it, clientMessageId) }
+                ?: SessionSendAck(
+                    clientMessageId = clientMessageId,
+                    status = SessionSendAck.SendStatus.REJECTED,
+                    error = "Server returned an invalid delivery acknowledgement",
+                    retryable = true,
+                )
+            acknowledgement.complete(parsed)
+        })
+        val result = withTimeoutOrNull(SEND_ACK_TIMEOUT_MS) { acknowledgement.await() }
+            ?: SessionSendAck(
+                clientMessageId = clientMessageId,
+                status = SessionSendAck.SendStatus.REJECTED,
+                error = "Server did not confirm delivery. Retry keeps the same message id.",
+                retryable = true,
+            )
+        if (result.status == SessionSendAck.SendStatus.ACCEPTED) {
+            _turnStarted.tryEmit(sessionId)
+        }
+        return result
     }
 
     /**
@@ -288,37 +391,40 @@ class SocketManager {
     }
 
     /**
-     * Respond to a hooks-based permission request with fine-grained control.
+     * Reconnect to a session: joins the room server-side and answers with
+     * `session:reconnected` (running state), so it doubles as a subscribe.
      */
-    fun respondToPermission(
+    fun reconnectSession(
         sessionId: String,
-        requestId: String,
-        action: PermissionAction,
-        pattern: String? = null
+        lastTimestamp: Long? = null,
+        lastSequence: Long? = null,
     ) {
         val data = JSONObject().apply {
             put("sessionId", sessionId)
-            put("requestId", requestId)
-            put("action", when (action) {
-                PermissionAction.ALLOW_ONCE -> "allow_once"
-                PermissionAction.ALLOW_PROJECT -> "allow_project"
-                PermissionAction.ALLOW_GLOBAL -> "allow_global"
-                PermissionAction.DENY -> "deny"
-            })
-            pattern?.let { put("pattern", it) }
-        }
-        socket?.emit("session:permission_respond", data)
-    }
-
-    /**
-     * Reconnect to a session and replay buffered messages.
-     */
-    fun reconnectSession(sessionId: String, lastTimestamp: Long? = null) {
-        val data = JSONObject().apply {
-            put("sessionId", sessionId)
             lastTimestamp?.let { put("lastTimestamp", it) }
+            lastSequence?.let { put("lastSequence", it) }
         }
         socket?.emit("session:reconnect", data)
+    }
+
+    fun updatePresence(
+        sessionId: String,
+        deviceId: String,
+        label: String?,
+        state: String,
+        lastReadMessageId: String?,
+    ) {
+        socket?.takeIf { it.connected() }?.emit(
+            "session:presence",
+            JSONObject().apply {
+                put("sessionId", sessionId)
+                put("deviceId", deviceId)
+                label?.let { put("label", it) }
+                put("state", state)
+                if (lastReadMessageId == null) put("lastReadMessageId", JSONObject.NULL)
+                else put("lastReadMessageId", lastReadMessageId)
+            },
+        )
     }
 
     // ========================================================================
@@ -340,9 +446,16 @@ class SocketManager {
         scheduleReconnect()
     }
 
-    private val onConnectError = Emitter.Listener {
+    private val onConnectError = Emitter.Listener { args ->
         _connectionState.value = ConnectionState.ERROR
-        scheduleReconnect()
+        val message = when (val cause = args.firstOrNull()) {
+            is Exception -> cause.message.orEmpty()
+            else -> cause?.toString().orEmpty()
+        }
+        val terminal = TERMINAL_CONNECT_ERRORS.any { message.contains(it, ignoreCase = true) }
+        // An invalid/expired token can only be fixed by re-login; retrying
+        // every second just floods the server and drains the battery.
+        if (!terminal) scheduleReconnect()
     }
 
     // ========================================================================
@@ -384,9 +497,13 @@ class SocketManager {
 
     private val onThinking = Emitter.Listener { args ->
         val obj = args.firstOrNull() as? JSONObject ?: return@Listener
-        val sessionId = obj.optString("sessionId")
-        val isThinking = obj.optBoolean("isThinking")
-        _thinking.tryEmit(sessionId to isThinking)
+        _thinking.tryEmit(
+            ThinkingEvent(
+                sessionId = obj.optString("sessionId"),
+                isThinking = obj.optBoolean("isThinking"),
+                message = obj.optString("message").takeIf { it.isNotBlank() },
+            )
+        )
     }
 
     private val onTodos = Emitter.Listener { args ->
@@ -403,8 +520,46 @@ class SocketManager {
         parseAndEmit<UsageData>(args) { _usage.tryEmit(it) }
     }
 
-    private val onImage = Emitter.Listener { args ->
-        parseAndEmit<GeneratedImageData>(args) { _image.tryEmit(it) }
+    private val onQueue = Emitter.Listener { args ->
+        parseAndEmit<QueueEvent>(args) { _queue.tryEmit(it) }
+    }
+
+    private val onQuestion = Emitter.Listener { args ->
+        parseAndEmit<QuestionRequestEvent>(args) { _question.tryEmit(it) }
+    }
+
+    private val onReconnected = Emitter.Listener { args ->
+        val obj = args.firstOrNull() as? JSONObject ?: return@Listener
+        val buffered = buildList {
+            val values = obj.optJSONArray("bufferedMessages") ?: JSONArray()
+            for (index in 0 until values.length()) {
+                val item = values.optJSONObject(index) ?: continue
+                runCatching { json.decodeFromString<BufferedMessage>(item.toString()) }
+                    .getOrNull()
+                    ?.let(::add)
+            }
+        }
+        _reconnected.tryEmit(
+            ReconnectedEvent(
+                sessionId = obj.optString("sessionId"),
+                isRunning = obj.optBoolean("isRunning"),
+                needsFullResync = obj.optBoolean("needsFullResync"),
+                bufferedMessages = buffered,
+                highWatermark = obj.optLongOrNull("highWatermark"),
+                snapshotRevision = obj.optLongOrNull("snapshotRevision"),
+            )
+        )
+    }
+
+    private val onCursor = Emitter.Listener { args ->
+        val obj = args.firstOrNull() as? JSONObject ?: return@Listener
+        val sessionId = obj.optString("sessionId")
+        val sequence = obj.optLongOrNull("sequence") ?: return@Listener
+        _cursor.tryEmit(sessionId to sequence)
+    }
+
+    private val onPresence = Emitter.Listener { args ->
+        parseAndEmit<PresenceSnapshot>(args) { _presence.tryEmit(it) }
     }
 
     private val onPermission = Emitter.Listener { args ->
@@ -478,15 +633,89 @@ data class CompactEvent(
     val error: String? = null
 )
 
-/**
- * Data class for generated image events from the server.
- */
-@kotlinx.serialization.Serializable
-data class GeneratedImageData(
+/** `session:thinking` — the label drives the activity indicator text. */
+data class ThinkingEvent(
     val sessionId: String,
-    val imagePath: String,
-    val imageBase64: String? = null,
-    val mimeType: String,
-    val prompt: String,
-    val generator: String = "codex"
+    val isThinking: Boolean,
+    val message: String? = null,
 )
+
+/** `session:reconnected` — answer to a `session:reconnect` request. */
+data class ReconnectedEvent(
+    val sessionId: String,
+    val isRunning: Boolean,
+    val needsFullResync: Boolean = false,
+    val bufferedMessages: List<BufferedMessage> = emptyList(),
+    val highWatermark: Long? = null,
+    val snapshotRevision: Long? = null,
+)
+
+@kotlinx.serialization.Serializable
+data class BufferedMessage(
+    val type: String,
+    val data: JsonElement,
+    val timestamp: Long,
+    val sequence: Long? = null,
+)
+
+/** `session:queue` — server-side message queue state while the CLI is busy. */
+@kotlinx.serialization.Serializable
+data class QueueEvent(
+    val sessionId: String,
+    val depth: Int = 0,
+    val busy: Boolean = false,
+    val preempting: Boolean = false,
+    val items: List<QueueItem> = emptyList(),
+)
+
+@kotlinx.serialization.Serializable
+data class QueueItem(
+    val id: String = "",
+    val preview: String = "",
+)
+
+internal const val SEND_ACK_TIMEOUT_MS = 12_000L
+
+internal fun parseSessionSendAck(
+    value: JSONObject,
+    expectedClientMessageId: String,
+): SessionSendAck {
+    val clientMessageId = value.optString("clientMessageId").ifBlank { expectedClientMessageId }
+    val attachments = buildList {
+        val array = value.optJSONArray("attachments") ?: JSONArray()
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            add(
+                SessionSendAttachmentResult(
+                    uploadId = item.optString("uploadId").takeIf { it.isNotBlank() },
+                    filename = item.optString("filename"),
+                    status = item.optString("status", "accepted"),
+                    error = item.optString("error").takeIf { it.isNotBlank() },
+                )
+            )
+        }
+    }
+    return if (value.optString("status") == "accepted") {
+        SessionSendAck(
+            clientMessageId = clientMessageId,
+            status = SessionSendAck.SendStatus.ACCEPTED,
+            chatId = value.optString("chatId").takeIf { it.isNotBlank() },
+            acceptedAt = value.optString("acceptedAt").takeIf { it.isNotBlank() },
+            messageId = value.optString("messageId").takeIf { it.isNotBlank() },
+            disposition = value.optString("disposition").takeIf { it.isNotBlank() },
+            highWatermark = value.optLongOrNull("highWatermark"),
+            attachments = attachments,
+        )
+    } else {
+        SessionSendAck(
+            clientMessageId = clientMessageId,
+            status = SessionSendAck.SendStatus.REJECTED,
+            attachments = attachments,
+            error = value.optString("error").ifBlank { "Message was rejected" },
+            retryable = value.optBoolean("retryable", false),
+        )
+    }
+}
+
+private fun JSONObject.optLongOrNull(key: String): Long? =
+    takeIf { has(key) && !isNull(key) }?.optLong(key)

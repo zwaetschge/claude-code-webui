@@ -81,14 +81,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.ProviderType
-import com.claudewebui.app.ui.theme.AntiqueBrass
 import com.claudewebui.app.ui.theme.ClaudeColor
 import com.claudewebui.app.ui.theme.CodexColor
-import com.claudewebui.app.ui.theme.ErrorRed
 import com.claudewebui.app.ui.theme.GoogleColor
-import com.claudewebui.app.ui.theme.SuccessGreen
-import com.claudewebui.app.ui.theme.WarningAmber
 import kotlinx.coroutines.launch
+import com.claudewebui.app.ui.components.common.PlumAmber
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumRed
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -120,7 +119,7 @@ fun ProviderSettingsScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddSheet = true },
-                containerColor = AntiqueBrass,
+                containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Add provider")
@@ -284,8 +283,8 @@ private fun ProviderCard(
                         checked = provider.enabled,
                         onCheckedChange = onToggle,
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = AntiqueBrass,
-                            checkedTrackColor = AntiqueBrass.copy(alpha = 0.4f),
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                         ),
                     )
                 },
@@ -331,8 +330,8 @@ private fun ProviderCard(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Icon(Icons.Default.Check, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(14.dp))
-                                    Text("Connected", style = MaterialTheme.typography.labelMedium, color = SuccessGreen)
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = PlumGreen, modifier = Modifier.size(14.dp))
+                                    Text("Connected", style = MaterialTheme.typography.labelMedium, color = PlumGreen)
                                 }
                             }
                             is TestResult.Failure -> {
@@ -340,8 +339,8 @@ private fun ProviderCard(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Icon(Icons.Default.Close, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(14.dp))
-                                    Text("Failed", style = MaterialTheme.typography.labelMedium, color = ErrorRed)
+                                    Icon(Icons.Default.Close, contentDescription = null, tint = PlumRed, modifier = Modifier.size(14.dp))
+                                    Text("Failed", style = MaterialTheme.typography.labelMedium, color = PlumRed)
                                 }
                             }
                             else -> {
@@ -362,7 +361,7 @@ private fun ProviderCard(
                 }
 
                 IconButton(onClick = { showDeleteConfirm = true }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = ErrorRed)
+                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = PlumRed)
                 }
             }
         }
@@ -376,7 +375,7 @@ private fun ProviderCard(
             confirmButton = {
                 TextButton(
                     onClick = { showDeleteConfirm = false; onDelete() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = ErrorRed),
+                    colors = ButtonDefaults.textButtonColors(contentColor = PlumRed),
                 ) { Text("Remove") }
             },
             dismissButton = {
@@ -424,7 +423,7 @@ private fun ProviderEditForm(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
         )
 
         // Type dropdown
@@ -440,7 +439,7 @@ private fun ProviderEditForm(
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeDropdownExpanded) },
                 modifier = Modifier.fillMaxWidth().menuAnchor(),
                 shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
             )
             ExposedDropdownMenu(
                 expanded = typeDropdownExpanded,
@@ -477,7 +476,7 @@ private fun ProviderEditForm(
                 }
             },
             shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
         )
 
         // Base URL (optional)
@@ -490,7 +489,7 @@ private fun ProviderEditForm(
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
             shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
         )
 
         // Models (comma-separated)
@@ -501,7 +500,7 @@ private fun ProviderEditForm(
             placeholder = { Text("gpt-4o, gpt-3.5-turbo") },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AntiqueBrass, focusedLabelColor = AntiqueBrass),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, focusedLabelColor = MaterialTheme.colorScheme.primary),
         )
 
         // Buttons
@@ -520,7 +519,7 @@ private fun ProviderEditForm(
                 enabled = name.isNotBlank(),
                 modifier = Modifier.weight(2f),
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AntiqueBrass),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             ) {
                 Text(if (provider == null) "Add" else "Save")
             }
@@ -537,7 +536,7 @@ private fun providerColor(type: ProviderType): Color = when (type) {
     ProviderType.ANTHROPIC -> ClaudeColor
     ProviderType.OPENAI -> CodexColor
     ProviderType.GOOGLE -> GoogleColor
-    ProviderType.OPENROUTER -> WarningAmber
+    ProviderType.OPENROUTER -> PlumAmber
     ProviderType.OLLAMA -> MaterialTheme.colorScheme.tertiary
     ProviderType.ZAI -> MaterialTheme.colorScheme.secondary
     ProviderType.CUSTOM -> MaterialTheme.colorScheme.onSurfaceVariant

@@ -1,7 +1,7 @@
 import type { CLIProvider, CodexServiceTier } from './session.js';
 
 export type Theme = 'dark' | 'light' | 'system' | 'eink';
-export type UiProvider = 'plum' | 'claude' | 'zai' | 'codex' | 'opencode' | 'pi';
+export type UiProvider = 'plum' | 'claude' | 'zai' | 'codex' | 'opencode' | 'pi' | 'kimi';
 export type BackgroundAnimation = 'glass' | 'aurora' | 'ribbons' | 'still';
 export type CodexWebSearchMode = 'auto' | 'cached' | 'live' | 'disabled';
 export type OracleBrowserMode = 'profile' | 'manual' | 'remote';
@@ -52,9 +52,21 @@ export interface UserSettings {
   localUsageBudgets?: Partial<Record<CLIProvider, LocalUsageBudget>>;
   oracleBrowser?: OracleBrowserSettings;
   analytics?: AnalyticsSettings;
+  /** When true, theme and background follow the account onto every client. */
+  appearanceSync?: boolean;
+  usageAlerts?: UsageAlertSettings;
+}
+
+/** Account-wide spend/quota alarm thresholds, shared by WebUI and app. */
+export interface UsageAlertSettings {
+  enabled?: boolean;
+  quotaPercent?: number;
+  dailyCostUsd?: number;
 }
 
 export interface UpdateSettingsInput {
+  appearanceSync?: boolean;
+  usageAlerts?: UsageAlertSettings;
   theme?: Theme;
   defaultWorkingDir?: string | null;
   allowedTools?: string[];

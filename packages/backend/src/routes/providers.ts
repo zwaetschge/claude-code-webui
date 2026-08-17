@@ -36,7 +36,7 @@ interface AIProviderResponse {
   base_url: string | null;
   models: string | null;
   default_model: string | null;
-  enabled: number;
+  enabled: boolean;
   auth_method: 'api_key' | 'oauth' | null;
   has_oauth_token: boolean;
   oauth_expires_at: string | null;
@@ -93,7 +93,9 @@ function transformProvider(p: AIProvider): AIProviderResponse {
     base_url: p.base_url,
     models: p.models,
     default_model: p.default_model,
-    enabled: p.enabled,
+    // SQLite stores this as INTEGER 0/1; strict JSON clients (the Android app)
+    // reject a number where a boolean is declared.
+    enabled: Boolean(p.enabled),
     auth_method: p.auth_method || 'api_key',
     has_oauth_token: !!p.oauth_access_token,
     oauth_expires_at: p.oauth_expires_at,

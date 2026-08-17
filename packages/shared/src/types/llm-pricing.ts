@@ -20,7 +20,7 @@ export interface ModelCostEstimate {
   known: boolean;
 }
 
-export const LLM_PRICING_RATE_CARD_VERSION = '2026-07-27-standard-api-equivalent-v8';
+export const LLM_PRICING_RATE_CARD_VERSION = '2026-08-02-standard-api-equivalent-v9';
 
 export const DEFAULT_MODEL_PRICING: ModelPricing = {
   input: 5,
@@ -51,6 +51,9 @@ function normalizeProviderModelId(provider: string | null, id: string, raw: stri
     provider === 'deepseek' ||
     provider === 'opencode' ||
     provider === 'opencode-go' ||
+    provider === 'kimi' ||
+    provider === 'kimi-code' ||
+    provider === 'moonshot' ||
     provider === 'alibaba-token-plan'
   ) {
     return id;
@@ -254,6 +257,9 @@ export function resolveModelPricing(model?: string | null): ModelPricing | null 
 
   // Moonshot/Kimi, USD per 1M tokens. OpenCode Go is subscription-based, but
   // analytics use API-equivalent spend so Go-routed Kimi rows stay priced.
+  if (id === 'k3' || id === 'kimi-k3') {
+    return price(3, 15, 0.3, 0, 'Kimi K3 API pricing, 2026-07-18', 'Kimi K3');
+  }
   if (id === 'kimi-k2.7-code' || id === 'kimi-k2.7-code-highspeed' || id === 'kimi-k2.7') {
     return price(0.95, 4, 0.19, 0, 'Kimi K2.7 Code API pricing, 2026-06-17', 'Kimi K2.7 Code');
   }

@@ -70,10 +70,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.BrandBlue
-import com.claudewebui.app.ui.theme.BrandPurple
-import com.claudewebui.app.ui.theme.SuccessGreen
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
 
 @Composable
 fun ServerSetupScreen(
@@ -116,7 +115,7 @@ fun ServerSetupScreen(
                             .size(56.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(
-                                Brush.linearGradient(listOf(BrandPurple, BrandBlue))
+                                Brush.linearGradient(listOf(PlumAccent, PlumBlue))
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -191,8 +190,8 @@ fun ServerSetupScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = AntiqueBrass,
-                            focusedLabelColor = AntiqueBrass,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            focusedLabelColor = MaterialTheme.colorScheme.primary,
                         ),
                     )
 
@@ -231,7 +230,7 @@ fun ServerSetupScreen(
                         enabled = serverUrl.isNotBlank() && !isLoading,
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AntiqueBrass,
+                            containerColor = MaterialTheme.colorScheme.primary,
                             contentColor = Color.White,
                         ),
                     ) {
@@ -354,7 +353,7 @@ fun ConnectionStatusDot(
 ) {
     val (color, fraction) = when (state) {
         is AuthState.Connecting -> MaterialTheme.colorScheme.tertiary to 0.5f
-        is AuthState.Connected -> SuccessGreen to 1f
+        is AuthState.Connected -> PlumGreen to 1f
         is AuthState.Error -> MaterialTheme.colorScheme.error to 1f
         else -> MaterialTheme.colorScheme.outline to 0f
     }

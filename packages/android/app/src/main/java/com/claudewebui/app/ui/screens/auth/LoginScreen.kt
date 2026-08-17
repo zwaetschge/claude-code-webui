@@ -1,5 +1,7 @@
 package com.claudewebui.app.ui.screens.auth
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -71,6 +73,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -85,11 +88,11 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claudewebui.app.R
+import com.claudewebui.app.core.security.TokenStore
 import com.claudewebui.app.data.model.AuthUser
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.BrandBlue
-import com.claudewebui.app.ui.theme.BrandPurple
-import com.claudewebui.app.ui.theme.SuccessGreen
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
 
 // ── Screen entry point ────────────────────────────────────────────────────────
 
@@ -98,6 +101,7 @@ fun LoginScreen(
     viewModel: LoginViewModel,
     onAuthenticated: (AuthUser) -> Unit,
     onNavigateToServerSetup: () -> Unit,
+    authCallbackUri: String? = null,
 ) {
     val authState by viewModel.authState.collectAsState()
 
@@ -106,6 +110,10 @@ fun LoginScreen(
         if (authState is AuthState.Authenticated) {
             onAuthenticated((authState as AuthState.Authenticated).user)
         }
+    }
+
+    LaunchedEffect(authCallbackUri) {
+        authCallbackUri?.let(viewModel::handleMobileAuthCallback)
     }
 
     Surface(
@@ -122,12 +130,16 @@ fun LoginScreen(
         ) { state ->
             when (state) {
                 is AuthState.Idle -> {
-                    // First launch — no server configured yet, go to server setup
+                    // Rehydrate the selected server after returning from setup. The
+                    // setup and login destinations own separate ViewModel instances.
                     LaunchedEffect(Unit) {
-                        onNavigateToServerSetup()
+                        if (authCallbackUri == null) {
+                            TokenStore.getServerUrl()?.let(viewModel::testConnection)
+                                ?: onNavigateToServerSetup()
+                        }
                     }
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = AntiqueBrass)
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
 
@@ -185,7 +197,10 @@ private fun BrandHeader(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Image(
-            painter = painterResource(id = R.mipmap.ic_launcher),
+            // The adaptive launcher resource resolves to an XML adaptive-icon on
+            // Android 8+, which painterResource cannot decode.  The foreground is
+            // a regular density-aware PNG and is safe to render inside Compose.
+            painter = painterResource(id = R.mipmap.ic_launcher_foreground),
             contentDescription = null,
             modifier = Modifier.size(84.dp),
         )
@@ -196,7 +211,7 @@ private fun BrandHeader(
             }
             withStyle(
                 SpanStyle(
-                    brush = Brush.horizontalGradient(listOf(BrandPurple, BrandBlue)),
+                    brush = Brush.horizontalGradient(listOf(PlumAccent, PlumBlue)),
                 )
             ) {
                 append("WebUI")
@@ -227,6 +242,7 @@ private fun AuthMethodSelectionView(
     onChangeServer: () -> Unit,
 ) {
     var showBasicAuth by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -266,6 +282,25 @@ private fun AuthMethodSelectionView(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
 
+                if (authConfig.proxyAuthEnabled) {
+                    OAuthButton(
+                        label = "Continue with Authelia",
+                        iconContent = {
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        onClick = {
+                            val loginUrl = viewModel.beginProxyLogin()
+                            if (loginUrl.isNotBlank()) {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(loginUrl)))
+                            }
+                        },
+                    )
+                }
+
                 // Google OAuth
                 if (authConfig.googleOAuthEnabled) {
                     OAuthButton(
@@ -293,7 +328,11 @@ private fun AuthMethodSelectionView(
                 }
 
                 // Separator before basic auth
-                if (authConfig.googleOAuthEnabled || authConfig.githubOAuthEnabled) {
+                if (
+                    authConfig.proxyAuthEnabled ||
+                    authConfig.googleOAuthEnabled ||
+                    authConfig.githubOAuthEnabled
+                ) {
                     OrDivider()
                 }
 
@@ -396,8 +435,8 @@ private fun BasicAuthForm(
             isError = authState is AuthState.Error,
             shape = RoundedCornerShape(10.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AntiqueBrass,
-                focusedLabelColor = AntiqueBrass,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
             ),
         )
 
@@ -436,8 +475,8 @@ private fun BasicAuthForm(
             isError = authState is AuthState.Error,
             shape = RoundedCornerShape(10.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AntiqueBrass,
-                focusedLabelColor = AntiqueBrass,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
             ),
         )
 
@@ -475,7 +514,7 @@ private fun BasicAuthForm(
             Checkbox(
                 checked = rememberMe,
                 onCheckedChange = { rememberMe = it },
-                colors = CheckboxDefaults.colors(checkedColor = AntiqueBrass),
+                colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary),
             )
             Text(
                 text = "Keep me signed in",
@@ -502,7 +541,7 @@ private fun BasicAuthForm(
                 enabled = username.isNotBlank() && password.isNotBlank() && !isLoading,
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = AntiqueBrass,
+                    containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color.White,
                 ),
             ) {
@@ -575,7 +614,7 @@ private fun ConnectedServerChip(
             modifier = Modifier
                 .size(8.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(SuccessGreen),
+                .background(PlumGreen),
         )
         Text(
             text = url,
@@ -590,7 +629,7 @@ private fun ConnectedServerChip(
             Text(
                 "Change",
                 style = MaterialTheme.typography.labelSmall,
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }
@@ -634,7 +673,7 @@ private fun ConnectingView() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             CircularProgressIndicator(
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp),
                 strokeWidth = 3.dp,
             )
@@ -658,7 +697,7 @@ private fun AuthenticatingView() {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             CircularProgressIndicator(
-                color = AntiqueBrass,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp),
                 strokeWidth = 3.dp,
             )
@@ -728,7 +767,7 @@ private fun ErrorView(
                     onClick = onRetry,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AntiqueBrass),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 ) {
                     Text(if (isConnectionError) "Try Again" else "Back to Login")
                 }

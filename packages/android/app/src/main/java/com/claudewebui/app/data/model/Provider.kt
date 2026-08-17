@@ -59,10 +59,47 @@ data class UpdateProviderInput(
     val enabled: Boolean? = null
 )
 
+/** Result of `POST /api/providers/:id/test`. */
 @Serializable
-data class CLIProviderStatus(
-    val claude: Boolean = false,
-    val codex: Boolean = false,
-    val opencode: Boolean = false,
-    val pi: Boolean = false
+data class ProviderTestResult(
+    val success: Boolean = false,
+    val message: String = "",
+)
+
+@Serializable
+data class CLIProviderConfig(
+    val id: String,
+    val name: String,
+    val defaultModel: String? = null,
+    val models: List<String> = emptyList(),
+    val enabled: Boolean = true,
+    val available: Boolean = false,
+)
+
+@Serializable
+data class OpenCodeProvider(
+    val id: String,
+    val name: String,
+    val apiKey: String = "",
+    val hasKey: Boolean = false,
+    val envVars: List<String> = emptyList(),
+    val baseUrl: String? = null,
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class SaveOpenCodeProviderInput(
+    val id: String,
+    val name: String,
+    val apiKey: String? = null,
+    val baseUrl: String? = null,
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class OpenCodeProviderTest(
+    val connected: Boolean = false,
+    val message: String = "",
+    val envVars: List<String> = emptyList(),
+    val modelCount: Int = 0,
 )

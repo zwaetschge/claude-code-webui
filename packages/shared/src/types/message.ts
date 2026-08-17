@@ -12,7 +12,7 @@ export interface MessageAttachment {
   type: 'image' | 'text' | 'pdf' | 'document';
 }
 
-export type ChatMediaSource = 'provider' | 'workspace' | 'comfyui';
+export type ChatMediaSource = 'provider' | 'workspace' | 'comfyui' | 'user';
 
 /**
  * Persisted chat media exposed to clients. Storage keys and host filesystem
@@ -30,12 +30,31 @@ export interface ChatMedia {
 export interface Message {
   id: string;
   sessionId: string;
+  /** Thread this message belongs to; null is the implicit legacy main thread. */
+  chatId?: string | null;
   role: MessageRole;
   content: string;
   createdAt: string;
   images?: MessageImage[];
   attachments?: MessageAttachment[];
   media?: ChatMedia[];
+  /** Stable client id used to reconcile an optimistic/persisted delivery. */
+  clientMessageId?: string;
+  /** Monotone cursor for replayable events in this session. */
+  eventSequence?: number;
+}
+
+export interface MessageHistorySnapshot {
+  chatId: string | null;
+  revision: number;
+  highWatermark: number;
+  newestMessageId: string | null;
+}
+
+export interface MessageJumpTarget {
+  sessionId: string;
+  chatId: string | null;
+  messageId: string;
 }
 
 export interface ToolUse {
@@ -46,6 +65,8 @@ export interface ToolUse {
 
 export interface StreamingMessage {
   sessionId: string;
+  /** Thread that owns the active provider turn. */
+  chatId?: string | null;
   content: string;
   isComplete: boolean;
   toolUse?: ToolUse;

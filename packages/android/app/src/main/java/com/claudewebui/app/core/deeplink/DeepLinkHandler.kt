@@ -47,6 +47,9 @@ sealed class DeepLinkDestination {
     /** Open the settings screen. */
     object Settings : DeepLinkDestination()
 
+    /** Open usage analytics, optionally pre-selecting a time range (24h/7d/30d/all). */
+    data class Analytics(val range: String? = null) : DeepLinkDestination()
+
     /** Fall through to the main sessions list. */
     object Home : DeepLinkDestination()
 
@@ -98,6 +101,7 @@ object DeepLinkHandler {
             }
             host == "new" -> DeepLinkDestination.NewSession
             host == "settings" -> DeepLinkDestination.Settings
+            host == "analytics" -> DeepLinkDestination.Analytics(uri.getQueryParameter("range"))
             host.isEmpty() || host == "sessions" -> {
                 // claudewebui:// with optional session id in path
                 pathSegments.firstOrNull()
@@ -126,6 +130,7 @@ object DeepLinkHandler {
             }
             "new" -> DeepLinkDestination.NewSession
             "settings" -> DeepLinkDestination.Settings
+            "analytics" -> DeepLinkDestination.Analytics(uri.getQueryParameter("range"))
             else -> DeepLinkDestination.Home
         }
     }
@@ -142,4 +147,7 @@ object DeepLinkHandler {
     fun newSessionUri(): Uri = Uri.parse("claudewebui://new")
 
     fun settingsUri(): Uri = Uri.parse("claudewebui://settings")
+
+    fun analyticsUri(range: String? = null): Uri =
+        Uri.parse("claudewebui://analytics" + (range?.let { "?range=$it" } ?: ""))
 }

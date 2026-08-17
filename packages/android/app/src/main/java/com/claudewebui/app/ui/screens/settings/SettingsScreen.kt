@@ -1,77 +1,58 @@
 package com.claudewebui.app.ui.screens.settings
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Android
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.FormatSize
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.automirrored.outlined.ExitToApp
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Brightness4
+import androidx.compose.material.icons.outlined.Cached
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudQueue
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.SettingsEthernet
+import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeTopAppBar
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,630 +60,427 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.ErrorRed
+import androidx.compose.ui.unit.sp
+import com.claudewebui.app.core.notifications.LocalNotificationManager
+import com.claudewebui.app.data.model.CLIProvider
+import com.claudewebui.app.data.model.CLIProviderConfig
+import com.claudewebui.app.ui.components.common.GlassPanel
+import com.claudewebui.app.ui.components.common.MainDestination
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumAmber
+import com.claudewebui.app.ui.components.common.PlumBackdrop
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumBorder
+import com.claudewebui.app.ui.components.common.PlumNavScaffold
+import com.claudewebui.app.ui.components.common.PlumGreen
+import com.claudewebui.app.ui.components.common.PlumIconButton
+import com.claudewebui.app.ui.components.common.PlumMuted
+import com.claudewebui.app.ui.components.common.PlumRed
+import com.claudewebui.app.ui.components.common.PlumScreenHeader
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
+import com.claudewebui.app.ui.components.common.PlumText
+import com.claudewebui.app.ui.components.common.StatusPill
+import com.claudewebui.app.ui.components.common.PlumContentWidth
+import com.claudewebui.app.ui.components.common.rememberWindowWidth
+import com.claudewebui.app.ui.components.common.WindowWidth
+import com.claudewebui.app.ui.theme.AppThemeOption
+import com.claudewebui.app.ui.components.common.providerColor
 
-// ── Screen ────────────────────────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateToProviders: () -> Unit,
+    onNavigateToCliProvider: (String) -> Unit = {},
     onNavigateToMcp: () -> Unit,
     onNavigateToCliTools: () -> Unit,
     onNavigateToAgents: () -> Unit,
     onNavigateToPermissions: () -> Unit,
+    onNavigateToIntegrations: () -> Unit,
+    onNavigateToOperations: () -> Unit,
     onLoggedOut: () -> Unit,
+    onNavigateMain: (MainDestination) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var showClearCacheDialog by remember { mutableStateOf(false) }
+    var showThemePicker by remember { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> viewModel.onNotificationPermissionResult(granted) }
 
-    LaunchedEffect(state.toastMessage) {
-        state.toastMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearToast()
-        }
+    LaunchedEffect(Unit) {
+        viewModel.ensureLoaded()
+        viewModel.refreshNotificationPermission()
     }
 
-    LaunchedEffect(state.error) {
-        state.error?.let {
-            snackbarHostState.showSnackbar("Error: $it")
-            viewModel.clearError()
-        }
-    }
-
-    Scaffold(
-        topBar = {
-            LargeTopAppBar(
-                title = {
-                    Text(
-                        "Settings",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                },
-                colors = TopAppBarDefaults.largeTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surface,
+    PlumBackdrop {
+        PlumNavScaffold(MainDestination.SETTINGS, onNavigateMain) { padding ->
+            PlumContentWidth(
+                modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
+                max = 1040.dp,
+            ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 4.dp,
+                    bottom = 4.dp + padding.calculateBottomPadding(),
                 ),
-            )
-        },
-        snackbarHost = {
-            SnackbarHost(snackbarHostState) { data ->
-                Snackbar(
-                    snackbarData = data,
-                    containerColor = MaterialTheme.colorScheme.inverseSurface,
-                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                )
-            }
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(innerPadding)
-                .padding(bottom = 24.dp),
-        ) {
-            // ── Account section ───────────────────────────────────────────────
-            SettingsSectionHeader("Account")
-
-            SettingsCard {
-                // Server URL
-                SettingsListItem(
-                    icon = Icons.Default.Link,
-                    iconTint = AntiqueBrass,
-                    title = "Server",
-                    subtitle = state.serverUrl.ifBlank { "Not configured" },
-                )
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-
-                // User info
-                val user = state.currentUser
-                if (user != null) {
-                    SettingsListItem(
-                        icon = Icons.Default.Person,
-                        iconTint = MaterialTheme.colorScheme.primary,
-                        title = user.name ?: user.email,
-                        subtitle = "Logged in",
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item {
+                    PlumScreenHeader(
+                        title = "Settings",
+                        subtitle = "Connection, providers and app preferences",
+                        actions = {
+                            PlumIconButton(Icons.Outlined.Refresh, "Refresh", viewModel::loadSettings)
+                        },
                     )
                 }
-
-                // Logout
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            "Sign out",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = ErrorRed,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    },
-                    leadingContent = {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ExitToApp,
-                            contentDescription = null,
-                            tint = ErrorRed,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    },
-                    modifier = Modifier.clickable { showLogoutDialog = true },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                )
-            }
-
-            // ── Appearance section ────────────────────────────────────────────
-            SettingsSectionHeader("Appearance")
-
-            SettingsCard {
-                // Theme picker
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.Palette,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(20.dp),
-                            )
+                item {
+                    GlassPanel(Modifier.fillMaxWidth(), radius = 19.dp) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("Server Status", color = PlumText, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Row(Modifier.padding(top = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(10.dp).background(PlumGreen, CircleShape))
+                                Column(Modifier.weight(1f).padding(horizontal = 11.dp)) {
+                                    Text("Connected to plum-code-webui", color = PlumText, fontWeight = FontWeight.Bold)
+                                    Text(state.serverUrl.ifBlank { "Server configured" }, color = PlumMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                StatusPill("Healthy", PlumGreen)
+                            }
+                            Box(Modifier.fillMaxWidth().padding(vertical = 13.dp).height(1.dp).background(PlumBorder))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Sync, null, tint = PlumMuted, modifier = Modifier.size(18.dp))
+                                Text("  Last sync: just now", color = PlumMuted, fontSize = 12.sp)
+                            }
                         }
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text(
+                    }
+                }
+                item {
+                    GlassPanel(Modifier.fillMaxWidth(), radius = 19.dp) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 13.dp)) {
+                            Text("Providers", color = PlumText, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 5.dp))
+                            CLIProvider.active.forEachIndexed { index, provider ->
+                                ProviderRow(
+                                    provider = provider,
+                                    config = state.cliProviders.firstOrNull {
+                                        it.id.equals(provider.name, ignoreCase = true)
+                                    },
+                                    // The row is about this CLI harness, so it
+                                    // opens that harness — not the unrelated
+                                    // database-provider list.
+                                    onClick = { onNavigateToCliProvider(provider.name.lowercase()) },
+                                )
+                                if (index < CLIProvider.active.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(PlumBorder))
+                            }
+                        }
+                    }
+                }
+                item {
+                    ResponsiveSettingsPair(
+                        first = { groupModifier -> SettingsGroup("Security", groupModifier) {
+                            CompactSettingRow(Icons.Outlined.Fingerprint, "Biometric lock", "Use fingerprint", PlumAccent) {
+                                PlumSwitch(state.biometricEnabled) { viewModel.setBiometricEnabled(it) }
+                            }
+                            CompactSettingRow(Icons.Outlined.Security, "Encrypted tokens", "Stored securely", PlumAccent) {
+                                Icon(Icons.Outlined.CloudDone, "Enabled", tint = PlumGreen)
+                            }
+                            CompactSettingRow(
+                                Icons.Outlined.Lock,
+                                "Permissions",
+                                "Per session",
+                                PlumAccent,
+                                onClick = onNavigateToPermissions,
+                            )
+                        } },
+                        second = { groupModifier -> SettingsGroup("Appearance", groupModifier) {
+                            CompactSettingRow(
+                                Icons.Outlined.Brightness4,
                                 "Theme",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
                                 state.theme.label,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                PlumMuted,
+                                onClick = { showThemePicker = true },
                             )
-                        }
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        AppTheme.entries.forEachIndexed { index, theme ->
-                            SegmentedButton(
-                                selected = state.theme == theme,
-                                onClick = { viewModel.updateTheme(theme) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = AppTheme.entries.size,
-                                ),
-                                label = {
-                                    Text(
-                                        theme.label.substringBefore(" "),
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
+                        } },
+                    )
+                }
+                item {
+                    ResponsiveSettingsPair(
+                        first = { groupModifier -> SettingsGroup("Notifications", groupModifier) {
+                            val notificationsActive = state.notificationsEnabled &&
+                                state.notificationsAllowedBySystem
+                            val notificationStatus = when {
+                                !state.notificationsAllowedBySystem -> "Blocked by Android settings"
+                                notificationsActive -> "Reply, goal and approval alerts"
+                                else -> "Off"
+                            }
+                            CompactSettingRow(Icons.Outlined.Notifications, "Push notifications", notificationStatus, PlumAccent) {
+                                PlumSwitch(notificationsActive) { enable ->
+                                    when {
+                                        !enable -> viewModel.setNotificationsEnabled(false)
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                            !LocalNotificationManager.hasNotificationPermission(context) ->
+                                            LocalNotificationManager.requestNotificationPermission(
+                                                notificationPermissionLauncher,
+                                            )
+                                        else -> viewModel.setNotificationsEnabled(true)
+                                    }
+                                }
+                            }
+                            var usageAlerts by remember {
+                                mutableStateOf(
+                                    com.claudewebui.app.widget.UsageAlerts.isEnabled(context)
+                                )
+                            }
+                            CompactSettingRow(
+                                Icons.Outlined.Notifications,
+                                "Usage alerts",
+                                "Quota ≥${com.claudewebui.app.widget.UsageAlerts.LIMIT_THRESHOLD_PERCENT}% " +
+                                    "or cost ≥$${"%.0f".format(com.claudewebui.app.widget.UsageAlerts.dailyCostThreshold(context))}/day",
+                                PlumAccent,
+                            ) {
+                                PlumSwitch(usageAlerts) { enable ->
+                                    usageAlerts = enable
+                                    com.claudewebui.app.widget.UsageAlerts.setEnabled(context, enable)
+                                    // Keep the account-wide setting authoritative so
+                                    // the WebUI sees the same thresholds.
+                                    viewModel.updateUsageAlerts(enabled = enable)
+                                }
+                            }
+                        } },
+                        second = { groupModifier -> SettingsGroup("Advanced", groupModifier) {
+                            // The update checker existed but nothing ever called
+                            // it — without this row the in-app update path was
+                            // unreachable and every install had to be sideloaded.
+                            val updateChecker: com.claudewebui.app.core.updates.AppUpdateChecker =
+                                org.koin.compose.koinInject()
+                            val updateState by updateChecker.updateState.collectAsState()
+                            CompactSettingRow(
+                                Icons.Outlined.Sync,
+                                "App update",
+                                when (val u = updateState) {
+                                    is com.claudewebui.app.core.updates.UpdateState.UpdateAvailable ->
+                                        "Version ${u.newVersion} available — tap to install"
+                                    com.claudewebui.app.core.updates.UpdateState.Checking -> "Checking…"
+                                    com.claudewebui.app.core.updates.UpdateState.UpToDate -> "Up to date"
+                                    is com.claudewebui.app.core.updates.UpdateState.Downloading ->
+                                        "Downloading… ${u.progress}%"
+                                    else -> "Version ${com.claudewebui.app.BuildConfig.VERSION_NAME} · tap to check"
+                                },
+                                PlumAccent,
+                                onClick = {
+                                    val current = updateState
+                                    if (current is com.claudewebui.app.core.updates.UpdateState.UpdateAvailable) {
+                                        updateChecker.downloadAndInstall(current.downloadUrl)
+                                    } else {
+                                        updateChecker.checkForUpdate()
+                                    }
                                 },
                             )
+                            CompactSettingRow(Icons.Outlined.SettingsEthernet, "MCP Servers", "${state.mcpServers.size} configured", PlumMuted, onNavigateToMcp)
+                            CompactSettingRow(
+                                Icons.Outlined.SmartToy,
+                                "Agents & Skills",
+                                "${state.configAgents.size + state.agents.size} agents · ${state.configSkills.size} skills",
+                                PlumMuted,
+                                onNavigateToAgents,
+                            )
+                            CompactSettingRow(Icons.Outlined.Terminal, "CLI Tools", "${state.cliTools.size} tools", PlumMuted, onNavigateToCliTools)
+                            CompactSettingRow(
+                                Icons.Outlined.Hub,
+                                "Integrations",
+                                "ComfyUI · Discord · Home Assistant",
+                                PlumMuted,
+                                onNavigateToIntegrations,
+                            )
+                            CompactSettingRow(
+                                Icons.Outlined.AdminPanelSettings,
+                                "Operations",
+                                "Containers, watchdogs, audit",
+                                PlumMuted,
+                                onNavigateToOperations,
+                            )
+                        } },
+                    )
+                }
+                item {
+                    GlassPanel(
+                        modifier = Modifier.fillMaxWidth().clickable { showLogoutDialog = true },
+                        radius = 18.dp,
+                        borderColor = PlumRed.copy(alpha = .45f),
+                    ) {
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.AutoMirrored.Outlined.ExitToApp, null, tint = PlumRed, modifier = Modifier.size(27.dp))
+                            Column(Modifier.weight(1f).padding(start = 13.dp)) {
+                                Text("Log out", color = PlumRed, fontWeight = FontWeight.Bold)
+                                Text("Sign out of your Plum Code account", color = PlumMuted, fontSize = 12.sp)
+                            }
+                            Icon(Icons.Outlined.ChevronRight, null, tint = PlumMuted)
                         }
                     }
                 }
-
-                HorizontalDivider(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
-
-                // Font size picker
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.secondaryContainer),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.FormatSize,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                "Font size",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                state.fontSize.label,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        FontSize.entries.forEachIndexed { index, size ->
-                            SegmentedButton(
-                                selected = state.fontSize == size,
-                                onClick = { viewModel.updateFontSize(size) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = FontSize.entries.size,
-                                ),
-                                label = {
-                                    Text(
-                                        size.label.substringBefore(" "),
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
+                item { Spacer(Modifier.height(5.dp)) }
             }
-
-            // ── AI / tools sections ───────────────────────────────────────────
-            SettingsSectionHeader("AI & Tools")
-
-            SettingsCard {
-                NavigationListItem(
-                    icon = Icons.Default.Cloud,
-                    iconTint = MaterialTheme.colorScheme.tertiary,
-                    title = "AI Providers",
-                    subtitle = "${state.providers.size} configured, ${state.providers.count { it.enabled }} active",
-                    onClick = onNavigateToProviders,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                NavigationListItem(
-                    icon = Icons.Default.Extension,
-                    iconTint = MaterialTheme.colorScheme.secondary,
-                    title = "MCP Servers",
-                    subtitle = "${state.mcpServers.size} configured",
-                    onClick = onNavigateToMcp,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                NavigationListItem(
-                    icon = Icons.Default.Terminal,
-                    iconTint = AntiqueBrass,
-                    title = "CLI Tools",
-                    subtitle = "Manage tools available to CLI providers",
-                    onClick = onNavigateToCliTools,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                NavigationListItem(
-                    icon = Icons.Default.SmartToy,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    title = "Custom Agents",
-                    subtitle = "${state.agents.size} agents",
-                    onClick = onNavigateToAgents,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                NavigationListItem(
-                    icon = Icons.Default.Security,
-                    iconTint = MaterialTheme.colorScheme.error,
-                    title = "Permissions",
-                    subtitle = "${state.permissionRules.size} rules configured",
-                    onClick = onNavigateToPermissions,
-                )
-            }
-
-            // ── Notifications section ─────────────────────────────────────────
-            SettingsSectionHeader("Notifications")
-
-            SettingsCard {
-                SwitchListItem(
-                    icon = Icons.Default.Notifications,
-                    iconTint = MaterialTheme.colorScheme.primary,
-                    title = "Push notifications",
-                    subtitle = "Get notified when a session finishes a task",
-                    checked = state.notificationsEnabled,
-                    onCheckedChange = viewModel::setNotificationsEnabled,
-                )
-            }
-
-            // ── Security section ──────────────────────────────────────────────
-            SettingsSectionHeader("Security")
-
-            SettingsCard {
-                SwitchListItem(
-                    icon = Icons.Default.Fingerprint,
-                    iconTint = AntiqueBrass,
-                    title = "Biometric lock",
-                    subtitle = "Require biometrics to open the app",
-                    checked = state.biometricEnabled,
-                    onCheckedChange = viewModel::setBiometricEnabled,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Session timeout
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.tertiaryContainer),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.Timer,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                "Session timeout",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                "${state.sessionTimeoutMinutes} minutes",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-
-                    val timeouts = listOf(5, 15, 30, 60, 120)
-                    val timeoutLabels = listOf("5m", "15m", "30m", "1h", "2h")
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        timeouts.forEachIndexed { index, minutes ->
-                            SegmentedButton(
-                                selected = state.sessionTimeoutMinutes == minutes,
-                                onClick = { viewModel.setSessionTimeout(minutes) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = timeouts.size,
-                                ),
-                                label = {
-                                    Text(
-                                        timeoutLabels[index],
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── App section ───────────────────────────────────────────────────
-            SettingsSectionHeader("App")
-
-            SettingsCard {
-                SettingsListItem(
-                    icon = Icons.Default.Info,
-                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    title = "Version",
-                    subtitle = state.appVersion,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                SettingsListItem(
-                    icon = Icons.Default.Storage,
-                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    title = "Cache",
-                    subtitle = state.cacheSize,
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
-
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            "Clear cache",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    },
-                    leadingContent = {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.errorContainer),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.Clear,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    },
-                    modifier = Modifier.clickable { showClearCacheDialog = true },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                )
             }
         }
     }
 
-    // ── Dialogs ───────────────────────────────────────────────────────────────
+    if (showThemePicker) {
+        AlertDialog(
+            onDismissRequest = { showThemePicker = false },
+            containerColor = PlumSurfaceStrong,
+            title = { Text("Theme", color = PlumText) },
+            text = {
+                Column {
+                    AppThemeOption.entries.forEach { option ->
+                        val selected = option == state.theme
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    viewModel.updateTheme(option)
+                                    showThemePicker = false
+                                }
+                                .padding(vertical = 11.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(15.dp)
+                                    .clip(CircleShape)
+                                    .background(if (selected) PlumAccent else Color.Transparent)
+                                    .border(1.dp, if (selected) PlumAccent else PlumBorder, CircleShape)
+                            )
+                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                Text(option.label, color = PlumText, fontWeight = FontWeight.Medium)
+                                Text(option.description, color = PlumMuted, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemePicker = false }) { Text("Close", color = PlumAccent) }
+            },
+        )
+    }
 
     if (showLogoutDialog) {
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
-            title = { Text("Sign out") },
-            text = { Text("Are you sure you want to sign out?") },
+            title = { Text("Log out?") },
+            text = { Text("You can sign in to Plum Code again at any time.") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showLogoutDialog = false
-                        viewModel.logout(onLoggedOut)
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = ErrorRed),
-                ) { Text("Sign out") }
+                TextButton(onClick = {
+                    showLogoutDialog = false
+                    viewModel.logout(onLoggedOut)
+                }) { Text("Log out", color = PlumRed) }
             },
-            dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel") }
-            },
-        )
-    }
-
-    if (showClearCacheDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearCacheDialog = false },
-            title = { Text("Clear cache") },
-            text = { Text("This will delete all cached data. Continue?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showClearCacheDialog = false
-                        viewModel.clearCache {}
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = ErrorRed),
-                ) { Text("Clear") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearCacheDialog = false }) { Text("Cancel") }
-            },
+            dismissButton = { TextButton(onClick = { showLogoutDialog = false }) { Text("Cancel") } },
         )
     }
 }
 
-// ── Shared composable helpers ─────────────────────────────────────────────────
-
 @Composable
-fun SettingsSectionHeader(title: String) {
-    Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        fontWeight = FontWeight.SemiBold,
-    )
-}
-
-@Composable
-fun SettingsCard(content: @Composable () -> Unit) {
-    Card(
-        modifier = Modifier
+private fun ProviderRow(provider: CLIProvider, config: CLIProviderConfig?, onClick: () -> Unit) {
+    val connected = config?.available ?: (provider == CLIProvider.CODEX || provider == CLIProvider.OPENCODE)
+    val enabled = config?.enabled ?: true
+    val status = when {
+        !enabled -> "Disabled"
+        connected -> "Connected"
+        else -> "Needs login"
+    }
+    val statusColor = when {
+        !enabled -> PlumMuted
+        connected -> PlumGreen
+        else -> PlumAmber
+    }
+    Row(
+        Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            .heightIn(min = 56.dp)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        content()
+        Box(Modifier.size(9.dp).background(providerColor(provider), CircleShape))
+        Column(Modifier.weight(1f).padding(horizontal = 11.dp)) {
+            Text(
+                provider.displayName,
+                color = PlumText,
+                fontWeight = FontWeight.Medium,
+            )
+            Text("${provider.name.lowercase()}@plum.code", color = PlumMuted, fontSize = 11.sp)
+        }
+        StatusPill(status, statusColor)
+        Icon(Icons.Outlined.ChevronRight, null, tint = PlumMuted, modifier = Modifier.padding(start = 7.dp))
     }
-    Spacer(Modifier.height(8.dp))
 }
 
 @Composable
-fun SettingsListItem(
-    icon: ImageVector,
-    iconTint: androidx.compose.ui.graphics.Color,
-    title: String,
-    subtitle: String? = null,
+private fun ResponsiveSettingsPair(
+    first: @Composable (Modifier) -> Unit,
+    second: @Composable (Modifier) -> Unit,
 ) {
-    ListItem(
-        headlineContent = {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-        },
-        supportingContent = subtitle?.let {
-            { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        },
-        leadingContent = {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(iconTint.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-            }
-        },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-    )
+    if (rememberWindowWidth() == WindowWidth.COMPACT) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            first(Modifier.fillMaxWidth())
+            second(Modifier.fillMaxWidth())
+        }
+    } else {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            first(Modifier.weight(1f))
+            second(Modifier.weight(1f))
+        }
+    }
 }
 
 @Composable
-fun NavigationListItem(
-    icon: ImageVector,
-    iconTint: androidx.compose.ui.graphics.Color,
-    title: String,
-    subtitle: String? = null,
-    onClick: () -> Unit,
-) {
-    ListItem(
-        headlineContent = {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-        },
-        supportingContent = subtitle?.let {
-            { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        },
-        leadingContent = {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(iconTint.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-            }
-        },
-        trailingContent = {
-            Icon(
-                Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-        },
-        modifier = Modifier.clickable(onClick = onClick),
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-    )
+private fun SettingsGroup(title: String, modifier: Modifier, content: @Composable () -> Unit) {
+    GlassPanel(modifier, radius = 18.dp) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(title, color = PlumText, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 5.dp))
+            content()
+        }
+    }
 }
 
 @Composable
-fun SwitchListItem(
+private fun CompactSettingRow(
     icon: ImageVector,
-    iconTint: androidx.compose.ui.graphics.Color,
     title: String,
-    subtitle: String? = null,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String,
+    tint: Color,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
-    ListItem(
-        headlineContent = {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-        },
-        supportingContent = subtitle?.let {
-            { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        },
-        leadingContent = {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(iconTint.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-            }
-        },
-        trailingContent = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(checkedThumbColor = AntiqueBrass, checkedTrackColor = AntiqueBrass.copy(alpha = 0.4f)),
-            )
-        },
-        modifier = Modifier.clickable { onCheckedChange(!checked) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+            Text(title, color = PlumText, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) Text(subtitle, color = PlumMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        trailing?.invoke() ?: if (onClick != null) Icon(Icons.Outlined.ChevronRight, null, tint = PlumMuted, modifier = Modifier.size(17.dp)) else Unit
+    }
+}
+
+@Composable
+private fun PlumSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?) {
+    Switch(checked = checked, onCheckedChange = onCheckedChange)
 }

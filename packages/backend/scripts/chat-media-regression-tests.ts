@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'plum-chat-media-'));
 const dataDirectory = path.join(root, 'data');
@@ -20,7 +21,7 @@ process.env.SESSION_SECRET = 'chat-media-session-secret-000000000000000000';
 process.env.JWT_SECRET = 'chat-media-jwt-secret-000000000000000000000';
 process.env.ENCRYPTION_KEY = 'chat-media-encryption-key-0000000000000000';
 
-const { initDatabase } = await import('../src/db/index.js');
+const { initDatabase, migrateMessageMediaUserSource } = await import('../src/db/index.js');
 const {
   MAX_CHAT_MEDIA_BYTES,
   chatMediaStorageDirectory,
@@ -49,6 +50,75 @@ assert.equal(detectChatMediaMime(gif), 'image/gif');
 assert.equal(detectChatMediaMime(webp), 'image/webp');
 assert.equal(detectChatMediaMime(Buffer.from('<svg><script/></svg>')), null);
 
+const legacyDatabase = new Database(':memory:');
+legacyDatabase.pragma('foreign_keys = ON');
+legacyDatabase.exec(`
+  CREATE TABLE users (id TEXT PRIMARY KEY);
+  CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+  );
+  CREATE TABLE message_media (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    storage_key TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    alt_text TEXT,
+    source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui')),
+    source_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(message_id, sha256)
+  );
+  INSERT INTO users (id) VALUES ('legacy-user');
+  INSERT INTO sessions (id, user_id) VALUES ('legacy-session', 'legacy-user');
+  INSERT INTO messages (id, session_id) VALUES ('legacy-message', 'legacy-session');
+  INSERT INTO message_media (
+    id, message_id, session_id, user_id, storage_key, filename,
+    mime_type, byte_size, sha256, source
+  ) VALUES (
+    'legacy-media', 'legacy-message', 'legacy-session', 'legacy-user',
+    '00000000-0000-4000-8000-000000000000.png', 'legacy.png',
+    'image/png', 1, '${'0'.repeat(64)}', 'provider'
+  );
+`);
+assert.equal(migrateMessageMediaUserSource(legacyDatabase), true);
+assert.equal(
+  (legacyDatabase.prepare('SELECT COUNT(*) AS count FROM message_media').get() as { count: number })
+    .count,
+  1,
+  'constraint migration must preserve existing media'
+);
+legacyDatabase
+  .prepare(
+    `INSERT INTO message_media (
+       id, message_id, session_id, user_id, storage_key, filename,
+       mime_type, byte_size, sha256, source
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+  .run(
+    'legacy-user-media',
+    'legacy-message',
+    'legacy-session',
+    'legacy-user',
+    '00000000-0000-4000-8000-000000000001.bin',
+    'notes.txt',
+    'text/plain',
+    1,
+    '1'.repeat(64),
+    'user'
+  );
+assert.equal(migrateMessageMediaUserSource(legacyDatabase), false, 'migration must be idempotent');
+legacyDatabase.close();
+
 database.exec(`
   INSERT INTO users (id, email, name, provider, provider_id, role, status)
   VALUES
@@ -62,6 +132,7 @@ database.exec(`
   VALUES
     ('message-a1', 'session-a', 'assistant', 'first'),
     ('message-a2', 'session-a', 'assistant', 'second'),
+    ('message-a3', 'session-a', 'user', 'files'),
     ('message-b1', 'session-b', 'assistant', 'foreign');
 `);
 
@@ -179,6 +250,48 @@ try {
     ],
   });
   assert.equal(workspaceMedia[0]?.source, 'workspace');
+
+  const userUploads = await persistMessageMedia({
+    messageId: 'message-a3',
+    sessionId: 'session-a',
+    userId: 'user-a',
+    media: [
+      {
+        kind: 'buffer',
+        buffer: pngBytes('user-image'),
+        filename: 'phone screenshot.png',
+        mimeType: 'image/png',
+        source: 'user',
+        sourceId: 'upload:message-a3:file:0',
+      },
+      {
+        kind: 'buffer',
+        buffer: Buffer.from('%PDF-1.7\nfixture'),
+        filename: 'report.pdf',
+        mimeType: 'application/pdf',
+        source: 'user',
+        sourceId: 'upload:message-a3:file:1',
+      },
+      {
+        kind: 'buffer',
+        buffer: Buffer.from('hello attachment'),
+        filename: 'notes.txt',
+        mimeType: 'text/plain',
+        source: 'user',
+        sourceId: 'upload:message-a3:inline:0',
+      },
+    ],
+  });
+  assert.equal(userUploads.length, 3);
+  assert.deepEqual(
+    userUploads.map(({ filename, mimeType, source }) => ({ filename, mimeType, source })),
+    [
+      { filename: 'phone screenshot.png', mimeType: 'image/png', source: 'user' },
+      { filename: 'report.pdf', mimeType: 'application/pdf', source: 'user' },
+      { filename: 'notes.txt', mimeType: 'text/plain', source: 'user' },
+    ]
+  );
+  assert.doesNotMatch(JSON.stringify(userUploads), /storageKey|filePath|workspace|chat-media/);
 
   const outsideFile = path.join(outside, 'outside.png');
   const escapingSymlink = path.join(workspace, 'escape.png');
@@ -311,6 +424,9 @@ try {
   const reloaded = responseRows.find((message) => message.id === 'message-a1');
   assert.deepEqual(reloaded?.media, first);
   assert.doesNotMatch(JSON.stringify(reloaded), /storageKey|filePath|chat-media/);
+  const reloadedUserMessage = responseRows.find((message) => message.id === 'message-a3');
+  assert.deepEqual(reloadedUserMessage?.media, userUploads);
+  assert.doesNotMatch(JSON.stringify(reloadedUserMessage), /storageKey|filePath|workspace|chat-media/);
 
   database.prepare('DELETE FROM messages WHERE id = ?').run('message-a1');
   assert.equal(

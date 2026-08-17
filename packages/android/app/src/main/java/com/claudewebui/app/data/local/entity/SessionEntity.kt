@@ -1,10 +1,12 @@
 package com.claudewebui.app.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.Session
+import com.claudewebui.app.data.model.SessionMode
 import com.claudewebui.app.data.model.SessionStatus
 
 /**
@@ -25,7 +27,18 @@ data class SessionEntity(
     val workingDirectory: String,
     val starred: Boolean = false,
     val lastMessage: String? = null,
+    @ColumnInfo(defaultValue = "0") val unreadCount: Int = 0,
     val categoryId: String? = null,
+    // Cached alongside the rest: without these the session settings sheet reads
+    // a cached session that has dropped its model and reasoning, and shows
+    // "provider default" for a session that has neither.
+    val cliModel: String? = null,
+    val cliReasoning: String? = null,
+    val cliServiceTier: String? = null,
+    val designStyleSkill: String? = null,
+    val writingStyleSkill: String? = null,
+    // Provider-native session id; resume/rewind logic needs it offline too.
+    val claudeSessionId: String? = null,
     val updatedAt: String,
     val createdAt: String
 )
@@ -39,10 +52,18 @@ fun Session.toEntity(): SessionEntity = SessionEntity(
     title = name,
     provider = cliProvider.name,
     status = status.name,
+    mode = mode.name,
     workingDirectory = workingDirectory,
     starred = starred,
     lastMessage = lastMessage,
+    unreadCount = unreadCount,
     categoryId = category,
+    cliModel = cliModel,
+    cliReasoning = cliReasoning,
+    cliServiceTier = cliServiceTier,
+    designStyleSkill = designStyleSkill,
+    writingStyleSkill = writingStyleSkill,
+    claudeSessionId = claudeSessionId,
     updatedAt = updatedAt,
     createdAt = createdAt
 )
@@ -52,11 +73,20 @@ fun SessionEntity.toModel(): Session = Session(
     userId = "",                   // Not stored locally — filled from API when available
     name = title,
     workingDirectory = workingDirectory,
+    claudeSessionId = claudeSessionId,
     status = runCatching { SessionStatus.valueOf(status) }.getOrDefault(SessionStatus.STOPPED),
     cliProvider = runCatching { CLIProvider.valueOf(provider) }.getOrDefault(CLIProvider.CODEX),
     starred = starred,
     lastMessage = lastMessage,
+    unreadCount = unreadCount,
     category = categoryId,
+    cliModel = cliModel,
+    cliReasoning = cliReasoning,
+    cliServiceTier = cliServiceTier,
+    designStyleSkill = designStyleSkill,
+    writingStyleSkill = writingStyleSkill,
+    mode = mode?.let { m -> runCatching { SessionMode.valueOf(m) }.getOrNull() }
+        ?: SessionMode.AUTO_ACCEPT,
     updatedAt = updatedAt,
     createdAt = createdAt
 )

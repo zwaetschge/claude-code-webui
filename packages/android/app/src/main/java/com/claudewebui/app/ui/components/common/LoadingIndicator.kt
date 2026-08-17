@@ -25,8 +25,6 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.claudewebui.app.ui.theme.BrandBlue
-import com.claudewebui.app.ui.theme.BrandPurple
 import com.claudewebui.app.ui.theme.ClaudeWebUITheme
 
 // ── LoadingIndicator ─────────────────────────────────────────────────────────
@@ -49,10 +47,12 @@ fun LoadingIndicator(
         label = "rotation",
     )
 
+    val accent = PlumAccent
+    val trackColor = accent.copy(alpha = 0.12f)
     val gradientBrush = Brush.sweepGradient(
-        0f to BrandPurple.copy(alpha = 0f),
-        0.6f to BrandPurple,
-        1f to BrandBlue,
+        0f to accent.copy(alpha = 0f),
+        0.6f to accent,
+        1f to PlumBlue,
     )
 
     Column(
@@ -64,7 +64,7 @@ fun LoadingIndicator(
             Canvas(modifier = Modifier.size(size)) {
                 // Background track
                 drawCircle(
-                    color = BrandPurple.copy(alpha = 0.12f),
+                    color = trackColor,
                     radius = (this.size.minDimension - strokeWidth.toPx()) / 2f,
                     style = Stroke(width = strokeWidth.toPx()),
                 )

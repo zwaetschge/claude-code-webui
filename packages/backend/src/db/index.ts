@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
@@ -11,6 +12,12 @@ import {
   type CLIProvider,
 } from '@plum-code-webui/shared';
 import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
+import {
+  readAllKimiUsageRecords,
+  readKimiRootPrompts,
+  summarizeKimiUsageBetween,
+} from '../utils/kimiTurnUsage.js';
+import { resolveOpenCodeTenantPaths } from '../services/opencode/tenantPaths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIRECTORY = process.env.WEBUI_DATA_DIR
@@ -44,6 +51,7 @@ export function initDatabase(): Database.Database {
 
   // Run migrations
   runMigrations(db);
+  backfillKimiUsageHistory(db);
 
   // The in-memory process registry starts empty after every backend restart.
   // Any persisted `running` rows therefore describe processes owned by the old
@@ -205,12 +213,196 @@ export function reconcileStaleRunningSessions(database: Database.Database): numb
 }
 
 /**
+ * Recover Kimi ACP turns created before Plum consumed Kimi's native usage
+ * ledger. Kimi persists one usage.record per model call, including cached
+ * tokens, under its native session directory. WebUI message ids are reused as
+ * turn ids so this scan is safe to repeat and cannot duplicate live writes.
+ */
+export function backfillKimiUsageHistory(database: Database.Database): number {
+  const kimiHome = (
+    process.env.CLI_PROVIDER_KIMI_CREDENTIALS_PATH || path.join(os.homedir(), '.kimi-code')
+  ).replace(/^~/, os.homedir());
+  const sessions = database
+    .prepare(
+      `SELECT id, user_id as userId, claude_session_id as nativeSessionId, cli_model as model
+       FROM sessions
+       WHERE cli_provider = 'kimi' AND claude_session_id IS NOT NULL`
+    )
+    .all() as Array<{
+    id: string;
+    userId: string;
+    nativeSessionId: string;
+    model: string | null;
+  }>;
+
+  let inserted = 0;
+  for (const session of sessions) {
+    try {
+      const messages = database
+        .prepare(
+          `SELECT id, content, created_at as createdAt
+           FROM messages
+           WHERE session_id = ? AND role = 'user'
+           ORDER BY created_at ASC, id ASC`
+        )
+        .all(session.id) as Array<{ id: string; content: string; createdAt: string }>;
+      if (messages.length === 0) continue;
+
+      const prompts = readKimiRootPrompts(kimiHome, session.nativeSessionId);
+      const usageRecords = readAllKimiUsageRecords(kimiHome, session.nativeSessionId);
+      if (prompts.length === 0 || usageRecords.length === 0) continue;
+
+      const mappedPrompts: Array<{ messageId: string; recordedAt: number }> = [];
+      let promptCursor = 0;
+      for (const message of messages) {
+        const sqlTime = Date.parse(`${message.createdAt.replace(' ', 'T')}Z`);
+        let match = -1;
+        for (let index = promptCursor; index < prompts.length; index += 1) {
+          const prompt = prompts[index]!;
+          if (Number.isFinite(sqlTime) && prompt.recordedAt < sqlTime - 5_000) continue;
+          if (message.content && prompt.text.includes(message.content)) {
+            match = index;
+            break;
+          }
+        }
+        if (match < 0) {
+          match = prompts.findIndex(
+            (prompt, index) =>
+              index >= promptCursor &&
+              (!Number.isFinite(sqlTime) || prompt.recordedAt >= sqlTime - 2_000)
+          );
+        }
+        if (match < 0) continue;
+        mappedPrompts.push({ messageId: message.id, recordedAt: prompts[match]!.recordedAt });
+        promptCursor = match + 1;
+      }
+
+      for (let index = 0; index < mappedPrompts.length; index += 1) {
+        const prompt = mappedPrompts[index]!;
+        const nextPrompt = mappedPrompts[index + 1];
+        const usage = summarizeKimiUsageBetween(
+          usageRecords,
+          prompt.recordedAt,
+          nextPrompt?.recordedAt ?? Number.POSITIVE_INFINITY
+        );
+        if (usage.totalTokens <= 0) continue;
+        const dominantModel = Object.entries(usage.models).sort((a, b) => b[1] - a[1])[0]?.[0];
+        const model = dominantModel || session.model;
+        const cost = estimateModelCost(
+          model,
+          {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheCreationTokens: usage.cacheCreationTokens,
+          },
+          null
+        ).cost;
+        if (
+          insertUsageHistoryTurn(database, {
+            userId: session.userId,
+            sessionId: session.id,
+            provider: 'kimi',
+            turnId: prompt.messageId,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+            cacheCreationTokens: usage.cacheCreationTokens,
+            totalTokens: usage.totalTokens,
+            costUsd: cost,
+            model,
+            createdAt: usage.lastRecordedAt
+              ? new Date(usage.lastRecordedAt).toISOString()
+              : new Date(prompt.recordedAt).toISOString(),
+          })
+        ) {
+          inserted += 1;
+        }
+      }
+    } catch (error) {
+      console.warn(`[DB] Kimi usage backfill skipped for session ${session.id}:`, error);
+    }
+  }
+
+  if (inserted > 0) {
+    console.log(`[DB] Backfilled ${inserted} Kimi usage turn(s) from native ACP ledgers.`);
+  }
+  return inserted;
+}
+
+/**
  * Add durable runtime attribution to existing usage ledgers.
  *
  * Historical model ids are used only for a best-effort backfill. Ambiguous
  * routed models prefer the session's current Pi/OpenCode provider; exact
  * historical attribution cannot be reconstructed after a provider switch.
  */
+/**
+ * Copy each provider's model list out of OpenCode's per-user config and into
+ * the WebUI provider registry.
+ *
+ * Pi derived its models from that file, so an endpoint the shared catalog does
+ * not know — a self-hosted server, or an aggregator added last week — only
+ * existed for Pi while OpenCode kept a config listing it. Owning the list here
+ * makes every harness readable from one place and lets a provider be set up
+ * without OpenCode being installed at all.
+ */
+export function migrateProviderModelsIntoRegistry(database: Database.Database): number {
+  const rows = database.prepare('SELECT user_id, settings_json FROM user_settings').all() as Array<{
+    user_id: string;
+    settings_json: string | null;
+  }>;
+
+  let updated = 0;
+  for (const row of rows) {
+    let settings: Record<string, unknown>;
+    try {
+      settings = JSON.parse(row.settings_json ?? '{}') as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const providers = settings.opencodeProviders;
+    if (!Array.isArray(providers) || providers.length === 0) continue;
+
+    let configModels: Record<string, string[]> = {};
+    try {
+      const configPath = path.join(
+        resolveOpenCodeTenantPaths(row.user_id).configDir,
+        'opencode.json'
+      );
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        provider?: Record<string, { models?: Record<string, unknown> }>;
+      };
+      for (const [providerId, entry] of Object.entries(parsed.provider ?? {})) {
+        const models = Object.keys(entry?.models ?? {}).filter((id) => id.trim().length > 0);
+        if (models.length > 0) configModels[providerId] = models;
+      }
+    } catch {
+      // No OpenCode config for this user — nothing to lift, and nothing broken.
+      configModels = {};
+    }
+    if (Object.keys(configModels).length === 0) continue;
+
+    let changed = false;
+    for (const provider of providers as Array<Record<string, unknown>>) {
+      const id = typeof provider.id === 'string' ? provider.id : '';
+      const models = configModels[id];
+      // Never overwrite a list the user already curated in the WebUI.
+      if (!models || (Array.isArray(provider.models) && provider.models.length > 0)) continue;
+      provider.models = models;
+      changed = true;
+    }
+
+    if (!changed) continue;
+    database
+      .prepare('UPDATE user_settings SET settings_json = ? WHERE user_id = ?')
+      .run(JSON.stringify(settings), row.user_id);
+    updated += 1;
+  }
+
+  return updated;
+}
+
 export function migrateUsageHistoryAttribution(database: Database.Database): number {
   const columns = new Set(
     (database.prepare('PRAGMA table_info(usage_history)').all() as Array<{ name: string }>).map(
@@ -388,7 +580,7 @@ function runMigrations(db: Database.Database): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- Persisted raster media attached to chat messages. The storage key is an
+    -- Persisted files attached to chat messages. The storage key is an
     -- opaque backend-generated name; host paths are never stored in message
     -- payloads or returned to clients. Repeating the same content for another
     -- message reuses the physical storage key, while the per-message unique
@@ -404,7 +596,7 @@ function runMigrations(db: Database.Database): void {
       byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
       sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
       alt_text TEXT,
-      source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui')),
+      source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui', 'user')),
       source_id TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(message_id, sha256)
@@ -660,6 +852,8 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
   `);
 
+  migrateMessageMediaUserSource(db);
+
   // Initialize default basic auth credentials
   initializeBasicAuth(db);
 
@@ -723,6 +917,32 @@ function runMigrations(db: Database.Database): void {
     // Column already exists, ignore error
   }
 
+  // Migration: multi-chat threads inside one session. chat_id NULL on both
+  // sessions.active_chat_id and messages.chat_id means the legacy main chat,
+  // so existing sessions need no data rewrite.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN active_chat_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN chat_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_chats (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      provider_session_id TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_chats_session ON session_chats(session_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_session_chat ON messages(session_id, chat_id);
+  `);
+
   // Vibe was removed as a first-class provider. Keep existing chats accessible by
   // moving them to OpenCode, but clear provider-native resume/model state because
   // those identifiers are not compatible across CLIs.
@@ -740,6 +960,10 @@ function runMigrations(db: Database.Database): void {
   }
 
   migrateUsageHistoryAttribution(db);
+  const liftedProviders = migrateProviderModelsIntoRegistry(db);
+  if (liftedProviders > 0) {
+    console.log(`[DB] Lifted provider models into the registry for ${liftedProviders} user(s).`);
+  }
   const zaiMigration = migrateLegacyClaudeEndpointToZai(db);
   if (zaiMigration.settings || zaiMigration.sessions || zaiMigration.usage) {
     console.log(
@@ -813,6 +1037,184 @@ function runMigrations(db: Database.Database): void {
     // Column already exists, ignore error
   }
 
+  // Durable chat delivery/reconnect cursors. These columns are additive so
+  // older clients can continue using timestamp-based replay while newer
+  // clients use a monotone, restart-safe cursor and snapshot revision.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN event_sequence INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN snapshot_revision INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN client_message_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+  try {
+    db.exec(`ALTER TABLE messages ADD COLUMN event_sequence INTEGER DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_delivery
+      ON messages(session_id, client_message_id)
+      WHERE client_message_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_messages_session_sequence
+      ON messages(session_id, event_sequence)
+      WHERE event_sequence IS NOT NULL;
+
+    -- A client-generated delivery id remains authoritative across sockets and
+    -- backend restarts. ack_json stores the exact terminal acknowledgement so
+    -- retries receive the same answer without dispatching another model turn.
+    CREATE TABLE IF NOT EXISTS message_deliveries (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      client_message_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL CHECK (length(payload_hash) = 64),
+      status TEXT NOT NULL CHECK (status IN ('processing', 'accepted', 'rejected')),
+      message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      disposition TEXT CHECK (disposition IS NULL OR disposition IN ('dispatched', 'queued')),
+      ack_json TEXT,
+      error TEXT,
+      retryable INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 1,
+      accepted_at DATETIME,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, session_id, client_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_message_deliveries_session_updated
+      ON message_deliveries(session_id, updated_at DESC);
+
+    -- Resumable uploads are assembled only after every validated chunk exists;
+    -- completed uploads are then atomically linked to the persisted message.
+    CREATE TABLE IF NOT EXISTS chat_uploads (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
+      sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+      chunk_size INTEGER NOT NULL CHECK (chunk_size > 0),
+      total_chunks INTEGER NOT NULL CHECK (total_chunks > 0),
+      received_bytes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'complete', 'cancelled', 'failed')),
+      error TEXT,
+      reserved_delivery_id TEXT,
+      consumed_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS chat_upload_chunks (
+      upload_id TEXT NOT NULL REFERENCES chat_uploads(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+      byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+      sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(upload_id, chunk_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_uploads_owner_session
+      ON chat_uploads(user_id, session_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_uploads_expiry
+      ON chat_uploads(status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS session_reads (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      chat_key TEXT NOT NULL DEFAULT '',
+      last_read_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(user_id, session_id, chat_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_reads_session
+      ON session_reads(session_id, chat_key, updated_at DESC);
+    CREATE TRIGGER IF NOT EXISTS trg_session_reads_validate_insert
+    BEFORE INSERT ON session_reads
+    WHEN NOT EXISTS (
+      SELECT 1 FROM sessions s
+       WHERE s.id = NEW.session_id AND s.user_id = NEW.user_id
+    ) OR (
+      NEW.last_read_message_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM messages m
+         WHERE m.id = NEW.last_read_message_id
+           AND m.session_id = NEW.session_id
+           AND COALESCE(m.chat_id, '') = NEW.chat_key
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'session read ownership mismatch');
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_session_reads_validate_update
+    BEFORE UPDATE ON session_reads
+    WHEN NOT EXISTS (
+      SELECT 1 FROM sessions s
+       WHERE s.id = NEW.session_id AND s.user_id = NEW.user_id
+    ) OR (
+      NEW.last_read_message_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM messages m
+         WHERE m.id = NEW.last_read_message_id
+           AND m.session_id = NEW.session_id
+           AND COALESCE(m.chat_id, '') = NEW.chat_key
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'session read ownership mismatch');
+    END;
+
+    -- Message history revisions deliberately include edits/deletes as well as
+    -- inserts. The trigger avoids touching sessions.updated_at so background
+    -- metadata changes do not reorder the dashboard.
+    CREATE TRIGGER IF NOT EXISTS trg_messages_snapshot_insert
+    AFTER INSERT ON messages BEGIN
+      UPDATE sessions
+         SET snapshot_revision = snapshot_revision + 1
+       WHERE id = NEW.session_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_messages_snapshot_update
+    AFTER UPDATE OF role, content, chat_id, client_message_id ON messages BEGIN
+      UPDATE sessions
+         SET snapshot_revision = snapshot_revision + 1
+       WHERE id = NEW.session_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_messages_snapshot_delete
+    AFTER DELETE ON messages BEGIN
+      UPDATE sessions
+         SET snapshot_revision = snapshot_revision + 1
+       WHERE id = OLD.session_id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_messages_cancel_consumed_uploads
+    BEFORE DELETE ON messages BEGIN
+      UPDATE chat_uploads
+         SET status = 'cancelled', reserved_delivery_id = NULL,
+             error = 'Consumed message removed', updated_at = CURRENT_TIMESTAMP
+       WHERE consumed_message_id = OLD.id;
+    END;
+  `);
+  db.exec(`
+    UPDATE sessions
+       SET snapshot_revision = (
+         SELECT COUNT(*) FROM messages WHERE messages.session_id = sessions.id
+       )
+     WHERE snapshot_revision = 0
+       AND EXISTS (SELECT 1 FROM messages WHERE messages.session_id = sessions.id)
+  `);
+  try {
+    db.exec(`ALTER TABLE chat_uploads ADD COLUMN reserved_delivery_id TEXT DEFAULT NULL`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
   // Create session_categories table
   db.exec(`
     CREATE TABLE IF NOT EXISTS session_categories (
@@ -858,10 +1260,11 @@ function runMigrations(db: Database.Database): void {
         INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
       END;
 
-      CREATE TRIGGER IF NOT EXISTS trg_messages_fts_update
+      DROP TRIGGER IF EXISTS trg_messages_fts_update;
+      CREATE TRIGGER trg_messages_fts_update
       AFTER UPDATE ON messages BEGIN
         INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES (new.rowid, new.content);
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
       END;
     `);
 
@@ -1106,6 +1509,22 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_delegations_to ON session_delegations(to_session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_delegations_correlation ON session_delegations(correlation_id);
 
+    -- Long-lived credentials for an external supervisor (Hermes, an OpenCode
+    -- or Codex CLI, a script) that drives this instance through the same API
+    -- the user drives. Only the hash is stored; the secret is shown once.
+    CREATE TABLE IF NOT EXISTS gateway_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      last_used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_gateway_tokens_user ON gateway_tokens(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_gateway_tokens_hash ON gateway_tokens(token_hash) WHERE revoked = 0;
+
     CREATE TABLE IF NOT EXISTS container_watchdogs (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1229,8 +1648,175 @@ function runMigrations(db: Database.Database): void {
     }
   }
 
+  // ── Session templates, notification centre, push, drafts, archive ────────
+  // One place for the newer feature tables so their shape is easy to compare.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_templates (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      cli_provider TEXT,
+      cli_model TEXT,
+      cli_reasoning TEXT,
+      mode TEXT,
+      working_directory TEXT,
+      design_style_skill TEXT,
+      writing_style_skill TEXT,
+      surface TEXT DEFAULT 'code',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_templates_user ON session_templates(user_id);
+
+    -- Durable "what happened" feed; the transient socket events are lost on
+    -- reload, this is what the notification centre reads.
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      read_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+      ON notifications(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+    -- Composer drafts follow the read-state model: server-side, per session and
+    -- chat thread, so a draft started on the desktop continues on the phone.
+    CREATE TABLE IF NOT EXISTS session_drafts (
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chat_id TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (session_id, user_id, chat_id)
+    );
+
+    -- Turn diffs: what the working tree looked like before/after one turn.
+    CREATE TABLE IF NOT EXISTS turn_diffs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      turn_id TEXT,
+      files_changed INTEGER DEFAULT 0,
+      insertions INTEGER DEFAULT 0,
+      deletions INTEGER DEFAULT 0,
+      summary TEXT,
+      diff TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_turn_diffs_session
+      ON turn_diffs(session_id, created_at DESC);
+  `);
+
+  // Archive instead of delete — sessions accumulate and deleting is lossy.
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN archived INTEGER DEFAULT 0`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
+  // Carries the payload a notification needs to be acted on in place — an
+  // approval row keeps its requestId so the feed can answer without opening
+  // the session.
+  try {
+    db.exec(`ALTER TABLE notifications ADD COLUMN data TEXT`);
+  } catch {
+    // Column already exists, ignore error
+  }
+
   repriceUsageHistoryCosts(db);
   backfillGpt55ContextSnapshotWindows(db);
+}
+
+/**
+ * SQLite cannot alter a CHECK constraint in place. Builds predating user-upload
+ * history created `message_media.source` without the `user` value, so every
+ * uploaded image failed persistence even though the TypeScript type accepted
+ * it. Rebuild the table once, preserving all existing rows and indexes.
+ */
+export function migrateMessageMediaUserSource(database: Database.Database): boolean {
+  const table = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'message_media'")
+    .get() as { sql: string | null } | undefined;
+  if (!table?.sql || table.sql.includes("'user'")) return false;
+
+  database.transaction(() => {
+    database.exec(`
+      DROP TRIGGER IF EXISTS trg_message_media_validate_ownership;
+      ALTER TABLE message_media RENAME TO message_media_before_user_source;
+
+      CREATE TABLE message_media (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        storage_key TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        byte_size INTEGER NOT NULL CHECK (byte_size > 0 AND byte_size <= 26214400),
+        sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+        alt_text TEXT,
+        source TEXT NOT NULL CHECK (source IN ('provider', 'workspace', 'comfyui', 'user')),
+        source_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(message_id, sha256)
+      );
+
+      INSERT INTO message_media (
+        id, message_id, session_id, user_id, storage_key, filename,
+        mime_type, byte_size, sha256, alt_text, source, source_id, created_at
+      )
+      SELECT
+        id, message_id, session_id, user_id, storage_key, filename,
+        mime_type, byte_size, sha256, alt_text, source, source_id, created_at
+      FROM message_media_before_user_source;
+
+      DROP TABLE message_media_before_user_source;
+
+      CREATE TRIGGER trg_message_media_validate_ownership
+      BEFORE INSERT ON message_media
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM messages m
+        JOIN sessions s ON s.id = m.session_id
+        WHERE m.id = NEW.message_id
+          AND m.session_id = NEW.session_id
+          AND s.user_id = NEW.user_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'message media ownership mismatch');
+      END;
+
+      CREATE INDEX idx_message_media_message_created
+        ON message_media(message_id, created_at, id);
+      CREATE INDEX idx_message_media_session
+        ON message_media(session_id, id);
+      CREATE INDEX idx_message_media_owner_hash
+        ON message_media(user_id, sha256);
+      CREATE INDEX idx_message_media_storage_key
+        ON message_media(storage_key);
+      CREATE UNIQUE INDEX idx_message_media_source_id
+        ON message_media(session_id, source, source_id)
+        WHERE source_id IS NOT NULL;
+    `);
+  })();
+
+  console.log('[DB] Migrated message_media to support durable user attachments.');
+  return true;
 }
 
 function repriceUsageHistoryCosts(database: Database.Database): void {

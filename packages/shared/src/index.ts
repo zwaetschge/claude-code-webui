@@ -2,6 +2,7 @@
 export type * from './types/user.js';
 export type * from './types/session.js';
 export type * from './types/message.js';
+export type * from './types/chat-delivery.js';
 export * from './types/settings.js';
 export type * from './types/style-library.js';
 export type * from './types/mcp.js';

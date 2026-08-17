@@ -931,7 +931,10 @@ export const CLI_PROVIDERS: Record<CLIProvider, CLIProviderConfig> = {
     icon: 'π',
     // Authentication and API connections are intentionally shared with OpenCode.
     // Pi itself stores only generated, secret-free provider references in ~/.pi.
-    credentialsPath: envOr('pi', 'CREDENTIALS_PATH', '~/.opencode'),
+    // Pi keeps its own config under ~/.pi. Pointing availability at ~/.opencode
+    // made Pi look uninstalled whenever OpenCode was absent, even though Pi
+    // only needs a configured endpoint from the WebUI provider registry.
+    credentialsPath: envOr('pi', 'CREDENTIALS_PATH', '~/.pi'),
     supportsStreamJson: true,
     supportsResume: true,
     supportsModes: true,
@@ -1508,9 +1511,17 @@ function getClaudePermissionFlags(mode: SessionMode): string[] {
 }
 
 /**
- * Check if a CLI provider is available (credentials exist)
+ * Check if a CLI provider is available (credentials exist).
+ *
+ * Pass `userId` for the harnesses whose credentials live in the WebUI provider
+ * registry rather than in a CLI's home directory. Without it they fall back to
+ * the directory probe, which answers "is the harness installed" — not "can this
+ * account actually run a turn".
  */
-export async function isProviderAvailable(provider: CLIProvider): Promise<boolean> {
+export async function isProviderAvailable(
+  provider: CLIProvider,
+  userId?: string
+): Promise<boolean> {
   const fs = await import('fs/promises');
   const os = await import('os');
 
@@ -1518,6 +1529,15 @@ export async function isProviderAvailable(provider: CLIProvider): Promise<boolea
   const credPath = config.credentialsPath.replace('~', os.homedir());
 
   try {
+    // Pi and OpenCode route through endpoints the user configures here, so a
+    // configured endpoint is the credential. This is what lets an operator set
+    // up one harness and leave the others untouched.
+    if (userId && (provider === 'pi' || provider === 'opencode')) {
+      const { readOpenCodeProvidersForUser } = await import('../utils/opencodeProviderKeys.js');
+      return readOpenCodeProvidersForUser(userId).some(
+        (entry) => entry.enabled && entry.apiKey.trim().length > 0
+      );
+    }
     if (provider === 'codex') {
       const raw = await fs.readFile(path.join(credPath, 'auth.json'), 'utf-8');
       const auth = JSON.parse(raw) as {
@@ -1544,11 +1564,11 @@ export async function isProviderAvailable(provider: CLIProvider): Promise<boolea
 /**
  * Get all available providers
  */
-export async function getAvailableProviders(): Promise<CLIProviderConfig[]> {
+export async function getAvailableProviders(userId?: string): Promise<CLIProviderConfig[]> {
   const available: CLIProviderConfig[] = [];
 
   for (const provider of Object.values(CLI_PROVIDERS)) {
-    if (await isProviderAvailable(provider.id)) {
+    if (await isProviderAvailable(provider.id, userId)) {
       available.push(provider);
     }
   }

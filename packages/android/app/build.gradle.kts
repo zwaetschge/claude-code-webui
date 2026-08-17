@@ -37,8 +37,8 @@ android {
         applicationId = "com.claudewebui.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -144,6 +144,15 @@ dependencies {
     // Serialization
     implementation(libs.kotlinx.serialization.json)
 
+    // WorkManager — periodic home-screen widget refresh
+    implementation(libs.work.runtime.ktx)
+
+    // Wear OS data layer (phone side of the watch bridge)
+    implementation(libs.play.services.wearable)
+
+    // Frosted glass (backdrop blur) for the floating nav bar
+    implementation(libs.haze)
+
     // Coil Image Loading
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
@@ -161,4 +170,14 @@ dependencies {
     androidTestImplementation(libs.junit.ext)
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
+}
+
+// The shared Android Builder invokes `clean assembleDebug` on an Unraid/FUSE
+// project mount where recursive Gradle deletes can observe directory entries
+// reappearing mid-delete. Keep normal local clean behaviour; only make the
+// builder's redundant pre-build clean a no-op so assemble can update outputs.
+if (project.projectDir.absolutePath.startsWith("/app/projects/")) {
+    tasks.named<org.gradle.api.tasks.Delete>("clean") {
+        setDelete(emptyList<Any>())
+    }
 }

@@ -507,6 +507,53 @@ router.post(
   })
 );
 
+/**
+ * Switch branches, optionally creating one. Refuses when the working tree is
+ * dirty rather than silently carrying changes across — an agent session's
+ * uncommitted work is too easy to lose that way.
+ */
+router.post(
+  '/checkout',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { path: repoPath, branch, create } = req.body as {
+      path?: string;
+      branch?: string;
+      create?: boolean;
+    };
+
+    if (!repoPath) throw new AppError('Path is required', 400, 'MISSING_PATH');
+    if (!branch || !branch.trim()) throw new AppError('Branch is required', 400, 'MISSING_BRANCH');
+
+    try {
+      const git = getGit(repoPath);
+      const status = await git.status();
+      if (!create && (status.modified.length > 0 || status.staged.length > 0)) {
+        throw new AppError(
+          'Working tree has uncommitted changes — commit or stash first.',
+          409,
+          'DIRTY_WORKTREE'
+        );
+      }
+
+      if (create) {
+        await git.checkoutLocalBranch(branch.trim());
+      } else {
+        await git.checkout(branch.trim());
+      }
+
+      const after = await git.status();
+      res.json({ success: true, data: { branch: after.current } });
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      if ((err as Error).message.includes('not a git repository')) {
+        throw new AppError('Not a git repository', 400, 'NOT_GIT_REPO');
+      }
+      throw new AppError((err as Error).message, 400, 'CHECKOUT_FAILED');
+    }
+  })
+);
+
 // Pull from remote
 router.post(
   '/pull',

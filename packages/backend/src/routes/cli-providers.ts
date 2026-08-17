@@ -121,9 +121,9 @@ function getProviderModelsForUser(
 // Get all CLI providers (with availability status)
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const availableProviders = await getAvailableProviders();
-    const availableIds = new Set(availableProviders.map((p) => p.id));
     const userId = (req as AuthenticatedRequest).userId;
+    const availableProviders = await getAvailableProviders(userId);
+    const availableIds = new Set(availableProviders.map((p) => p.id));
     const enabledIds = new Set(getEnabledCliProvidersForUser(userId));
     const zaiConfig = getZaiApiConfigForUser(userId);
 
@@ -172,7 +172,7 @@ router.get('/available', requireAuth, async (req, res) => {
     const userId = (req as AuthenticatedRequest).userId;
     const enabledIds = new Set(getEnabledCliProvidersForUser(userId));
     const zaiConfig = getZaiApiConfigForUser(userId);
-    const providers = (await getAvailableProviders()).filter(
+    const providers = (await getAvailableProviders(userId)).filter(
       (provider) => enabledIds.has(provider.id) && (provider.id !== 'zai' || zaiConfig !== null)
     );
 

@@ -68,13 +68,13 @@ fun ThinkingIndicator(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (toolName != null) {
-                        // Tool executing state
+                        // Tool executing state. A long-running tool call is
+                        // exactly where a missing timer reads as a hang, so it
+                        // gets the same elapsed counter as thinking.
                         PulsingDots(color = MaterialTheme.colorScheme.tertiary)
-                        Text(
-                            text = formatToolLabel(toolName),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp,
+                        ElapsedTime(
+                            startTime = thinkingStartTime,
+                            prefix = formatToolLabel(toolName).removeSuffix("…"),
                         )
                     } else {
                         // Thinking state

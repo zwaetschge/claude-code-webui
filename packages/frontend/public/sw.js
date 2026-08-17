@@ -43,3 +43,51 @@ self.addEventListener('fetch', (event) => {
     })()
   );
 });
+
+// ── Web Push ───────────────────────────────────────────────────────────────
+// The backend sends {title, body, sessionId, kind}; tapping focuses an already
+// open tab for that session instead of opening a second one.
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  let payload = {};
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: 'Plum Code', body: event.data.text() };
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || 'Plum Code', {
+      body: payload.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: payload.sessionId || payload.kind || 'plum',
+      renotify: true,
+      data: { sessionId: payload.sessionId || null },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const sessionId = event.notification.data?.sessionId;
+  const target = sessionId ? `/session/${sessionId}` : '/';
+
+  event.waitUntil(
+    (async () => {
+      const clientList = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+      for (const client of clientList) {
+        if (client.url.includes(target)) return client.focus();
+      }
+      const existing = clientList[0];
+      if (existing) {
+        await existing.focus();
+        return existing.navigate(target);
+      }
+      return self.clients.openWindow(target);
+    })()
+  );
+});

@@ -29,8 +29,6 @@ import kotlinx.serialization.json.jsonPrimitive
 
 // ── Permission Request Card ───────────────────────────────────────────────────
 
-private const val PERMISSION_TIMEOUT_SECONDS = 30
-
 /** Dangerous operations that warrant a red warning treatment */
 private val DESTRUCTIVE_PATTERNS = listOf(
     "rm ", "rmdir", "rm -", "sudo rm", "del ", "delete",
@@ -49,19 +47,21 @@ fun PermissionRequestCard(
     val toolInfo = ToolIconMapper.forTool(request.toolName)
     val isDestructive = isDestructiveOperation(request)
 
-    // Countdown timer
-    var secondsRemaining by remember { mutableIntStateOf(PERMISSION_TIMEOUT_SECONDS) }
-    var expired by remember { mutableStateOf(false) }
+    // Key the state as well as the coroutine to the request. A new approval
+    // must never inherit the previous card's elapsed/expired state.
+    var elapsedSeconds by remember(request.requestId) { mutableIntStateOf(0) }
 
     LaunchedEffect(request.requestId) {
-        while (secondsRemaining > 0) {
+        elapsedSeconds = 0
+        repeat(PERMISSION_REQUEST_LIFETIME_SECONDS) {
             delay(1000)
-            secondsRemaining--
+            elapsedSeconds++
         }
-        expired = true
     }
 
-    val timerProgress = secondsRemaining.toFloat() / PERMISSION_TIMEOUT_SECONDS
+    val secondsRemaining = permissionSecondsRemaining(elapsedSeconds)
+    val awaitingServer = secondsRemaining == 0
+    val timerProgress = secondsRemaining.toFloat() / PERMISSION_REQUEST_LIFETIME_SECONDS
     val timerColor by animateColorAsState(
         targetValue = when {
             timerProgress > 0.5f -> Color(0xFF22C55E)
@@ -139,14 +139,14 @@ fun PermissionRequestCard(
                 }
 
                 // Countdown chip
-                if (!expired) {
+                if (!awaitingServer) {
                     CountdownChip(
                         seconds = secondsRemaining,
                         color = timerColor,
                         progress = timerProgress,
                     )
                 } else {
-                    ExpiredChip()
+                    AwaitingServerChip()
                 }
             }
 
@@ -200,46 +200,27 @@ fun PermissionRequestCard(
             Spacer(modifier = Modifier.height(14.dp))
 
             // ── Action buttons ────────────────────────────────────────────────
-            if (!expired) {
-                PermissionActions(
-                    isDestructive = isDestructive,
-                    onAllow = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onAction(PermissionAction.ALLOW_ONCE)
-                    },
-                    onAllowAlways = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onAction(PermissionAction.ALLOW_PROJECT)
-                    },
-                    onDeny = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onAction(PermissionAction.DENY)
-                    },
-                )
-            } else {
-                // Expired state
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Timer,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Permission request expired",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            // The backend is authoritative. Keep the controls usable after the
+            // local countdown: transport latency must not disable a request
+            // that the server still accepts.
+            PermissionActions(
+                isDestructive = isDestructive,
+                onAllow = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onAction(PermissionAction.ALLOW_ONCE)
+                },
+                onAllowAlways = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onAction(PermissionAction.ALLOW_PROJECT)
+                },
+                onDeny = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onAction(PermissionAction.DENY)
+                },
+            )
 
             // ── Timer progress bar ────────────────────────────────────────────
-            if (!expired) {
+            if (!awaitingServer) {
                 Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
                     progress = { timerProgress },
@@ -286,13 +267,13 @@ private fun CountdownChip(seconds: Int, color: Color, progress: Float) {
 }
 
 @Composable
-private fun ExpiredChip() {
+private fun AwaitingServerChip() {
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
     ) {
         Text(
-            text = "Expired",
+            text = "Checking…",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

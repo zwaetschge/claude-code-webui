@@ -1,9 +1,10 @@
 package com.claudewebui.app.ui.components.chat
 
-import android.util.Base64
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Stop
@@ -26,10 +28,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -37,7 +43,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.claudewebui.app.data.model.FileAttachmentData
+import com.claudewebui.app.data.model.PendingFileAttachment
+import com.claudewebui.app.data.model.SlashCommand
+import com.claudewebui.app.data.model.ActiveFollowupMode
+import com.claudewebui.app.ui.components.common.PlumAccent
+import com.claudewebui.app.ui.components.common.PlumBorder
+import com.claudewebui.app.ui.components.common.PlumMuted
+import com.claudewebui.app.ui.components.common.PlumSurfaceStrong
+import com.claudewebui.app.ui.components.common.PlumText
+import com.claudewebui.app.ui.components.common.glassSurface
+import com.claudewebui.app.ui.theme.LocalPlumPalette
+import com.claudewebui.app.ui.theme.LocalReduceMotion
 
 @Composable
 fun ChatInput(
@@ -47,23 +63,140 @@ fun ChatInput(
     onAttachFile: (() -> Unit)? = null,
     isWorking: Boolean = false,
     onInterrupt: (() -> Unit)? = null,
-    attachments: List<FileAttachmentData> = emptyList(),
+    attachments: List<PendingFileAttachment> = emptyList(),
     onRemoveAttachment: ((Int) -> Unit)? = null,
+    isPreparingAttachments: Boolean = false,
+    attachmentPreparationProgress: Float = 0f,
+    activeFollowupMode: ActiveFollowupMode = ActiveFollowupMode.QUEUE,
+    onActiveFollowupModeChange: (ActiveFollowupMode) -> Unit = {},
+    onCancelDelivery: (() -> Unit)? = null,
+    slashCommands: List<SlashCommand> = emptyList(),
+    voiceAvailable: Boolean = false,
+    isTranscribing: Boolean = false,
+    isRecording: Boolean = false,
+    onToggleRecording: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val reduceMotion = LocalReduceMotion.current
 
-    val canSend = (text.isNotBlank() || attachments.isNotEmpty()) && !isWorking
+    // Sending while the agent works is allowed — the server queues the turn.
+    val canSend = text.isNotBlank() || attachments.isNotEmpty()
     val charCount = text.length
     val showCharCount = charCount > 800
 
+    // Transparent over the app-wide backdrop; the field itself carries the
+    // frosted-glass fill, so no solid bar sits behind the composer.
+    // A leading "/" opens the command picker and filters as you type. Only the
+    // first word counts — once a space follows, the user is writing arguments.
+    val commandQuery = text.takeIf { it.startsWith("/") && !it.contains(' ') && !it.contains('\n') }
+    val commandMatches = remember(commandQuery, slashCommands) {
+        val prefix = commandQuery?.removePrefix("/")?.lowercase()
+        if (prefix == null) {
+            emptyList()
+        } else {
+            slashCommands
+                .filter { prefix.isEmpty() || it.name.lowercase().startsWith(prefix) }
+                .take(6)
+        }
+    }
+
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
+        color = Color.Transparent,
     ) {
         Column {
+            AnimatedVisibility(
+                visible = commandMatches.isNotEmpty(),
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(PlumSurfaceStrong)
+                        .border(1.dp, PlumBorder, RoundedCornerShape(16.dp)),
+                ) {
+                    commandMatches.forEach { command ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    // Trailing space so arguments can follow straight away.
+                                    onTextChange("/${command.name} ")
+                                }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "/${command.name}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = PlumAccent,
+                                )
+                                if (command.description.isNotBlank()) {
+                                    Text(
+                                        command.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = PlumMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            Text(
+                                command.scope,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PlumMuted,
+                            )
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = isPreparingAttachments) {
+                Column(
+                    Modifier
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Uploading attachments…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PlumMuted,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "${(attachmentPreparationProgress.coerceIn(0f, 1f) * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PlumMuted,
+                        )
+                        if (onCancelDelivery != null) {
+                            TextButton(
+                                onClick = onCancelDelivery,
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Text("Cancel")
+                            }
+                        }
+                    }
+                    LinearProgressIndicator(
+                        progress = { attachmentPreparationProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
             // Pending attachments
             AnimatedVisibility(
                 visible = attachments.isNotEmpty(),
@@ -107,26 +240,53 @@ fun ChatInput(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Attachment button
-                if (onAttachFile != null) {
-                    IconButton(
-                        onClick = onAttachFile,
+                // Dictation — same glass circle as the attachment button.
+                // Hidden entirely when the server cannot transcribe.
+                if (voiceAvailable && onToggleRecording != null) {
+                    Box(
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape),
-                        enabled = !isWorking,
+                            .padding(bottom = 2.dp)
+                            .size(48.dp)
+                            .glassSurface(CircleShape)
+                            .clickable(enabled = !isTranscribing, onClick = onToggleRecording),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isTranscribing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = PlumAccent,
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (isRecording) Icons.Outlined.Stop else Icons.Outlined.Mic,
+                                contentDescription = if (isRecording) "Stop dictation" else "Dictate",
+                                tint = if (isRecording) Color(0xFFEF4444) else PlumMuted,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+
+                // Attachment button — glass circle flanking the field, base-
+                // aligned with it so the row reads as one composed unit.
+                if (onAttachFile != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(bottom = 2.dp)
+                            .size(48.dp)
+                            .glassSurface(CircleShape)
+                            .clickable(onClick = onAttachFile),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.AttachFile,
                             contentDescription = "Attach file",
-                            tint = if (!isWorking)
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                            tint = PlumMuted,
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -138,9 +298,13 @@ fun ChatInput(
                     onValueChange = onTextChange,
                     placeholder = {
                         Text(
-                            text = if (isWorking) "Agent is working…" else "Message agent…",
+                            text = when {
+                                !isWorking -> "Message agent…"
+                                activeFollowupMode == ActiveFollowupMode.STEER -> "Steer the active turn…"
+                                else -> "Queue after the active turn…"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            color = PlumMuted,
                         )
                     },
                     modifier = Modifier
@@ -156,64 +320,75 @@ fun ChatInput(
                     maxLines = 6,
                     textStyle = MaterialTheme.typography.bodyMedium,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        focusedBorderColor = PlumAccent,
+                        unfocusedBorderColor = PlumBorder,
+                        focusedContainerColor = LocalPlumPalette.current.glassFillTop,
+                        unfocusedContainerColor = LocalPlumPalette.current.glassFill,
+                        focusedTextColor = PlumText,
+                        unfocusedTextColor = PlumText,
                     ),
-                    enabled = !isWorking,
                 )
 
                 // Send / Interrupt button
                 val buttonScale by animateFloatAsState(
                     targetValue = if (canSend || isWorking) 1f else 0.85f,
-                    animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                    animationSpec = if (reduceMotion) snap() else spring(stiffness = Spring.StiffnessMedium),
                     label = "send_scale",
                 )
 
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .padding(bottom = 2.dp)
+                        .size(48.dp)
                         .graphicsLayer { scaleX = buttonScale; scaleY = buttonScale }
                         .clip(CircleShape)
                         .background(
                             color = when {
+                                canSend -> PlumAccent
                                 isWorking -> MaterialTheme.colorScheme.error
-                                canSend -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.surfaceContainerHighest
+                                else -> PlumSurfaceStrong
                             }
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     IconButton(
                         onClick = {
-                            if (isWorking) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onInterrupt?.invoke()
-                            } else if (canSend) {
+                            if (canSend) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onSend(text)
                                 keyboardController?.hide()
+                            } else if (isWorking) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onInterrupt?.invoke()
                             }
                         },
                         modifier = Modifier.fillMaxSize(),
                         enabled = canSend || isWorking,
                     ) {
                         AnimatedContent(
-                            targetState = isWorking,
+                            targetState = isWorking && !canSend,
                             transitionSpec = {
-                                scaleIn(animationSpec = tween(150)) togetherWith
+                                if (reduceMotion) {
+                                    fadeIn(animationSpec = snap()) togetherWith fadeOut(animationSpec = snap())
+                                } else {
+                                    scaleIn(animationSpec = tween(150)) togetherWith
                                         scaleOut(animationSpec = tween(150))
+                                }
                             },
                             label = "send_icon",
                         ) { working ->
                             Icon(
                                 imageVector = if (working) Icons.Outlined.Stop else Icons.Filled.Send,
-                                contentDescription = if (working) "Stop" else "Send",
+                                contentDescription = when {
+                                    working -> "Stop active turn"
+                                    isWorking && activeFollowupMode == ActiveFollowupMode.STEER -> "Steer agent now"
+                                    isWorking -> "Queue message"
+                                    else -> "Send message"
+                                },
                                 tint = when {
                                     working -> MaterialTheme.colorScheme.onError
-                                    canSend -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    canSend -> Color.White
+                                    else -> PlumMuted.copy(alpha = 0.38f)
                                 },
                                 modifier = Modifier.size(18.dp),
                             )
@@ -227,7 +402,7 @@ fun ChatInput(
 
 @Composable
 private fun AttachmentChip(
-    attachment: FileAttachmentData,
+    attachment: PendingFileAttachment,
     onRemove: () -> Unit,
 ) {
     val isImage = attachment.mimeType.startsWith("image/")
@@ -236,9 +411,6 @@ private fun AttachmentChip(
         attachment.mimeType.startsWith("text/") ||
             attachment.mimeType in TEXT_MIME_TYPES -> Icons.Outlined.Description
         else -> Icons.Outlined.InsertDriveFile
-    }
-    val imageBytes = remember(attachment.data, isImage) {
-        if (isImage) runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull() else null
     }
 
     Surface(
@@ -258,9 +430,9 @@ private fun AttachmentChip(
                     .background(MaterialTheme.colorScheme.surfaceContainerLow),
                 contentAlignment = Alignment.Center,
             ) {
-                if (imageBytes != null) {
+                if (isImage) {
                     AsyncImage(
-                        model = imageBytes,
+                        model = attachment.uri,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
@@ -275,7 +447,7 @@ private fun AttachmentChip(
                 }
             }
             Text(
-                text = attachment.filename ?: "attachment",
+                text = attachment.filename,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
@@ -284,7 +456,7 @@ private fun AttachmentChip(
             )
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,

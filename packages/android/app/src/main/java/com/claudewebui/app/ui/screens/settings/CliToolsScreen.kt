@@ -53,10 +53,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.claudewebui.app.ui.theme.AntiqueBrass
-import com.claudewebui.app.ui.theme.InfoBlue
-import com.claudewebui.app.ui.theme.SuccessGreen
-import com.claudewebui.app.ui.theme.WarningAmber
+import com.claudewebui.app.ui.components.common.PlumAmber
+import com.claudewebui.app.ui.components.common.PlumBlue
+import com.claudewebui.app.ui.components.common.PlumGreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -127,8 +126,8 @@ fun CliToolsScreen(
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AntiqueBrass,
-                        focusedLabelColor = AntiqueBrass,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        focusedLabelColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
             }
@@ -145,13 +144,13 @@ fun CliToolsScreen(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(SuccessGreen.copy(alpha = 0.15f))
+                            .background(PlumGreen.copy(alpha = 0.15f))
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
                         Text(
                             "$enabledCount / $totalCount enabled",
                             style = MaterialTheme.typography.labelSmall,
-                            color = SuccessGreen,
+                            color = PlumGreen,
                             fontWeight = FontWeight.Medium,
                         )
                     }
@@ -164,7 +163,7 @@ fun CliToolsScreen(
                     ToolSectionHeader(
                         label = "Built-in",
                         icon = Icons.Default.Build,
-                        color = AntiqueBrass,
+                        color = MaterialTheme.colorScheme.primary,
                         count = builtinTools.size,
                     )
                 }
@@ -192,7 +191,7 @@ fun CliToolsScreen(
                     ToolSectionHeader(
                         label = "Custom",
                         icon = Icons.Default.Terminal,
-                        color = InfoBlue,
+                        color = PlumBlue,
                         count = customTools.size,
                     )
                 }
@@ -220,7 +219,7 @@ fun CliToolsScreen(
                     ToolSectionHeader(
                         label = "MCP-provided",
                         icon = Icons.Default.Extension,
-                        color = WarningAmber,
+                        color = PlumAmber,
                         count = mcpTools.size,
                     )
                 }
@@ -334,9 +333,9 @@ private fun ToolRow(
     onToggle: (Boolean) -> Unit,
 ) {
     val categoryColor = when (tool.category) {
-        CliToolCategory.BUILTIN -> AntiqueBrass
-        CliToolCategory.CUSTOM -> InfoBlue
-        CliToolCategory.MCP_PROVIDED -> WarningAmber
+        CliToolCategory.BUILTIN -> MaterialTheme.colorScheme.primary
+        CliToolCategory.CUSTOM -> PlumBlue
+        CliToolCategory.MCP_PROVIDED -> PlumAmber
     }
 
     ListItem(
@@ -378,8 +377,8 @@ private fun ToolRow(
                 checked = tool.enabled,
                 onCheckedChange = onToggle,
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = AntiqueBrass,
-                    checkedTrackColor = AntiqueBrass.copy(alpha = 0.4f),
+                    checkedThumbColor = MaterialTheme.colorScheme.primary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
                 ),
             )
         },
