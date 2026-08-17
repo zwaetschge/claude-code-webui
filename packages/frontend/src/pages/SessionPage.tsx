@@ -426,8 +426,13 @@ export function SessionPage() {
   // Floating header + input overlay: measure their heights so the scroll area
   // below gets matching top/bottom padding. Without this, content scrolls
   // completely behind the bars and the top/bottom rows are permanently hidden.
-  const headerBarRef = useRef<HTMLDivElement>(null);
-  const inputBarRef = useRef<HTMLDivElement>(null);
+  // Callback refs, not useRef: the composer only renders on the chat view, so
+  // switching to Files and back mounts a *new* node. A ResizeObserver attached
+  // once at mount keeps watching the detached one, --chat-input-h freezes, and
+  // the transcript then scrolls behind a composer that has since grown — the
+  // status strip appearing during a turn is enough to swallow the last lines.
+  const [headerBarEl, setHeaderBarEl] = useState<HTMLDivElement | null>(null);
+  const [inputBarEl, setInputBarEl] = useState<HTMLDivElement | null>(null);
   const rootShellRef = useRef<HTMLDivElement>(null);
 
   // Per-session slices: shallow-compared so unrelated sessions don't trigger re-renders
@@ -557,16 +562,16 @@ export function SessionPage() {
       shell.style.setProperty(name, `${el.offsetHeight}px`);
     };
     const ro = new ResizeObserver(() => {
-      setVar('--chat-header-h', headerBarRef.current);
-      setVar('--chat-input-h', inputBarRef.current);
+      setVar('--chat-header-h', headerBarEl);
+      setVar('--chat-input-h', inputBarEl);
     });
-    if (headerBarRef.current) ro.observe(headerBarRef.current);
-    if (inputBarRef.current) ro.observe(inputBarRef.current);
-    // Prime the values on mount
-    setVar('--chat-header-h', headerBarRef.current);
-    setVar('--chat-input-h', inputBarRef.current);
+    if (headerBarEl) ro.observe(headerBarEl);
+    if (inputBarEl) ro.observe(inputBarEl);
+    // Prime the values for the nodes currently mounted
+    setVar('--chat-header-h', headerBarEl);
+    setVar('--chat-input-h', inputBarEl);
     return () => ro.disconnect();
-  }, []);
+  }, [headerBarEl, inputBarEl]);
 
   // Fetch available CLI tools
   const { data: cliTools } = useQuery({
@@ -4264,7 +4269,7 @@ export function SessionPage() {
       >
         {/* Session Header measurement point; visible runtime controls live in the right menu. */}
         <div
-          ref={headerBarRef}
+          ref={setHeaderBarEl}
           className={cn(
             'chat-topbar relative shrink-0',
             isTaskSurface ? 'task-workbench-topbar' : 'is-empty'
@@ -4630,7 +4635,7 @@ export function SessionPage() {
 
         {/* Centered composer */}
         {mainView === 'chat' && (
-          <div ref={inputBarRef} className="composer-wrap shrink-0">
+          <div ref={setInputBarEl} className="composer-wrap shrink-0">
             <div className="composer-inner">
               {showSavedIndicator && (
                 <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground animate-fade-in pb-2">
