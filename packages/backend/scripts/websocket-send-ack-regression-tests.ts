@@ -240,7 +240,7 @@ assert.match(
   'known replay gaps must expose neither truncated items nor an unapplied high watermark'
 );
 const sequencedHelper = managerSource.match(
-  /private emitBufferedEvent<[\s\S]*?\n  private compactActivityText/
+  /private emitBufferedEvent<[\s\S]*?\n {2}private compactActivityText/
 )?.[0];
 assert.ok(sequencedHelper, 'sequenced buffered-event helper should remain present');
 assert.ok(
