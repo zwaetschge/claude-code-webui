@@ -5202,6 +5202,17 @@ html.dark .aurora-grain,
   bottom: 12px;
   left: 0;
 }
+
+/* The pill floats over the transcript, so it needs an opaque surface of its
+   own. At the shared 50% tint the message underneath read straight through it
+   and both became illegible. */
+.chat-jump-latest .ui-pill {
+  border: 1px solid hsl(var(--foreground) / 0.12);
+  background: hsl(var(--card) / 0.94);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  box-shadow: 0 10px 28px -18px hsl(var(--shadow-color) / 0.8);
+}
 .composer-wrap > * {
   pointer-events: auto;
 }
