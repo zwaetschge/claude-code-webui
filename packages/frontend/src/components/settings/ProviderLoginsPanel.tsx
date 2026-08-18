@@ -152,17 +152,18 @@ export function ProviderLoginsPanel() {
               )}
             </h3>
           </header>
-          {status.antigravity.authenticated ? (
-            <p className="text-xs text-muted-foreground">
-              The <code>antigravity/*</code> models are selectable in Pi sessions.
+          <div className="flex items-start justify-between gap-3">
+            <p className="min-w-0 text-xs text-muted-foreground">
+              {status.antigravity.authenticated
+                ? 'Signed in — the antigravity/* models are selectable in Pi sessions.'
+                : 'Sign in with Google to use the antigravity/* models in Pi. Using this may violate Google’s Terms of Service.'}
             </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              Pi has no sign-in outside a session, so this one cannot be started from here. Open a
-              Pi session and send <code>/login antigravity</code>; Pi shows a Google URL and takes
-              the returned code. Using it may violate Google&apos;s Terms of Service.
-            </p>
-          )}
+            <CliDeviceLoginDialog
+              provider="pi"
+              authenticated={status.antigravity.authenticated}
+              onCompleted={refresh}
+            />
+          </div>
         </section>
       )}
     </div>

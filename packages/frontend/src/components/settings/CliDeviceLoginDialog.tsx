@@ -24,7 +24,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from '@/hooks/use-toast';
 import { api } from '@/services/api';
 
-type CliLoginProvider = 'claude' | 'codex' | 'kimi';
+type CliLoginProvider = 'claude' | 'codex' | 'kimi' | 'pi';
 type CliLoginStatus = 'starting' | 'awaiting_code' | 'completed' | 'error';
 
 interface CliLoginData {
@@ -62,6 +62,12 @@ const PROVIDER_COPY = {
     account: 'Claude subscription',
     description:
       'Start Anthropic authorization in Plum, finish it in your browser, and paste a returned code if requested.',
+  },
+  pi: {
+    name: 'Antigravity',
+    account: 'Google',
+    description:
+      'Pi has no sign-in outside a session, so Plum drives its login screen for you. Complete the Google flow, then paste the redirect URL or code below.',
   },
   kimi: {
     name: 'Kimi Code',

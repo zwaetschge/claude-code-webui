@@ -347,10 +347,16 @@ export function resolvePiExtensionPaths(): string[] {
   // Pi removed built-in Google Antigravity in 0.71.0. The extension registers
   // the provider again, with its own OAuth flow; Pi stores the tokens in the
   // per-user agent dir like any other login.
+  // Image copy first, unlike the others: a separately installed copy brings its
+  // own nested @earendil-works/pi-agent-core, and the duplicate module makes Pi
+  // silently ignore the provider registration ("Unknown provider antigravity").
+  // The copy installed next to pi-coding-agent shares that core.
   const antigravity = firstExisting(
-    prefixes.map((prefix) =>
-      path.join(prefix, 'lib', 'node_modules', 'pi-antigravity', 'src', 'index.ts')
-    )
+    [...prefixes]
+      .reverse()
+      .map((prefix) =>
+        path.join(prefix, 'lib', 'node_modules', 'pi-antigravity', 'src', 'index.ts')
+      )
   );
   return [mcp, subagent, permission, antigravity].filter((value): value is string => !!value);
 }
