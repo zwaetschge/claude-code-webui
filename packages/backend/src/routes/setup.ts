@@ -10,6 +10,9 @@ import {
 } from '../services/cli-providers.js';
 import { getEnabledCliProvidersForUser, getZaiApiConfigForUser } from './settings.js';
 import { readOpenCodeProvidersForUser } from '../utils/opencodeProviderKeys.js';
+import fs from 'fs';
+import path from 'path';
+import { hasPiAntigravityExtension } from '../utils/piConfig.js';
 import { getPiModelsForUser } from '../utils/piConfig.js';
 import type { ApiResponse } from '@plum-code-webui/shared';
 
@@ -44,6 +47,28 @@ function isInstalled(provider: CLIProvider): boolean {
   // credential check decide.
   if (!command.includes('/')) return true;
   return existsSync(command.replace('~', os.homedir()));
+}
+
+/**
+ * Antigravity logs in through Pi's own `/login` inside a session — Pi has no
+ * CLI-level login — so the only thing the UI can report is whether that already
+ * happened. Pi stores every credential in the agent dir's auth.json.
+ */
+function readPiAntigravityState(userId: string): {
+  available: boolean;
+  authenticated: boolean;
+} {
+  const available = hasPiAntigravityExtension();
+  if (!available) return { available: false, authenticated: false };
+
+  const segment = userId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 120) || 'default';
+  const authFile = path.join(os.homedir(), '.pi', 'webui-users', segment, 'agent', 'auth.json');
+  try {
+    const parsed = JSON.parse(fs.readFileSync(authFile, 'utf8')) as Record<string, unknown>;
+    return { available: true, authenticated: Object.keys(parsed).includes('antigravity') };
+  } catch {
+    return { available: true, authenticated: false };
+  }
 }
 
 /**
@@ -93,11 +118,24 @@ router.get('/status', requireAuth, async (req: Request, res: Response) => {
   );
 
   const ready = harnesses.filter((harness) => harness.ready);
+  // The endpoints themselves, so the logins page can list what is configured
+  // without a second round trip. Keys never leave the server.
+  const endpoints = registryProviders.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    baseUrl: entry.baseUrl ?? null,
+    enabled: entry.enabled,
+    hasKey: entry.apiKey.trim().length > 0,
+    modelCount: entry.models?.length ?? 0,
+  }));
+
   const response: ApiResponse<{
     ready: boolean;
     readyHarnesses: string[];
     configuredEndpoints: number;
     harnesses: typeof harnesses;
+    endpoints: typeof endpoints;
+    antigravity: ReturnType<typeof readPiAntigravityState>;
   }> = {
     success: true,
     data: {
@@ -105,6 +143,8 @@ router.get('/status', requireAuth, async (req: Request, res: Response) => {
       readyHarnesses: ready.map((harness) => harness.id),
       configuredEndpoints: configuredEndpoints.length,
       harnesses,
+      endpoints,
+      antigravity: readPiAntigravityState(userId),
     },
   };
   res.json(response);
