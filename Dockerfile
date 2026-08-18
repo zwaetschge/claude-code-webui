@@ -88,6 +88,10 @@ ARG CODEX_VERSION=0.144.0
 ARG OPENCODE_VERSION=1.17.17
 ARG PI_CODING_AGENT_VERSION=0.83.0
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
+# Pi dropped built-in Google Antigravity in 0.71.0; this community extension is
+# the supported way back in — it registers an `antigravity` provider with its
+# own OAuth flow. Ships TypeScript source with no install scripts.
+ARG PI_ANTIGRAVITY_VERSION=0.3.0
 ARG KIMI_CODE_VERSION=0.31.1
 ARG NPM_VERSION=12.0.2
 ARG NPM_BRACE_EXPANSION_VERSION=5.0.9
@@ -99,7 +103,8 @@ RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     npm install -g --prefix /opt/plum-cli \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
       @earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION} \
-      pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION} && \
+      pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION} \
+      pi-antigravity@${PI_ANTIGRAVITY_VERSION} && \
     npm install -g --prefix /opt/plum-cli @openai/codex@${CODEX_VERSION} && \
     npm install -g --prefix /opt/plum-cli opencode-ai@${OPENCODE_VERSION} && \
     npm install -g --prefix /opt/plum-cli @moonshot-ai/kimi-code@${KIMI_CODE_VERSION} && \
@@ -110,6 +115,7 @@ RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     /opt/plum-cli/bin/kimi --version && \
     test -x /opt/plum-cli/bin/pi && \
     test -x /opt/plum-cli/bin/pi-mcp-adapter && \
+    test -f /opt/plum-cli/lib/node_modules/pi-antigravity/src/index.ts && \
     npm install -g --prefix /usr/local npm@${NPM_VERSION} && \
     /usr/local/bin/npm --version | grep -Fx "${NPM_VERSION}" && \
     /usr/local/bin/npm pack brace-expansion@${NPM_BRACE_EXPANSION_VERSION} \
