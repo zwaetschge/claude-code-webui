@@ -1,6 +1,12 @@
 const ANSI_ESCAPE_REGEX =
   /\x1B\[[0-9;]*[a-zA-Z]|\x1B\[\?[0-9;]*[a-zA-Z]|\x1B\[[<>=][^\x1B]*[a-zA-Z]/g;
-const URL_REGEX = /(https?:\/\/[^\s"'<>\u001b]+)/i;
+// OSC sequences, hyperlinks above all: ESC ] 8 ; ; <url> BEL <label> ESC ] 8 ; ; BEL
+// carries the address twice. Leaving them in made the extractor run from the
+// payload straight through the BEL into the label — BEL is not whitespace — and
+// hand Google a query string with the whole URL appended to ?prompt=consent.
+const OSC_SEQUENCE_REGEX = /\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g;
+// Control characters end a URL as surely as a space does.
+const URL_REGEX = /(https?:\/\/[^\s"'<>\u0000-\u001f]+)/i;
 const DEVICE_CODE_REGEX = /\b[A-Z0-9]{4}(?:-[A-Z0-9]{4})+\b/;
 
 const CLI_LOGIN_INVOCATIONS = {
@@ -25,10 +31,22 @@ export const CLI_LOGIN_TUI_INPUT: Partial<Record<string, string>> = {
 };
 
 export function stripCliLoginAnsi(value: string): string {
-  return value.replace(ANSI_ESCAPE_REGEX, '');
+  return value.replace(OSC_SEQUENCE_REGEX, '').replace(ANSI_ESCAPE_REGEX, '');
 }
 
+/** ESC ] 8 ; <params> ; <uri> BEL|ST — the hyperlink's authoritative target. */
+const OSC_HYPERLINK_REGEX = /\x1B\]8;[^;\x07\x1B]*;([^\x07\x1B]+)(?:\x07|\x1B\\)/;
+
 export function extractCliLoginUrl(value: string): string | null {
+  // Prefer the hyperlink payload. A TUI renders the address as an OSC-8 link
+  // and shows a shortened label, so the payload is the only complete copy —
+  // and reading the label instead once produced a URL with the whole thing
+  // appended to ?prompt=consent, which Google rejected as invalid_request.
+  const linked = value.match(OSC_HYPERLINK_REGEX)?.[1]?.trim();
+  if (linked && /^https?:\/\//i.test(linked)) {
+    return linked.replace(/[),.;\]}]+$/, '');
+  }
+
   const match = stripCliLoginAnsi(value).match(URL_REGEX);
   return match?.[1]?.replace(/[),.;\]}]+$/, '') || null;
 }

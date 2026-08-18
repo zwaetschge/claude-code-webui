@@ -33,6 +33,7 @@ interface LoginSession {
   proc: pty.IPty | null;
   status: LoginStatus;
   output: string;
+  rawOutput: string;
   loginUrl?: string;
   verificationCode?: string;
   error?: string;
@@ -59,9 +60,13 @@ const loginSessions = new Map<string, LoginSession>();
 function appendOutput(session: LoginSession, chunk: string): void {
   const cleaned = stripCliLoginAnsi(chunk);
   session.output = (session.output + cleaned).slice(-OUTPUT_LIMIT);
+  // The URL has to be read from the untouched stream: a TUI publishes it as an
+  // OSC-8 hyperlink and only prints a shortened label, so stripping escapes
+  // first throws away the one complete copy.
+  session.rawOutput = (session.rawOutput + chunk).slice(-OUTPUT_LIMIT);
 
   if (!session.loginUrl) {
-    session.loginUrl = extractCliLoginUrl(session.output) || undefined;
+    session.loginUrl = extractCliLoginUrl(session.rawOutput) || undefined;
   }
 
   if (!session.verificationCode) {
@@ -73,6 +78,19 @@ function appendOutput(session: LoginSession, chunk: string): void {
     (session.loginUrl || CODE_PROMPT_REGEX.test(session.output))
   ) {
     session.status = 'awaiting_code';
+  }
+
+  // A provider that binds a fixed loopback port for the OAuth callback fails
+  // outright while an abandoned attempt still holds it. Without this the run
+  // just never produces a URL, which reads like a hang.
+  if (session.status !== 'completed' && !session.loginUrl) {
+    const failure = session.output.match(/Failed to login[^\n]*/i)?.[0];
+    if (failure) {
+      session.status = 'error';
+      session.error = /EADDRINUSE/i.test(failure)
+        ? `${failure.trim()} — a previous login attempt is still running. Cancel it and try again.`
+        : failure.trim();
+    }
   }
 
   if (ALREADY_LOGGED_REGEX.test(session.output) || LOGIN_SUCCESS_REGEX.test(session.output)) {
@@ -218,6 +236,7 @@ router.post(
       proc: null,
       status: 'starting',
       output: '',
+      rawOutput: '',
       createdAt: Date.now(),
       waiters: [],
     };
