@@ -222,7 +222,11 @@ function buildPiProvidersForUser(userId: string): {
 }
 
 export function getPiModelsForUser(userId: string): string[] {
-  return buildPiProvidersForUser(userId).models;
+  const models = buildPiProvidersForUser(userId).models;
+  // Extension-provided models are not in the registry, so append them when the
+  // extension ships in this image. The user still has to /login antigravity.
+  if (!hasPiAntigravityExtension()) return models;
+  return [...new Set([...models, ...PI_ANTIGRAVITY_MODELS])];
 }
 
 function readClaudeMcpServers(): Record<string, ClaudeMcpServer> {
@@ -340,7 +344,39 @@ export function resolvePiExtensionPaths(): string[] {
     path.resolve(process.cwd(), 'scripts', 'pi-webui-extension.ts'),
     '/app/scripts/pi-webui-extension.ts',
   ]);
-  return [mcp, subagent, permission].filter((value): value is string => !!value);
+  // Pi removed built-in Google Antigravity in 0.71.0. The extension registers
+  // the provider again, with its own OAuth flow; Pi stores the tokens in the
+  // per-user agent dir like any other login.
+  const antigravity = firstExisting(
+    prefixes.map((prefix) =>
+      path.join(prefix, 'lib', 'node_modules', 'pi-antigravity', 'src', 'index.ts')
+    )
+  );
+  return [mcp, subagent, permission, antigravity].filter((value): value is string => !!value);
+}
+
+/**
+ * Models the Antigravity extension registers under the `antigravity` provider.
+ *
+ * Mirrored here rather than read from the package: the WebUI resolves the Pi
+ * model list from the provider registry, and an extension's catalog only
+ * materialises inside Pi's own process. Without this the models exist but
+ * cannot be picked in the UI. Keep in sync with pi-antigravity's models.ts
+ * when bumping PI_ANTIGRAVITY_VERSION in the Dockerfile.
+ */
+export const PI_ANTIGRAVITY_MODELS = [
+  'antigravity/gemini-3.7-flash',
+  'antigravity/gemini-3.6-flash',
+  'antigravity/gemini-3.5-flash',
+  'antigravity/gemini-3.1-pro',
+  'antigravity/claude-opus-4-6',
+  'antigravity/claude-sonnet-4-6',
+  'antigravity/gpt-oss-120b',
+] as const;
+
+/** True when the Antigravity extension is actually present in this image. */
+export function hasPiAntigravityExtension(): boolean {
+  return resolvePiExtensionPaths().some((entry) => entry.includes('pi-antigravity'));
 }
 
 export function syncPiConfig(userId: string): PiConfigSyncResult {

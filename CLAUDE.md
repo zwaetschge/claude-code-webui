@@ -33,13 +33,13 @@ Node `>=20`, pnpm `>=9`; the package manager is pinned to `pnpm@9.15.0`.
 
 ### Packages
 
-| Package             | Purpose                                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `packages/backend`  | Express, Socket.IO, SQLite via better-sqlite3, and provider CLI process management                                |
-| `packages/frontend` | React 18, Vite, Radix UI, Tailwind, Zustand, and Socket.IO client                                                  |
-| `packages/shared`   | Shared TypeScript types, pricing, and provider-label logic                                                        |
-| `packages/desktop`  | Desktop shell wrapper                                                                                             |
-| `packages/android`  | Android client                                                                                                    |
+| Package             | Purpose                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| `packages/backend`  | Express, Socket.IO, SQLite via better-sqlite3, and provider CLI process management |
+| `packages/frontend` | React 18, Vite, Radix UI, Tailwind, Zustand, and Socket.IO client                  |
+| `packages/shared`   | Shared TypeScript types, pricing, and provider-label logic                         |
+| `packages/desktop`  | Desktop shell wrapper                                                              |
+| `packages/android`  | Android client                                                                     |
 
 ### Backend
 
@@ -47,7 +47,7 @@ Entry: `packages/backend/src/index.ts`. Routes are in `src/routes/`; services ar
 
 - **Codex**: runs `codex exec --json` once per turn. `translateCodexMessage` streams `item.delta`, `agent_message.delta`, `text.delta`, and `response.output_text.delta`, with `item.completed` fallback. `buildCodexContextPrefix()` prepends up to the last 40 SQLite turns, limited to 24k characters, as `[Prior conversation context]`; Codex has no native `--resume`.
 - **OpenCode**: per-user HTTP/SSE server with native streaming and resume. Config, data, OAuth, and account state are isolated under `~/.opencode/users/<sha256-user-key>`. Legacy global OAuth state is not assigned to users; affected users reconnect through the WebUI. It routes 75+ models, including `z-ai/glm-*` and Kimi.
-- **Pi**: persistent JSONL RPC using OpenCode connections and models, shared skills, converted agents, and the MCP bridge.
+- **Pi**: persistent JSONL RPC using OpenCode connections and models, shared skills, converted agents, and the MCP bridge. Google Antigravity comes from the `pi-antigravity` extension (Pi dropped built-in support in 0.71.0); `resolvePiExtensionPaths()` provisions it and `PI_ANTIGRAVITY_MODELS` mirrors its catalog, because extension models never reach the provider registry. It needs a one-time `/login antigravity` per user and — per the package's own README — using it may violate Google's ToS.
 - **Kimi Code**: persistent `kimi acp` stdio with native resume, cancellation, streaming, and queued follow-ups. Do not regress to `kimi -p`.
 - **Claude Code**: legacy persistent stream-json transport.
 
@@ -197,6 +197,7 @@ The WebUI connects directly to ComfyUI; there is no LoRA Tester sidecar.
   - `flux2-klein-edit`: older edit variant with TeaCache and tiled VAE decode; kept for existing callers
 
 `krea2-t2i` uses `ResolutionSelector`, which labels aspect ratios differently from the Flux node (`1:1 (Square)` versus `1:1 (Perfect Square)`). `workflows.ts` translates on the way in — an unknown combo value is **not** rejected by ComfyUI: the prompt is accepted, the image branch never runs, and the job reports success with no image.
+
 - URL resolution: `app_config.comfyui_url` → `$COMFYUI_URL` → `http://192.168.1.23:8188`; settings are re-read for every job.
 - `scripts/mcp-servers/comfyui.mjs` exposes `generate_image`, `generate_image_quality`, and `edit_image`, calling `POST /api/comfyui/internal/generate` with inherited `WEBUI_HOOK_SECRET`.
 - `/generated/*.png` is served behind Passport session authentication.
