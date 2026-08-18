@@ -6738,6 +6738,10 @@ html.dark .aurora-grain,
   padding: 0 10px;
   color: hsl(var(--muted-foreground));
   box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.035);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    box-shadow 0.16s ease;
 }
 
 .dashboard-chatbar-name input {
@@ -6753,6 +6757,24 @@ html.dark .aurora-grain,
 
 .dashboard-chatbar-name input::placeholder {
   color: hsl(var(--muted-foreground) / 0.7);
+}
+
+/* The global :focus-visible ring is a box-shadow, so it follows the radius of
+   the focused element — and these inputs are square children inside a rounded
+   pill, which drew a hard rectangle inside it. The pill carries the focus
+   state instead, so the indicator keeps the shape the control actually has. */
+.dashboard-search input:focus-visible,
+.dashboard-chatbar-name input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.dashboard-chatbar-name:focus-within {
+  border-color: hsl(var(--primary) / 0.42);
+  background: hsl(var(--foreground) / 0.065);
+  box-shadow:
+    inset 0 1px 0 hsl(var(--foreground) / 0.06),
+    0 0 0 3px hsl(var(--primary) / 0.08);
 }
 
 .dashboard-prompt-shell.dashboard-chatbar-input-shell {
