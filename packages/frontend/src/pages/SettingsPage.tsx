@@ -118,6 +118,7 @@ import { AdminAuditLogPage } from '@/pages/admin/AdminAuditLogPage';
 import { HomeAssistantSettingsCard } from '@/components/integrations/HomeAssistantSettingsCard';
 import { CliDeviceLoginDialog } from '@/components/settings/CliDeviceLoginDialog';
 import { GatewayTokensPanel } from '@/components/settings/GatewayTokensPanel';
+import { ProviderLoginsPanel } from '@/components/settings/ProviderLoginsPanel';
 
 interface PluginInfo {
   id: string;
@@ -277,6 +278,7 @@ type SettingsTab =
 
 type GeneralSettingsTab =
   | 'workspace'
+  | 'logins'
   | 'codex'
   | 'claude'
   | 'zai'
@@ -466,6 +468,13 @@ const GENERAL_SETTINGS_TABS: GeneralSettingsTabDescriptor[] = [
       { id: 'default-directory', label: 'Default directory' },
       { id: 'cli-updates', label: 'CLI updates' },
     ],
+  },
+  {
+    value: 'logins',
+    label: 'Provider logins',
+    description: 'Every sign-in method in one place.',
+    icon: KeyRound,
+    sections: [{ id: 'provider-logins', label: 'Provider logins' }],
   },
   {
     value: 'codex',
@@ -2579,6 +2588,19 @@ export function SettingsPage() {
                     </TabsContent>
 
                     {/* Codex CLI */}
+                    <TabsContent value="logins" className="settings-general-pane mt-0">
+                      <div className="settings-pane-column">
+                        <SettingsPanel
+                          id="provider-logins"
+                          eyebrow="Access"
+                          title="Provider logins"
+                          description="Harness sign-in, API endpoints, and Antigravity — each with the method it actually uses."
+                        >
+                          <ProviderLoginsPanel />
+                        </SettingsPanel>
+                      </div>
+                    </TabsContent>
+
                     <TabsContent value="codex" className="settings-general-pane mt-0">
                       <div className="settings-pane-column">
                         <section id="codex-cli">
