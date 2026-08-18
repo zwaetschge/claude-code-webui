@@ -6,6 +6,8 @@ import os from 'os';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { CLI_PROVIDERS, type CLIProvider } from '../services/cli-providers.js';
+import fs from 'fs';
+import path from 'path';
 import { getCliEnv } from '../utils/cliPaths.js';
 import {
   ensureOpenCodeTenantDirectories,
@@ -14,6 +16,7 @@ import {
 import {
   extractCliDeviceCode,
   extractCliLoginUrl,
+  CLI_LOGIN_TUI_INPUT,
   resolveCliLoginInvocation,
   stripCliLoginAnsi,
 } from '../utils/cliLoginOutput.js';
@@ -242,6 +245,15 @@ router.post(
         ensureOpenCodeTenantDirectories(tenantPaths);
         env.OPENCODE_CONFIG_DIR = tenantPaths.configDir;
         env.OPENCODE_DATA_DIR = tenantPaths.dataDir;
+      } else if (provider === 'pi') {
+        // Same per-user agent dir the WebUI hands to Pi sessions, so the token
+        // lands where syncPiConfig and the model resolution look for it.
+        const segment = userId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 120) || 'default';
+        const agentDir = path.join(os.homedir(), '.pi', 'webui-users', segment, 'agent');
+        fs.mkdirSync(agentDir, { recursive: true });
+        env.PI_CODING_AGENT_DIR = agentDir;
+        env.PI_TELEMETRY = '0';
+        env.PI_SKIP_VERSION_CHECK = '1';
       } else if (provider === 'kimi') {
         // Kimi Code CLI keeps OAuth + provider state under ~/.kimi-code by
         // default. The device-code login prints the verification URL + user code
@@ -269,6 +281,26 @@ router.post(
       proc.onExit(({ exitCode }) => {
         finalizeSession(session, exitCode);
       });
+
+      // Providers whose login is a TUI command need it typed after the
+      // interface has drawn; writing immediately lands before the input is
+      // wired and is swallowed.
+      const tuiInput = CLI_LOGIN_TUI_INPUT[provider];
+      if (tuiInput) {
+        const type = (value: string) => {
+          try {
+            proc.write(value);
+          } catch {
+            // The process may already be gone; onExit reports that.
+          }
+        };
+        // Three separate writes on purpose. The TUI needs to have drawn before
+        // it accepts input, and submitting in the same write as the text does
+        // not register — the command just sits in the composer.
+        setTimeout(() => type(tuiInput), 2000);
+        setTimeout(() => type('\r'), 3000);
+        setTimeout(() => type('\r'), 5000);
+      }
     } catch (error) {
       session.status = 'error';
       session.error = error instanceof Error ? error.message : 'Failed to start CLI login';
