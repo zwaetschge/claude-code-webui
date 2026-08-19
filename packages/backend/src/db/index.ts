@@ -47,6 +47,9 @@ export function initDatabase(): Database.Database {
 
   db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
+  // WAL guarantees consistency on crash either way; FULL additionally fsyncs
+  // every tiny bookkeeping commit (updated_at per message, token last-used).
+  db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
 
   // Run migrations

@@ -463,7 +463,21 @@ function fallbackProviderCatalog(): OpenCodeProviderCatalog {
   return catalog;
 }
 
+let catalogCache: { value: OpenCodeProviderCatalog; at: number } | null = null;
+const CATALOG_TTL_MS = 120_000;
+
+/** Provider create/update/delete must refresh the catalog immediately. */
+export function resetOpenCodeProviderCatalogCache(): void {
+  catalogCache = null;
+}
+
 export function getOpenCodeProviderCatalog(): OpenCodeProviderCatalog {
+  // Memoised: building this shells out to `opencode models` synchronously
+  // (10s timeout), and it used to run on every provider/model GET — one open
+  // provider picker could stall the whole event loop for seconds.
+  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+    return catalogCache.value;
+  }
   const catalog: OpenCodeProviderCatalog = {};
 
   for (const [id, provider] of Object.entries(readOpenCodeModelsCache())) {
@@ -485,7 +499,9 @@ export function getOpenCodeProviderCatalog(): OpenCodeProviderCatalog {
     });
   }
 
-  return sortOpenCodeProviderCatalog(catalog);
+  const sorted = sortOpenCodeProviderCatalog(catalog);
+  catalogCache = { value: sorted, at: Date.now() };
+  return sorted;
 }
 
 export function getOpenCodeModelIdsForProviders(providerIds: string[]): string[] {
