@@ -4,6 +4,7 @@ import {
   useState,
   useCallback,
   useMemo,
+  useSyncExternalStore,
   type FormEvent,
   type ReactElement,
   type ReactNode,
@@ -374,6 +375,55 @@ function ChatQuickTimeline({
   );
 }
 
+type TimelineRange = { startIndex: number; endIndex: number };
+
+type TimelineRangeStore = {
+  get: () => TimelineRange;
+  set: (next: TimelineRange) => void;
+  subscribe: (listener: () => void) => () => void;
+};
+
+function createTimelineRangeStore(): TimelineRangeStore {
+  let range: TimelineRange = { startIndex: 0, endIndex: 0 };
+  const listeners = new Set<() => void>();
+  return {
+    get: () => range,
+    set: (next) => {
+      if (next.startIndex === range.startIndex && next.endIndex === range.endIndex) return;
+      range = next;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+// Owns the visible-range state so Virtuoso's rangeChanged (which fires on
+// every scroll shift) re-renders only this rail, never the whole session page.
+function QuickTimelineRail({
+  store,
+  markers,
+  onJump,
+}: {
+  store: TimelineRangeStore;
+  markers: ChatTimelineMarker[];
+  onJump: (index: number) => void;
+}) {
+  const range = useSyncExternalStore(store.subscribe, store.get);
+  const visibleIndex = Math.round((range.startIndex + range.endIndex) / 2);
+  const activeIndex = useMemo(() => {
+    if (markers.length === 0) return visibleIndex;
+    return markers.reduce((nearest, marker) =>
+      Math.abs(marker.index - visibleIndex) < Math.abs(nearest.index - visibleIndex)
+        ? marker
+        : nearest
+    ).index;
+  }, [markers, visibleIndex]);
+  return <ChatQuickTimeline markers={markers} activeIndex={activeIndex} onJump={onJump} />;
+}
+
 function TimelineContinuation({ children }: { children: ReactNode }) {
   return (
     <div className="timeline-continuation">
@@ -393,7 +443,7 @@ export function SessionPage() {
   const lastMessageIdRef = useRef<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [isAtTop, setIsAtTop] = useState(false);
-  const [visibleTimelineRange, setVisibleTimelineRange] = useState({ startIndex: 0, endIndex: 0 });
+  const timelineRangeStore = useMemo(createTimelineRangeStore, []);
   const [historyFirstItemIndex, setHistoryFirstItemIndex] = useState(MESSAGE_HISTORY_FIRST_INDEX);
   const [historyPagination, setHistoryPagination] = useState<MessageHistoryPagination>({
     total: 0,
@@ -438,7 +488,7 @@ export function SessionPage() {
   // Per-session slices: shallow-compared so unrelated sessions don't trigger re-renders
   const {
     sessionMessages,
-    currentStreamingContent,
+    hasStreamingContent,
     currentActivity,
     currentUsage,
     currentTodos,
@@ -455,7 +505,10 @@ export function SessionPage() {
       const sid = id ?? '';
       return {
         sessionMessages: s.messages[sid] ?? EMPTY_MESSAGES,
-        currentStreamingContent: s.streamingContent[sid] ?? '',
+        // Boolean on purpose: the string itself flushes every 50ms while
+        // streaming and would re-render this 4900-line page each time. The
+        // components that show the text subscribe to the string themselves.
+        hasStreamingContent: Boolean(s.streamingContent[sid]),
         currentActivity: s.activity[sid] ?? IDLE_ACTIVITY,
         currentUsage: s.usage[sid],
         currentTodos: s.todos[sid] ?? EMPTY_TODOS,
@@ -737,6 +790,10 @@ export function SessionPage() {
     },
     [unpinAllPanels]
   );
+  const handleOpenRunOverview = useCallback(
+    () => openRunCockpitSection('overview'),
+    [openRunCockpitSection]
+  );
   const closeActivityRails = useCallback(() => {
     setRunCockpitOpen(false);
     if (typeof window !== 'undefined') {
@@ -760,8 +817,8 @@ export function SessionPage() {
 
   const hasOpenFiles = currentOpenFiles.length > 0;
   const hasLiveAssistantFooter =
-    currentActivity.type === 'thinking' || !!currentActiveAgent || !!currentStreamingContent;
-  const hasLiveAssistantTimelinePoint = !!currentStreamingContent;
+    currentActivity.type === 'thinking' || !!currentActiveAgent || hasStreamingContent;
+  const hasLiveAssistantTimelinePoint = hasStreamingContent;
 
   // Combine messages, generated images and tool executions into a single timeline
   type TimelineItem =
@@ -769,30 +826,41 @@ export function SessionPage() {
     | { type: 'image'; data: (typeof currentGeneratedImages)[0]; timestamp: number }
     | { type: 'tool'; data: (typeof currentToolExecutions)[0]; timestamp: number };
 
-  const timeline = useMemo<TimelineItem[]>(
+  // Memoized per source: a tool progress event must not re-parse the createdAt
+  // of every message again. Array.prototype.sort is stable, so equal timestamps
+  // keep the message → image → tool concatenation order without index juggling.
+  const messageTimelineItems = useMemo<TimelineItem[]>(
     () =>
-      [
-        ...sessionMessages.map((msg) => ({
-          type: 'message' as const,
-          data: msg,
-          timestamp: new Date(msg.createdAt).getTime(),
-        })),
-        ...currentGeneratedImages.map((img) => ({
-          type: 'image' as const,
-          data: img,
-          timestamp: img.timestamp,
-        })),
-        ...currentToolExecutions.map((tool) => ({
-          type: 'tool' as const,
-          data: tool,
-          timestamp: tool.timestamp,
-        })),
-      ]
-        .map((item, _sortIdx) => ({ ...item, _sortIdx }))
-        .sort((a, b) => a.timestamp - b.timestamp || a._sortIdx - b._sortIdx)
-        .map(({ _sortIdx, ...rest }) => rest as TimelineItem),
-    [sessionMessages, currentGeneratedImages, currentToolExecutions]
+      sessionMessages.map((msg) => ({
+        type: 'message' as const,
+        data: msg,
+        timestamp: new Date(msg.createdAt).getTime(),
+      })),
+    [sessionMessages]
   );
+  const imageTimelineItems = useMemo<TimelineItem[]>(
+    () =>
+      currentGeneratedImages.map((img) => ({
+        type: 'image' as const,
+        data: img,
+        timestamp: img.timestamp,
+      })),
+    [currentGeneratedImages]
+  );
+  const toolTimelineItems = useMemo<TimelineItem[]>(
+    () =>
+      currentToolExecutions.map((tool) => ({
+        type: 'tool' as const,
+        data: tool,
+        timestamp: tool.timestamp,
+      })),
+    [currentToolExecutions]
+  );
+  const timeline = useMemo<TimelineItem[]>(() => {
+    const items = [...messageTimelineItems, ...imageTimelineItems, ...toolTimelineItems];
+    items.sort((a, b) => a.timestamp - b.timestamp);
+    return items;
+  }, [messageTimelineItems, imageTimelineItems, toolTimelineItems]);
 
   // Live ref of the current timeline so Run turn jumps always read
   // fresh indices without retriggering Virtuoso's internal observers.
@@ -1353,17 +1421,6 @@ export function SessionPage() {
     }
     return sampled;
   }, [historyFirstItemIndex, providerLabel, timeline]);
-  const visibleTimelineIndex = Math.round(
-    (visibleTimelineRange.startIndex + visibleTimelineRange.endIndex) / 2
-  );
-  const activeQuickTimelineIndex = useMemo(() => {
-    if (quickTimelineMarkers.length === 0) return visibleTimelineIndex;
-    return quickTimelineMarkers.reduce((nearest, marker) =>
-      Math.abs(marker.index - visibleTimelineIndex) < Math.abs(nearest.index - visibleTimelineIndex)
-        ? marker
-        : nearest
-    ).index;
-  }, [quickTimelineMarkers, visibleTimelineIndex]);
 
   useEffect(() => {
     if (!id || !session) {
@@ -2709,10 +2766,10 @@ export function SessionPage() {
     ]
   );
 
-  const handleInterrupt = () => {
+  const handleInterrupt = useCallback(() => {
     if (!id) return;
     socketService.interruptSession(id);
-  };
+  }, [id]);
 
   const handleRestart = () => {
     if (!id) return;
@@ -2745,19 +2802,14 @@ export function SessionPage() {
     sessionReasoningMutation.mutate(nextValue || null);
   };
 
-  const applyServiceTierSelection = (value: string) => {
-    if (sessionProvider !== 'codex') return;
-    if (!id) return;
+  const applyServiceTier = sessionServiceTierMutation.mutate;
+  const handleFastModeToggle = useCallback(() => {
+    if (sessionProvider !== 'codex' || !id) return;
     const current = session?.cliServiceTier || '';
-    const nextValue = value === '__default__' ? '' : value.trim().toLowerCase();
+    const nextValue = fastModeActive ? '' : 'fast';
     if (nextValue === current) return;
-
-    sessionServiceTierMutation.mutate(nextValue || null);
-  };
-
-  const handleFastModeToggle = () => {
-    applyServiceTierSelection(fastModeActive ? '__default__' : 'fast');
-  };
+    applyServiceTier(nextValue || null);
+  }, [sessionProvider, id, session?.cliServiceTier, fastModeActive, applyServiceTier]);
 
   const applySurfaceSelection = (surface: SessionSurface) => {
     if (!id || surface === sessionSurface) return;
@@ -3535,7 +3587,7 @@ export function SessionPage() {
       providerLabel={providerLabel}
       sessionStatus={session.status}
       messages={sessionMessages}
-      streamingContent={currentStreamingContent}
+      streamingSessionId={id || ''}
       activity={currentActivity}
       todos={currentTodos}
       tools={currentToolExecutions}
@@ -4350,7 +4402,7 @@ export function SessionPage() {
               )}
 
               {timeline.length === 0 &&
-                !currentStreamingContent &&
+                !hasStreamingContent &&
                 (hasInitialMessagesError ? (
                   <div className="flex h-full items-center justify-center px-5 text-center">
                     <div role="alert" className="max-w-sm">
@@ -4570,7 +4622,7 @@ export function SessionPage() {
                   }}
                   components={virtuosoComponents}
                   rangeChanged={(range) =>
-                    setVisibleTimelineRange({
+                    timelineRangeStore.set({
                       startIndex: range.startIndex,
                       endIndex: range.endIndex,
                     })
@@ -4613,9 +4665,9 @@ export function SessionPage() {
                 )}
 
               {timeline.length > 0 && mainView === 'chat' && (
-                <ChatQuickTimeline
+                <QuickTimelineRail
+                  store={timelineRangeStore}
                   markers={quickTimelineMarkers}
-                  activeIndex={activeQuickTimelineIndex}
                   onJump={jumpToTimelineIndex}
                 />
               )}
@@ -4683,7 +4735,7 @@ export function SessionPage() {
                 fastModePending={sessionServiceTierMutation.isPending}
                 onFastModeToggle={sessionProvider === 'codex' ? handleFastModeToggle : undefined}
                 queueDepth={queuedDepth}
-                onOpenRun={() => openRunCockpitSection('overview')}
+                onOpenRun={handleOpenRunOverview}
               />
             </div>
           </div>
