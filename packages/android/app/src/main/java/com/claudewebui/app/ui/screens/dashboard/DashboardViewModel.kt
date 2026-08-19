@@ -46,9 +46,7 @@ class DashboardViewModel(
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    private val _uiState = MutableStateFlow(
-        DashboardUiState(isLoading = true, lastSessionSetup = launchPreferences.load())
-    )
+    private val _uiState = MutableStateFlow(DashboardUiState(isLoading = true))
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
     private val _events = Channel<DashboardEvent>(Channel.BUFFERED)
@@ -62,6 +60,12 @@ class DashboardViewModel(
     // ── Init ──────────────────────────────────────────────────────────────────
 
     init {
+        // SharedPreferences pages its file in on first read; doing that in the
+        // constructor stalled the first dashboard frame on cold start.
+        viewModelScope.launch(Dispatchers.IO) {
+            val setup = launchPreferences.load()
+            _uiState.update { it.copy(lastSessionSetup = setup) }
+        }
         observeCachedSessions()
         loadData()
         loadTemplates()

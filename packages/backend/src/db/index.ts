@@ -848,6 +848,11 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_events_user_created ON session_events(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_events_session_created ON session_events(session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_events_type_created ON session_events(event_type, created_at DESC);
+    -- Serves the per-session telemetry snapshot (two type counts + latest
+    -- context row) as an index-only lookup instead of scanning every event
+    -- row of the session on each PATCH/GET.
+    CREATE INDEX IF NOT EXISTS idx_session_events_session_type
+      ON session_events(session_id, event_type, user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_id ON session_checkpoints(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_agents_user_id ON custom_agents(user_id);
     CREATE INDEX IF NOT EXISTS idx_custom_agents_updated_at ON custom_agents(updated_at);
@@ -1739,6 +1744,33 @@ function runMigrations(db: Database.Database): void {
     db.exec(`ALTER TABLE notifications ADD COLUMN data TEXT`);
   } catch {
     // Column already exists, ignore error
+  }
+
+  // Approvals resolve by requestId. A dedicated indexed column replaces the
+  // former leading-wildcard LIKE over the JSON blob, which scanned the whole
+  // table on every approve/deny click.
+  try {
+    db.exec(`ALTER TABLE notifications ADD COLUMN request_id TEXT`);
+    db.exec(
+      `UPDATE notifications
+          SET request_id = json_extract(data, '$.requestId')
+        WHERE request_id IS NULL AND data IS NOT NULL`
+    );
+  } catch {
+    // Column already exists, ignore error
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_request_id
+    ON notifications(request_id) WHERE request_id IS NOT NULL`);
+
+  // The feed shows recent history; rows were previously inserted forever. Keep
+  // read notifications for 30 days, everything else stays.
+  try {
+    db.prepare(
+      `DELETE FROM notifications
+        WHERE read_at IS NOT NULL AND created_at < datetime('now', '-30 days')`
+    ).run();
+  } catch {
+    // Retention is best-effort; never block startup on it.
   }
 
   repriceUsageHistoryCosts(db);

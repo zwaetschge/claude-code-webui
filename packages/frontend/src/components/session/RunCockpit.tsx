@@ -27,6 +27,7 @@ import type {
   ToolExecution,
   UsageData,
 } from '@plum-code-webui/shared';
+import { useSessionStore } from '@/stores/sessionStore';
 import type { ActivityState, TodoItem } from '@/stores/sessionStore';
 import { api } from '@/services/api';
 import { cn } from '@/lib/utils';
@@ -36,7 +37,7 @@ interface RunCockpitProps {
   providerLabel: string;
   sessionStatus: SessionStatus;
   messages: Message[];
-  streamingContent: string;
+  streamingSessionId: string;
   activity: ActivityState;
   todos: TodoItem[];
   tools: ToolExecution[];
@@ -176,7 +177,7 @@ export function RunCockpit({
   providerLabel,
   sessionStatus,
   messages,
-  streamingContent,
+  streamingSessionId,
   activity,
   todos,
   tools,
@@ -192,6 +193,9 @@ export function RunCockpit({
   activeSection = 'overview',
   focusVersion = 0,
 }: RunCockpitProps) {
+  // Subscribed here, not passed down: the string flushes every 50ms while
+  // streaming and must only re-render this cockpit, never the session page.
+  const streamingContent = useSessionStore((s) => s.streamingContent[streamingSessionId] ?? '');
   const railRef = useRef<HTMLElement | null>(null);
   const overviewRef = useRef<HTMLDivElement | null>(null);
   const queueRef = useRef<HTMLDivElement | null>(null);

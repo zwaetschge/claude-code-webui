@@ -742,6 +742,7 @@ function getSessionTelemetrySnapshot(
       SELECT event_type as eventType, COUNT(*) as count
       FROM session_events
       WHERE session_id = ? AND user_id = ?
+        AND event_type IN ('context_snapshot', 'compact')
       GROUP BY event_type
     `
     )

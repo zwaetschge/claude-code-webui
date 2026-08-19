@@ -124,7 +124,9 @@ class ChatViewModel(
 
     private fun startPresenceHeartbeat() {
         presenceJob?.cancel()
-        presenceJob = viewModelScope.launch {
+        // IO on purpose: the first tick materialises deviceId from
+        // SharedPreferences, and socket emits are thread-safe.
+        presenceJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 socketManager.updatePresence(
                     sessionId = sessionId,

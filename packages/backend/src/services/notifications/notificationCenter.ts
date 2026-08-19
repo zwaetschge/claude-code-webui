@@ -36,10 +36,14 @@ export function notify(input: NotifyInput): void {
   try {
     const id = nanoid();
     const data = input.data ? JSON.stringify(input.data) : null;
+    const requestId =
+      typeof input.data?.requestId === 'string' && input.data.requestId
+        ? input.data.requestId
+        : null;
     getDatabase()
       .prepare(
-        `INSERT INTO notifications (id, user_id, session_id, kind, title, body, data)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO notifications (id, user_id, session_id, kind, title, body, data, request_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -48,7 +52,8 @@ export function notify(input: NotifyInput): void {
         input.kind,
         input.title,
         input.body ?? null,
-        data
+        data,
+        requestId
       );
 
     const payload = {
@@ -78,9 +83,9 @@ export function resolveApprovalNotification(requestId: string): void {
       .prepare(
         `UPDATE notifications
             SET read_at = CURRENT_TIMESTAMP
-          WHERE kind = 'approval' AND read_at IS NULL AND data LIKE ?`
+          WHERE kind = 'approval' AND read_at IS NULL AND request_id = ?`
       )
-      .run(`%"${requestId}"%`);
+      .run(requestId);
   } catch (error) {
     console.warn('[Notifications] failed to resolve approval:', error);
   }

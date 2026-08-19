@@ -293,11 +293,31 @@ fun ChatScreen(
         }
     }
 
-    // Build display items: messages + streaming + thinking
-    val displayItems = if (isDesignPreview) {
+    // Build display items: messages + streaming + thinking. The stable part is
+    // remembered — StreamingState changes every 50ms flush, and rebuilding one
+    // wrapper per cached message on each flush dominated streaming jank. The
+    // streaming row is appended separately.
+    val baseDisplayItems = if (isDesignPreview) {
         previewDisplayItems()
     } else {
-        buildDisplayItems(messages, outboxItems, displayUiState)
+        remember(
+            messages,
+            outboxItems,
+            displayUiState.lastReadMessageId,
+            displayUiState.unreadCount,
+            displayUiState.activeTools,
+        ) {
+            buildDisplayItems(messages, outboxItems, displayUiState)
+        }
+    }
+    val streamingPartial = if (isDesignPreview) null else {
+        (displayUiState.streamingState as? StreamingState.Streaming)
+            ?.partialText?.takeIf { it.isNotEmpty() }
+    }
+    val displayItems = if (streamingPartial != null) {
+        baseDisplayItems + DisplayItem.StreamingItem(streamingPartial)
+    } else {
+        baseDisplayItems
     }
 
     LaunchedEffect(initialMessageId, initialChatId) {
@@ -358,7 +378,10 @@ fun ChatScreen(
     ) 1 else 0
     val streamingText = displayUiState.streamingText
     val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
-    LaunchedEffect(displayItemCount, streamingText, imeBottom) {
+    // Re-anchoring per 50ms flush re-measured the growing last item every
+    // frame; a coarse length bucket keeps the end pinned a few times per reply.
+    val streamingAnchorBucket = (streamingText?.length ?: -1) / 128
+    LaunchedEffect(displayItemCount, streamingAnchorBucket, imeBottom) {
         if (!initialHistoryPositioned && displayItemCount > 0) {
             val anchor = displayUiState.restoreAnchorMessageId
             val anchorIndex = anchor?.let { id ->
@@ -392,12 +415,15 @@ fun ChatScreen(
         if (index >= 0) listState.scrollToItem(index + historyHeaderCount)
     }
 
-    LaunchedEffect(listState, displayItems, historyHeaderCount) {
+    // Keyed on the size, not the list: the streaming flush replaces the list
+    // identity 20x/s and used to cancel/rebuild this snapshotFlow each time.
+    val currentDisplayItems by rememberUpdatedState(displayItems)
+    LaunchedEffect(listState, displayItems.size, historyHeaderCount) {
         snapshotFlow {
             val visible = listState.layoutInfo.visibleItemsInfo
                 .firstOrNull { it.key != "history_loader" }
             val item = visible?.let { info ->
-                displayItems.getOrNull(info.index - historyHeaderCount)
+                currentDisplayItems.getOrNull(info.index - historyHeaderCount)
             }
             Triple(!showScrollToBottom, (item as? DisplayItem.MessageItem)?.message?.id, visible?.offset ?: 0)
         }
@@ -1853,12 +1879,8 @@ private fun buildDisplayItems(
             items.add(DisplayItem.ToolItem(tool))
         }
 
-    // Streaming text
-    val streaming = uiState.streamingState
-    if (streaming is StreamingState.Streaming && streaming.partialText.isNotEmpty()) {
-        items.add(DisplayItem.StreamingItem(streaming.partialText))
-    }
-
+    // The streaming row is appended by the caller so this stable part can be
+    // remembered across streaming flushes.
     return items
 }
 

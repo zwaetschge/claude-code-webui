@@ -145,6 +145,62 @@ const WORKFLOW_BY_TOOL = {
   edit_image: 'f2k-edit',
 };
 
+// Discovery + guidance tools, following the official Comfy MCP conventions
+// (search_templates / get_template_schema / get_prompting_guide): agents can
+// inspect what exists before generating instead of relying on tool names.
+TOOLS.push(
+  {
+    name: 'list_workflows',
+    description:
+      'List the ComfyUI workflow templates this server can run: id, title, description, defaults and accepted parameters. Read-only; use it to choose between speed, quality and edit variants.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_prompting_guide',
+    description:
+      'Prompting recommendations per workflow family (Krea2, Flux.2 Klein, Z-Image). Read-only; consult before writing prompts for best results.',
+    inputSchema: { type: 'object', properties: {} },
+  }
+);
+
+const PROMPTING_GUIDE = [
+  '# Prompting guide (Plum ComfyUI workflows)',
+  '',
+  '## generate_image — Krea2 Turbo (default T2I)',
+  '- The prompt is used verbatim: no refinement pass, no LoRA trigger words.',
+  '- Describe subject, style, lighting, colors and composition explicitly.',
+  '- 8 steps, euler/simple; CFG is distilled to 1 — do not raise it.',
+  '',
+  '## generate_image_quality — Flux.2 Klein 9B + Turbo LoRA',
+  '- Handles longer, denser prompts and fine detail better than the fast path.',
+  '- Natural-language sentences outperform keyword soup on Flux models.',
+  '- 8 steps, CFG 1 distilled; changing sampler rarely helps.',
+  '',
+  '## edit_image — Flux.2 Klein image-to-image (ReferenceLatent)',
+  '- `input_image` is required; the prompt describes the desired RESULT, not the change delta.',
+  '- Keep the prompt aligned with what should stay: unmentioned traits may drift.',
+  '',
+  '## General',
+  '- megapixel "0.5" for chat previews, "1.0"–"2.0" for final quality.',
+  '- Pass `seed` to reproduce or iterate on a specific result.',
+].join('\n');
+
+async function callBackendGet(path) {
+  const headers = {};
+  const sessionId = getSessionId();
+  if (HOOK_SECRET) headers['x-webui-hook-secret'] = HOOK_SECRET;
+  if (sessionId) headers['x-webui-session-id'] = sessionId;
+  const resp = await fetch(`${BACKEND}${path}`, {
+    headers,
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = await resp.json();
+  if (!resp.ok || !body.success) {
+    throw new Error(body?.error?.message || `HTTP ${resp.status}`);
+  }
+  return body.data;
+}
+
 function getSessionId() {
   if (SESSION_ID) return SESSION_ID;
   if (!SESSION_CONTEXT_FILE) return '';
@@ -260,6 +316,23 @@ async function handleRequest(msg) {
     if (method === 'tools/call') {
       const toolName = params?.name;
       const args = params?.arguments || {};
+      if (toolName === 'get_prompting_guide') {
+        return result(id, { content: [{ type: 'text', text: PROMPTING_GUIDE }] });
+      }
+      if (toolName === 'list_workflows') {
+        try {
+          const data = await callBackendGet('/api/comfyui/internal/workflows');
+          return result(id, {
+            content: [{ type: 'text', text: JSON.stringify(data.workflows, null, 2) }],
+            structuredContent: data,
+          });
+        } catch (e) {
+          return result(id, {
+            content: [{ type: 'text', text: `Error: ${e.message}` }],
+            isError: true,
+          });
+        }
+      }
       if (!WORKFLOW_BY_TOOL[toolName]) {
         return error(id, -32601, `unknown tool: ${toolName}`);
       }

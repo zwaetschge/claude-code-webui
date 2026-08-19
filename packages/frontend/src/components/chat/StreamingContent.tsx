@@ -619,17 +619,38 @@ function LiveStreamingText({ message }: { message: string }) {
   );
 }
 
+// The word reveal changes `visibleMessage` many times a second. Re-parsing the
+// whole accumulated answer through remark+KaTeX on each tick is what made long
+// streams expensive, so only the settled part (up to the last completed
+// paragraph) goes through markdown; the in-flight tail renders as plain text
+// until its paragraph completes. Never split inside an open code fence.
+function splitSettledMarkdown(text: string): { settled: string; tail: string } {
+  const boundary = text.lastIndexOf('\n\n');
+  if (boundary <= 0) return { settled: '', tail: text };
+  const settled = text.slice(0, boundary + 2);
+  const fences = settled.match(/```/g)?.length ?? 0;
+  if (fences % 2 === 1) return { settled: '', tail: text };
+  return { settled, tail: text.slice(boundary + 2) };
+}
+
 // Live response with markdown and LaTeX support for normal-sized partial text.
 // Very long partial streams render as plain text until the final persisted
 // message arrives; that avoids reparsing a large markdown document every flush.
 function ClaudeResponse({ message, provider }: { message: string; provider: UiProvider }) {
-  const normalized =
-    provider === 'claude' || provider === 'zai'
-      ? normalizeClaudeDisplayContent(message)
-      : { message, providerTools: [], providerToolComplete: false };
+  const normalized = useMemo(
+    () =>
+      provider === 'claude' || provider === 'zai'
+        ? normalizeClaudeDisplayContent(message)
+        : { message, providerTools: [], providerToolComplete: false },
+    [provider, message]
+  );
   const shouldUsePlainText = normalized.message.length > LIVE_MARKDOWN_CHAR_LIMIT;
   const visibleMessage = useWordRevealText(normalized.message);
   const isRevealing = visibleMessage.length < normalized.message.length;
+  const { settled, tail } = useMemo(
+    () => (shouldUsePlainText ? { settled: '', tail: '' } : splitSettledMarkdown(visibleMessage)),
+    [shouldUsePlainText, visibleMessage]
+  );
 
   return (
     <div className="flex gap-3">
@@ -647,11 +668,16 @@ function ClaudeResponse({ message, provider }: { message: string; provider: UiPr
           (shouldUsePlainText ? (
             <LiveStreamingText message={visibleMessage} />
           ) : (
-            <MemoizedMarkdown
-              content={visibleMessage}
-              animateWords
-              className="prose prose-sm dark:prose-invert max-w-none"
-            />
+            <>
+              {settled && (
+                <MemoizedMarkdown
+                  content={settled}
+                  animateWords
+                  className="prose prose-sm dark:prose-invert max-w-none"
+                />
+              )}
+              {tail && <LiveStreamingText message={tail} />}
+            </>
           ))}
         <ProviderToolNotice
           tools={normalized.providerTools}

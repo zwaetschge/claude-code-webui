@@ -534,14 +534,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }),
 
   updateToolExecution: (sessionId, toolId, update) =>
-    set((state) => ({
-      toolExecutions: {
-        ...state.toolExecutions,
-        [sessionId]: (state.toolExecutions[sessionId] || []).map((exec) =>
-          exec.toolId === toolId ? { ...exec, ...update } : exec
-        ),
-      },
-    })),
+    set((state) => {
+      const existing = state.toolExecutions[sessionId];
+      if (!existing) return state;
+      const index = existing.findIndex((exec) => exec.toolId === toolId);
+      // Unknown tool: return the same state object so nothing downstream
+      // (timeline memo, turn segments, markers) recomputes for a no-op.
+      if (index === -1) return state;
+      const next = existing.slice();
+      next[index] = { ...next[index]!, ...update };
+      return {
+        toolExecutions: {
+          ...state.toolExecutions,
+          [sessionId]: next,
+        },
+      };
+    }),
 
   clearToolExecutions: (sessionId) =>
     set((state) => ({
