@@ -95,14 +95,28 @@ export function resolveGatewayToken(token: string): string | null {
   const b = Buffer.from(presented, 'hex');
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 
-  // Best effort — a failed bookkeeping write must not fail the request.
+  touchLastUsed(row.id);
+  return row.userId;
+}
+
+const lastUsedWrites = new Map<string, number>();
+const LAST_USED_WRITE_INTERVAL_MS = 60_000;
+
+/**
+ * Best effort, and throttled: a supervisor polling the overview every few
+ * seconds would otherwise turn every request into a WAL write for a timestamp
+ * nobody reads at that resolution.
+ */
+function touchLastUsed(tokenId: string): void {
+  const now = Date.now();
+  const last = lastUsedWrites.get(tokenId) ?? 0;
+  if (now - last < LAST_USED_WRITE_INTERVAL_MS) return;
+  lastUsedWrites.set(tokenId, now);
   try {
     getDatabase()
       .prepare('UPDATE gateway_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(row.id);
+      .run(tokenId);
   } catch {
     /* ignore */
   }
-
-  return row.userId;
 }
