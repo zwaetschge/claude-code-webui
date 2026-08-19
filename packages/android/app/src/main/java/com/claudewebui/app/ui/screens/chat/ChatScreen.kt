@@ -293,9 +293,12 @@ fun ChatScreen(
         }
     }
 
+    val revealWindow by viewModel.revealWindow.collectAsState()
     val requestOlderHistory = {
+        // Fires when the server has more, or when the local window is full —
+        // Room may hold older rows the transcript has not revealed yet.
         if (
-            displayUiState.hasMoreHistory &&
+            (displayUiState.hasMoreHistory || messages.size >= revealWindow) &&
             !displayUiState.isLoadingOlderHistory &&
             !isDesignPreview
         ) {

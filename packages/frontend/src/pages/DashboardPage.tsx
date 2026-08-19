@@ -141,6 +141,7 @@ function getDashboardReasoningOptions(provider: CLIProvider) {
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
       { value: 'high', label: 'High' },
+      { value: 'xhigh', label: 'X-High (ultrathink)' },
       { value: 'max', label: 'Max' },
     ];
   }

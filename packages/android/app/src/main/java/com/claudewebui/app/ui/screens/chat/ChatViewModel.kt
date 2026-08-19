@@ -44,10 +44,21 @@ class ChatViewModel(
 
     private val selectedChatId = MutableStateFlow<String?>(null)
 
+    /**
+     * How many of the newest rows the transcript observes. Scrolling to the top
+     * widens it; a bounded window is what keeps year-long sessions from holding
+     * their entire history in memory (and re-reading it on every write).
+     */
+    private val messageWindow = MutableStateFlow(MESSAGE_WINDOW_INITIAL)
+    val revealWindow: StateFlow<Int> = messageWindow.asStateFlow()
+
     /** Room-backed message list — auto-updates as messages arrive */
-    val messages: StateFlow<List<Message>> = selectedChatId
-        .flatMapLatest { chatId -> messageRepository.getMessages(sessionId, chatId) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val messages: StateFlow<List<Message>> =
+        combine(selectedChatId, messageWindow, ::Pair)
+            .flatMapLatest { (chatId, limit) ->
+                messageRepository.getMessages(sessionId, chatId, limit)
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Pending/accepted/failed sends survive process death and reconnects. */
     val outbox: StateFlow<List<OutboxEntity>> = messageRepository.getOutbox(sessionId)
@@ -822,6 +833,10 @@ class ChatViewModel(
 
     /** Load one older page; Room prepends it without clearing the recent page. */
     fun loadOlderHistory() {
+        // Widen the window first: rows already cached in Room become visible
+        // even when the server has nothing further to hand out.
+        messageWindow.value += MESSAGE_WINDOW_PAGE
+
         val state = _uiState.value
         val before = state.oldestMessageId
         if (!state.hasMoreHistory || before == null || state.isLoadingOlderHistory) return
@@ -1756,6 +1771,7 @@ class ChatViewModel(
 
     fun switchChat(chatId: String) {
         if (chatId == _uiState.value.activeChatId) return
+        messageWindow.value = MESSAGE_WINDOW_INITIAL
         _uiState.update { it.copy(isSwitchingChat = true) }
         viewModelScope.launch {
             sessionRepository.activateChat(sessionId, chatId)
@@ -1767,6 +1783,7 @@ class ChatViewModel(
     }
 
     fun newChat() {
+        messageWindow.value = MESSAGE_WINDOW_INITIAL
         _uiState.update { it.copy(isSwitchingChat = true) }
         viewModelScope.launch {
             sessionRepository.createChat(sessionId)
@@ -1861,6 +1878,8 @@ class ChatViewModel(
 }
 
 internal const val STREAM_FLUSH_MS = 50L
+internal const val MESSAGE_WINDOW_INITIAL = 150
+internal const val MESSAGE_WINDOW_PAGE = 150
 internal const val PRESENCE_HEARTBEAT_MS = 25_000L
 internal const val SEARCH_DEBOUNCE_MS = 250L
 internal const val READ_POSITION_DEBOUNCE_MS = 400L

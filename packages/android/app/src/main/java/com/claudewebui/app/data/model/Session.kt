@@ -96,7 +96,7 @@ enum class ReasoningLevel(val id: String, val label: String) {
          * harness rejects silently downgrades the turn, so the lists must match.
          */
         fun forProvider(provider: CLIProvider): List<ReasoningLevel> = when (provider) {
-            CLIProvider.CLAUDE, CLIProvider.ZAI -> listOf(LOW, MEDIUM, HIGH, MAX)
+            CLIProvider.CLAUDE, CLIProvider.ZAI -> listOf(LOW, MEDIUM, HIGH, XHIGH, MAX)
             CLIProvider.OPENCODE, CLIProvider.PI -> listOf(MINIMAL, LOW, MEDIUM, HIGH, MAX)
             else -> listOf(NONE, MINIMAL, LOW, MEDIUM, HIGH, XHIGH, MAX, ULTRA)
         }

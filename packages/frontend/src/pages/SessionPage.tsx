@@ -1471,6 +1471,8 @@ export function SessionPage() {
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
         { value: 'high', label: 'High' },
+        // The CLI's session-level tier behind the "ultrathink" prompt keyword.
+        { value: 'xhigh', label: 'X-High (ultrathink)' },
         { value: 'max', label: 'Max' },
       ];
     }

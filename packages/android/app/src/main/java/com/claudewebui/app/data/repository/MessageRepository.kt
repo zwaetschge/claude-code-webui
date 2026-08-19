@@ -55,8 +55,8 @@ class MessageRepository(
      * Observe all cached messages for a session in chronological order.
      * Backed by Room — updates automatically when new messages arrive.
      */
-    fun getMessages(sessionId: String, chatId: String?): Flow<List<Message>> =
-        dao.getByChat(sessionId, chatId).map { list -> list.map { it.toModel() } }
+    fun getMessages(sessionId: String, chatId: String?, limit: Int): Flow<List<Message>> =
+        dao.getByChat(sessionId, chatId, limit).map { list -> list.map { it.toModel() } }
 
     fun getOutbox(sessionId: String): Flow<List<OutboxEntity>> =
         outboxDao.observeForSession(sessionId)

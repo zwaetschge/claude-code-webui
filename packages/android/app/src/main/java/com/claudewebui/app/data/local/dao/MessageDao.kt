@@ -10,12 +10,20 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MessageDao {
 
-    /** Observe one chat only; mixing sibling threads produces a false transcript. */
+    /**
+     * Observe one chat only; mixing sibling threads produces a false transcript.
+     *
+     * Windowed to the newest [limit] rows: this Flow re-materialises on every
+     * write, so observing the whole chat kept the entire transcript resident
+     * and re-read it per streamed message — long sessions ran out of memory.
+     */
     @Query(
-        "SELECT * FROM messages WHERE sessionId = :sessionId AND chatId IS :chatId " +
-            "ORDER BY timestamp ASC, eventSequence ASC, id ASC"
+        "SELECT * FROM (" +
+            "SELECT * FROM messages WHERE sessionId = :sessionId AND chatId IS :chatId " +
+            "ORDER BY timestamp DESC, eventSequence DESC, id DESC LIMIT :limit" +
+            ") ORDER BY timestamp ASC, eventSequence ASC, id ASC"
     )
-    fun getByChat(sessionId: String, chatId: String?): Flow<List<MessageEntity>>
+    fun getByChat(sessionId: String, chatId: String?, limit: Int): Flow<List<MessageEntity>>
 
     /** Insert a single message, replacing on conflict (e.g. streaming update). */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
