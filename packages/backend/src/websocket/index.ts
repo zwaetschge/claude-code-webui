@@ -293,8 +293,19 @@ export function setupWebSocket(httpServer: HttpServer): Server {
     const messageBucket = makeBucket();
     // Re-check lifecycle state on every event so a suspended/deleted user
     // cannot keep an already-authenticated JWT socket alive.
+    // Cached for a few seconds per socket: this middleware runs per event, and
+    // presence heartbeats alone made it a DB query per packet per tab. Eager
+    // revocation still works — disconnectUserSockets tears sockets down
+    // directly when a user is suspended.
+    let lifecycleCheckedAt = 0;
+    let lifecycleOk = false;
     socket.use((_event, next) => {
-      if (isActiveUser(socket.data.userId)) return next();
+      const now = Date.now();
+      if (now - lifecycleCheckedAt > 5_000) {
+        lifecycleOk = isActiveUser(socket.data.userId);
+        lifecycleCheckedAt = now;
+      }
+      if (lifecycleOk) return next();
       socket.disconnect(true);
     });
 
@@ -307,14 +318,17 @@ export function setupWebSocket(httpServer: HttpServer): Server {
       return true;
     };
 
-    // Debug: Log all incoming events
-    socket.onAny((eventName, ...args) => {
-      console.log(
-        `[SOCKET EVENT] ${eventName}:`,
-        args[0]?.sessionId || '',
-        args[0]?.message?.substring(0, 30) || ''
-      );
-    });
+    // Debug: log all incoming events. Unconditional stdout per packet blocks
+    // under piped Docker log drivers, so this is opt-in.
+    if (process.env.WEBUI_DEBUG_SOCKET_EVENTS === '1') {
+      socket.onAny((eventName, ...args) => {
+        console.log(
+          `[SOCKET EVENT] ${eventName}:`,
+          args[0]?.sessionId || '',
+          args[0]?.message?.substring(0, 30) || ''
+        );
+      });
+    }
 
     // Subscribe to session output
     socket.on('session:subscribe', async (sessionId) => {

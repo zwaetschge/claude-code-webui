@@ -57,6 +57,8 @@ import com.claudewebui.app.data.local.entity.OutboxEntity
 import com.claudewebui.app.BuildConfig
 import com.claudewebui.app.ui.components.chat.*
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.claudewebui.app.ui.components.chat.TurnDiffRow
@@ -106,12 +108,23 @@ fun ChatScreen(
     onNavigateToDevTools: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    // Keyed by session: parameters are only read when the ViewModel is first
-    // created, so an unkeyed lookup returns the previous session's instance
-    // whenever this screen stays mounted and only its sessionId changes — which
-    // is exactly what the tablet workspace does when you pick another session.
-    val viewModel: ChatViewModel =
-        koinViewModel(key = sessionId, parameters = { parametersOf(sessionId) })
+    // Owned in a per-session store that is cleared when the screen switches
+    // sessions or leaves composition. Parameters are only read at creation, so
+    // an unkeyed lookup would reuse the previous session's instance — while a
+    // host-store `key = sessionId` parked one live ViewModel (socket
+    // subscriptions, 25s heartbeat and all) per visited session forever.
+    val sessionStoreOwner = remember(sessionId) {
+        object : ViewModelStoreOwner {
+            override val viewModelStore = ViewModelStore()
+        }
+    }
+    DisposableEffect(sessionStoreOwner) {
+        onDispose { sessionStoreOwner.viewModelStore.clear() }
+    }
+    val viewModel: ChatViewModel = koinViewModel(
+        viewModelStoreOwner = sessionStoreOwner,
+        parameters = { parametersOf(sessionId) },
+    )
     val uiState by viewModel.uiState.collectAsState()
     var showSessionSettings by remember { mutableStateOf(false) }
     val messages by viewModel.messages.collectAsState()

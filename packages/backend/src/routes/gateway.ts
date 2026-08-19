@@ -179,11 +179,20 @@ router.get('/events', requireAuth, (req: Request, res: Response) => {
   });
   res.write(`event: ready\ndata: ${JSON.stringify({ userId })}\n\n`);
 
+  // One ownership probe per session per 30s, not per streamed message: a busy
+  // session emits many events per second, and each one used to cost a query
+  // for every connected supervisor.
+  const ownershipCache = new Map<string, { owned: boolean; at: number }>();
+  const OWNERSHIP_TTL_MS = 30_000;
   const ownsSession = (sessionId: string): boolean => {
+    const cached = ownershipCache.get(sessionId);
+    if (cached && Date.now() - cached.at < OWNERSHIP_TTL_MS) return cached.owned;
     const row = getDatabase()
       .prepare('SELECT 1 FROM sessions WHERE id = ? AND user_id = ?')
       .get(sessionId, userId);
-    return Boolean(row);
+    const owned = Boolean(row);
+    ownershipCache.set(sessionId, { owned, at: Date.now() });
+    return owned;
   };
 
   const send = (event: string, sessionId: string, payload: unknown): void => {

@@ -50,6 +50,25 @@ function getCommandPath(command: string): string | null {
   }
 }
 
+// which + --version are blocking execs with 5s timeouts each; per-provider
+// per-request they can pin the event loop for seconds. Binaries do not move
+// while the container runs, so a coarse TTL is plenty.
+const commandInfoCache = new Map<
+  string,
+  { path: string | null; version: string | null; at: number }
+>();
+const COMMAND_INFO_TTL_MS = 300_000;
+
+function getCommandInfoCached(command: string): { path: string | null; version: string | null } {
+  const cached = commandInfoCache.get(command);
+  if (cached && Date.now() - cached.at < COMMAND_INFO_TTL_MS) return cached;
+  const path = getCommandPath(command);
+  const version = path ? getCommandVersion(command) : null;
+  const entry = { path, version, at: Date.now() };
+  commandInfoCache.set(command, entry);
+  return entry;
+}
+
 function getCommandVersion(command: string): string | null {
   try {
     return (
@@ -201,7 +220,8 @@ router.get('/diagnostics', requireAuth, async (req, res) => {
   const diagnostics = await Promise.all(
     Object.values(CLI_PROVIDERS).map(async (provider) => {
       const models = getProviderModelsForUser(provider.id, userId, zaiConfig);
-      const binaryPath = getCommandPath(provider.command);
+      const commandInfo = getCommandInfoCached(provider.command);
+      const binaryPath = commandInfo.path;
       const credentialsPath = expandHome(provider.credentialsPath);
       const available = await isProviderAvailable(provider.id);
       return {
@@ -210,7 +230,7 @@ router.get('/diagnostics', requireAuth, async (req, res) => {
         command: provider.command,
         binaryPath,
         installed: !!binaryPath,
-        version: binaryPath ? getCommandVersion(provider.command) : null,
+        version: commandInfo.version,
         credentialsPath,
         authenticated: available,
         defaultModel: provider.defaultModel ?? null,

@@ -345,7 +345,10 @@ export const MessageBubble = memo(
     return (
       prev.message.id === next.message.id &&
       prev.message.content === next.message.content &&
-      mediaSignature(prev.message) === mediaSignature(next.message) &&
+      // Same object → same media; the signature strings are only built when
+      // the message object was actually replaced.
+      (prev.message === next.message ||
+        mediaSignature(prev.message) === mediaSignature(next.message)) &&
       prev.sessionStatus === next.sessionStatus &&
       prev.provider === next.provider &&
       prev.modelLabel === next.modelLabel &&

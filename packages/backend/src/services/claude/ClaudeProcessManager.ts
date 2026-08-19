@@ -2975,7 +2975,9 @@ export class ClaudeProcessManager {
   private readonly allocateEventSequence: (sessionId: string) => number;
 
   /** Public event emitter for external consumers */
-  public events = new EventEmitter();
+  // Gateway SSE clients add three listeners each; the default cap of 10 warns
+  // at the fourth supervisor.
+  public events = new EventEmitter().setMaxListeners(0);
 
   constructor(
     io: Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>,
@@ -3233,6 +3235,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       toolId?: string | null;
       externalAgentId?: string;
       startedAt?: number;
+      background?: boolean;
     }
   ): SubagentRun {
     const now = input.startedAt ?? Date.now();
@@ -3248,6 +3251,7 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
       toolId: input.toolId || existing?.toolId,
       externalAgentId: input.externalAgentId || existing?.externalAgentId,
       provider: proc.cliProvider,
+      background: input.background ?? existing?.background,
     };
     proc.subagentRuns.set(id, run);
     proc.currentAgentType = run.agentType;
@@ -3256,6 +3260,43 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
     this.trimSubagentRuns(proc);
     this.emitSubagentRun(sessionId, run);
     return run;
+  }
+
+  private completeBackgroundRunsFromNotifications(
+    sessionId: string,
+    proc: ClaudeProcess,
+    msg: { message?: unknown }
+  ): void {
+    if (proc.subagentRuns.size === 0) return;
+    const message = msg.message;
+    const content =
+      message && typeof message === 'object'
+        ? (message as { content?: Array<{ type: string; text?: string }> | string }).content
+        : undefined;
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((block) => block.type === 'text' && block.text)
+              .map((block) => block.text)
+              .join('\n')
+          : '';
+    if (!text.includes('<task-notification>')) return;
+
+    const notifications = text.matchAll(
+      /<task-id>([A-Za-z0-9_-]+)<\/task-id>[\s\S]*?<status>(\w+)<\/status>/g
+    );
+    for (const match of notifications) {
+      const [, taskId, status] = match;
+      if (!taskId) continue;
+      this.completeSubagentRun(
+        sessionId,
+        proc,
+        { externalAgentId: taskId },
+        { status: status === 'failed' ? 'error' : 'completed' }
+      );
+    }
   }
 
   private findSubagentRun(
@@ -3312,10 +3353,16 @@ You are in Planning Mode. Do not execute tools other than TodoWrite or ExitPlanM
   private completeActiveSubagents(
     sessionId: string,
     proc: ClaudeProcess,
-    update: { status?: SubagentRunStatus; result?: unknown; error?: unknown } = {}
+    update: {
+      status?: SubagentRunStatus;
+      result?: unknown;
+      error?: unknown;
+      /** Only process teardown finalises detached runs — they outlive turns. */
+      includeBackground?: boolean;
+    } = {}
   ): void {
     const activeRuns = Array.from(proc.subagentRuns.values()).filter(
-      (run) => run.status === 'started'
+      (run) => run.status === 'started' && (!run.background || update.includeBackground === true)
     );
     for (const run of activeRuns) {
       this.completeSubagentRun(sessionId, proc, { agentId: run.id }, update);
@@ -4186,7 +4233,26 @@ Discord Main Gateway:
     return true;
   }
 
+  /** One spawn at a time per session: the awaits between the has() guard and
+   * processes.set() let a concurrent send start a second CLI whose loser is
+   * never registered, never killed, and keeps running unmanaged. */
+  private readonly startingSessions = new Map<string, Promise<void>>();
+
   async startSession(sessionId: string, userId: string, mode?: SessionMode): Promise<void> {
+    const inflight = this.startingSessions.get(sessionId);
+    if (inflight) return inflight;
+    const run = this.doStartSession(sessionId, userId, mode).finally(() => {
+      this.startingSessions.delete(sessionId);
+    });
+    this.startingSessions.set(sessionId, run);
+    return run;
+  }
+
+  private async doStartSession(
+    sessionId: string,
+    userId: string,
+    mode?: SessionMode
+  ): Promise<void> {
     const db = getDatabase();
 
     const session = db
@@ -4900,7 +4966,10 @@ Discord Main Gateway:
         `${providerConfig.name} process for session ${sessionId} exited with code ${exitCode}`
       );
       const managedProc = this.processes.get(sessionId);
-      if (managedProc) {
+      // A detached child's late exit must not act on its replacement: it would
+      // persist the new process's half-streamed text as a truncated message
+      // and book its usage against the wrong turn.
+      if (managedProc && managedProc.process === proc) {
         // A Codex exec killed mid-turn never emits turn.completed, so book what
         // it already spent before the process state is torn down.
         this.flushCodexUsageOnExit(sessionId, managedProc);
@@ -4937,6 +5006,11 @@ Discord Main Gateway:
     if (!proc) return;
 
     proc.buffer += data;
+
+    // A multi-megabyte stream-json line arrives in ~64KB chunks; splitting the
+    // whole accumulated buffer per chunk is quadratic in the line size. Only
+    // split once this chunk actually completed a line.
+    if (!data.includes('\n')) return;
 
     // Process complete JSON lines
     const lines = proc.buffer.split('\n');
@@ -6966,7 +7040,7 @@ Discord Main Gateway:
         `[CODEX] Respawned process for session ${sessionId} exited with code ${exitCode}`
       );
       const managedProc = this.processes.get(sessionId);
-      if (managedProc) {
+      if (managedProc && managedProc.process === newChildProc) {
         if (managedProc.codexPreemptKillTimer) {
           clearTimeout(managedProc.codexPreemptKillTimer);
           managedProc.codexPreemptKillTimer = undefined;
@@ -7626,24 +7700,29 @@ The planning phase is complete. You are now in Auto-Accept mode.
             }
           }
 
-          // Handle Task tool (agents)
-          if (normalizedToolName === 'task') {
+          // Handle Task/Agent tools (subagents). "Agent" is the newer tool and
+          // detaches by default: the tool_result only acknowledges the launch,
+          // the run itself outlives the turn.
+          if (normalizedToolName === 'task' || normalizedToolName === 'agent') {
             try {
               const taskInput = JSON.parse(proc.currentToolInput) as {
                 subagent_type?: string;
                 description?: string;
+                run_in_background?: boolean;
               };
-              if (taskInput.subagent_type) {
-                console.log(
-                  `[AGENT] Agent starting: ${taskInput.subagent_type} - ${taskInput.description || ''}`
-                );
-                this.startSubagentRun(sessionId, proc, {
-                  agentId: proc.currentToolId || undefined,
-                  agentType: taskInput.subagent_type,
-                  description: taskInput.description,
-                  toolId: proc.currentToolId,
-                });
-              }
+              const agentType = taskInput.subagent_type || 'general-purpose';
+              const background =
+                normalizedToolName === 'agent' && taskInput.run_in_background !== false;
+              console.log(
+                `[AGENT] Agent starting: ${agentType}${background ? ' (background)' : ''} - ${taskInput.description || ''}`
+              );
+              this.startSubagentRun(sessionId, proc, {
+                agentId: proc.currentToolId || undefined,
+                agentType,
+                description: taskInput.description,
+                toolId: proc.currentToolId,
+                background,
+              });
             } catch (err) {
               console.error(`[AGENT] Failed to parse Task input:`, err);
             }
@@ -7836,6 +7915,11 @@ The planning phase is complete. You are now in Auto-Accept mode.
         isThinking: true,
       });
 
+      // Background agents report back through harness task-notifications that
+      // surface as injected user messages. That is the only completion signal
+      // a detached run ever gets.
+      this.completeBackgroundRunsFromNotifications(sessionId, proc, msg);
+
       // Extract tool results from user message content
       const userMsg = msg as {
         message?: {
@@ -7870,12 +7954,30 @@ The planning phase is complete. You are now in Auto-Accept mode.
                 .replace(/[_-]/g, '')
                 .toLowerCase();
               if (normalizedPendingTool === 'task' || normalizedPendingTool === 'agent') {
-                this.completeSubagentRun(
-                  sessionId,
-                  proc,
-                  { toolId: block.tool_use_id },
-                  { result: resultText }
-                );
+                const run = this.findSubagentRun(proc, { toolId: block.tool_use_id });
+                if (run?.background) {
+                  // The result only acknowledges the launch; the run is still
+                  // going. Capture its id so the completion notification can
+                  // find it later.
+                  const launchedId = resultText.match(/agentId:\s*([A-Za-z0-9_-]+)/)?.[1];
+                  if (launchedId) {
+                    this.startSubagentRun(sessionId, proc, {
+                      agentId: run.id,
+                      agentType: run.agentType,
+                      description: run.description,
+                      toolId: run.toolId,
+                      externalAgentId: launchedId,
+                      background: true,
+                    });
+                  }
+                } else {
+                  this.completeSubagentRun(
+                    sessionId,
+                    proc,
+                    { toolId: block.tool_use_id },
+                    { result: resultText }
+                  );
+                }
               }
               this.io.to(`session:${sessionId}`).emit('session:tool_use', {
                 sessionId,
@@ -10118,7 +10220,12 @@ ${proc.contextReminder.summary}
 
     // Wait a bit for the process to terminate, then restart
     setTimeout(async () => {
-      this.processes.delete(sessionId);
+      // Only remove the process this timer was armed for. A send arriving
+      // within the grace period starts a replacement, and deleting that one
+      // orphans a live CLI while the session shows as stopped.
+      if (this.processes.get(sessionId) === proc) {
+        this.processes.delete(sessionId);
+      }
       try {
         await this.startSession(sessionId, userId, mode);
         console.log(`[MODE] Session ${sessionId} restarted with mode ${mode}`);
@@ -10201,7 +10308,7 @@ ${proc.contextReminder.summary}
       attachments: turn.attachments?.length,
     }));
     const hasActiveSubagents = Array.from(proc.subagentRuns.values()).some(
-      (run) => run.status === 'started'
+      (run) => run.status === 'started' && !run.background
     );
     const hasPendingCodexFollowup =
       proc.cliProvider === 'codex' && (proc.codexQueuedTurns?.length ?? 0) > 0;

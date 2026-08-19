@@ -799,16 +799,18 @@ class ChatViewModel(
 
     private fun enqueueStreamingDelta(delta: String) {
         if (delta.isEmpty()) return
+        // The accumulator now holds the whole partial reply; publishing its
+        // snapshot per flush copies the text once instead of concatenating
+        // current + batch — quadratic over a long answer.
         streamingDeltas.append(delta)
         if (streamingFlushJob?.isActive == true) return
         streamingFlushJob = viewModelScope.launch {
             delay(STREAM_FLUSH_MS)
-            val batch = streamingDeltas.drain()
-            if (batch.isNotEmpty()) {
+            if (!streamingDeltas.isEmpty()) {
+                val text = streamingDeltas.snapshot()
                 _uiState.update { state ->
-                    val current = (state.streamingState as? StreamingState.Streaming)?.partialText.orEmpty()
                     state.copy(
-                        streamingState = StreamingState.Streaming(current + batch),
+                        streamingState = StreamingState.Streaming(text),
                         isThinking = false,
                         isSending = false,
                     )
@@ -820,7 +822,7 @@ class ChatViewModel(
     private fun clearStreamingDeltas() {
         streamingFlushJob?.cancel()
         streamingFlushJob = null
-        streamingDeltas.drain()
+        streamingDeltas.reset()
     }
 
     // ========================================================================
@@ -1924,6 +1926,16 @@ internal class StreamingDeltaAccumulator {
     }
 
     fun drain(): String = value.toString().also { value.clear() }
+
+    /** Full text so far without clearing — one copy per flush instead of the
+     *  quadratic current+batch concatenation over the whole reply. */
+    fun snapshot(): String = value.toString()
+
+    fun reset() {
+        value.clear()
+    }
+
+    fun isEmpty(): Boolean = value.isEmpty()
 }
 
 internal fun readUriWithLimit(

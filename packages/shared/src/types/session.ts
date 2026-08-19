@@ -40,6 +40,8 @@ export interface SubagentRun {
   toolId?: string;
   externalAgentId?: string;
   provider?: CLIProvider;
+  /** Detached run (Agent tool default): outlives the turn, must not hold busy. */
+  background?: boolean;
 }
 
 export interface SessionTelemetry {

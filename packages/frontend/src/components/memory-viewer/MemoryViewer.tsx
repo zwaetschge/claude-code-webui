@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Brain,
   Eye,
@@ -64,6 +64,10 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
 
   const debouncedContent = useDebounce(content, 1000);
   const hasChanges = content !== originalContent;
+  // The path the user actually typed in. The debounced text lags a full second
+  // behind a file switch, and saving it against the newly selected path used to
+  // overwrite that file with the previous file's body.
+  const editedPathRef = useRef<string | null>(null);
 
   // Load file content
   const loadFileContent = useCallback(
@@ -71,6 +75,7 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
       setLoadingContent(true);
       setError(null);
       setSelectedFile(file);
+      editedPathRef.current = null;
 
       try {
         const response = await api.get<MemoryContentResponse>(
@@ -157,7 +162,12 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
 
   // Auto-save
   useEffect(() => {
-    if (selectedFile && debouncedContent && debouncedContent !== originalContent) {
+    if (
+      selectedFile &&
+      editedPathRef.current === selectedFile.path &&
+      debouncedContent &&
+      debouncedContent !== originalContent
+    ) {
       saveContent(debouncedContent);
     }
   }, [debouncedContent, originalContent, saveContent, selectedFile]);
@@ -446,9 +456,10 @@ export function MemoryViewer({ workingDirectory, className }: MemoryViewerProps)
               <div className={cn('flex-1 min-w-0', viewMode === 'split' && 'border-r')}>
                 <Textarea
                   value={content}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                    setContent(e.target.value)
-                  }
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                    editedPathRef.current = selectedFile?.path ?? null;
+                    setContent(e.target.value);
+                  }}
                   placeholder="Write your memory notes here..."
                   className="h-full w-full resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0"
                 />

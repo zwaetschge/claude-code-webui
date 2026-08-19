@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   FileCode2,
   Eye,
@@ -45,6 +45,9 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
   const [fileExists, setFileExists] = useState(false);
 
   const debouncedContent = useDebounce(content, 1000);
+  // Only persist text the user typed against the workspace it was typed in —
+  // the debounced value survives a workspace switch by up to a second.
+  const editedDirRef = useRef<string | null>(null);
   const hasChanges = content !== originalContent;
 
   // Load AGENTS.md content
@@ -117,10 +120,15 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
 
   // Auto-save
   useEffect(() => {
-    if (debouncedContent && debouncedContent !== originalContent && fileExists) {
+    if (
+      debouncedContent &&
+      debouncedContent !== originalContent &&
+      fileExists &&
+      editedDirRef.current === workingDirectory
+    ) {
       saveContent(debouncedContent);
     }
-  }, [debouncedContent, fileExists, originalContent, saveContent]);
+  }, [debouncedContent, fileExists, originalContent, saveContent, workingDirectory]);
 
   const createFile = async () => {
     setSaving(true);
@@ -252,9 +260,10 @@ export function AgentsEditor({ workingDirectory, className }: AgentsEditorProps)
               <div className={cn('flex-1 min-w-0', viewMode === 'split' && 'border-r')}>
                 <Textarea
                   value={content}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                    setContent(e.target.value)
-                  }
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                    editedDirRef.current = workingDirectory;
+                    setContent(e.target.value);
+                  }}
                   placeholder="# AGENTS.md
 
 Define your agent instructions here..."

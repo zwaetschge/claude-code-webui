@@ -182,7 +182,11 @@ class SocketService {
   private deviceId: string | null = null;
 
   connect(): TypedSocket {
-    if (this.socket?.connected) {
+    // An existing socket may be mid-reconnect (connected === false). Creating a
+    // second one over it duplicated every handler: both sockets received the
+    // stream and every delta rendered twice. socket.io reconnects the existing
+    // instance on its own.
+    if (this.socket) {
       return this.socket;
     }
 

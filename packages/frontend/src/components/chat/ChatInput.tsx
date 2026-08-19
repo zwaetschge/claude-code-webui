@@ -303,11 +303,12 @@ export const ChatInput = memo(function ChatInput({
   const addFiles = useCallback(
     (files: File[]) => {
       if (deliveryPending || files.length === 0) return;
-      const currentBytes = attachments.reduce(
-        (total, attachment) => total + attachment.file.size,
-        0
-      );
-      const selection = selectChatAttachments(attachments.length, currentBytes, files);
+      // Read via the ref so this callback keeps its identity across attachment
+      // changes — its consumers re-bind the form's paste/drop handlers on every
+      // identity change.
+      const current = attachmentsRef.current;
+      const currentBytes = current.reduce((total, attachment) => total + attachment.file.size, 0);
+      const selection = selectChatAttachments(current.length, currentBytes, files);
       const newAttachments: FileAttachment[] = selection.accepted.map((file) => {
         const type = getAttachmentType(file.type, file.name);
         return {
@@ -325,7 +326,7 @@ export const ChatInput = memo(function ChatInput({
       setAttachmentError(formatAttachmentErrors(selection.errors));
       setDeliveryState((current) => (current?.status === 'failed' ? null : current));
     },
-    [attachments, deliveryPending]
+    [deliveryPending]
   );
 
   const handleComposerPaste = useCallback(

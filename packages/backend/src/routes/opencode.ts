@@ -5,6 +5,7 @@ import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 import {
   buildOpenCodeCommandEnv,
   getOpenCodeProviderCatalog,
+  resetOpenCodeProviderCatalogCache,
   resolveOpenCodeBinary,
   type OpenCodeProviderCatalog,
 } from '../utils/opencodeCatalog.js';
@@ -124,6 +125,7 @@ router.put('/providers', requireAuth, (req, res) => {
     }
 
     writeOpenCodeProvidersForUser(userId, providers);
+    resetOpenCodeProviderCatalogCache();
     awaitRestartOpenCodeServer(userId);
 
     res.json({
@@ -145,6 +147,7 @@ router.delete('/providers/:id', requireAuth, (req, res) => {
   try {
     const providers = readOpenCodeProvidersForUser(userId).filter((p) => p.id !== id);
     writeOpenCodeProvidersForUser(userId, providers);
+    resetOpenCodeProviderCatalogCache();
     awaitRestartOpenCodeServer(userId);
     res.json({ success: true, data: { id } });
   } catch (error) {

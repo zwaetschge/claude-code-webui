@@ -160,6 +160,7 @@ export function OracleBrowserPanel({ sessionId, className }: OracleBrowserPanelP
     }
   }, [cleanupFrameUrl, sessionId, token]);
 
+  const stateRef = useRef<OracleBrowserState | null>(null);
   const loadState = useCallback(async () => {
     try {
       const response = await api.get<ApiResponse<OracleBrowserState>>(
@@ -169,11 +170,17 @@ export function OracleBrowserPanel({ sessionId, className }: OracleBrowserPanelP
       setState(nextState);
       setStateError(null);
       setDraftUrl((current) => {
-        if (!current.trim() || current === state?.currentUrl || current === state?.chatgptUrl) {
+        const previous = stateRef.current;
+        if (
+          !current.trim() ||
+          current === previous?.currentUrl ||
+          current === previous?.chatgptUrl
+        ) {
           return nextState?.currentUrl || nextState?.chatgptUrl || '';
         }
         return current;
       });
+      stateRef.current = nextState;
       return nextState;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load browser state';
@@ -182,7 +189,10 @@ export function OracleBrowserPanel({ sessionId, className }: OracleBrowserPanelP
     } finally {
       setIsStateLoading(false);
     }
-  }, [sessionId, state?.chatgptUrl, state?.currentUrl]);
+    // Deliberately not keyed on state: every URL change used to mint a new
+    // loadState, which re-fired the mount effect immediately and rebuilt the
+    // poll interval — back-to-back requests instead of one every 2s.
+  }, [sessionId]);
 
   const refreshAll = useCallback(async () => {
     const nextState = await loadState();
