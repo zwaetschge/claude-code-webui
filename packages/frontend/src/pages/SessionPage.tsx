@@ -1047,10 +1047,16 @@ export function SessionPage() {
       const footerPermissionRequest = useSessionStore((s) => s.permissionRequests[sid] ?? null);
       const footerActiveAgents = footerAgentRuns.filter((agent) => agent.status === 'started');
       const [footerNow, setFooterNow] = useState(() => Date.now());
+      // Only tick while something actually shows a duration; an idle session
+      // otherwise re-rendered the footer once per second for the tab's life.
+      const footerTicks =
+        footerActivity.type === 'thinking' || !!footerActiveAgent || footerActiveAgents.length > 0;
       useEffect(() => {
+        if (!footerTicks) return;
+        setFooterNow(Date.now());
         const intervalId = window.setInterval(() => setFooterNow(Date.now()), 1000);
         return () => window.clearInterval(intervalId);
-      }, []);
+      }, [footerTicks]);
       const deps = footerDepsRef.current;
       if (!deps) {
         return <div aria-hidden style={{ height: '8px' }} />;

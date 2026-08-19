@@ -61,7 +61,7 @@ function LiveTimer({ startedAt }: { startedAt: number }) {
   useEffect(() => {
     const interval = setInterval(() => {
       setElapsed(Date.now() - startedAt);
-    }, 100);
+    }, 1000);
     return () => clearInterval(interval);
   }, [startedAt]);
 

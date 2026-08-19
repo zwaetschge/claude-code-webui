@@ -328,10 +328,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }),
 
   removeSession: (id) =>
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.id !== id),
-      activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
-    })),
+    set((state) => {
+      // Drop the per-session slices too: messages, tool logs and base64 images
+      // of a deleted session otherwise stay resident until a hard reload.
+      const omit = <T>(record: Record<string, T>): Record<string, T> => {
+        if (!(id in record)) return record;
+        const { [id]: _removed, ...rest } = record;
+        return rest;
+      };
+      return {
+        sessions: state.sessions.filter((s) => s.id !== id),
+        activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
+        messages: omit(state.messages),
+        toolExecutions: omit(state.toolExecutions),
+        streamingContent: omit(state.streamingContent),
+        generatedImages: omit(state.generatedImages),
+        agentRuns: omit(state.agentRuns),
+        usage: omit(state.usage),
+        todos: omit(state.todos),
+        activity: omit(state.activity),
+        queueState: omit(state.queueState),
+      };
+    }),
 
   setActiveSession: (id) => set({ activeSessionId: id }),
 

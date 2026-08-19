@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { StickyNote, Plus, Trash2, Pin, PinOff, Send, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +46,9 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
 
   const debouncedContent = useDebounce(content, 500);
   const debouncedTitle = useDebounce(title, 500);
+  // Note the edits belong to: the debounced values outlive a note switch and
+  // used to overwrite the newly selected note with the previous note's text.
+  const editedNoteIdRef = useRef<string | null>(null);
 
   // Fetch notes
   const fetchNotes = useCallback(async () => {
@@ -85,6 +88,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
     if (
       selectedNote &&
       isEditing &&
+      editedNoteIdRef.current === selectedNote.id &&
       (debouncedContent !== selectedNote.content || debouncedTitle !== selectedNote.title)
     ) {
       saveNote(selectedNote.id, debouncedTitle, debouncedContent);
@@ -137,6 +141,7 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
   };
 
   const selectNote = (note: Note) => {
+    editedNoteIdRef.current = null;
     setSelectedNote(note);
     setTitle(note.title);
     setContent(note.content);
@@ -218,7 +223,10 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
               <div className="shrink-0 flex items-center gap-2 p-2 border-b">
                 <Input
                   value={title}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    editedNoteIdRef.current = selectedNote?.id ?? null;
+                    setTitle(e.target.value);
+                  }}
                   placeholder="Note title..."
                   className="h-8 font-medium border-0 shadow-none focus-visible:ring-0"
                 />
@@ -238,7 +246,10 @@ export function Notepad({ sessionId, onSendToChat, className }: NotepadProps) {
               </div>
               <Textarea
                 value={content}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                  editedNoteIdRef.current = selectedNote?.id ?? null;
+                  setContent(e.target.value);
+                }}
                 placeholder="Write your notes here... Use this as a scratchpad for prompts, ideas, or anything else."
                 className="flex-1 resize-none border-0 rounded-none focus-visible:ring-0"
               />
