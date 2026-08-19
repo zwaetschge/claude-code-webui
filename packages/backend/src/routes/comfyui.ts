@@ -300,6 +300,13 @@ router.get('/generation/:id', (req: Request, res: Response) => {
 // resolve the latter to a user id for attribution.
 const internalRouter = Router();
 
+// Discovery for the MCP bridge (mirrors the official Comfy MCP's template
+// tools): ids, defaults and accepted params, so agents pick a workflow
+// instead of hardcoding one.
+internalRouter.get('/workflows', requireHookSecret, (_req: Request, res: Response) => {
+  res.json({ success: true, data: { workflows: listWorkflows() } });
+});
+
 internalRouter.post('/generate', requireHookSecret, async (req: Request, res: Response) => {
   const parsed = generateSchema.safeParse(req.body);
   if (!parsed.success) {
