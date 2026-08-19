@@ -55,6 +55,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -63,7 +65,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -254,56 +260,142 @@ fun Modifier.glassSurface(
  * cut mid-word, or a card sliced by a divider. The content is masked with a
  * gradient alpha, so the item fades into the backdrop as it scrolls out.
  *
- * Offscreen compositing is required: DstIn needs a layer to blend against.
+ * DstIn needs a layer to blend against, but a full-viewport offscreen buffer
+ * per frame is exactly the fill-rate cost these full-screen lists cannot
+ * afford. The middle of the content therefore draws directly; only the thin
+ * edge strips render through a saveLayer of their own size.
  */
 fun Modifier.fadingEdges(
     top: Dp = 0.dp,
     bottom: Dp = 0.dp,
     start: Dp = 0.dp,
     end: Dp = 0.dp,
-): Modifier = this
-    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-    .drawWithContent {
-        drawContent()
-        if (top > 0.dp) {
-            drawRect(
-                brush = Brush.verticalGradient(
+): Modifier {
+    val vertical = top > 0.dp || bottom > 0.dp
+    val horizontal = start > 0.dp || end > 0.dp
+    // Mixed axes would need corner treatment no current caller wants; fall
+    // back to a single full layer for that case instead of guessing.
+    if (vertical && horizontal) {
+        return this
+            .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            .drawWithContent {
+                drawContent()
+                fadeMask(top, bottom, start, end)
+            }
+    }
+    return this.drawWithContent {
+        val topPx = top.toPx().coerceIn(0f, size.height)
+        val bottomPx = bottom.toPx().coerceIn(0f, size.height - topPx)
+        val startPx = start.toPx().coerceIn(0f, size.width)
+        val endPx = end.toPx().coerceIn(0f, size.width - startPx)
+
+        clipRect(
+            left = startPx,
+            top = topPx,
+            right = size.width - endPx,
+            bottom = size.height - bottomPx,
+        ) {
+            this@drawWithContent.drawContent()
+        }
+
+        if (topPx > 0f) {
+            fadeStrip(
+                Rect(0f, 0f, size.width, topPx),
+                Brush.verticalGradient(
                     colors = listOf(Color.Transparent, Color.Black),
-                    endY = top.toPx(),
+                    endY = topPx,
                 ),
-                blendMode = BlendMode.DstIn,
             )
         }
-        if (bottom > 0.dp) {
-            drawRect(
-                brush = Brush.verticalGradient(
+        if (bottomPx > 0f) {
+            fadeStrip(
+                Rect(0f, size.height - bottomPx, size.width, size.height),
+                Brush.verticalGradient(
                     colors = listOf(Color.Black, Color.Transparent),
-                    startY = size.height - bottom.toPx(),
+                    startY = size.height - bottomPx,
                     endY = size.height,
                 ),
-                blendMode = BlendMode.DstIn,
             )
         }
-        if (start > 0.dp) {
-            drawRect(
-                brush = Brush.horizontalGradient(
+        if (startPx > 0f) {
+            fadeStrip(
+                Rect(0f, 0f, startPx, size.height),
+                Brush.horizontalGradient(
                     colors = listOf(Color.Transparent, Color.Black),
-                    endX = start.toPx(),
+                    endX = startPx,
                 ),
-                blendMode = BlendMode.DstIn,
             )
         }
-        if (end > 0.dp) {
-            drawRect(
-                brush = Brush.horizontalGradient(
+        if (endPx > 0f) {
+            fadeStrip(
+                Rect(size.width - endPx, 0f, size.width, size.height),
+                Brush.horizontalGradient(
                     colors = listOf(Color.Black, Color.Transparent),
-                    startX = size.width - end.toPx(),
+                    startX = size.width - endPx,
                     endX = size.width,
                 ),
-                blendMode = BlendMode.DstIn,
             )
         }
     }
+}
+
+/** Content clipped into a strip-sized layer, then alpha-masked with DstIn. */
+private fun ContentDrawScope.fadeStrip(rect: Rect, brush: Brush) {
+    if (rect.width <= 0f || rect.height <= 0f) return
+    drawIntoCanvas { canvas -> canvas.saveLayer(rect, Paint()) }
+    clipRect(rect.left, rect.top, rect.right, rect.bottom) {
+        this@fadeStrip.drawContent()
+    }
+    drawRect(
+        brush = brush,
+        topLeft = Offset(rect.left, rect.top),
+        size = Size(rect.width, rect.height),
+        blendMode = BlendMode.DstIn,
+    )
+    drawIntoCanvas { canvas -> canvas.restore() }
+}
+
+/** Legacy single-layer mask, used only when both axes fade at once. */
+private fun ContentDrawScope.fadeMask(top: Dp, bottom: Dp, start: Dp, end: Dp) {
+    if (top > 0.dp) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color.Transparent, Color.Black),
+                endY = top.toPx(),
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+    if (bottom > 0.dp) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color.Black, Color.Transparent),
+                startY = size.height - bottom.toPx(),
+                endY = size.height,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+    if (start > 0.dp) {
+        drawRect(
+            brush = Brush.horizontalGradient(
+                colors = listOf(Color.Transparent, Color.Black),
+                endX = start.toPx(),
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+    if (end > 0.dp) {
+        drawRect(
+            brush = Brush.horizontalGradient(
+                colors = listOf(Color.Black, Color.Transparent),
+                startX = size.width - end.toPx(),
+                endX = size.width,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+}
 
 @Composable
 fun PlumIconButton(

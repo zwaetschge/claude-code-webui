@@ -322,7 +322,7 @@ class SocketManager {
                 retryable = true,
             )
         if (result.status == SessionSendAck.SendStatus.ACCEPTED) {
-            _turnStarted.tryEmit(sessionId)
+            _turnStarted.emitBlocking(sessionId)
         }
         return result
     }
@@ -463,11 +463,11 @@ class SocketManager {
     // ========================================================================
 
     private val onSessionOutput = Emitter.Listener { args ->
-        parseAndEmit<StreamingMessage>(args) { _output.tryEmit(it) }
+        parseAndEmit<StreamingMessage>(args) { _output.emitBlocking(it) }
     }
 
     private val onSessionMessage = Emitter.Listener { args ->
-        parseAndEmit<Message>(args) { _messages.tryEmit(it) }
+        parseAndEmit<Message>(args) { _messages.emitBlocking(it) }
     }
 
     private val onSessionStatus = Emitter.Listener { args ->
@@ -477,27 +477,27 @@ class SocketManager {
         val sessionStatus = try {
             json.decodeFromString<SessionStatus>("\"$statusStr\"")
         } catch (_: Exception) { return@Listener }
-        _status.tryEmit(sessionId to sessionStatus)
+        _status.emitBlocking(sessionId to sessionStatus)
     }
 
     private val onSessionError = Emitter.Listener { args ->
         val obj = args.firstOrNull() as? JSONObject ?: return@Listener
         val sessionId = obj.optString("sessionId")
         val error = obj.optString("error")
-        _errors.tryEmit(sessionId to error)
+        _errors.emitBlocking(sessionId to error)
     }
 
     private val onToolUse = Emitter.Listener { args ->
-        parseAndEmit<ToolExecutionEvent>(args) { _toolUse.tryEmit(it) }
+        parseAndEmit<ToolExecutionEvent>(args) { _toolUse.emitBlocking(it) }
     }
 
     private val onAgentEvent = Emitter.Listener { args ->
-        parseAndEmit<AgentEvent>(args) { _agent.tryEmit(it) }
+        parseAndEmit<AgentEvent>(args) { _agent.emitBlocking(it) }
     }
 
     private val onThinking = Emitter.Listener { args ->
         val obj = args.firstOrNull() as? JSONObject ?: return@Listener
-        _thinking.tryEmit(
+        _thinking.emitBlocking(
             ThinkingEvent(
                 sessionId = obj.optString("sessionId"),
                 isThinking = obj.optBoolean("isThinking"),
@@ -513,19 +513,19 @@ class SocketManager {
         val todoItems = try {
             json.decodeFromString<List<TodoItem>>(todosArray)
         } catch (_: Exception) { return@Listener }
-        _todos.tryEmit(sessionId to todoItems)
+        _todos.emitBlocking(sessionId to todoItems)
     }
 
     private val onUsage = Emitter.Listener { args ->
-        parseAndEmit<UsageData>(args) { _usage.tryEmit(it) }
+        parseAndEmit<UsageData>(args) { _usage.emitBlocking(it) }
     }
 
     private val onQueue = Emitter.Listener { args ->
-        parseAndEmit<QueueEvent>(args) { _queue.tryEmit(it) }
+        parseAndEmit<QueueEvent>(args) { _queue.emitBlocking(it) }
     }
 
     private val onQuestion = Emitter.Listener { args ->
-        parseAndEmit<QuestionRequestEvent>(args) { _question.tryEmit(it) }
+        parseAndEmit<QuestionRequestEvent>(args) { _question.emitBlocking(it) }
     }
 
     private val onReconnected = Emitter.Listener { args ->
@@ -539,7 +539,7 @@ class SocketManager {
                     ?.let(::add)
             }
         }
-        _reconnected.tryEmit(
+        _reconnected.emitBlocking(
             ReconnectedEvent(
                 sessionId = obj.optString("sessionId"),
                 isRunning = obj.optBoolean("isRunning"),
@@ -555,11 +555,11 @@ class SocketManager {
         val obj = args.firstOrNull() as? JSONObject ?: return@Listener
         val sessionId = obj.optString("sessionId")
         val sequence = obj.optLongOrNull("sequence") ?: return@Listener
-        _cursor.tryEmit(sessionId to sequence)
+        _cursor.emitBlocking(sessionId to sequence)
     }
 
     private val onPresence = Emitter.Listener { args ->
-        parseAndEmit<PresenceSnapshot>(args) { _presence.tryEmit(it) }
+        parseAndEmit<PresenceSnapshot>(args) { _presence.emitBlocking(it) }
     }
 
     private val onPermission = Emitter.Listener { args ->
@@ -567,11 +567,11 @@ class SocketManager {
         val element = try {
             json.parseToJsonElement(obj.toString())
         } catch (_: Exception) { return@Listener }
-        _permission.tryEmit(element)
+        _permission.emitBlocking(element)
     }
 
     private val onCompact = Emitter.Listener { args ->
-        parseAndEmit<CompactEvent>(args) { _compact.tryEmit(it) }
+        parseAndEmit<CompactEvent>(args) { _compact.emitBlocking(it) }
     }
 
     private val onMode = Emitter.Listener { args ->
@@ -581,7 +581,7 @@ class SocketManager {
         val sessionMode = try {
             json.decodeFromString<SessionMode>("\"$modeStr\"")
         } catch (_: Exception) { return@Listener }
-        _mode.tryEmit(sessionId to sessionMode)
+        _mode.emitBlocking(sessionId to sessionMode)
     }
 
     // ========================================================================
@@ -607,6 +607,16 @@ class SocketManager {
     // ========================================================================
     // Private: JSON Parsing Helper
     // ========================================================================
+
+    /**
+     * tryEmit drops silently when the buffer is full (a busy main thread) — a
+     * lost session:message then never reaches Room and the transcript has a
+     * hole until the next reconnect. Briefly blocking the socket.io event
+     * thread instead preserves ordering and loses nothing.
+     */
+    private fun <T> MutableSharedFlow<T>.emitBlocking(value: T) {
+        if (!tryEmit(value)) runBlocking { emit(value) }
+    }
 
     private inline fun <reified T> parseAndEmit(
         args: Array<out Any>,
