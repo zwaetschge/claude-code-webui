@@ -767,6 +767,29 @@ function normalizeCodexThreadStateRow(value: unknown): CodexThreadState | null {
   };
 }
 
+// One long-lived readonly handle per state DB. Opening better-sqlite3 per call
+// showed up on every session PATCH; readonly WAL readers are safe to keep.
+const codexStateDbHandles = new Map<string, SQLiteDatabase.Database>();
+
+function getCodexStateDatabase(dbPath: string): SQLiteDatabase.Database {
+  const cached = codexStateDbHandles.get(dbPath);
+  if (cached) return cached;
+  const db = new SQLiteDatabase(dbPath, { readonly: true, fileMustExist: true });
+  codexStateDbHandles.set(dbPath, db);
+  return db;
+}
+
+function dropCodexStateDatabase(dbPath: string): void {
+  const cached = codexStateDbHandles.get(dbPath);
+  if (!cached) return;
+  codexStateDbHandles.delete(dbPath);
+  try {
+    cached.close();
+  } catch {
+    // ignore close failures
+  }
+}
+
 export function readCodexThreadState(
   codexHome: string,
   opts: {
@@ -781,7 +804,7 @@ export function readCodexThreadState(
 
   let db: SQLiteDatabase.Database | null = null;
   try {
-    db = new SQLiteDatabase(dbPath, { readonly: true, fileMustExist: true });
+    db = getCodexStateDatabase(dbPath);
     const hasThreads = db
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads'")
       .get();
@@ -862,13 +885,10 @@ export function readCodexThreadState(
     return (promptPattern ? queryLatest(true) : null) || queryLatest(false);
   } catch (error) {
     console.warn('[CODEX] Failed to read Codex thread state:', error);
+    // A stale handle (rotated/replaced state file) should not poison every
+    // later call; reopen lazily on the next one.
+    dropCodexStateDatabase(dbPath);
     return null;
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // ignore close failures
-    }
   }
 }
 
@@ -1264,6 +1284,16 @@ function normalizeCodexTokenCountUsage(value: unknown): CodexUsageCounters | und
   return { input, cached, output };
 }
 
+// token_count events sit near the end of a rollout, so a small tail finds one
+// almost always; the 16 MiB bound stays as the rare fallback. Snapshots are
+// cached per rollout file version — a session PATCH on an idle session must
+// not re-read and re-parse megabytes it already parsed.
+const CODEX_ROLLOUT_SNAPSHOT_TAIL_BYTES = 512 * 1024;
+const codexContextSnapshotCache = new Map<
+  string,
+  { mtimeMs: number; size: number; snapshot: CodexContextSnapshot | null }
+>();
+
 export function readLatestCodexContextSnapshot(
   codexHome: string,
   opts: {
@@ -1276,8 +1306,45 @@ export function readLatestCodexContextSnapshot(
   const threadState = readCodexThreadState(codexHome, opts);
   if (!threadState?.rolloutPath) return null;
 
-  const tail = readCodexRolloutTail(threadState.rolloutPath);
+  let stat: fsSync.Stats | null = null;
+  try {
+    stat = fsSync.statSync(threadState.rolloutPath);
+  } catch {
+    stat = null;
+  }
+  if (stat) {
+    const cached = codexContextSnapshotCache.get(threadState.rolloutPath);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      return cached.snapshot;
+    }
+  }
+
+  const snapshot =
+    scanCodexContextSnapshotTail(threadState, CODEX_ROLLOUT_SNAPSHOT_TAIL_BYTES) ??
+    scanCodexContextSnapshotTail(threadState, CODEX_ROLLOUT_TAIL_MAX_BYTES, true);
+
+  if (stat) {
+    if (codexContextSnapshotCache.size > 256) codexContextSnapshotCache.clear();
+    codexContextSnapshotCache.set(threadState.rolloutPath, {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      snapshot,
+    });
+  }
+  return snapshot;
+}
+
+function scanCodexContextSnapshotTail(
+  threadState: CodexThreadState,
+  maxBytes: number,
+  isFallback = false
+): CodexContextSnapshot | null {
+  if (!threadState.rolloutPath) return null;
+  const tail = readCodexRolloutTail(threadState.rolloutPath, maxBytes);
   if (!tail) return null;
+  // The small first pass only fails when no token_count landed in its window;
+  // skip the expensive fallback when the file was fully covered already.
+  if (isFallback && tail.bytesRead <= CODEX_ROLLOUT_SNAPSHOT_TAIL_BYTES) return null;
 
   // Scan newest-first and stop at the first valid token_count. This avoids
   // parsing unrelated tool output in the rest of the bounded tail.
