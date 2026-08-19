@@ -337,7 +337,7 @@ private fun RuntimeDefaultsPanel(
     val reasoningOptions = if (providerId == "codex") {
         listOf("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
     } else {
-        listOf("low", "medium", "high", "max")
+        listOf("low", "medium", "high", "xhigh", "max")
     }
 
     GlassPanel(Modifier.fillMaxWidth(), radius = 19.dp) {
