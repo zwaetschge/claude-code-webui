@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class DashboardViewModel(
@@ -41,6 +42,7 @@ class DashboardViewModel(
 
     private val launchPreferences = SessionLaunchPreferences(context)
     private val appContext = context.applicationContext
+    private var lastShortcutSignature: String? = null
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -176,8 +178,19 @@ class DashboardViewModel(
                 _allSessions.value = sessions
                 // Published here rather than from a screen: the phone and the
                 // tablet render different dashboards, and the launcher menu
-                // must not depend on which one happens to be on screen.
-                SessionShortcuts.publish(appContext, sessions)
+                // must not depend on which one happens to be on screen. The
+                // publish is a binder IPC, so it runs off the main thread and
+                // only when the shortcut-relevant slice actually changed.
+                val signature = sessions
+                    .sortedByDescending { it.updatedAt }
+                    .take(5)
+                    .joinToString("|") { "${it.id}:${it.name}" }
+                if (signature != lastShortcutSignature) {
+                    lastShortcutSignature = signature
+                    viewModelScope.launch(Dispatchers.IO) {
+                        SessionShortcuts.publish(appContext, sessions)
+                    }
+                }
                 _uiState.update { state ->
                     state.copy(
                         sessions = sessions,

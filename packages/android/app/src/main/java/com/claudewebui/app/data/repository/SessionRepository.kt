@@ -16,6 +16,7 @@ import com.claudewebui.app.data.model.SwitchProviderInput
 import com.claudewebui.app.data.model.UpdateSessionInput
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 /**
@@ -41,6 +42,10 @@ class SessionRepository(
             model.copy(unreadCount = counts[entity.id] ?: model.unreadCount)
         }
     }
+        // Room invalidates per table, so every read-state write (one per socket
+        // event) re-emitted the identical list and re-ran every collector —
+        // dashboard filtering, shortcut publishing, the lot.
+        .distinctUntilChanged()
 
     /** Sessions filtered by category. */
     fun getByCategory(categoryId: String): Flow<List<Session>> =

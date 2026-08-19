@@ -807,6 +807,15 @@ sealed class MarkdownBlock {
     object HorizontalRule : MarkdownBlock()
 }
 
+// Compiled once: parseMarkdown runs per bubble per recomposition, and Regex()
+// inside the line loop re-compiled these for every single line of every message.
+private val MD_HEADING = Regex("^(#{1,6})\\s+(.+)$")
+private val MD_HRULE = Regex("[-*_]{3,}")
+private val MD_ORDERED_ITEM = Regex("^(\\s*)(\\d+)\\.\\s+(.+)$")
+private val MD_UNORDERED_ITEM = Regex("^(\\s*)[-*+]\\s+(.+)$")
+private val MD_UNORDERED_LINE = Regex("^\\s*[-*+]\\s+.+")
+private val MD_ORDERED_LINE = Regex("^\\s*\\d+\\.\\s+.+")
+
 fun parseMarkdown(text: String): List<MarkdownBlock> {
     val blocks = mutableListOf<MarkdownBlock>()
     val lines = text.lines()
@@ -832,7 +841,7 @@ fun parseMarkdown(text: String): List<MarkdownBlock> {
         }
 
         // Heading
-        val headingMatch = Regex("^(#{1,6})\\s+(.+)$").matchEntire(trimmed)
+        val headingMatch = MD_HEADING.matchEntire(trimmed)
         if (headingMatch != null) {
             val level = headingMatch.groupValues[1].length
             val content = headingMatch.groupValues[2]
@@ -842,7 +851,7 @@ fun parseMarkdown(text: String): List<MarkdownBlock> {
         }
 
         // Horizontal rule
-        if (trimmed.matches(Regex("[-*_]{3,}"))) {
+        if (trimmed.matches(MD_HRULE)) {
             blocks.add(MarkdownBlock.HorizontalRule)
             i++
             continue
@@ -857,7 +866,7 @@ fun parseMarkdown(text: String): List<MarkdownBlock> {
         }
 
         // Ordered list item
-        val orderedMatch = Regex("^(\\s*)(\\d+)\\.\\s+(.+)$").matchEntire(line)
+        val orderedMatch = MD_ORDERED_ITEM.matchEntire(line)
         if (orderedMatch != null) {
             val indent = orderedMatch.groupValues[1].length * 4
             val num = orderedMatch.groupValues[2].toIntOrNull() ?: 1
@@ -868,7 +877,7 @@ fun parseMarkdown(text: String): List<MarkdownBlock> {
         }
 
         // Unordered list item
-        val unorderedMatch = Regex("^(\\s*)[-*+]\\s+(.+)$").matchEntire(line)
+        val unorderedMatch = MD_UNORDERED_ITEM.matchEntire(line)
         if (unorderedMatch != null) {
             val indent = unorderedMatch.groupValues[1].length * 4
             val content = unorderedMatch.groupValues[2]
@@ -888,9 +897,9 @@ fun parseMarkdown(text: String): List<MarkdownBlock> {
         while (i < lines.size) {
             val l = lines[i].trim()
             if (l.isEmpty() || l.startsWith("#") || l.startsWith("```") ||
-                l.startsWith("> ") || l.matches(Regex("[-*_]{3,}")) ||
-                Regex("^\\s*[-*+]\\s+.+").matches(lines[i]) ||
-                Regex("^\\s*\\d+\\.\\s+.+").matches(lines[i])) break
+                l.startsWith("> ") || l.matches(MD_HRULE) ||
+                MD_UNORDERED_LINE.matches(lines[i]) ||
+                MD_ORDERED_LINE.matches(lines[i])) break
             paragraphLines.add(lines[i])
             i++
         }

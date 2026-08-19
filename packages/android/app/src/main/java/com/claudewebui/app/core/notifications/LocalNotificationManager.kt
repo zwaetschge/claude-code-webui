@@ -52,10 +52,16 @@ object LocalNotificationManager {
     // notification so the lockscreen/watch tells you what the agent is doing.
     private val activeDetail = ConcurrentHashMap<String, String>()
     @Volatile private var lastDetailPushMs = 0L
+    @Volatile private var lastWidgetRefreshMs = 0L
 
     /** Widgets and the Wear companion update straight from socket events. */
     private fun refreshWidgets() {
         val ctx = appContext ?: return
+        // One WorkManager enqueue per socket event churned the unique-work
+        // queue during streaming; widgets don't need sub-3s freshness.
+        val now = System.currentTimeMillis()
+        if (now - lastWidgetRefreshMs < 3_000) return
+        lastWidgetRefreshMs = now
         WidgetRefreshWorker.refreshNow(ctx)
     }
 

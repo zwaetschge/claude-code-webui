@@ -592,8 +592,10 @@ class SocketManager {
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             _connectionState.value = ConnectionState.RECONNECTING
-            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s cap
-            val delay = minOf(1000L * (1L shl reconnectAttempt), maxReconnectDelay)
+            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s cap. The shift
+            // must stay clamped: at attempt 63 `1L shl 63` is negative, minOf
+            // picks it, and delay(negative) fires an immediate reconnect burst.
+            val delay = minOf(1000L * (1L shl reconnectAttempt.coerceAtMost(5)), maxReconnectDelay)
             reconnectAttempt++
             delay(delay)
             if (isActive) {
