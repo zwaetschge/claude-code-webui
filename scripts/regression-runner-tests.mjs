@@ -38,6 +38,20 @@ const expectedSuites = [
   'progressive extension lists',
   'capability catalog view',
   'task workbench',
+  'usage limit history',
+  'websocket send ack',
+  'durable chat',
+  'cli login',
+  'claude oauth refresh',
+  'message pagination',
+  'analytics settings',
+  'pi settings tab',
+  'recent sessions limit',
+  'chat delivery',
+  'dashboard ux',
+  'message history',
+  'web ux',
+  'analytics model breakdown',
 ];
 
 assert.deepEqual(

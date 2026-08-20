@@ -223,6 +223,76 @@ export const REGRESSION_SUITES = [
       '../frontend/scripts/task-workbench-tests.ts',
     ],
   },
+  {
+    name: 'usage limit history',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:usage-limit-history'],
+  },
+  {
+    name: 'websocket send ack',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:websocket-send-ack'],
+  },
+  {
+    name: 'durable chat',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:durable-chat'],
+  },
+  {
+    name: 'cli login',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:cli-login'],
+  },
+  {
+    name: 'claude oauth refresh',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:claude-oauth-refresh'],
+  },
+  {
+    name: 'message pagination',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:message-pagination'],
+  },
+  {
+    name: 'analytics settings',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:analytics-settings'],
+  },
+  {
+    name: 'pi settings tab',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:pi-settings'],
+  },
+  {
+    name: 'recent sessions limit',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:recent-sessions'],
+  },
+  {
+    name: 'chat delivery',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:chat-delivery'],
+  },
+  {
+    name: 'dashboard ux',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:dashboard-ux'],
+  },
+  {
+    name: 'message history',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:message-history'],
+  },
+  {
+    name: 'web ux',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:web-ux'],
+  },
+  {
+    name: 'analytics model breakdown',
+    command: 'pnpm',
+    args: ['--filter', '@plum-code-webui/frontend', 'run', 'test:analytics-model-breakdown'],
+  },
 ];
 
 function resolveCommand(suite) {
