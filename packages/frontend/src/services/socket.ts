@@ -893,6 +893,11 @@ class SocketService {
     this.socket?.disconnect();
     this.socket = null;
     this.subscribedSessions.clear();
+    this.activeSessions.clear();
+    this.lastSequenceBySession.clear();
+    this.activeChatBySession.clear();
+    this.fullResyncPendingSessions.clear();
+    this.presenceBySession.clear();
   }
 
   onModeChange(listener: (data: { sessionId: string; mode: SessionMode }) => void): () => void {
@@ -913,6 +918,12 @@ class SocketService {
     this.socket?.emit('session:unsubscribe', sessionId);
     this.emitPresence(sessionId, 'leave');
     this.presenceBySession.delete(sessionId);
+    // Prune the remaining per-session bookkeeping so visiting many sessions
+    // over a long-lived tab does not grow these maps without bound.
+    this.activeSessions.delete(sessionId);
+    this.lastSequenceBySession.delete(sessionId);
+    this.activeChatBySession.delete(sessionId);
+    this.fullResyncPendingSessions.delete(sessionId);
   }
 
   private getDeviceId(): string {

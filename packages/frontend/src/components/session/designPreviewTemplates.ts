@@ -5,6 +5,7 @@ const DESIGN_PREVIEW_BASE_PATH = '/design-previews/';
 const DESIGN_PREVIEW_FILE_OVERRIDES: Record<string, string> = {
   'material-3': 'preview-material3.html',
   material3: 'preview-material3.html',
+  'material-preview': 'design-material-preview.html',
   'ricardo-marketplace': 'preview-marketplace.html',
 };
 
@@ -65,7 +66,6 @@ const DESIGN_PREVIEW_TEMPLATE_SLUGS = new Set([
   'plum-style',
   'plum-style-claude',
   'plum-style-codex',
-  'plum-style-mistral',
   'plum-style-opencode',
   'premium',
   'professional',

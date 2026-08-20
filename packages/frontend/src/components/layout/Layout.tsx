@@ -3,7 +3,6 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Menu, PanelRightOpen } from 'lucide-react';
 import { Sidebar } from './Sidebar';
-// UsageLimitsBar removed - limits now in ContextPopover
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { applyTheme, normalizeTheme, useAppearanceStore } from '@/stores/appearanceStore';

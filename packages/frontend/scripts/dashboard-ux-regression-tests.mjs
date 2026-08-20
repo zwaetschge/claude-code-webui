@@ -57,8 +57,13 @@ assert.match(
 );
 assert.match(
   styles,
-  /\.session-chat-layered > \.chat-scroll-shell\s*{[\s\S]*?bottom: calc\(var\(--chat-input-h, 112px\) \+ 8px\);/,
-  'the chat viewport should reserve the measured composer height'
+  /\.session-chat-layered > \.chat-scroll-shell\s*{[\s\S]*?bottom: 0;/,
+  'the chat viewport should span the full height so the transcript scrolls behind the frosted composer'
+);
+assert.match(
+  styles,
+  /\.session-chat-layered \.chat-footer-stream\s*{\s*padding-bottom: calc\(var\(--chat-input-h, 112px\) \+ \d+px\);/,
+  'the list footer should reserve the measured composer height'
 );
 assert.match(
   styles,

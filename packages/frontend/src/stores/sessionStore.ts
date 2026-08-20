@@ -19,6 +19,8 @@ import type {
 // to drag the chat below 60fps on long answers, so text updates are capped while
 // the browser still gets free animation frames between React commits.
 const STREAMING_FLUSH_INTERVAL_MS = 50;
+// Most recent generated images kept per session (base64 payloads are heavy).
+const MAX_GENERATED_IMAGES_PER_SESSION = 24;
 const streamingBuffer: Record<string, string> = {};
 let rafId: number | null = null;
 let flushTimerId: number | null = null;
@@ -327,10 +329,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return nextState;
     }),
 
-  removeSession: (id) =>
+  removeSession: (id) => {
+    // Drop buffered (not yet flushed) streaming chunks so the flush cannot
+    // recreate the deleted session's streamingContent entry.
+    dropPendingStreamingChunks(id);
     set((state) => {
-      // Drop the per-session slices too: messages, tool logs and base64 images
-      // of a deleted session otherwise stay resident until a hard reload.
+      // Drop every per-session slice: messages, tool logs, base64 images and
+      // open editor files of a deleted session otherwise stay resident until
+      // a hard reload.
       const omit = <T>(record: Record<string, T>): Record<string, T> => {
         if (!(id in record)) return record;
         const { [id]: _removed, ...rest } = record;
@@ -348,8 +354,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         todos: omit(state.todos),
         activity: omit(state.activity),
         queueState: omit(state.queueState),
+        thinking: omit(state.thinking),
+        activeAgent: omit(state.activeAgent),
+        permissionRequests: omit(state.permissionRequests),
+        pendingPermissions: omit(state.pendingPermissions),
+        pendingQuestions: omit(state.pendingQuestions),
+        fileTreeOpen: omit(state.fileTreeOpen),
+        selectedFile: omit(state.selectedFile),
+        openFiles: omit(state.openFiles),
+        activeFileTab: omit(state.activeFileTab),
+        lastMessageTimestamp: omit(state.lastMessageTimestamp),
       };
-    }),
+    });
+  },
 
   setActiveSession: (id) => set({ activeSessionId: id }),
 
@@ -512,10 +529,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({
       generatedImages: {
         ...state.generatedImages,
+        // Cap retained images per session: each entry can hold a full base64
+        // payload, so an unbounded list dominates heap on long sessions
+        // (mirrors the agentRuns cap in mergeAgentRuns).
         [sessionId]: [
           ...(state.generatedImages[sessionId] || []),
           { ...image, timestamp: Date.now() },
-        ],
+        ].slice(-MAX_GENERATED_IMAGES_PER_SESSION),
       },
     })),
 

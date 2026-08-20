@@ -27,15 +27,12 @@ export default defineConfig({
             '@radix-ui/react-select',
             '@radix-ui/react-tabs',
             '@radix-ui/react-toast',
-            '@radix-ui/react-tooltip',
             '@radix-ui/react-scroll-area',
           ],
-          // Monaco editor (largest dependency)
-          'vendor-monaco': ['@monaco-editor/react'],
           // Data fetching and state management
           'vendor-data': ['@tanstack/react-query', 'zustand', 'socket.io-client'],
-          // Markdown and syntax highlighting
-          'vendor-markdown': ['react-markdown', 'react-syntax-highlighter'],
+          // Markdown rendering
+          'vendor-markdown': ['react-markdown'],
           // Math rendering (KaTeX)
           'vendor-katex': ['katex', 'remark-math', 'rehype-katex'],
         },
