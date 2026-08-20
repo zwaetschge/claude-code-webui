@@ -85,7 +85,6 @@ services:
       - CLI_AUTO_UPDATE=${CLI_AUTO_UPDATE:-true}
       - CLI_AUTO_UPDATE_INTERVAL_HOURS=${CLI_AUTO_UPDATE_INTERVAL_HOURS:-24}
       - CLI_AUTO_UPDATE_PROVIDERS=${CLI_AUTO_UPDATE_PROVIDERS:-}
-      - SUPERPOWERS_ENABLED=${SUPERPOWERS_ENABLED:-false}
     volumes:
       # Persist database
       - claude-data:/app/packages/backend/data

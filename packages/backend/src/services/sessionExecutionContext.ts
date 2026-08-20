@@ -8,10 +8,6 @@ const VALE_DECISION_PROXY_RULES = [
   '- Escalate only a genuine conflict that meets the real-blocker definition. The proxy is a decision filter, not another skill invocation, checklist, review, or approval gate.',
 ];
 
-export function buildValeDecisionProxyPrompt(): string {
-  return VALE_DECISION_PROXY_RULES.join('\n');
-}
-
 const AUTONOMOUS_EXECUTION_RULES = [
   'Plum Code execution contract:',
   '- Treat the user as the supervisor who defines outcomes, not as the missing planner. Own the decomposition, sequencing, and routine implementation decisions.',

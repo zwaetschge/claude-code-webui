@@ -13,7 +13,6 @@
     "typecheck": "tsc --noEmit",
     "fix:esm-imports": "node scripts/normalize-esm-imports.mjs",
     "test:providers": "pnpm --filter @plum-code-webui/shared run build && tsx scripts/provider-regression-tests.ts",
-    "test:superpowers": "tsx scripts/superpowers-regression-tests.ts",
     "test:design-md": "tsx scripts/design-md-regression-tests.ts",
     "test:style-previews": "tsx scripts/style-preview-regression-tests.ts",
     "test:managed-skills": "tsx scripts/managed-plum-skills-regression-tests.ts",

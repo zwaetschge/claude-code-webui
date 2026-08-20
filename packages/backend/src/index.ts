@@ -29,7 +29,6 @@ import {
   sanitizeClaudeSettingsProviderEnv,
 } from './utils/mcpDefaults.js';
 import { syncProviderLinks } from './utils/providerLinks.js';
-import { syncSuperpowers } from './utils/superpowersSync.js';
 import { resolveConfigHome } from './utils/configPaths.js';
 import { listSkillLibrary } from './utils/skillLibrary.js';
 import { buildSessionCookieOptions } from './utils/sessionCookie.js';
@@ -208,11 +207,6 @@ async function main() {
     }
   } catch (err) {
     console.warn('[mcp-defaults] sync skipped:', err);
-  }
-  try {
-    await syncSuperpowers();
-  } catch (err) {
-    console.warn('[superpowers] sync skipped:', err);
   }
   try {
     const skills = await listSkillLibrary(resolveConfigHome());

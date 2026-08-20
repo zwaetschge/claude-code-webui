@@ -97,11 +97,6 @@ export const REGRESSION_SUITES = [
     args: ['--filter', '@plum-code-webui/backend', 'run', 'test:codex-usage-cache'],
   },
   {
-    name: 'superpowers',
-    command: 'pnpm',
-    args: ['--filter', '@plum-code-webui/backend', 'run', 'test:superpowers'],
-  },
-  {
     name: 'design.md',
     command: 'pnpm',
     args: ['--filter', '@plum-code-webui/backend', 'run', 'test:design-md'],

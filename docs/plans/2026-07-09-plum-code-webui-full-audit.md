@@ -163,7 +163,7 @@
 
 **Files:**
 - Verify: all files changed during Tasks 1-6.
-- Update: `docs/superpowers/plans/2026-07-09-plum-code-webui-full-audit.md` checkbox state as work completes.
+- Update: `docs/plans/2026-07-09-plum-code-webui-full-audit.md` checkbox state as work completes.
 
 **Interfaces:**
 - Consumes: all focused regressions and package/deployment gates.

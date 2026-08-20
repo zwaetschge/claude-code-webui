@@ -29,10 +29,5 @@ export function buildIntegrationEnv(): Record<string, string> {
   if (openaiKey) {
     env.OPENAI_API_KEY = openaiKey;
   }
-  env.SUPERPOWERS_DISABLE_TELEMETRY =
-    process.env.SUPERPOWERS_DISABLE_TELEMETRY ||
-    process.env.DISABLE_TELEMETRY ||
-    process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ||
-    '1';
   return env;
 }

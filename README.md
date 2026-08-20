@@ -58,7 +58,6 @@ tablet in the two-pane workspace._
 - Todo and subagent lifecycle rendering when the active CLI emits them
 - Shared `/agents`, `/skills`, `/subagents`, and slash-command discovery
 - Lean capability catalog: a small active core plus searchable on-demand skills, styles, personas, and domain packs
-- Optional Superpowers workflow skills from `obra/Superpowers`, disabled instance-wide by default
 
 ### DevTools Integration
 
@@ -75,7 +74,6 @@ tablet in the two-pane workspace._
 - **Kimi Code** - Moonshot's native persistent ACP agent with device-code login, live token/tool streaming, queued follow-ups, cancel, and persisted native sessions
 - **Claude Code** (Anthropic) - legacy persistent stream-json provider with a configurable Anthropic-compatible API endpoint
 - Per-session provider selection; switching providers restarts the underlying CLI cleanly
-- When explicitly enabled instance-wide, shared Superpowers skills install into `~/.claude/skills`; Codex also gets a managed local `superpowers@plum-managed` plugin cache/config entry, and OpenCode uses `skills.paths` without the upstream auto-bootstrap plugin
 - Dedicated auth routes: `/auth/codex`, `/auth/opencode`, `/auth/pi`, `/auth/claude`
 - Independent harness state with persisted config (`~/.codex`, `~/.local/share/opencode`, `~/.pi`, `~/.claude`); Pi deliberately reuses OpenCode credentials
 - Admin/helper LLM calls, such as commit message generation, route through the same Codex-first provider preference
@@ -144,7 +142,6 @@ tablet in the two-pane workspace._
 - Active core skills from `~/.claude/skills`; on-demand workflows remain under `~/.claude/skill-catalog`, and optional design/writing presets remain under `~/.claude/style-library`
 - CLI discovery command: `node /app/scripts/capability-catalog.mjs search "<task>"` and `show <name>`
 - Consolidated legacy names stay discoverable through aliases; retired packages are blocked from external re-import
-- Optional Superpowers sync from `https://github.com/obra/Superpowers`; disabled across all providers, users, and workspaces unless the instance explicitly opts in
 - Plugin management for user and marketplace plugins
 - Codex plugin browser/install flow for OpenAI-curated plugins
 - Auto-sync of external skill packs and provider links for OpenCode where supported
@@ -312,8 +309,6 @@ Full schema in `packages/backend/src/config.ts` (zod-validated, fails fast on st
 | `CLI_PROVIDER_<PROVIDER>_DEFAULT_MODEL`                                                  | Override defaults such as Codex `gpt-5.5`, OpenCode `z-ai/glm-5.1`, or Claude `sonnet`.                                                                                                            | No          |
 | `CLI_PROVIDER_OPENCODE_DEFAULT_AGENT` / `CLI_PROVIDER_OPENCODE_STYLE_PROMPT`             | OpenCode WebUI primary agent and Codex-like communication style. Defaults to `build`; set style prompt to `0` or `false` to disable the injected reminder.                                         | No          |
 | `CLI_AUTO_UPDATE` / `CLI_AUTO_UPDATE_PROVIDERS` / `CLI_AUTO_UPDATE_INTERVAL_HOURS`       | Runtime CLI autoupdater. Docker Compose defaults to Codex-only updates on boot and every 24 hours; set providers to a comma-separated list to opt in more CLIs.                                    | No          |
-| `SUPERPOWERS_ENABLED` / `SUPERPOWERS_REPO_URL` / `SUPERPOWERS_REF`                       | Managed Superpowers sync + provider registration. Disabled instance-wide by default; set enabled to `true` to opt all providers, users, and workspaces back in.                                    | No          |
-| `SUPERPOWERS_SYNC_INTERVAL_MS` / `SUPERPOWERS_GIT_TIMEOUT_MS`                            | Optional Superpowers refresh interval and Git operation timeout. Defaults: 6 hours / 45 seconds.                                                                                                   | No          |
 | `ADMIN_LLM_PROVIDER`                                                                     | Pin admin/helper calls to `codex`, `opencode`, or `claude`. Default preference is Codex first.                                                                                                     | No          |
 | `CODEX_WEBUI_SANDBOX_MODE` / `CODEX_WEBUI_APPROVAL_POLICY`                               | Codex Docker defaults. The image defaults to `danger-full-access` / `never` because Codex's Landlock `workspace-write` sandbox is unreliable inside Docker.                                        | No          |
 | `CODEX_USAGE_URL` / `CODEX_USER_AGENT`                                                   | Override the ChatGPT Codex usage endpoint or User-Agent used for `/api/usage/limits?provider=codex`.                                                                                               | No          |

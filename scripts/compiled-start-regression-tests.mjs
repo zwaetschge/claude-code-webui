@@ -45,7 +45,6 @@ const child = spawn(process.execPath, ['packages/backend/dist/index.js'], {
     WEBUI_EXTERNAL_SKILL_SYNC: 'false',
     WEBUI_SUPPRESS_BOOTSTRAP_CREDENTIAL_LOG: '1',
     CLI_AUTO_UPDATE: 'false',
-    SUPERPOWERS_ENABLED: 'false',
     SESSION_SECRET: 'compiled-start-session-secret-000000000000000',
     JWT_SECRET: 'compiled-start-jwt-secret-000000000000000000',
     ENCRYPTION_KEY: 'compiled-start-encryption-key-0000000000000',

@@ -21,7 +21,6 @@ const expectedSuites = [
   'readiness',
   'migration dry-run',
   'codex usage cache',
-  'superpowers',
   'design.md',
   'style previews',
   'managed skills',

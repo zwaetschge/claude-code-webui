@@ -187,21 +187,7 @@ Response shape:
 - External packs sync in order from `/mnt/user/AI/Skills`, `/mnt/unraid/AI/Skills`, then comma-separated `WEBUI_SKILLS_DIRS`. `.skill.zip` files enter active or on-demand trees according to catalog state and aliases/tombstones.
 - Only the main WebUI imports external skills. Set `WEBUI_EXTERNAL_SKILL_SYNC=false` on auxiliary processes such as `repair-bot`; shared config mounts must not race reconciliation.
 - Managed blocks in `AGENTS.md` and `CLAUDE.md` update per session; preserve custom text outside them.
-
-### Superpowers (`obra/Superpowers`)
-
-- Disabled by default. Sync `https://github.com/obra/Superpowers` only with `SUPERPOWERS_ENABLED=true`.
-- Defaults: `SUPERPOWERS_ENABLED=false`, `SUPERPOWERS_REPO_URL=https://github.com/obra/Superpowers.git`, `SUPERPOWERS_REF=main`, `SUPERPOWERS_SYNC_INTERVAL_MS=21600000`, `SUPERPOWERS_GIT_TIMEOUT_MS=45000`. `true` enables all providers/users/workspaces; `false` removes Plum-managed skills, provider registration, and bootstrap injection.
-- Never overwrite user skills unless `.plum-superpowers.json` marks them WebUI-managed.
-- Provider exposure:
-  - Codex: `[plugins."superpowers@plum-managed"]` plus Docker fallback `~/.agents/skills -> ~/.claude/skills`
-  - Claude: `~/.claude/skills`
-  - OpenCode: `skills.paths` in `opencode.json`; remove upstream `plugin`, whose blanket `using-superpowers` injection bypasses Plum policy
-  - Pi: `~/.agents/skills` plus `syncPiConfig()`’s per-user agent directory
-- `buildSuperpowersBootstrapContext()` injects compact provider-specific policy once per session. Do not duplicate it in project `CLAUDE.md` or `AGENTS.md`.
-- The silent “What would Vale do?” proxy resolves routine/reversible decisions internally; it must never become a skill, checklist, review, or approval gate.
-- Regression: `pnpm --filter @plum-code-webui/backend run test:superpowers`.
-- CLI sessions default to `SUPERPOWERS_DISABLE_TELEMETRY=1` unless overridden.
+- The silent “What would Vale do?” proxy (part of the session execution contract in `sessionExecutionContext.ts`) resolves routine/reversible decisions internally; it must never become a skill, checklist, review, or approval gate.
 
 ### Style preset library
 
@@ -378,6 +364,7 @@ If `docker ps --filter name=repair-bot` is empty, `plum-rebuild.sh` exits 3. Sta
 - Top-level GLM provider; GLM belongs to OpenCode
 - Orchestration manager, task router, worker pool
 - Ralph autonomous loop
+- Superpowers integration (obra/Superpowers sync, managed skills, bootstrap injection, `SUPERPOWERS_*` env)
 - Watchdog monitoring and Telegram alerts
 - Main-container self-rebuild HTTP API and handover protocol
 

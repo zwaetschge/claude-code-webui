@@ -84,7 +84,6 @@ import {
 import { sanitizeClaudeResumeTranscript } from '../../utils/claudeResumeTranscript.js';
 import { buildOpenCodeProviderCredentialEnv } from '../../utils/opencodeProviderKeys.js';
 import { assertRunnerAccess } from '../../utils/runnerAccess.js';
-import { buildSuperpowersBootstrapContext, syncSuperpowers } from '../../utils/superpowersSync.js';
 import { buildSessionExecutionPrompt } from '../sessionExecutionContext.js';
 import { materializeAttachments, type FileAttachmentData } from '../attachments.js';
 import { onSessionCompacted } from '../memoryOptimizer.js';
@@ -2765,7 +2764,6 @@ interface ClaudeProcess {
   pendingPermissionDenials: PermissionDenial[] | null;
   pendingChatMedia: PendingChatMedia[];
   sharedContextInjected: boolean;
-  superpowersContextInjected: boolean;
   sessionStyleContextInjected?: string | null;
   modePromptInjected: SessionMode | null;
   androidDeviceSerialInjected?: string | null;
@@ -4396,13 +4394,6 @@ Discord Main Gateway:
     let args: string[] = [];
     let piAgentDir: string | null = null;
 
-    // Make managed Superpowers skills available before the shared provider registry is written.
-    try {
-      await syncSuperpowers(configHome, { quiet: true });
-    } catch (err) {
-      console.warn('[superpowers] session sync skipped:', err);
-    }
-
     // Write skills/agents to global ~/.claude/CLAUDE.md + lightweight project AGENTS.md context
     await ensureGlobalInstructions(configHome);
     await ensureProjectInstructions(session.working_directory, configHome, cliProvider);
@@ -4504,7 +4495,6 @@ Discord Main Gateway:
         pendingPermissionDenials: null,
         pendingChatMedia: [],
         sharedContextInjected: false,
-        superpowersContextInjected: false,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         serverBacked: true,
@@ -4603,7 +4593,6 @@ Discord Main Gateway:
         pendingPermissionDenials: null,
         pendingChatMedia: [],
         sharedContextInjected: !shouldInjectStaticBootstrap,
-        superpowersContextInjected: !shouldInjectStaticBootstrap,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         kimiIdle: true,
@@ -4794,7 +4783,6 @@ Discord Main Gateway:
         pendingPermissionDenials: null,
         pendingChatMedia: [],
         sharedContextInjected: !shouldInjectStaticBootstrap,
-        superpowersContextInjected: !shouldInjectStaticBootstrap,
         modePromptInjected: null,
         lastContextLimitAt: undefined,
         codexIdle: true,
@@ -4986,7 +4974,6 @@ Discord Main Gateway:
       pendingPermissionDenials: null,
       pendingChatMedia: [],
       sharedContextInjected: false,
-      superpowersContextInjected: false,
       modePromptInjected: null,
       lastContextLimitAt: undefined,
     };
@@ -9419,17 +9406,6 @@ ${proc.contextReminder.summary}
       }
     }
 
-    if (!codexReviewCommand && !providerNativeSlashCommand && !proc.superpowersContextInjected) {
-      const superpowersContext = await buildSuperpowersBootstrapContext(
-        proc.cliProvider,
-        resolveConfigHome(proc.cliProvider)
-      );
-      if (superpowersContext) {
-        messageForClaude = `${superpowersContext}\n\n${messageForClaude}`;
-      }
-      proc.superpowersContextInjected = true;
-    }
-
     if (
       proc.cliProvider === 'codex' &&
       !codexReviewCommand &&
@@ -10665,7 +10641,6 @@ ${proc.contextReminder.summary}
       pendingPermissionDenials: null,
       pendingChatMedia: proc.pendingChatMedia,
       sharedContextInjected: false,
-      superpowersContextInjected: false,
       modePromptInjected: null,
       lastContextLimitAt: proc.lastContextLimitAt,
     };

@@ -143,8 +143,6 @@ Set `basic_auth_enabled` to `false` to disable it.
 - External packs sync in order from `/mnt/user/AI/Skills`, `/mnt/unraid/AI/Skills`, then comma-separated `WEBUI_SKILLS_DIRS`. `.skill.zip` imports respect catalog state, aliases, and tombstones.
 - Managed blocks in `AGENTS.md` and `CLAUDE.md` update per session; preserve custom text outside them.
 
-**Superpowers** from [obra/Superpowers](https://github.com/obra/Superpowers) are disabled by default. `SUPERPOWERS_ENABLED=true` enables them instance-wide; `false` removes Plum-managed skills, provider registration, and bootstrap injection. Never overwrite user skills unless `.plum-superpowers.json` marks them as managed.
-
 The 37 design and 32 writing profiles are session presentation layers, not executable skills. Legacy names remain searchable aliases.
 
 ## Environment Variables
@@ -180,7 +178,6 @@ Common:
 - `WEBUI_SKILLS_DIRS`, legacy `CLAUDE_SKILLS_DIRS`
 - `CODEX_USAGE_TIMEOUT_MS`, `CODEX_USAGE_CACHE_TTL_MS`, `CODEX_USER_AGENT`
 - `OPENCODE_NO_PROGRESS_TIMEOUT_MS`, `OPENCODE_ZAI_VISION_MCP`, `OPENCODE_DEBUG_EVENTS`
-- `SUPERPOWERS_ENABLED`, `SUPERPOWERS_REPO_URL`, `SUPERPOWERS_REF`, `SUPERPOWERS_SYNC_INTERVAL_MS`, `SUPERPOWERS_GIT_TIMEOUT_MS`
 - `COMFYUI_URL`, `ANDROID_BUILDER_URL`, `GODOT_BIN`, `BLENDER_BIN`
 
 ## ComfyUI Image Generation (built-in)
@@ -252,7 +249,7 @@ Default-provider selection is encoded in:
 
 ## Pitfalls
 
-- Removed functionality must not return: Gemini provider/image service, top-level GLM provider, orchestration manager, task router, worker pool, Ralph loop, watchdog/Telegram alerts, main-container self-rebuild API, or handover protocol.
+- Removed functionality must not return: Gemini provider/image service, top-level GLM provider, orchestration manager, task router, worker pool, Ralph loop, watchdog/Telegram alerts, main-container self-rebuild API, handover protocol, or the Superpowers integration (obra/Superpowers sync, managed skills, bootstrap injection, `SUPERPOWERS_*` env).
 - GLM belongs to OpenCode routing; `repair-bot` is the only rebuild mechanism.
 - Source-of-truth order is code → this file → README/AGENTS.
 - Provider and MCP configuration binds at process spawn; use a new session after changing it.
