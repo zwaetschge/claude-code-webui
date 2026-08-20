@@ -1127,7 +1127,7 @@ export function SessionPage() {
       }, [footerTicks]);
       const deps = footerDepsRef.current;
       if (!deps) {
-        return <div aria-hidden style={{ height: '8px' }} />;
+        return <div aria-hidden className="chat-footer-spacer" />;
       }
       const footerHasAgentActivity = !!footerActiveAgent || footerActiveAgents.length > 0;
       const footerThinkingDetail =
