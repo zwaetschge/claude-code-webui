@@ -15,6 +15,15 @@ export function spawnManagedProcess(
   const detached = process.platform !== 'win32';
   const child = spawnChildProcess(command, [...args], { ...options, detached });
   if (detached) managedProcessGroups.add(child);
+  // A write to a child that just died surfaces EPIPE as a stream 'error' event;
+  // without a listener that becomes an uncaughtException and takes the whole
+  // backend down. Log it instead — the child's own exit/error handlers already
+  // clean up the session.
+  child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+    console.warn(
+      `[PROCESS] stdin error on managed child ${child.pid ?? '?'} (${command}): ${err.code ?? ''} ${err.message}`
+    );
+  });
   return child;
 }
 

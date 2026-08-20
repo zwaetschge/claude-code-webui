@@ -156,6 +156,10 @@ const BUFFER_SIZE = 5000;
 const HANDOFF_CONTEXT_MAX_CHARS = 60000;
 const HANDOFF_CONTEXT_MAX_MESSAGES = 80;
 const CODEX_TURN_TOKEN_FIELD_CAP = 1_000_000;
+// Cap for a single accumulating stream-json line. Legitimate lines reach a few
+// megabytes; a newline-free stream past this point would otherwise grow the
+// per-session buffer without bound.
+const MAX_STREAM_LINE_BUFFER_BYTES = 8 * 1024 * 1024;
 
 // Pi events that prove the turn is still moving. Used to cancel the scheduled
 // post-compaction nudge so we never inject a duplicate prompt.
@@ -4374,9 +4378,7 @@ Discord Main Gateway:
     );
 
     // Parse allowed directories
-    const allowedDirs: string[] = session.allowed_directories
-      ? JSON.parse(session.allowed_directories)
-      : [];
+    const allowedDirs: string[] = safeJsonParse<string[]>(session.allowed_directories, []);
 
     const isResuming = !!session.claude_session_id;
     if (cliProvider === 'claude' && session.claude_session_id) {
@@ -5064,17 +5066,55 @@ Discord Main Gateway:
     // A multi-megabyte stream-json line arrives in ~64KB chunks; splitting the
     // whole accumulated buffer per chunk is quadratic in the line size. Only
     // split once this chunk actually completed a line.
-    if (!data.includes('\n')) return;
+    if (!data.includes('\n')) {
+      if (proc.buffer.length > MAX_STREAM_LINE_BUFFER_BYTES) {
+        console.warn(
+          `[STREAM] Dropping ${proc.buffer.length}-byte partial line without newline [${sessionId}] (${proc.cliProvider}); exceeds ${MAX_STREAM_LINE_BUFFER_BYTES}-byte cap`
+        );
+        proc.buffer = '';
+      }
+      return;
+    }
 
     // Process complete JSON lines
     const lines = proc.buffer.split('\n');
     proc.buffer = lines.pop() || ''; // Keep incomplete line in buffer
+    if (proc.buffer.length > MAX_STREAM_LINE_BUFFER_BYTES) {
+      console.warn(
+        `[STREAM] Dropping ${proc.buffer.length}-byte partial line without newline [${sessionId}] (${proc.cliProvider}); exceeds ${MAX_STREAM_LINE_BUFFER_BYTES}-byte cap`
+      );
+      proc.buffer = '';
+    }
 
     for (const line of lines) {
       if (!line.trim()) continue;
 
+      let raw: unknown;
       try {
-        const raw = JSON.parse(line) as unknown;
+        raw = JSON.parse(line) as unknown;
+      } catch {
+        // Not valid JSON, emit as raw output for debugging (skip noisy Codex/OpenCode output)
+        console.log(`Non-JSON output [${sessionId}]:`, line);
+        if (
+          proc.cliProvider !== 'codex' &&
+          proc.cliProvider !== 'opencode' &&
+          proc.cliProvider !== 'pi' &&
+          proc.cliProvider !== 'kimi'
+        ) {
+          this.io.to(`session:${sessionId}`).emit('session:output', {
+            sessionId,
+            chatId: this.processes.get(sessionId)?.currentChatId,
+            content: line + '\n',
+            isComplete: false,
+          });
+        }
+        continue;
+      }
+
+      // The line parsed; any failure past this point is a real processing bug
+      // and must never be misreported (or re-emitted to the chat) as raw
+      // non-JSON provider noise.
+      try {
         if (proc.cliProvider === 'pi') {
           const translated = this.translatePiMessage(sessionId, raw);
           if (Array.isArray(translated)) {
@@ -5100,22 +5140,11 @@ Discord Main Gateway:
           continue;
         }
         this.processStreamMessage(sessionId, raw as StreamJsonMessage);
-      } catch (e) {
-        // Not valid JSON, emit as raw output for debugging (skip noisy Codex/OpenCode output)
-        console.log(`Non-JSON output [${sessionId}]:`, line);
-        if (
-          proc.cliProvider !== 'codex' &&
-          proc.cliProvider !== 'opencode' &&
-          proc.cliProvider !== 'pi' &&
-          proc.cliProvider !== 'kimi'
-        ) {
-          this.io.to(`session:${sessionId}`).emit('session:output', {
-            sessionId,
-            chatId: this.processes.get(sessionId)?.currentChatId,
-            content: line + '\n',
-            isComplete: false,
-          });
-        }
+      } catch (err) {
+        console.error(
+          `[STREAM] Failed to process ${proc.cliProvider} message [${sessionId}]:`,
+          err
+        );
       }
     }
   }
@@ -5403,7 +5432,8 @@ Discord Main Gateway:
       console.log(
         `[PI] Resuming turn after ${reason} compaction (attempt ${current.piCompactContinuations}) [${sessionId}]`
       );
-      current.process.stdin?.write(formatInputMessage('pi', PI_COMPACT_CONTINUE_PROMPT));
+      if (!current.process.stdin?.writable) return;
+      current.process.stdin.write(formatInputMessage('pi', PI_COMPACT_CONTINUE_PROMPT));
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: true,
@@ -6991,9 +7021,7 @@ Discord Main Gateway:
 
     if (!session) throw new Error('Session not found for codex respawn');
 
-    const allowedDirs: string[] = session.allowed_directories
-      ? JSON.parse(session.allowed_directories)
-      : [];
+    const allowedDirs: string[] = safeJsonParse<string[]>(session.allowed_directories, []);
 
     const resumeSessionId = proc.codexPendingExecCommand ? undefined : proc.codexSessionId;
     const args = getCLIArgs('codex', {
@@ -8143,14 +8171,22 @@ The planning phase is complete. You are now in Auto-Accept mode.
     const chatId = proc?.currentChatId ?? getSessionSyncState(sessionId).activeChatId;
     const eventSequence = this.allocateEventSequence(sessionId);
 
-    db.prepare(
-      `INSERT INTO messages (
-         id, session_id, chat_id, role, content, event_sequence
-       ) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(messageId, sessionId, chatId, 'assistant', deliveredContent, eventSequence);
-    db.prepare(
-      'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(deliveredContent.substring(0, 200), sessionId);
+    // This runs from child 'exit' handlers among other places; a throw there
+    // becomes an uncaughtException and kills the whole backend. Log and bail
+    // instead of emitting a message whose row was never persisted.
+    try {
+      db.prepare(
+        `INSERT INTO messages (
+           id, session_id, chat_id, role, content, event_sequence
+         ) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(messageId, sessionId, chatId, 'assistant', deliveredContent, eventSequence);
+      db.prepare(
+        'UPDATE sessions SET last_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).run(deliveredContent.substring(0, 200), sessionId);
+    } catch (error) {
+      console.error(`[SAVE] Failed to persist assistant message [${sessionId}]:`, error);
+      return;
+    }
 
     if (proc) {
       proc.lastSavedAssistantContent = deliveredContent;
@@ -8328,10 +8364,16 @@ The planning phase is complete. You are now in Auto-Accept mode.
       sessionId,
       isThinking: true,
     });
-    proc.process.stdin?.write(formatInputMessage(proc.cliProvider, turn.messageForClaude));
-    console.log(
-      `Sent message [${sessionId}] via ${proc.cliProvider}: ${turn.messageForClaude.substring(0, 100)}...`
-    );
+    if (proc.process.stdin?.writable) {
+      proc.process.stdin.write(formatInputMessage(proc.cliProvider, turn.messageForClaude));
+      console.log(
+        `Sent message [${sessionId}] via ${proc.cliProvider}: ${turn.messageForClaude.substring(0, 100)}...`
+      );
+    } else {
+      console.warn(
+        `[SEND] stdin no longer writable for ${proc.cliProvider} [${sessionId}]; dropping dispatched turn`
+      );
+    }
     this.emitQueueState(sessionId, proc);
   }
 
@@ -9308,6 +9350,8 @@ The planning phase is complete. You are now in Auto-Accept mode.
       activeFollowupMode?: ActiveFollowupMode;
       clientMessageId?: string;
       uploadIds?: string[];
+      /** Internal: set when re-dispatching after a mid-send session restart. */
+      staleProcRedispatch?: boolean;
     }
   ): Promise<SendMessageResult> {
     assertRunnerAccess(userId);
@@ -9823,6 +9867,28 @@ ${proc.contextReminder.summary}
       };
     }
 
+    // The context reads above awaited; the session may have been restarted
+    // (mode change, permission approval, provider reload) in the meantime.
+    // Never write into the stale child — its stdin is dead or belongs to a
+    // replaced turn. Re-dispatch once through the current transport instead;
+    // the user message is already recorded, so the retry must not re-record.
+    if (this.processes.get(sessionId) !== proc) {
+      if (options?.staleProcRedispatch) {
+        throw new Error('Session restarted repeatedly while sending; message not delivered');
+      }
+      console.warn(`[SEND] Session ${sessionId} restarted mid-send; re-dispatching message`);
+      const redispatched = await this.sendMessage(sessionId, userId, message, attachments, {
+        ...options,
+        chatId: targetChatId,
+        recordMessage: false,
+        staleProcRedispatch: true,
+      });
+      return {
+        ...redispatched,
+        ...(recordMessage ? { messageId: recordedMessageId } : {}),
+      };
+    }
+
     if (updateLastMessage) {
       // Track last message for permission approval resend
       proc.lastUserMessage = message;
@@ -9833,7 +9899,9 @@ ${proc.contextReminder.summary}
     if (piCompactCommand) {
       // Manual compaction is not a turn — leave piTurnInFlight alone so an
       // in-flight turn still gets resumed once compaction finishes.
-      proc.process.stdin?.write(`${JSON.stringify({ type: 'compact' })}\n`);
+      if (proc.process.stdin?.writable) {
+        proc.process.stdin.write(`${JSON.stringify({ type: 'compact' })}\n`);
+      }
       this.io.to(`session:${sessionId}`).emit('session:thinking', {
         sessionId,
         isThinking: true,
@@ -9862,10 +9930,14 @@ ${proc.contextReminder.summary}
     });
 
     const formattedMessage = formatInputMessage(proc.cliProvider, messageForClaude);
-    proc.process.stdin?.write(formattedMessage);
-    console.log(
-      `Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`
-    );
+    if (proc.process.stdin?.writable) {
+      proc.process.stdin.write(formattedMessage);
+      console.log(
+        `Sent message [${sessionId}] via ${proc.cliProvider}: ${messageForClaude.substring(0, 100)}...`
+      );
+    } else {
+      console.warn(`[SEND] stdin no longer writable for ${proc.cliProvider} [${sessionId}]`);
+    }
     return {
       ...(recordMessage ? { messageId: recordedMessageId } : {}),
       chatId: recordedChatId,
@@ -10294,6 +10366,12 @@ ${proc.contextReminder.summary}
     this.clearPiCompactResumeTimer(proc);
     proc.piTurnInFlight = false;
 
+    // Same for the steering-preemption escalation timers.
+    if (proc.codexPreemptKillTimer) {
+      clearTimeout(proc.codexPreemptKillTimer);
+      proc.codexPreemptKillTimer = undefined;
+    }
+
     // Server-backed opencode: drop the SSE handler so events for this session
     // stop routing anywhere. The opencode session itself stays alive on the
     // server (it can be resumed on next startSession).
@@ -10303,11 +10381,17 @@ ${proc.contextReminder.summary}
 
     this.processes.delete(sessionId);
 
-    const db = getDatabase();
-    db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-      'stopped',
-      sessionId
-    );
+    // Runs from child 'exit'/'error' handlers: a DB throw here would become an
+    // uncaughtException and take the backend down with it.
+    try {
+      const db = getDatabase();
+      db.prepare('UPDATE sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        'stopped',
+        sessionId
+      );
+    } catch (error) {
+      console.error(`[CLEANUP] Failed to mark session ${sessionId} stopped:`, error);
+    }
 
     this.emitStatus(sessionId, {
       sessionId,
@@ -10468,6 +10552,49 @@ ${proc.contextReminder.summary}
     // Clear pending denials
     proc.pendingPermissionDenials = null;
 
+    // The kill→respawn below leaves the session absent from `processes` across
+    // several awaits. Publish that window through `startingSessions` so a
+    // concurrent sendMessage/startSession waits for the respawn instead of
+    // spawning a second child that would be orphaned (but keep streaming) once
+    // the respawn overwrites the map entry.
+    let releaseRestartGuard!: () => void;
+    const restartGuard = new Promise<void>((resolve) => {
+      releaseRestartGuard = resolve;
+    });
+    this.startingSessions.set(sessionId, restartGuard);
+    try {
+      await this.respawnWithApprovedTools(sessionId, userId, toolNames, proc);
+    } finally {
+      if (this.startingSessions.get(sessionId) === restartGuard) {
+        this.startingSessions.delete(sessionId);
+      }
+      releaseRestartGuard();
+    }
+
+    const resumeMessage = [
+      `Permission granted for tools: ${toolNames.join(', ') || 'approved tools'}.`,
+      'Continue the previous request from the existing context.',
+      'Do not repeat earlier analysis or summaries; resume where you left off.',
+    ].join('\n');
+
+    // Send a resume signal instead of re-sending the full prompt,
+    // and skip recording/emitting the message to avoid duplicates in the UI.
+    // This runs outside the restart guard: if the fresh child died instantly,
+    // sendMessage may legitimately need startSession, which would otherwise
+    // deadlock on the guard it is part of.
+    await this.sendMessage(sessionId, userId, resumeMessage, undefined, {
+      recordMessage: false,
+      updateLastMessage: false,
+    });
+  }
+
+  /** Kill the current child and respawn it with the approved tools allowed. */
+  private async respawnWithApprovedTools(
+    sessionId: string,
+    userId: string,
+    toolNames: string[],
+    proc: ClaudeProcess
+  ): Promise<void> {
     // Store session info before killing
     const claudeSessionId = proc.claudeSessionId;
     const workingDirectory = proc.workingDirectory;
@@ -10499,9 +10626,7 @@ ${proc.contextReminder.summary}
     }
 
     // Parse allowed directories
-    const allowedDirs: string[] = session.allowed_directories
-      ? JSON.parse(session.allowed_directories)
-      : [];
+    const allowedDirs: string[] = safeJsonParse<string[]>(session.allowed_directories, []);
 
     let args: string[] = [];
     const requestedModel =
@@ -10675,19 +10800,6 @@ ${proc.contextReminder.summary}
 
     // Wait for initialization
     await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const resumeMessage = [
-      `Permission granted for tools: ${toolNames.join(', ') || 'approved tools'}.`,
-      'Continue the previous request from the existing context.',
-      'Do not repeat earlier analysis or summaries; resume where you left off.',
-    ].join('\n');
-
-    // Send a resume signal instead of re-sending the full prompt,
-    // and skip recording/emitting the message to avoid duplicates in the UI.
-    await this.sendMessage(sessionId, userId, resumeMessage, undefined, {
-      recordMessage: false,
-      updateLastMessage: false,
-    });
   }
 
   // Handle permission denial - clear pending state
