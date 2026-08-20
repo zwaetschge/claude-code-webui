@@ -82,6 +82,19 @@ ROOT_OWNED_FIXES.md
 *.bak-*
 *.bak.*
 
+# One-off debug/audit artifacts (screenshots, CDP probes, audit dumps)
+.artifacts/
+tmp-*.png
+.tmp-*.mjs
+web-audit-*/
+android-verify/
+html previews/
+plum-code-*.list0
+
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Local UI mockups / scratch
 html templates/
 
