@@ -5148,8 +5148,16 @@ html.dark .aurora-grain,
   pointer-events: none;
   backdrop-filter: blur(16px) saturate(150%);
   -webkit-backdrop-filter: blur(16px) saturate(150%);
-  mask-image: linear-gradient(to top, black, black 62%, transparent);
-  -webkit-mask-image: linear-gradient(to top, black, black 62%, transparent);
+  /* Feathered on three sides: without the horizontal fade the blur rectangle
+     ends in a visible vertical seam at the chat column's edges. */
+  mask-image:
+    linear-gradient(to top, black, black 62%, transparent),
+    linear-gradient(to right, transparent, black 48px, black calc(100% - 48px), transparent);
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to top, black, black 62%, transparent),
+    linear-gradient(to right, transparent, black 48px, black calc(100% - 48px), transparent);
+  -webkit-mask-composite: source-in;
 }
 
 /* --- Chat scroll viewport — overlay fades that do not mask sticky controls --- */
