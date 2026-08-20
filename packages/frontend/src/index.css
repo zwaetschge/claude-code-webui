@@ -5148,8 +5148,27 @@ html.dark .aurora-grain,
   position: absolute;
   top: 0;
   right: 0;
-  bottom: calc(var(--chat-input-h, 112px) + 8px);
+  /* Full height on purpose: the transcript scrolls behind the frosted
+     composer instead of being cut off at its top edge. Bottom clearance
+     comes from the list footer, so the last message can scroll clear. */
+  bottom: 0;
   left: 0;
+}
+
+.session-chat-layered .chat-footer-stream {
+  padding-bottom: calc(var(--chat-input-h, 112px) + 24px);
+}
+
+.chat-footer-spacer {
+  height: 8px;
+}
+
+.chat-footer-spacer {
+  height: 8px;
+}
+
+.session-chat-layered .chat-footer-spacer {
+  height: calc(var(--chat-input-h, 112px) + 24px);
 }
 
 .chat-virtuoso {
@@ -5201,6 +5220,10 @@ html.dark .aurora-grain,
   right: 0;
   bottom: 12px;
   left: 0;
+}
+
+.session-chat-layered .chat-jump-latest {
+  bottom: calc(var(--chat-input-h, 112px) + 12px);
 }
 
 /* The pill floats over the transcript, so it needs an opaque surface of its
@@ -5598,9 +5621,11 @@ html.dark .aurora-grain,
   padding: 6px;
   border: 1px solid hsl(var(--foreground) / 0.12);
   background:
-    linear-gradient(180deg, hsl(var(--card) / 0.92), hsl(var(--background) / 0.76)),
+    linear-gradient(180deg, hsl(var(--card) / 0.68), hsl(var(--background) / 0.52)),
     radial-gradient(circle at 18% 0%, hsl(var(--primary) / 0.14), transparent 36%),
     radial-gradient(circle at 78% 0%, hsl(var(--accent) / 0.12), transparent 34%);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
   box-shadow:
     inset 0 1px 0 hsl(var(--foreground) / 0.08),
     0 18px 52px -36px hsl(var(--shadow-color) / 0.82),
