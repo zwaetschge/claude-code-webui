@@ -69,9 +69,6 @@ sealed class Routes(val route: String) {
     /** Settings root screen */
     object Settings : Routes("settings")
 
-    /** Provider configuration (API keys, models) */
-    object SettingsProviders : Routes("settings/providers")
-
     /** Detail view for one CLI harness (status + model selection) */
     data class SettingsCliProvider(val providerId: String) : Routes(ROUTE) {
         companion object {

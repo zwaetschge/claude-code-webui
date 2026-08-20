@@ -95,7 +95,6 @@ import com.claudewebui.app.ui.components.common.providerColor
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onNavigateToProviders: () -> Unit,
     onNavigateToCliProvider: (String) -> Unit = {},
     onNavigateToMcp: () -> Unit,
     onNavigateToCliTools: () -> Unit,

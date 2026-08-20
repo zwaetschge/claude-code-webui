@@ -585,35 +585,8 @@ class ApiClient {
         client.delete(url("/api/checkpoints/$checkpointId")).body()
 
     // ========================================================================
-    // AI Providers
+    // CLI Providers
     // ========================================================================
-
-    /** GET /api/providers */
-    suspend fun getProviders(): ApiResponse<List<AIProvider>> =
-        client.get(url("/api/providers")).body()
-
-    /** POST /api/providers */
-    suspend fun createProvider(input: CreateProviderInput): ApiResponse<AIProvider> =
-        client.post(url("/api/providers")) {
-            setBody(input)
-        }.body()
-
-    /** PATCH /api/providers/:id */
-    suspend fun updateProvider(id: String, input: UpdateProviderInput): ApiResponse<AIProvider> =
-        client.patch(url("/api/providers/$id")) {
-            setBody(input)
-        }.body()
-
-    /**
-     * POST /api/providers/:id/test — the backend actually calls the provider's
-     * API with the stored credentials and reports what came back.
-     */
-    suspend fun testProvider(id: String): ApiResponse<ProviderTestResult> =
-        client.post(url("/api/providers/$id/test")).body()
-
-    /** DELETE /api/providers/:id */
-    suspend fun deleteProvider(id: String): ApiResponse<Unit> =
-        client.delete(url("/api/providers/$id")).body()
 
     /** GET /api/cli-providers */
     suspend fun getCLIProviders(): ApiResponse<List<CLIProviderConfig>> =

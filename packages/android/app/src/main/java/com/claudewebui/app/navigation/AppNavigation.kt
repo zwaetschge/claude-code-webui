@@ -60,7 +60,6 @@ import com.claudewebui.app.ui.screens.memory.MemoryScreen
 import com.claudewebui.app.ui.screens.settings.CliProviderDetailScreen
 import com.claudewebui.app.ui.screens.settings.McpSettingsScreen
 import com.claudewebui.app.ui.screens.settings.PermissionsScreen
-import com.claudewebui.app.ui.screens.settings.ProviderSettingsScreen
 import com.claudewebui.app.ui.screens.settings.SettingsScreen
 import com.claudewebui.app.ui.theme.LocalReduceMotion
 import org.koin.compose.viewmodel.koinViewModel
@@ -367,7 +366,6 @@ fun AppNavigation(
                 val viewModel = settingsViewModel
                 SettingsScreen(
                     viewModel = viewModel,
-                    onNavigateToProviders = { navController.navigate(Routes.SettingsProviders.route) },
                     onNavigateToCliProvider = { providerId ->
                         navController.navigate(Routes.SettingsCliProvider.createRoute(providerId))
                     },
@@ -386,14 +384,6 @@ fun AppNavigation(
                         }
                     },
                     onNavigateMain = { navController.navigateMain(it) },
-                )
-            }
-
-            composable(route = Routes.SettingsProviders.route) {
-                val viewModel = settingsViewModel
-                ProviderSettingsScreen(
-                    viewModel = viewModel,
-                    onNavigateBack = { navController.popBackStack() }
                 )
             }
 

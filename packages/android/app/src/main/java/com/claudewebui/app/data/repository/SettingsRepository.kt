@@ -1,7 +1,6 @@
 package com.claudewebui.app.data.repository
 
 import com.claudewebui.app.core.network.ApiClient
-import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.Category
 import com.claudewebui.app.data.model.CLIProvider
 import com.claudewebui.app.data.model.CLIProviderConfig
@@ -15,14 +14,12 @@ import com.claudewebui.app.data.model.ConfigSkill
 import com.claudewebui.app.data.model.CreateCategoryInput
 import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CreateMcpServerInput
-import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.McpTestResult
 import com.claudewebui.app.data.model.OpenCodeProvider
 import com.claudewebui.app.data.model.OpenCodeProviderTest
 import com.claudewebui.app.data.model.InstallPluginInput
-import com.claudewebui.app.data.model.ProviderTestResult
 import com.claudewebui.app.data.model.SaveConfigAgentInput
 import com.claudewebui.app.data.model.SaveConfigPluginInput
 import com.claudewebui.app.data.model.SaveConfigSkillInput
@@ -33,7 +30,6 @@ import com.claudewebui.app.data.model.UiProvider
 import com.claudewebui.app.data.model.UpdateCategoryInput
 import com.claudewebui.app.data.model.UpdateCustomAgentInput
 import com.claudewebui.app.data.model.UpdateMcpServerInput
-import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UpdateSettingsInput
 import com.claudewebui.app.data.model.UserSettings
 import com.claudewebui.app.data.model.UpdateZaiApiInput
@@ -147,51 +143,7 @@ class SettingsRepository(
         response.data
     }
 
-    // ---- AI Providers ------------------------------------------------------
-
-    /** Fetch all configured AI providers. */
-    suspend fun getProviders(): Result<List<AIProvider>> = runCatching {
-        val response = api.getProviders()
-        if (!response.success || response.data == null) {
-            error(response.error?.message ?: "Failed to fetch providers")
-        }
-        response.data
-    }
-
-    /** Add a new AI provider configuration. */
-    suspend fun createProvider(input: CreateProviderInput): Result<AIProvider> = runCatching {
-        val response = api.createProvider(input)
-        if (!response.success || response.data == null) {
-            error(response.error?.message ?: "Failed to create provider")
-        }
-        response.data
-    }
-
-    /** Update an existing provider. */
-    suspend fun updateProvider(id: String, input: UpdateProviderInput): Result<AIProvider> = runCatching {
-        val response = api.updateProvider(id, input)
-        if (!response.success || response.data == null) {
-            error(response.error?.message ?: "Failed to update provider")
-        }
-        response.data
-    }
-
-    /** Ask the server to call the provider's API and report the result. */
-    suspend fun testProvider(id: String): Result<ProviderTestResult> = runCatching {
-        val response = api.testProvider(id)
-        if (!response.success || response.data == null) {
-            error(response.error?.message ?: "Failed to test provider")
-        }
-        response.data
-    }
-
-    /** Delete a provider. */
-    suspend fun deleteProvider(id: String): Result<Unit> = runCatching {
-        val response = api.deleteProvider(id)
-        if (!response.success) {
-            error(response.error?.message ?: "Failed to delete provider")
-        }
-    }
+    // ---- CLI Providers -----------------------------------------------------
 
     /** Fetch the canonical CLI provider registry, including enabled/auth status. */
     suspend fun getCLIProviders(): Result<List<CLIProviderConfig>> = runCatching {

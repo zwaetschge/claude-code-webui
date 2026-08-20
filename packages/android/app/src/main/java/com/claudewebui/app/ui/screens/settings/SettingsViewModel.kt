@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.claudewebui.app.core.notifications.LocalNotificationManager
 import com.claudewebui.app.core.notifications.NotificationPreferences
 import com.claudewebui.app.core.security.TokenStore
-import com.claudewebui.app.data.model.AIProvider
 import com.claudewebui.app.data.model.AuthUser
 import com.claudewebui.app.data.model.CreateCustomAgentInput
 import com.claudewebui.app.data.model.CLIProviderConfig
@@ -19,17 +18,14 @@ import com.claudewebui.app.data.model.ConfigMarketplace
 import com.claudewebui.app.data.model.ConfigPlugin
 import com.claudewebui.app.data.model.ConfigSkill
 import com.claudewebui.app.data.model.CreateMcpServerInput
-import com.claudewebui.app.data.model.CreateProviderInput
 import com.claudewebui.app.data.model.CustomAgent
 import com.claudewebui.app.data.model.McpServer
 import com.claudewebui.app.data.model.McpServerType
 import com.claudewebui.app.data.model.OpenCodeProvider
-import com.claudewebui.app.data.model.ProviderType
 import com.claudewebui.app.data.model.SlashCommand
 import com.claudewebui.app.data.model.Theme
 import com.claudewebui.app.data.model.UpdateCustomAgentInput
 import com.claudewebui.app.data.model.UpdateMcpServerInput
-import com.claudewebui.app.data.model.UpdateProviderInput
 import com.claudewebui.app.data.model.UserSettings
 import com.claudewebui.app.data.model.UpdateZaiApiInput
 import com.claudewebui.app.data.model.SaveOpenCodeProviderInput
@@ -101,9 +97,7 @@ data class SettingsUiState(
     val userSettings: UserSettings? = null,
 
     // Providers
-    val providers: List<AIProvider> = emptyList(),
     val cliProviders: List<CLIProviderConfig> = emptyList(),
-    val providerTestResults: Map<String, TestResult> = emptyMap(),
     val zaiApi: ZaiApiStatus? = null,
     val zaiApiSaving: Boolean = false,
     val openCodeProviders: List<OpenCodeProvider> = emptyList(),
@@ -236,10 +230,6 @@ class SettingsViewModel(
                         .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
                     // Depends on the allowedTools allowlist from the call above.
                     loadCliToolsInternal()
-                }
-                launch {
-                    settingsRepository.getProviders()
-                        .onSuccess { providers -> _uiState.update { it.copy(providers = providers) } }
                 }
                 launch {
                     settingsRepository.getCLIProviders()
@@ -648,83 +638,6 @@ class SettingsViewModel(
 
     // ── Providers ─────────────────────────────────────────────────────────────
 
-    fun addProvider(
-        name: String,
-        type: ProviderType,
-        apiKey: String?,
-        baseUrl: String?,
-        models: List<String>,
-    ) {
-        viewModelScope.launch {
-            val input = CreateProviderInput(
-                name = name,
-                type = type,
-                apiKey = apiKey?.takeIf { it.isNotBlank() },
-                baseUrl = baseUrl?.takeIf { it.isNotBlank() },
-                models = models.takeIf { it.isNotEmpty() },
-                enabled = true,
-            )
-            settingsRepository.createProvider(input)
-                .onSuccess { provider ->
-                    _uiState.update {
-                        it.copy(
-                            providers = it.providers + provider,
-                            toastMessage = "Provider '${provider.name}' added",
-                        )
-                    }
-                }
-                .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
-        }
-    }
-
-    fun updateProvider(
-        id: String,
-        name: String? = null,
-        apiKey: String? = null,
-        baseUrl: String? = null,
-        models: List<String>? = null,
-        enabled: Boolean? = null,
-    ) {
-        viewModelScope.launch {
-            val input = UpdateProviderInput(
-                name = name,
-                apiKey = apiKey?.takeIf { it.isNotBlank() },
-                baseUrl = baseUrl,
-                models = models,
-                enabled = enabled,
-            )
-            settingsRepository.updateProvider(id, input)
-                .onSuccess { updated ->
-                    _uiState.update { state ->
-                        state.copy(
-                            providers = state.providers.map { if (it.id == id) updated else it },
-                            toastMessage = "Provider updated",
-                        )
-                    }
-                }
-                .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
-        }
-    }
-
-    fun toggleProvider(id: String, enabled: Boolean) {
-        updateProvider(id = id, enabled = enabled)
-    }
-
-    fun deleteProvider(id: String) {
-        viewModelScope.launch {
-            settingsRepository.deleteProvider(id)
-                .onSuccess {
-                    _uiState.update { state ->
-                        state.copy(
-                            providers = state.providers.filter { it.id != id },
-                            toastMessage = "Provider removed",
-                        )
-                    }
-                }
-                .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
-        }
-    }
-
     /**
      * Choose which model a CLI harness runs for new sessions.
      *
@@ -906,28 +819,6 @@ class SettingsViewModel(
                         )
                     }
                 }
-        }
-    }
-
-    /**
-     * Test a provider through the backend, which calls its API with the stored
-     * credentials. Previously this slept 1.5s and reported success from the
-     * local `enabled` flag, so it could claim a working connection for a
-     * provider whose key was wrong.
-     */
-    fun testProviderConnection(id: String) {
-        _uiState.update { it.copy(providerTestResults = it.providerTestResults + (id to TestResult.Testing)) }
-        viewModelScope.launch {
-            val result = settingsRepository.testProvider(id).fold(
-                onSuccess = { test ->
-                    if (test.success) TestResult.Success
-                    else TestResult.Failure(test.message.ifBlank { "Connection failed" })
-                },
-                onFailure = { error -> TestResult.Failure(error.message ?: "Test failed") },
-            )
-            _uiState.update { state ->
-                state.copy(providerTestResults = state.providerTestResults + (id to result))
-            }
         }
     }
 
