@@ -58,8 +58,6 @@ import checkpointsRoutes from './routes/checkpoints.js';
 import agentsRoutes from './routes/agents.js';
 import notesRoutes from './routes/notes.js';
 import categoriesRoutes from './routes/categories.js';
-import providersRoutes from './routes/providers.js';
-import providerOAuthRoutes from './routes/provider-oauth.js';
 import cliProvidersRoutes from './routes/cli-providers.js';
 import cliLoginRoutes from './routes/cli-login.js';
 import codexRoutes from './routes/codex.js';
@@ -367,8 +365,6 @@ async function main() {
   app.use('/api/agents', agentsRoutes);
   app.use('/api/notes', notesRoutes);
   app.use('/api/categories', categoriesRoutes);
-  app.use('/api/providers', providersRoutes);
-  app.use('/api/providers', providerOAuthRoutes);
   app.use('/api/cli-providers', cliProvidersRoutes);
   app.use('/api/cli-login', cliLoginRoutes);
   app.use('/api/setup', setupRoutes);

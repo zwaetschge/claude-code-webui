@@ -1064,15 +1064,6 @@ export function getZaiApiConfigForUser(userId: string): ZaiApiConfig | null {
   };
 }
 
-/** @deprecated Use the dedicated Z.AI settings route and getter. */
-export const getClaudeApiConfigForUser = getZaiApiConfigForUser;
-
-// Compatibility aliases for older frontends during a rolling deployment.
-router.get('/claude-api', requireAuth, (req, res) => {
-  const userId = (req as AuthenticatedRequest).userId;
-  res.json({ success: true, data: serializeZaiApiStatus(getZaiApiConfigForUser(userId)) });
-});
-
 // ComfyUI / LoRA Tester integration URLs (admin-wide, stored in app_config)
 const integrationsSchema = z.object({
   comfyuiUrl: z.string().trim().url().or(z.literal('')).nullable().optional(),

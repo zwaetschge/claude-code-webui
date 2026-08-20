@@ -27,7 +27,7 @@ function getKey(): Buffer {
  * Encrypt a plaintext string
  * @returns Base64-encoded ciphertext with IV and auth tag prepended
  */
-export function encrypt(plaintext: string): string {
+function encrypt(plaintext: string): string {
   const key = getKey();
   const iv = crypto.randomBytes(IV_LENGTH);
 
@@ -45,7 +45,7 @@ export function encrypt(plaintext: string): string {
  * Decrypt a Base64-encoded ciphertext
  * @returns Decrypted plaintext string
  */
-export function decrypt(ciphertext: string): string {
+function decrypt(ciphertext: string): string {
   const key = getKey();
   const combined = Buffer.from(ciphertext, 'base64');
 
@@ -65,7 +65,7 @@ export function decrypt(ciphertext: string): string {
 /**
  * Check if encryption is available (ENCRYPTION_KEY is set)
  */
-export function isEncryptionAvailable(): boolean {
+function isEncryptionAvailable(): boolean {
   return !!config.encryptionKey;
 }
 

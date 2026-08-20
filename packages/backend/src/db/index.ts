@@ -11,7 +11,6 @@ import {
   LLM_PRICING_RATE_CARD_VERSION,
   type CLIProvider,
 } from '@plum-code-webui/shared';
-import { safeEncrypt, isEncryptionAvailable, decrypt } from '../utils/encryption.js';
 import {
   readAllKimiUsageRecords,
   readKimiRootPrompts,
@@ -669,15 +668,6 @@ function runMigrations(db: Database.Database): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- Claude OAuth tokens table
-    CREATE TABLE IF NOT EXISTS claude_tokens (
-      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-      access_token TEXT NOT NULL,
-      refresh_token TEXT,
-      expires_at DATETIME,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
     -- Usage history table (for analytics)
     CREATE TABLE IF NOT EXISTS usage_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1306,50 +1296,23 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_notes_session_id ON notes(session_id);
   `);
 
-  // Create ai_providers table for multi-provider support
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ai_providers (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      api_key_encrypted TEXT,
-      base_url TEXT,
-      models TEXT,
-      default_model TEXT,
-      enabled INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_ai_providers_user_id ON ai_providers(user_id);
-  `);
-
-  // Migration: Add OAuth columns to ai_providers for subscription-based auth
+  // Migration: drop dead tables.
+  // - ai_providers: the BYO-API-key / Gemini-OAuth feature was removed; no
+  //   inference path ever consumed the stored credentials, so drop the table
+  //   so orphaned secrets do not linger at rest.
+  // - claude_tokens: legacy Claude OAuth token storage, unreferenced.
+  // - session_peer_profiles: half-shipped mesh feature, unreferenced.
   try {
-    db.exec(`ALTER TABLE ai_providers ADD COLUMN oauth_access_token TEXT`);
-  } catch {
-    // Column already exists
+    db.exec(`
+      DROP INDEX IF EXISTS idx_ai_providers_user_id;
+      DROP TABLE IF EXISTS ai_providers;
+      DROP TABLE IF EXISTS claude_tokens;
+      DROP INDEX IF EXISTS idx_session_peer_profiles_enabled;
+      DROP TABLE IF EXISTS session_peer_profiles;
+    `);
+  } catch (err) {
+    console.error('[migrations] Failed to drop legacy tables:', err);
   }
-  try {
-    db.exec(`ALTER TABLE ai_providers ADD COLUMN oauth_refresh_token TEXT`);
-  } catch {
-    // Column already exists
-  }
-  try {
-    db.exec(`ALTER TABLE ai_providers ADD COLUMN oauth_expires_at DATETIME`);
-  } catch {
-    // Column already exists
-  }
-  try {
-    db.exec(`ALTER TABLE ai_providers ADD COLUMN auth_method TEXT DEFAULT 'api_key'`);
-  } catch {
-    // Column already exists
-  }
-
-  // Migration: Backfill-encrypt OAuth tokens stored before F2. Runs once,
-  // gated on the presence of ENCRYPTION_KEY so a misconfigured deploy does
-  // not silently leave tokens plaintext.
-  backfillEncryptOauthTokens(db);
 
   // Create trusted devices table (for Electron desktop app auth)
   db.exec(`
@@ -1464,19 +1427,6 @@ function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_session_goals_session_id ON session_goals(session_id);
     CREATE INDEX IF NOT EXISTS idx_session_goals_status ON session_goals(status);
     CREATE INDEX IF NOT EXISTS idx_session_goals_created ON session_goals(created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS session_peer_profiles (
-      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-      alias TEXT NOT NULL,
-      description TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      visibility TEXT NOT NULL DEFAULT 'private',
-      inbox_policy TEXT NOT NULL DEFAULT 'queue',
-      capabilities_json TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_session_peer_profiles_enabled ON session_peer_profiles(enabled);
 
     CREATE TABLE IF NOT EXISTS session_peer_links (
       id TEXT PRIMARY KEY,
@@ -2028,65 +1978,6 @@ function initializeBasicAuth(db: Database.Database): void {
     console.log('║  ⚠️  Change these in Settings > Security after first login ║');
     console.log('╚════════════════════════════════════════════════════════════╝');
     console.log('');
-  }
-}
-
-function backfillEncryptOauthTokens(database: Database.Database): void {
-  if (!isEncryptionAvailable()) return;
-
-  const flagRow = database
-    .prepare("SELECT value FROM app_config WHERE key = 'oauth_tokens_encrypted_at_rest'")
-    .get() as { value: string } | undefined;
-  if (flagRow?.value === 'true') return;
-
-  const rows = database
-    .prepare(
-      'SELECT id, oauth_access_token, oauth_refresh_token FROM ai_providers WHERE oauth_access_token IS NOT NULL OR oauth_refresh_token IS NOT NULL'
-    )
-    .all() as Array<{
-    id: string;
-    oauth_access_token: string | null;
-    oauth_refresh_token: string | null;
-  }>;
-
-  const looksEncrypted = (value: string): boolean => {
-    try {
-      decrypt(value);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const update = database.prepare(
-    'UPDATE ai_providers SET oauth_access_token = ?, oauth_refresh_token = ? WHERE id = ?'
-  );
-
-  const tx = database.transaction(() => {
-    for (const row of rows) {
-      const newAccess =
-        row.oauth_access_token && !looksEncrypted(row.oauth_access_token)
-          ? safeEncrypt(row.oauth_access_token)
-          : row.oauth_access_token;
-      const newRefresh =
-        row.oauth_refresh_token && !looksEncrypted(row.oauth_refresh_token)
-          ? safeEncrypt(row.oauth_refresh_token)
-          : row.oauth_refresh_token;
-      if (newAccess !== row.oauth_access_token || newRefresh !== row.oauth_refresh_token) {
-        update.run(newAccess, newRefresh, row.id);
-      }
-    }
-    database
-      .prepare(
-        "INSERT INTO app_config (key, value, updated_at) VALUES ('oauth_tokens_encrypted_at_rest', 'true', CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = CURRENT_TIMESTAMP"
-      )
-      .run();
-  });
-
-  try {
-    tx();
-  } catch (err) {
-    console.error('[migrations] Failed to backfill-encrypt OAuth tokens:', err);
   }
 }
 

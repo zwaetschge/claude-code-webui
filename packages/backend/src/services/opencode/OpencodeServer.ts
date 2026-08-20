@@ -790,9 +790,20 @@ export class OpencodeServer {
             }
           }
 
+          // Cap the reassembly buffer: a frame that never terminates with
+          // "\n\n" (misbehaving server, proxy mangling) would otherwise grow
+          // memory without bound. 8 MB is far above any legitimate SSE frame.
+          const MAX_SSE_BUFFER_BYTES = 8 * 1024 * 1024;
           let buffer = '';
           res.on('data', (chunk: string) => {
             buffer += chunk;
+            if (buffer.length > MAX_SSE_BUFFER_BYTES) {
+              console.warn(
+                `[OPENCODE-SERVER] SSE buffer exceeded ${MAX_SSE_BUFFER_BYTES} bytes without a frame delimiter; discarding buffered data`
+              );
+              buffer = '';
+              return;
+            }
             let idx;
             while ((idx = buffer.indexOf('\n\n')) >= 0) {
               const frame = buffer.slice(0, idx);

@@ -24,8 +24,6 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v !== 'false'),
-  // User email for display (since Anthropic API is Cloudflare-protected)
-  CLAUDE_USER_EMAIL: z.string().optional(),
   PREVIEW_HOSTNAME: z.string().optional(),
   // Shared secret proving a request originates from the local permission-prompt
   // hook script (or any other in-process CLI caller). Auto-generated per-process
@@ -156,12 +154,9 @@ function loadConfig() {
       ]),
     },
     claude: {
-      oauthEnabled: env.CLAUDE_OAUTH_ENABLED, // Enabled by default (set CLAUDE_OAUTH_ENABLED=false to disable)
-      clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Official Claude Code client ID
-      authorizationUrl: 'https://console.anthropic.com/oauth/authorize',
-      tokenUrl: 'https://console.anthropic.com/api/oauth/token',
-      scopes: 'org:create_api_key user:profile user:inference',
-      userEmail: env.CLAUDE_USER_EMAIL, // Optional: set via CLAUDE_USER_EMAIL env var
+      // Enabled by default (set CLAUDE_OAUTH_ENABLED=false to disable). The
+      // OAuth client ID and endpoint constants live in utils/claudeOauth.ts.
+      oauthEnabled: env.CLAUDE_OAUTH_ENABLED,
     },
   };
 }

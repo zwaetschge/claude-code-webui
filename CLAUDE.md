@@ -21,8 +21,7 @@ pnpm format:check           # prettier --check (CI)
 ./scripts/start-webui.sh    # dev helper: generates ephemeral SESSION_SECRET/JWT_SECRET, kills stale PIDs, logs to .logs/, writes PIDs to .pids/
 
 # Backend-specific (run from packages/backend)
-pnpm db:migrate             # apply SQLite migrations (better-sqlite3)
-pnpm db:seed                # seed dev data
+pnpm db:migrate             # apply SQLite migrations (better-sqlite3); target honors WEBUI_DATA_DIR
 ```
 
 Dev ports: backend `3006`, frontend `5173`. Docker maps `4545:3001`; the container listens on `3001`.
@@ -165,7 +164,6 @@ Common:
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
 - `CLAUDE_OAUTH_ENABLED` (default `true`; `false` disables legacy Claude)
-- `CLAUDE_USER_EMAIL` — display-only
 - `ADMIN_LLM_PROVIDER` — helper override; default order `codex` → `opencode` → `claude`
 - `ENCRYPTION_KEY` — encrypts stored credentials
 - `WEBUI_HOOK_SECRET` — authenticates permission hooks; generated per process if unset
