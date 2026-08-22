@@ -37,11 +37,11 @@ _Responsive chat with the same provider-aware UI on phone-sized viewports._
 ## Android client
 
 A native client ships in `packages/android` — Kotlin and Jetpack Compose, talking to the same
-backend as the browser. It is a full client, not a web view.
+backend as the browser. It is a full client, not a web view: a sessions dashboard with search,
+category and status filters, streaming chat with tool cards and Chat/Files/Git/Checks/Stats tabs,
+and an analytics view with live per-provider quota and reset windows.
 
-![Android chat](docs/screenshots/android/04-chat-tablet.png)
-_Streaming chat with tool cards, provider badge, and the Files/Git/Checks/Stats tabs — here on a
-tablet in the two-pane workspace._
+Screenshots are being recaptured; see `scripts/capture-android-screenshots.sh`.
 
 ## Features
 
