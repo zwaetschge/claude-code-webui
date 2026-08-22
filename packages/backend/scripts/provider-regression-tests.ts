@@ -749,9 +749,83 @@ function testCodexUsageClampsEachLargeTurnField() {
     },
   }) as { usage?: Record<string, number> } | null;
 
-  assert.equal(translated?.usage?.input_tokens, 1_000_000);
-  assert.equal(translated?.usage?.cache_read_input_tokens, 1_000_000);
+  // Fresh input/output clamp at 5M; cache reads repeat the cached prefix on
+  // every model call in the turn, so 22.5M is a legitimate value that must
+  // survive (the old shared 1M cap truncated ~37% of real turns).
+  assert.equal(translated?.usage?.input_tokens, 1_500_000);
+  assert.equal(translated?.usage?.cache_read_input_tokens, 22_500_000);
   assert.equal(translated?.usage?.output_tokens, 500_000);
+}
+
+function testCodexContextEstimateDoesNotPinToWindow() {
+  const ioStub = {
+    to: () => ({
+      emit: () => undefined,
+    }),
+  };
+  const manager = new ClaudeProcessManager(
+    ioStub as unknown as ClaudeProcessManagerIo,
+    createTestEventSequenceAllocator()
+  );
+  const managerPrivate = manager as unknown as {
+    processes: Map<string, Record<string, unknown>>;
+    completeActiveSubagents: (...args: unknown[]) => void;
+    recordContextSnapshot: (...args: unknown[]) => void;
+    buildUsageSnapshot: (
+      sessionId: string,
+      proc: unknown
+    ) => { totalTokens: number; contextUsedPercent: number };
+    translateCodexMessage: (sessionId: string, raw: unknown) => unknown;
+  };
+  managerPrivate.completeActiveSubagents = () => undefined;
+  managerPrivate.recordContextSnapshot = () => undefined;
+
+  const sessionId = 'session-codex-estimate-no-thread-state';
+  const proc: Record<string, unknown> = {
+    cliProvider: 'codex',
+    userId: 'user-1',
+    workingDirectory: '/nonexistent/estimate-only',
+    model: 'gpt-5.6-sol',
+    contextWindow: 1_050_000,
+    totalCostUsd: 0,
+    previousTotalCostUsd: 0,
+    turnInputTokens: 0,
+    turnCacheReadTokens: 0,
+    turnCacheCreationTokens: 0,
+    turnOutputTokens: 0,
+    codexCurrentExecUsedResume: false,
+    codexSawTokenCountThisTurn: false,
+    codexLastPromptEstimateTokens: 9_000,
+    // Last real context observation (token_count or thread state) from an
+    // earlier turn: 180K in context.
+    codexLastObservedContextUsage: { input: 180_000, cached: 0, output: 0 },
+    currentToolName: null,
+    currentToolId: null,
+    currentAgentType: null,
+    currentAgentDescription: null,
+    currentActivitySummary: null,
+    subagentRuns: new Map(),
+    outputBuffer: { push: () => undefined },
+    lastActivityAt: Date.now(),
+  };
+  managerPrivate.processes.set(sessionId, proc);
+
+  // Heavy agentic turn: billing counters far above the context window. The
+  // old estimator fed them into the context meter and pinned it at 100%.
+  managerPrivate.translateCodexMessage(sessionId, {
+    type: 'turn.completed',
+    usage: {
+      input_tokens: 3_200_000,
+      cached_input_tokens: 2_900_000,
+      output_tokens: 40_000,
+      reasoning_output_tokens: 0,
+    },
+  });
+
+  const snapshot = managerPrivate.buildUsageSnapshot(sessionId, proc);
+  // Estimate = max(promptEstimate, last observed context) + turn output.
+  assert.equal(snapshot.totalTokens, 220_000);
+  assert.equal(snapshot.contextUsedPercent, 21);
 }
 
 function testCodexUsageIncludesDescendantThreadDelta() {
@@ -5505,6 +5579,7 @@ testCodexUsageUsesNormalizedContextWindow();
 testContextUsageCapsAtWindow();
 testCodexFreshExecUsageDoesNotDelta();
 testCodexUsageClampsEachLargeTurnField();
+testCodexContextEstimateDoesNotPinToWindow();
 testCodexUsageIncludesDescendantThreadDelta();
 await testCodexThreadStateReaderMatchesPrompt();
 await testCodexContextSnapshotReadsRolloutTokenCount();

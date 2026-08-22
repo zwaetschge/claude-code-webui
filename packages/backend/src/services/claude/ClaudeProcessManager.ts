@@ -155,7 +155,13 @@ const __dirname = path.dirname(__filename);
 const BUFFER_SIZE = 5000;
 const HANDOFF_CONTEXT_MAX_CHARS = 60000;
 const HANDOFF_CONTEXT_MAX_MESSAGES = 80;
-const CODEX_TURN_TOKEN_FIELD_CAP = 1_000_000;
+// Guards against the historical cumulative-counter bug, where a lost delta
+// baseline booked a whole session's counters (hundreds of millions) as one
+// turn. Cache reads legitimately re-send the cached prefix on every model
+// call inside an agentic turn, so their per-turn ceiling sits far above
+// fresh input/output — the old shared 1M cap clamped ~37% of real turns.
+const CODEX_TURN_TOKEN_FIELD_CAP = 5_000_000;
+const CODEX_TURN_CACHE_READ_CAP = 50_000_000;
 // Cap for a single accumulating stream-json line. Legitimate lines reach a few
 // megabytes; a newline-free stream past this point would otherwise grow the
 // per-session buffer without bound.
@@ -4126,12 +4132,19 @@ Discord Main Gateway:
     // Schema difference vs Claude:
     //   Codex:  input_tokens INCLUDES cached_input_tokens (overlapping)
     //   Claude: input_tokens and cache_read_input_tokens are disjoint
-    const nonCachedInput = Math.min(
-      Math.max(deltaInput - deltaCached, 0),
-      CODEX_TURN_TOKEN_FIELD_CAP
-    );
-    const cached = Math.min(Math.max(deltaCached, 0), CODEX_TURN_TOKEN_FIELD_CAP);
-    const output = Math.min(Math.max(deltaOutput, 0), CODEX_TURN_TOKEN_FIELD_CAP);
+    const nonCachedRaw = Math.max(deltaInput - deltaCached, 0);
+    const cachedRaw = Math.max(deltaCached, 0);
+    const outputRaw = Math.max(deltaOutput, 0);
+    const nonCachedInput = Math.min(nonCachedRaw, CODEX_TURN_TOKEN_FIELD_CAP);
+    const cached = Math.min(cachedRaw, CODEX_TURN_CACHE_READ_CAP);
+    const output = Math.min(outputRaw, CODEX_TURN_TOKEN_FIELD_CAP);
+    if (nonCachedInput !== nonCachedRaw || cached !== cachedRaw || output !== outputRaw) {
+      // A clamped field means the delta logic saw counter values no real turn
+      // produces — surface it instead of silently truncating analytics.
+      console.warn(
+        `[CODEX] Per-turn usage clamped [${sessionId}]: input=${nonCachedRaw} cached=${cachedRaw} output=${outputRaw}`
+      );
+    }
 
     proc.turnInputTokens = nonCachedInput;
     proc.turnOutputTokens = output;
@@ -5818,7 +5831,6 @@ Discord Main Gateway:
             cached: deltaCached,
             output: deltaOutput,
           } = this.applyCodexTurnUsage(sessionId, codexProc, turnUsage);
-          const deltaInput = nonCachedInput + deltaCached;
 
           // If this Codex version did not emit token_count.last_token_usage, use
           // Codex's own persisted thread meter before falling back to billing
@@ -5826,10 +5838,6 @@ Discord Main Gateway:
           // transcript-prefix exec turns (for example 13K shown while Codex had
           // ~250K tokens in its thread state).
           if (!codexProc.codexSawTokenCountThisTurn) {
-            const contextWindow = this.resolveObservedContextWindow(
-              codexProc.model,
-              codexProc.contextWindow
-            );
             const codexHome = CLI_PROVIDERS.codex.credentialsPath.replace('~', os.homedir());
             const threadState = readCodexThreadState(codexHome, {
               threadId: codexProc.codexSessionId || codexProc.claudeSessionId,
@@ -5871,8 +5879,15 @@ Discord Main Gateway:
                 typeof codexProc.codexLastPromptEstimateTokens === 'number'
                   ? codexProc.codexLastPromptEstimateTokens
                   : 0;
-              const billingInputEstimate = deltaInput > 0 ? Math.min(deltaInput, contextWindow) : 0;
-              const estimatedInput = Math.max(promptEstimate, billingInputEstimate);
+              // Billing deltas sum every model call in the turn and routinely
+              // dwarf the real prompt footprint — using them here pinned the
+              // context meter at 100% for heavy agentic turns. The last
+              // observed context reading is a sound floor instead: absent
+              // compaction, a session's context only grows.
+              const prevObservedTotal = codexProc.codexLastObservedContextUsage
+                ? this.getCodexContextUsageTotal(codexProc.codexLastObservedContextUsage)
+                : 0;
+              const estimatedInput = Math.max(promptEstimate, prevObservedTotal);
               const boundedContextInput = estimatedInput > 0 ? estimatedInput : deltaOutput;
               const boundedContextCached = Math.min(deltaCached, boundedContextInput);
               const estimatedContextUsage = {
