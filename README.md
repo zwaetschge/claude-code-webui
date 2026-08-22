@@ -1,12 +1,13 @@
 # Plum Code WebUI
 
-Self-hosted web interface for Codex, OpenCode, Pi, and Claude Code harnesses. Plum Code WebUI gives each harness the same browser workspace: streaming chat, tool approvals, file and git panes, provider analytics, shared agents/skills/plugins, preview tooling, and built-in MCP servers inside one Docker deployment. A native **Android client** ships alongside it in `packages/android`.
+Self-hosted control center for Codex, OpenCode, Pi, Kimi Code, and Claude Code — with **two first-class clients**: a browser workspace and a **native Android app** (Kotlin/Jetpack Compose, plus a Wear OS companion). Both talk to the same backend: streaming chat, tool approvals, file and git panes, provider analytics, shared agents/skills/plugins, preview tooling, and built-in MCP servers inside one Docker deployment.
 
 > **Default provider: Codex.** Anthropic is restricting `claude -p` / introducing a credit system, so Codex is now the primary CLI. Claude stays available as a legacy option.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.3-blue.svg)](https://react.dev/)
+[![Android](https://img.shields.io/badge/Android-Kotlin%20%2B%20Compose-3DDC84.svg?logo=android&logoColor=white)](#android-client-1)
 
 # Screenshots
 
@@ -167,8 +168,10 @@ tablet in the two-pane workspace._
 
 ## Android client
 
-`packages/android` is a native Kotlin/Jetpack Compose app for the same server — sessions, streaming
-chat, approvals and analytics on a phone or tablet.
+`packages/android` is a full native client for the same server — not a web view. ~170 Kotlin files
+of Jetpack Compose UI covering sessions, streaming chat, approvals, analytics, and offline behavior
+on phones, tablets, and Wear OS. Feature work lands in the web and Android clients together, so the
+app tracks the WebUI closely.
 
 - **Sessions** — list, search, categories, archive, bulk actions, and a jump-back row for the last
   five you touched (also available as launcher long-press shortcuts)
@@ -176,14 +179,20 @@ chat, approvals and analytics on a phone or tablet.
   and an outbox that queues messages while offline
 - **Tablet layout** — two panes at expanded window sizes: session list beside the chat, with a
   navigation rail for Activity, Analytics and Library
-- **Notifications** — a durable feed with inline approve/deny, plus push and home-screen widgets
+- **Notifications** — a durable feed with inline approve/deny, plus push and configurable
+  home-screen widgets for sessions and pending approvals
 - **Analytics** — token volume, spend against your alert threshold, and per-provider limits
+- **Wear OS companion** — `packages/android/wear` ships a watch app with a tile, a pending-approvals
+  complication, and phone-synced session snapshots, so you can approve a tool call from your wrist
+
+Requirements: Android 8.0+ (`minSdk 26`, `targetSdk 35`).
 
 ### Build it
 
 ```bash
 cd packages/android
 ./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
+./gradlew :wear:assembleDebug    # optional Wear OS companion
 ```
 
 Install the APK, enter your Plum Code URL on first launch, and sign in with the same account you use
@@ -208,8 +217,13 @@ in the browser.
 - **Tailwind CSS** - Styling
 - **Zustand** - State management
 - **TanStack Query** - Data fetching
-- **Monaco Editor** - Code editing
 - **KaTeX** - Math rendering
+
+### Android
+
+- **Kotlin + Jetpack Compose** - native UI for phone, tablet, and Wear OS
+- **Socket.IO client** - the same realtime stream the browser uses
+- **Home-screen widgets** - sessions and approvals as configurable app widgets
 
 ### Shared
 
