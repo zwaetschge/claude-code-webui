@@ -99,6 +99,9 @@ ARG NPM_BRACE_EXPANSION_VERSION=5.0.9
 # through our lockfile, so they are replaced in place like brace-expansion.
 ARG NPM_IP_ADDRESS_VERSION=10.5.0
 ARG PI_UNDICI_VERSION=8.10.0
+# npm 12.0.2 still bundles tar 7.5.19 (CVE-2026-73566); drop this once an npm
+# release ships tar >= 7.5.21.
+ARG NPM_TAR_VERSION=7.5.21
 RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     npm install -g --prefix /opt/plum-cli \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
@@ -150,6 +153,17 @@ RUN mkdir -p /home/node/.npm-global /opt/plum-cli && \
     node -p \
       "require('/usr/local/lib/node_modules/npm/node_modules/ip-address/package.json').version" \
       | grep -Fx "${NPM_IP_ADDRESS_VERSION}" && \
+    /usr/local/bin/npm pack tar@${NPM_TAR_VERSION} \
+      --pack-destination /tmp --silent >/dev/null && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/tar && \
+    mkdir -p /usr/local/lib/node_modules/npm/node_modules/tar && \
+    tar -xzf /tmp/tar-${NPM_TAR_VERSION}.tgz \
+      -C /usr/local/lib/node_modules/npm/node_modules/tar \
+      --strip-components=1 && \
+    rm -f /tmp/tar-${NPM_TAR_VERSION}.tgz && \
+    node -p \
+      "require('/usr/local/lib/node_modules/npm/node_modules/tar/package.json').version" \
+      | grep -Fx "${NPM_TAR_VERSION}" && \
     /usr/local/bin/npm pack undici@${PI_UNDICI_VERSION} \
       --pack-destination /tmp --silent >/dev/null && \
     rm -rf \
