@@ -316,6 +316,7 @@ Both clients speak the same REST/socket API; keep new session features reachable
   - Kimi Code: `/home/node/.kimi-code`
   - Claude Code: `/home/node/.claude`
   - npm-global: `/home/node/.npm-global`
+  - GitHub CLI: `/home/node/.config/gh` (token + config; would be ephemeral otherwise)
 - Workspace: `${WORKSPACE_DIR}` → `/workspace`; constrain with `ALLOWED_BASE_PATHS`.
 
 ## Environment overrides
@@ -333,6 +334,17 @@ Both clients speak the same REST/socket API; keep new session features reachable
 - `CLI_RUNNER_ACCESS=admin-only|trusted-users`: default `admin-only` while CLIs share Unix/provider homes. Use `trusted-users` only in a deliberately trusted private deployment.
 - `CLI_RUNNER_ALLOWED_EMAILS`: permit selected non-admins without enabling all active users.
 - `PLUM_BACKUP_RETENTION_DAYS`, `PLUM_LOG_RETENTION_DAYS`, `PLUM_SESSION_RETENTION_DAYS`: retention for `node scripts/plum-maintenance.mjs`; preview with `--dry-run`.
+
+## GitHub CLI (`gh`)
+
+`gh` is the supported way to talk to GitHub from a session: pull requests, issues, releases, CI runs, and the raw API. Prefer it over hand-rolled `curl` against `api.github.com`, and over asking the user to click through the web UI.
+
+- Installed from Alpine `github-cli` in the runtime image (`Dockerfile`, the `apk add` layer).
+- Authenticated once per deployment as `zwaetschge` via OAuth device flow; scopes `repo`, `read:org`, `gist`, `workflow`.
+- Credentials live in `~/.config/gh/hosts.yml`, mounted from `${CONFIG_DIR}/gh` for both the main WebUI and `repair-bot`, so the login survives rebuilds.
+- `git_protocol` is `ssh`, matching the read-only `~/.ssh` mount that already authenticates `git@github.com`.
+- Re-auth after a token revoke: `gh auth login --hostname github.com --git-protocol ssh --web`. It prints a one-time code the user enters at <https://github.com/login/device>; there is no headless path, since the WebUI's own GitHub OAuth is login-only and stores no repo-scoped token.
+- The token is stored in plain text inside the mounted config, exactly like the other provider credentials. Treat `${CONFIG_DIR}/gh` as secret material: never commit it, never echo `gh auth token`, and redact it in Discord or logs.
 
 ## Rebuild / redeploy protocol (MANDATORY for agents)
 

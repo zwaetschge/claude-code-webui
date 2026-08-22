@@ -115,6 +115,7 @@ The override pins:
 - `/mnt/cache/appdata/plum-code-webui/config/kimi-code` → `/home/node/.kimi-code`
 - `/mnt/cache/appdata/plum-code-webui/config/claude` → `/home/node/.claude`
 - `/mnt/cache/appdata/plum-code-webui/config/npm-global` → `/home/node/.npm-global`
+- `/mnt/cache/appdata/plum-code-webui/config/gh` → `/home/node/.config/gh` (GitHub CLI token; see AGENTS.md)
 - `/mnt/cache/appdata/plum-code-webui/config/ssh` → `/home/node/.ssh` (ro)
 - `/mnt/cache` → `/mnt/cache`
 
